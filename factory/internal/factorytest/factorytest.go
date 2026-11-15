@@ -24,6 +24,7 @@ import (
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakeforge"
+	"github.com/solidtrace/factory/internal/fakesource"
 	"github.com/solidtrace/factory/internal/recorder"
 )
 
@@ -69,13 +70,18 @@ type Env struct {
 	// Proxy is the agent machines' proxy, with the ThroughProxy option
 	// (else nil: the wrappers reach SolidTrace directly).
 	Proxy *Proxy
+	// Source is the fake webhook source: the API of each connection of
+	// kind fakesource.Kind or fakesource.OtherKind.
+	Source *fakesource.Source
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
-	people  int
-	logs    lockedBuffer
+	// webhooks is the Dispatcher's webhook listener.
+	webhooks *httptest.Server
+	people   int
+	logs     lockedBuffer
 	// projects counts the Projects that Project made, for their ids.
 	projects int64
 	admin    *Person
@@ -229,6 +235,7 @@ func New(t testing.TB, options ...Option) *Env {
 		t:          t,
 		SolidTrace: recorder.New(DispatcherToken),
 		Forge:      fakeforge.New(t),
+		Source:     fakesource.New(),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	t.Cleanup(e.SolidTrace.Close)
@@ -247,11 +254,16 @@ func New(t testing.TB, options ...Option) *Env {
 		EncryptionKey:   EncryptionKey,
 		BitbucketAPIURL: e.Forge.APIURL(),
 		BitbucketGitURL: e.Forge.GitURL(),
+		WebhookURL:      PublicWebhookURL,
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.current.Load().Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(e.server.Close)
+	e.webhooks = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.current.Load().WebhookHandler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(e.webhooks.Close)
 	for _, option := range options {
 		option(e)
 	}
@@ -263,7 +275,8 @@ func New(t testing.TB, options ...Option) *Env {
 func (e *Env) start() {
 	e.t.Helper()
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
-		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry}
+		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
+		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
@@ -279,6 +292,10 @@ func (e *Env) start() {
 
 // URL is the Dispatcher's private listener.
 func (e *Env) URL() string { return e.server.URL }
+
+// WebhookListenerURL is the Dispatcher's webhook listener (the address
+// that Caddy sends /webhooks/* to).
+func (e *Env) WebhookListenerURL() string { return e.webhooks.URL }
 
 // Restart stops the Dispatcher and starts it again on the same database.
 func (e *Env) Restart() {

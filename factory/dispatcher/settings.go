@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -265,7 +266,7 @@ func quote(s string) string {
 }
 
 func (d *Dispatcher) listConnections(w http.ResponseWriter, r *http.Request, p person) {
-	connections, err := d.store.connections(p.organization.id)
+	connections, err := d.connections(p.organization.id)
 	if err != nil {
 		d.serverError(w, "list the connections", err)
 		return
@@ -291,9 +292,9 @@ func (d *Dispatcher) saveConnection(w http.ResponseWriter, r *http.Request, p pe
 	}
 	save.Token = strings.TrimSpace(save.Token)
 	switch {
-	case save.Kind != dispatcherapi.ForgeBitbucket:
-		writeProblem(w, http.StatusBadRequest, "the kind of a connection must be "+dispatcherapi.ForgeBitbucket+
-			" (Bitbucket Cloud), not "+quote(save.Kind))
+	case save.Kind != dispatcherapi.ForgeBitbucket && d.kinds[save.Kind] == nil:
+		writeProblem(w, http.StatusBadRequest, "the kind of a connection must be "+
+			strings.Join(d.connectionKinds(), " or ")+", not "+quote(save.Kind))
 		return
 	case save.Token == "" || len(save.Token) > maxToken:
 		writeProblem(w, http.StatusBadRequest, "a connection needs its token (at most 8 KiB)")
@@ -306,7 +307,37 @@ func (d *Dispatcher) saveConnection(w http.ResponseWriter, r *http.Request, p pe
 	}
 	d.log.Info("an Admin saved a connection", "organization", p.organization.slug, "connection", name,
 		"kind", save.Kind, "made", made, "by", p.name)
-	connections, err := d.store.connections(p.organization.id)
+	d.writeConnection(w, p.organization.id, name)
+}
+
+// connectionKinds are the kinds that a connection can have.
+func (d *Dispatcher) connectionKinds() []string {
+	kinds := []string{dispatcherapi.ForgeBitbucket + " (Bitbucket Cloud)"}
+	for _, kind := range slices.Sorted(maps.Keys(d.kinds)) {
+		if kind != dispatcherapi.ForgeBitbucket {
+			kinds = append(kinds, kind)
+		}
+	}
+	return kinds
+}
+
+// connections reads the Organization's connections, with the webhook URL
+// of each connection whose kind sends webhooks.
+func (d *Dispatcher) connections(organizationID string) ([]dispatcherapi.Connection, error) {
+	stored, err := d.store.connections(organizationID)
+	connections := make([]dispatcherapi.Connection, 0, len(stored))
+	for _, c := range stored {
+		if _, ok := d.kinds[c.Kind]; ok && d.config.WebhookURL != "" {
+			c.WebhookURL = d.config.WebhookURL + webhookPath(c.Kind, c.id)
+		}
+		connections = append(connections, c.Connection)
+	}
+	return connections, err
+}
+
+// writeConnection answers with the Organization's connection with name.
+func (d *Dispatcher) writeConnection(w http.ResponseWriter, organizationID, name string) {
+	connections, err := d.connections(organizationID)
 	if err != nil {
 		d.serverError(w, "read the connection", err)
 		return
@@ -318,6 +349,44 @@ func (d *Dispatcher) saveConnection(w http.ResponseWriter, r *http.Request, p pe
 		}
 	}
 	d.serverError(w, "read the connection", errNotFound)
+}
+
+// maxWebhookSecret is the longest webhook secret that a connection keeps.
+const maxWebhookSecret = 1 << 10
+
+// saveWebhookSecret makes or replaces the webhook secret of the
+// Organization's connection with the request's {name}: the secret that
+// the connection's service signs each webhook with.
+func (d *Dispatcher) saveWebhookSecret(w http.ResponseWriter, r *http.Request, p person) {
+	name := r.PathValue("name")
+	var save dispatcherapi.SaveWebhookSecret
+	if !decode(w, r, &save, "the body must be a JSON object with secret") {
+		return
+	}
+	save.Secret = strings.TrimSpace(save.Secret)
+	if save.Secret == "" || len(save.Secret) > maxWebhookSecret {
+		writeProblem(w, http.StatusBadRequest, "a webhook secret has 1 to 1024 characters")
+		return
+	}
+	kind, _, err := d.store.connection(p.organization.id, name)
+	switch {
+	case errors.Is(err, errNotFound):
+		writeProblem(w, http.StatusNotFound, "no connection "+name+" in the Organization "+p.organization.slug+
+			": 'solidtrace connections list' lists them")
+		return
+	case err != nil:
+		d.serverError(w, "read the connection", err)
+		return
+	case d.kinds[kind] == nil:
+		writeProblem(w, http.StatusUnprocessableEntity, "a "+kind+" connection gets no webhooks from this Dispatcher")
+		return
+	}
+	if err := d.store.saveWebhookSecret(p.organization.id, name, save.Secret); err != nil {
+		d.serverError(w, "save the webhook secret", err)
+		return
+	}
+	d.log.Info("an Admin saved a webhook secret", "organization", p.organization.slug, "connection", name, "by", p.name)
+	d.writeConnection(w, p.organization.id, name)
 }
 
 // decode reads the request's JSON body into v, with no unknown field. It

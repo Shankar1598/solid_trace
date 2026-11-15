@@ -90,10 +90,16 @@ Usage:
       is cleared: no folder is the root, and no base branch is the
       repository's default branch.
   solidtrace connections list [--dispatcher URL]
-      List your Organization's forge connections (never their tokens).
+      List your Organization's connections (never their tokens or
+      secrets), with the webhook URL of each connection that sends
+      webhooks and the time of its last webhook.
   solidtrace connections set NAME [--kind bitbucket] [--dispatcher URL] < TOKEN
-      Save a forge connection with the token on stdin, or replace its
-      token (an Admin only). The Dispatcher keeps the token encrypted.
+      Save a connection with the token on stdin, or replace its token
+      (an Admin only). The Dispatcher keeps the token encrypted.
+  solidtrace connections webhook-secret NAME [--dispatcher URL] < SECRET
+      Save the secret that signs the connection's webhooks, with the
+      secret on stdin (an Admin only). Paste its webhook URL into the
+      connection's service. The Dispatcher keeps the secret encrypted.
   solidtrace report --outcome done|needs-a-person|failed --summary TEXT
           [--question TEXT]
       Inside a Run only: report the outcome of your work to the wrapper.

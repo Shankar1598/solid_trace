@@ -17,8 +17,8 @@ import (
 // from a file and from the environment. The file holds NAME=value lines
 // with the same names as the environment (blank lines and lines that start
 // with # are not read), and a name in the environment wins over the file.
-// Later tickets add the default allowlist, the checkpoint interval, the
-// public webhook URL and the trigger word.
+// Later tickets add the default allowlist, the checkpoint interval and the
+// trigger word.
 type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
@@ -38,6 +38,15 @@ type Config struct {
 	EncryptionKey string
 	// Listen is the address of the private listener.
 	Listen string
+	// WebhookListen is the address of the webhook listener, which serves
+	// only POST /webhooks/<kind>/<id>. Caddy (or the operator's own load
+	// balancer) sends /webhooks/* from the public name to it. "" is no
+	// webhook listener: the backstops alone find each change.
+	WebhookListen string
+	// WebhookURL is the public webhook URL, such as
+	// https://factory.example.com: the base of each connection's webhook
+	// URL that the Dispatcher shows ("" shows none).
+	WebhookURL string
 	// BitbucketAPIURL and BitbucketGitURL are the bases of Bitbucket
 	// Cloud's REST API and clone URLs ("" is Bitbucket Cloud's own). The
 	// tests set them to the fake Forge.
@@ -135,6 +144,8 @@ const (
 	EnvDatabase        = "DISPATCHER_DATABASE"
 	EnvEncryptionKey   = "DISPATCHER_ENCRYPTION_KEY"
 	EnvListen          = "DISPATCHER_LISTEN"
+	EnvWebhookListen   = "DISPATCHER_WEBHOOK_LISTEN"
+	EnvWebhookURL      = "DISPATCHER_WEBHOOK_URL"
 	EnvBitbucketAPIURL = "DISPATCHER_BITBUCKET_API_URL"
 	EnvBitbucketGitURL = "DISPATCHER_BITBUCKET_GIT_URL"
 	EnvWIPRefs         = "DISPATCHER_WIP_REFS"
@@ -177,6 +188,8 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		Database:            value(EnvDatabase),
 		EncryptionKey:       value(EnvEncryptionKey),
 		Listen:              value(EnvListen),
+		WebhookListen:       value(EnvWebhookListen),
+		WebhookURL:          strings.TrimRight(value(EnvWebhookURL), "/"),
 		BitbucketAPIURL:     strings.TrimRight(value(EnvBitbucketAPIURL), "/"),
 		BitbucketGitURL:     strings.TrimRight(value(EnvBitbucketGitURL), "/"),
 		WIPRefs:             value(EnvWIPRefs),
@@ -228,7 +241,7 @@ func (c Config) Check() error {
 		problems = append(problems, err.Error())
 	}
 	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL,
-		EnvIngestURL: c.SolidTraceIngestURL} {
+		EnvIngestURL: c.SolidTraceIngestURL, EnvWebhookURL: c.WebhookURL} {
 		if u, err := url.Parse(v); v != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
 			problems = append(problems, name+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", v))
 		}

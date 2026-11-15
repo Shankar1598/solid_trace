@@ -233,13 +233,28 @@ type ProjectList struct {
 // ForgeBitbucket is the kind of a Bitbucket Cloud connection.
 const ForgeBitbucket = "bitbucket"
 
-// Connection is a forge connection of the Organization. The Dispatcher
-// never gives its token.
+// Connection is a forge or tracker connection of the Organization. The
+// Dispatcher never gives its token or its webhook secret.
 type Connection struct {
 	Name      string    `json:"name"`
 	Kind      string    `json:"kind"`
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy Person    `json:"updated_by"`
+	// WebhookURL is the public URL to paste into the connection's service,
+	// for a kind that sends webhooks ("" when the kind sends none or the
+	// operator configuration has no public webhook URL).
+	WebhookURL string `json:"webhook_url,omitempty"`
+	// WebhookSecret is true when the connection has a webhook secret.
+	WebhookSecret bool `json:"webhook_secret"`
+	// LastWebhookAt is the time of the last verified webhook (nil is
+	// none).
+	LastWebhookAt *time.Time `json:"last_webhook_at,omitempty"`
+}
+
+// SaveWebhookSecret is the body of a save of a connection's webhook
+// secret: the secret that signs its webhooks.
+type SaveWebhookSecret struct {
+	Secret string `json:"secret"`
 }
 
 // SaveConnection is the body of a save of a connection. It makes the
@@ -375,6 +390,15 @@ func (c *Client) Connections(ctx context.Context) ([]Connection, error) {
 func (c *Client) SaveConnection(ctx context.Context, name string, save SaveConnection) (Connection, error) {
 	var connection Connection
 	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name), save, &connection)
+	return connection, err
+}
+
+// SaveWebhookSecret makes or replaces a connection's webhook secret (an
+// Admin only).
+func (c *Client) SaveWebhookSecret(ctx context.Context, name, secret string) (Connection, error) {
+	var connection Connection
+	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name)+"/webhook-secret",
+		SaveWebhookSecret{Secret: secret}, &connection)
 	return connection, err
 }
 
