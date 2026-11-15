@@ -69,6 +69,9 @@ type Dispatcher struct {
 	// commandsAdded wakes the waiting commands calls.
 	commandsAdded signal
 	backstopEvery time.Duration
+	// runnerStopped holds the Executions whose workload the backstop
+	// stopped through the Runner, until the Runner's end event.
+	runnerStopped sync.Map
 	// closing closes when Serve or Close starts to stop.
 	closing     chan struct{}
 	closingOnce sync.Once

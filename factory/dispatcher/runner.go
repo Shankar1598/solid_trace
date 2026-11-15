@@ -161,11 +161,16 @@ func (d *Dispatcher) watchLoop(ctx context.Context) {
 				d.log.Info("an Execution changed state on the Runner", "execution", ev.Execution, "state", ev.State)
 				continue
 			}
+			_, stopped := d.runnerStopped.LoadAndDelete(ev.Execution)
 			if ev.Lost {
 				d.endByDispatcher(ev.Execution, "the machine was lost", nil)
 				continue
 			}
 			code := ev.ExitCode
+			if stopped {
+				d.endByDispatcher(ev.Execution, endStoppedByRunner, &code)
+				continue
+			}
 			d.endByDispatcher(ev.Execution,
 				fmt.Sprintf("the wrapper exited with code %d before the end of the Execution", code), &code)
 		}

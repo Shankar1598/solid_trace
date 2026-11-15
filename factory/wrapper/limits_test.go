@@ -149,3 +149,35 @@ func TestTheIdleLimitEndsAnExecutionWhoseHarnessDoesNotReadItsTask(t *testing.T)
 		t.Errorf("the reason is %q, want timeout with the idle limit", run.Reason)
 	}
 }
+
+func TestTheDispatcherStopsAWedgedWrapperThroughTheRunnerAfterTheBackstop(t *testing.T) {
+	env, ana := newEnv(t)
+	here, reached := marker(t)
+	env.Runner.Agent(takeTask, initLine(t), here, inToolCall, interrupted, thenEOF)
+	id := start(t, env, ana, "Fix the cart")
+	reached()
+	// The wrapper hangs: it takes no command, and its timers do not fire.
+	execution := env.Runner.Dispatched()[0]
+	if err := env.Runner.Fake.Freeze(execution); err != nil {
+		t.Fatal(err)
+	}
+
+	env.Clock.Advance(8*time.Hour + 15*time.Minute + time.Second)
+	waitForEvent(t, env, id, "stop")
+	time.Sleep(settle)
+	// The wrapper gets the time of the end procedure for the stop command.
+	if run := getRun(t, ana, id); run.State != dispatcherapi.StateStopped ||
+		run.Executions[0].State != dispatcherapi.ExecutionRunning {
+		t.Fatalf("before the stop's grace the Run is %s, its Execution %s", run.State, run.Executions[0].State)
+	}
+	env.Clock.Advance(5 * time.Minute)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateStopped)
+	e := onlyExecution(t, run)
+	if !strings.HasPrefix(e.EndReason, dispatcherapi.EndStopped+": ") || !strings.Contains(e.EndReason, "Runner") {
+		t.Errorf("the end reason is %q, want stopped by the Runner", e.EndReason)
+	}
+	if state, _ := env.Runner.Fake.State(execution); !state.Ended() {
+		t.Errorf("the wrapper is %s on the Runner", state)
+	}
+}

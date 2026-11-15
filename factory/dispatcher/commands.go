@@ -27,6 +27,18 @@ var defaultLimits = dispatcherapi.Limits{
 // limit by more than this. The wrapper's own timer ends it at the limit.
 const backstopMargin = 15 * time.Minute
 
+// stopGrace is how long a wrapper has to end its Execution after a stop
+// command (the interrupt, the push, the uploads and the end call). After
+// it, the backstop stops the workload through the Runner.
+const stopGrace = 5 * time.Minute
+
+// runnerStopWait is the limit of one Runner.Stop call.
+const runnerStopWait = 30 * time.Second
+
+// endStoppedByRunner is the end reason of an Execution whose wrapper did
+// not act on its stop command, so that the Runner stopped it.
+const endStoppedByRunner = dispatcherapi.EndStopped + ": the wrapper did not end the Execution after its stop command, so the Runner stopped it"
+
 // backstopEvery is how often the backstop looks for such Executions
 // (Options.BackstopEvery replaces it).
 const backstopEvery = time.Minute
@@ -262,10 +274,13 @@ func (s *store) commandsAfter(executionID string, after int64) ([]dispatcherapi.
 }
 
 // backstopLoop stops each Execution that passed its total limit plus
-// backstopMargin: its wrapper did not end it at the limit.
+// backstopMargin: its wrapper did not end it at the limit. It also stops
+// through the Runner each Execution whose wrapper did not act on its stop
+// command in stopGrace: a wrapper that hangs takes no command.
 func (d *Dispatcher) backstopLoop(ctx context.Context) {
 	for {
 		d.backstop()
+		d.stopThroughTheRunner(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -290,6 +305,53 @@ func (d *Dispatcher) backstop() {
 	if len(due) > 0 {
 		d.commandsAdded.wake()
 	}
+}
+
+// stopThroughTheRunner stops the workload of each running Execution whose
+// stop command is stopGrace old or older, once. The Runner's end event then
+// ends the Execution (watchLoop) with endStoppedByRunner.
+func (d *Dispatcher) stopThroughTheRunner(ctx context.Context) {
+	due, err := d.store.unansweredStops(d.now().Add(-stopGrace))
+	if err != nil {
+		d.log.Error("could not read the Executions with a stop command", "error", err)
+		return
+	}
+	for _, e := range due {
+		// Before the call: the end event can come before Stop returns.
+		if _, done := d.runnerStopped.LoadOrStore(e.id, true); done {
+			continue
+		}
+		stop, cancel := context.WithTimeout(ctx, runnerStopWait)
+		err := d.runner.Stop(stop, e.workload)
+		cancel()
+		if err != nil {
+			d.runnerStopped.Delete(e.id)
+			d.log.Error("the Runner could not stop an Execution", "execution", e.id, "error", err)
+			continue
+		}
+		d.log.Warn("the Runner stopped an Execution whose wrapper did not act on its stop command", "execution", e.id)
+	}
+}
+
+// unansweredStops gives the running Executions that have a workload and a
+// stop command made at or before before.
+func (s *store) unansweredStops(before time.Time) ([]storedExecution, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT e.id, e.workload FROM executions e
+		JOIN commands c ON c.execution_id = e.id WHERE e.state = ? AND e.workload != '' AND c.kind = ?
+		AND c.created_at <= ?`, dispatcherapi.ExecutionRunning, dispatcherapi.CommandStop, before.UnixMicro())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []storedExecution
+	for rows.Next() {
+		var e storedExecution
+		if err := rows.Scan(&e.id, &e.workload); err != nil {
+			return nil, err
+		}
+		list = append(list, e)
+	}
+	return list, rows.Err()
 }
 
 // pastTheBackstop gives the running Executions that started more than
