@@ -179,33 +179,51 @@ func TestTheNotionKindReadsEachPageOfTheListAndTheContentOfATicket(t *testing.T)
 		t.Fatalf("ReadyTickets gave %d tickets and %v, want the 5 ready pages over 3 lists", len(tickets), err)
 	}
 
+	// A ticket has no body: the reconcile step reads it only for the
+	// Run that it starts. Only a ready ticket has the user's name.
 	page := fakenotion.NewID()
-	env.Notion.Put(db, fakenotion.Page{ID: page, Title: "Content", Status: "Backlog", Blocks: []fakenotion.Block{
-		{Type: "heading_2", Text: "Steps"},
-		{Type: "numbered_list_item", Text: "Open the cart"},
-		{Type: "to_do", Text: "Add a coupon", Checked: true},
-		{Type: "to_do", Text: "Pay"},
-		{Type: "image"},
-		{Type: "code", Text: "total := sum - discount"},
-		{Type: "quote", Text: "It is wrong"},
-		{Type: "paragraph", Text: "Level 0", Children: []fakenotion.Block{
-			{Type: "paragraph", Text: "Level 1", Children: []fakenotion.Block{
-				{Type: "paragraph", Text: "Level 2", Children: []fakenotion.Block{
-					{Type: "paragraph", Text: "Level 3"}}}}}}},
-	}}, rosaN)
+	env.Notion.Put(db, fakenotion.Page{ID: page, Title: "Later", Status: "Backlog",
+		Blocks: []fakenotion.Block{{Type: "paragraph", Text: "Some day"}}}, rosaN)
 	ticket, err := kind.Ticket(ctx, c, strings.ReplaceAll(page, "-", ""))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || ticket.ID != page || ticket.Title != "Later" || ticket.Status != "Backlog" || ticket.Route != "" ||
+		ticket.Body != "" || ticket.StatusBy != (dispatcher.TrackerUser{ID: rosaN.ID}) {
+		t.Errorf("the ticket is %+v (%v)", ticket, err)
 	}
-	want := "## Steps\n1. Open the cart\n[x] Add a coupon\n[ ] Pay\n```\ntotal := sum - discount\n```\n> It is wrong\n" +
-		"Level 0\n  Level 1\n    Level 2\n\n(The page has more content: read the rest in Notion.)"
-	if ticket.Body != want {
-		t.Errorf("the body is\n%s\nwant\n%s", ticket.Body, want)
-	}
-	if ticket.ID != page || ticket.Title != "Content" || ticket.Status != "Backlog" || ticket.Route != "" ||
+	ready := readyPage(env, db, "Ready")
+	if ticket, err := kind.Ticket(ctx, c, ready); err != nil || ticket.Route != "shop" ||
 		ticket.StatusBy != (dispatcher.TrackerUser{ID: rosaN.ID, Name: "Rosa"}) {
-		t.Errorf("the ticket is %+v", ticket)
+		t.Errorf("the ready ticket is %+v (%v)", ticket, err)
 	}
+}
+
+// promptsByPage waits until there are n Runs, and gives the prompt of
+// each Run by its page.
+func promptsByPage(t *testing.T, env *factorytest.Env, n int) map[string]string {
+	t.Helper()
+	prompts := map[string]string{}
+	for _, run := range waitForRuns(t, env, n) {
+		prompts[run.Link] = run.Prompt
+	}
+	return prompts
+}
+
+func TestTheRunOfANotionPageHasThePagesContentAsItsPrompt(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	content := fakenotion.NewID()
+	env.Notion.Put(db, fakenotion.Page{ID: content, Title: "Content", Status: "Ready for agent",
+		Select: map[string]string{"Project": "shop"}, Blocks: []fakenotion.Block{
+			{Type: "heading_2", Text: "Steps"},
+			{Type: "numbered_list_item", Text: "Open the cart"},
+			{Type: "to_do", Text: "Add a coupon", Checked: true},
+			{Type: "to_do", Text: "Pay"},
+			{Type: "image"},
+			{Type: "code", Text: "total := sum - discount"},
+			{Type: "quote", Text: "It is wrong"},
+			{Type: "paragraph", Text: "Level 0", Children: []fakenotion.Block{
+				{Type: "paragraph", Text: "Level 1", Children: []fakenotion.Block{
+					{Type: "paragraph", Text: "Level 2", Children: []fakenotion.Block{
+						{Type: "paragraph", Text: "Level 3"}}}}}}},
+		}}, rosaN)
 
 	// A body over 64 KiB is cut.
 	big := fakenotion.NewID()
@@ -213,10 +231,19 @@ func TestTheNotionKindReadsEachPageOfTheListAndTheContentOfATicket(t *testing.T)
 	for range 70 {
 		blocks = append(blocks, fakenotion.Block{Type: "paragraph", Text: strings.Repeat("é", 600)})
 	}
-	env.Notion.Put(db, fakenotion.Page{ID: big, Title: "Big", Status: "Backlog", Blocks: blocks}, rosaN)
-	if ticket, err := kind.Ticket(ctx, c, big); err != nil || len(ticket.Body) > 64<<10+100 ||
-		!strings.HasSuffix(ticket.Body, "read the rest in Notion.)") || !strings.HasPrefix(ticket.Body, "éé") {
-		t.Errorf("a big body has %d bytes (%v), want at most 64 KiB and the note", len(ticket.Body), err)
+	env.Notion.Put(db, fakenotion.Page{ID: big, Title: "Big", Status: "Ready for agent",
+		Select: map[string]string{"Project": "shop"}, Blocks: blocks}, rosaN)
+
+	env.Clock.Advance(dispatcher.NotionPoll)
+	prompts := promptsByPage(t, env, 2)
+	want := "Content\n\n## Steps\n1. Open the cart\n[x] Add a coupon\n[ ] Pay\n```\ntotal := sum - discount\n```\n> It is wrong\n" +
+		"Level 0\n  Level 1\n    Level 2\n\n(The page has more content: read the rest in Notion.)"
+	if got := prompts[fakenotion.PageURL(content)]; got != want {
+		t.Errorf("the prompt is\n%s\nwant\n%s", got, want)
+	}
+	if got := prompts[fakenotion.PageURL(big)]; len(got) > 64<<10+100 || !strings.HasSuffix(got, "read the rest in Notion.)") ||
+		!strings.HasPrefix(got, "Big\n\néé") {
+		t.Errorf("the prompt of a big body has %d bytes, want at most 64 KiB and the note", len(got))
 	}
 }
 

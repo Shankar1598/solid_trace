@@ -458,8 +458,8 @@ func (n *notion) ReadyTickets(ctx context.Context, c TrackerConnection) ([]Ticke
 	return tickets, nil
 }
 
-// ticket is a page as a ticket: it reads the page's content and the name
-// of the user who edited it last.
+// ticket is a page as a ticket, with no Body. For a page in the ready
+// status, it reads the name of the user who edited it last.
 func (n *notion) ticket(ctx context.Context, c TrackerConnection, p notionPage) (Ticket, error) {
 	id, ok := notionID(p.ID)
 	if !ok {
@@ -482,15 +482,19 @@ func (n *notion) ticket(ctx context.Context, c TrackerConnection, p notionPage) 
 	// a new edit. A page that is back at the same status and route in the
 	// same minute is the same edit.
 	ticket.Edit = p.LastEditedTime + "|" + ticket.Status + "|" + ticket.Route
-	body, err := n.body(ctx, c, id)
-	if err != nil {
-		return Ticket{}, err
-	}
-	ticket.Body = body
 	// Notion gives no history of a property: the user who set the status
-	// is the user who edited the page last.
-	ticket.StatusBy = TrackerUser{ID: p.LastEditedBy.ID, Name: n.user(ctx, c, p.LastEditedBy.ID)}
+	// is the user who edited the page last. Only a ticket in the ready
+	// status needs the user's name.
+	ticket.StatusBy = TrackerUser{ID: p.LastEditedBy.ID}
+	if ticket.Status == c.Settings.ReadyStatus {
+		ticket.StatusBy.Name = n.user(ctx, c, p.LastEditedBy.ID)
+	}
 	return ticket, nil
+}
+
+// ticketBody reads the page's content: the kind is a bodyReader.
+func (n *notion) ticketBody(ctx context.Context, c TrackerConnection, id string) (string, error) {
+	return n.body(ctx, c, id)
 }
 
 // user is the name of a Notion user. It is the id when the integration

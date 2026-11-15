@@ -39,6 +39,13 @@ type Tracker interface {
 	Comment(ctx context.Context, c TrackerConnection, id, body string) error
 }
 
+// bodyReader is a Tracker whose Ticket and ReadyTickets give each ticket
+// with no Body, as a body costs many calls of the tracker's API: the
+// reconcile step reads the body only for a ticket whose Run it starts.
+type bodyReader interface {
+	ticketBody(ctx context.Context, c TrackerConnection, id string) (string, error)
+}
+
 // settingsCheck is a Tracker that checks the settings that an Admin saves.
 // It gives them in the form to keep, or an error that tells the Admin what
 // is wrong (400). The settings of a Tracker with no check have no
@@ -58,9 +65,11 @@ type TrackerConnection struct {
 type Ticket struct {
 	ID string
 	// URL is the ticket's page in the tracker.
-	URL         string
-	Title, Body string
-	Status      string
+	URL   string
+	Title string
+	// Body is the ticket's content as plain text ("" from a bodyReader).
+	Body   string
+	Status string
 	// Route is the value of the connection's routing field ("" is none).
 	Route string
 	// Edit names the ticket's current edit: it changes at each change of
@@ -194,6 +203,11 @@ func (s *ticketStep) ready(ctx context.Context, ticket Ticket) (bool, error) {
 	settings, err := d.store.settings(s.org.id, projectID)
 	if err != nil {
 		return false, err
+	}
+	if r, ok := s.t.(bodyReader); ok {
+		if ticket.Body, err = r.ticketBody(ctx, c, ticket.ID); err != nil {
+			return false, err
+		}
 	}
 	prompt := strings.TrimSpace(ticket.Title)
 	if body := strings.TrimSpace(ticket.Body); body != "" {

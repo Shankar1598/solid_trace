@@ -130,3 +130,73 @@ func TestAfterTheFirstVerifiedWebhookTheBackstopIsEvery5Minutes(t *testing.T) {
 	// The backstop found a ready page that no webhook announced.
 	env.WaitForWarning("no webhook announced")
 }
+
+// notionCalls is how many calls to the fake Notion so far start with
+// prefix ("METHOD /path").
+func notionCalls(env *factorytest.Env, prefix string) int {
+	n := 0
+	for _, call := range env.Notion.Calls() {
+		if strings.HasPrefix(call, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// waitForNotionCalls waits up to 10 s until the fake Notion has at least n
+// calls that start with prefix.
+func waitForNotionCalls(t *testing.T, env *factorytest.Env, prefix string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for notionCalls(env, prefix) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d calls %s after 10 s, want %d", notionCalls(env, prefix), prefix, n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTheDispatcherReadsANotionPagesContentOnlyForTheRunThatItStarts(t *testing.T) {
+	env, db, path := notionEnv(t, secret)
+	later := fakenotion.NewID()
+	env.Notion.Put(db, fakenotion.Page{ID: later, Title: "Some day", Status: "Backlog",
+		Select: map[string]string{"Project": "shop"}, Blocks: []fakenotion.Block{{Type: "paragraph", Text: "Not now"}}}, rosaN)
+	env.NotionWebhook(path, secret, fakenotion.PageEvent(fakenotion.NewID(), "page.content_updated", later))
+	waitForNotionCalls(t, env, "GET /v1/pages/"+later, 1)
+	settle()
+	if n := notionCalls(env, "GET /v1/blocks/") + notionCalls(env, "GET /v1/users/"); n != 0 {
+		t.Errorf("a webhook for a page in Backlog read %d lists of blocks or users, want none", n)
+	}
+
+	page := readyPage(env, db, "Fix the cart total")
+	query := "POST /v1/databases/" + db + "/query"
+	polls := notionCalls(env, query)
+	env.Clock.Advance(dispatcher.NotionPoll) // the poll that was due before the webhook
+	waitForRuns(t, env, 1)
+	if n := notionCalls(env, "GET /v1/blocks/"+page); n != 1 {
+		t.Errorf("the start of the Run read the page's content %d times, want 1", n)
+	}
+	// The page is still in the ready status, and its edit has a Run: the
+	// next poll does not read its content again.
+	blocks := notionCalls(env, "GET /v1/blocks/")
+	polls = notionCalls(env, query)
+	env.Clock.Advance(dispatcher.NotionBackstop)
+	waitForNotionCalls(t, env, query, polls+1)
+	settle()
+	if n := notionCalls(env, "GET /v1/blocks/"); n != blocks {
+		t.Errorf("a poll read %d lists of blocks of a page whose edit has a Run, want none", n-blocks)
+	}
+}
+
+func TestANotionPageWhoseContentNotionDoesNotGiveDoesNotStopTheOtherReadyPages(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	first := readyPage(env, db, "Fix the cart total")
+	second := readyPage(env, db, "Fix the coupon")
+	env.Notion.FailNext("GET /v1/blocks/"+second, http.StatusInternalServerError, 1)
+	env.Clock.Advance(dispatcher.NotionPoll)
+	if run := waitForRuns(t, env, 1)[0]; run.Link != fakenotion.PageURL(first) {
+		t.Errorf("the Run's link is %q, want the page whose content Notion gave", run.Link)
+	}
+	env.Clock.Advance(dispatcher.NotionPoll)
+	waitForRuns(t, env, 2)
+}
