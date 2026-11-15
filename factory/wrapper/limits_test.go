@@ -2,6 +2,8 @@ package wrapper_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -117,5 +119,33 @@ func TestTheDispatcherStopsAnExecutionThatPassesItsTotalLimitPlusFifteenMinutes(
 	}
 	if !strings.Contains(env.Logs(), "the backstop stopped an Execution") {
 		t.Errorf("the Dispatcher's log does not say that the backstop stopped the Execution:\n%s", env.Logs())
+	}
+}
+
+func TestTheIdleLimitEndsAnExecutionWhoseHarnessDoesNotReadItsTask(t *testing.T) {
+	env, ana := newEnv(t)
+	// A harness that hangs at its start and never reads stdin. The task is
+	// larger than a pipe's buffer (64 KiB), so the write of the task blocks.
+	here := filepath.Join(t.TempDir(), "here")
+	program := filepath.Join(t.TempDir(), "claude-that-hangs")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\ntouch "+here+"\nexec sleep 600\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.UseHarness(program)
+	id := start(t, env, ana, "Fix the cart. "+strings.Repeat("The cart loses items. ", 5000))
+	deadline := time.Now().Add(30 * time.Second)
+	for _, err := os.Stat(here); err != nil; _, err = os.Stat(here) {
+		if time.Now().After(deadline) {
+			t.Fatal("the harness did not start in 30 s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(settle)
+
+	env.Clock.Advance(30 * time.Minute)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if !strings.HasPrefix(run.Reason, dispatcherapi.EndTimeout+": ") || !strings.Contains(run.Reason, "idle limit") {
+		t.Errorf("the reason is %q, want timeout with the idle limit", run.Reason)
 	}
 }

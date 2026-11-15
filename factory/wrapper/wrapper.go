@@ -46,6 +46,11 @@ const dockerWait = 3 * time.Second
 // empty after cgroup.kill.
 const emptyWait = 5 * time.Second
 
+// writeWait is the longest time that the end waits to write the
+// interrupt to a harness that does not read its stdin. It is shorter than
+// endWait.
+const writeWait = time.Second
+
 // outputWait is how long the wrapper reads the harness's output after the
 // harness exits. A process that the harness started can hold the output
 // open until the cgroup kill.
@@ -148,10 +153,15 @@ type execution struct {
 
 	needsPerson chan struct{}
 	uploads     *uploads
-	stdin       io.WriteCloser
-	harness     *exec.Cmd
-	kill        *time.Timer
-	killOnce    sync.Once
+	// stdin is the harness's stdin. writing holds each write to it, so
+	// that an interrupt never goes into the middle of a message. It is not
+	// mu: a write blocks while the harness does not read, and the end must
+	// not wait for it.
+	stdin    *os.File
+	writing  sync.Mutex
+	harness  *exec.Cmd
+	kill     *time.Timer
+	killOnce sync.Once
 	// left is the error when the cgroup was not empty after the end.
 	left error
 }
@@ -445,10 +455,13 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	failed := func(err error) dispatcherapi.ExecutionEnd {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}
 	}
-	stdin, err := cmd.StdinPipe()
+	// A pipe of the wrapper's own, not cmd.StdinPipe: the end sets a write
+	// deadline on it.
+	in, stdin, err := os.Pipe()
 	if err != nil {
 		return failed(err)
 	}
+	cmd.Stdin = in
 	// A pipe of the wrapper's own, not cmd.StdoutPipe: the wrapper waits
 	// for the harness's exit while it reads the output.
 	stdout, w, err := os.Pipe()
@@ -463,18 +476,21 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	if e.ending {
 		e.mu.Unlock()
 		w.Close()
+		in.Close()
 		stdin.Close()
 		end, _ := e.endedEarly()
 		return end
 	}
 	err = e.boundary.Start(cmd)
 	w.Close()
+	in.Close()
 	if err == nil {
 		e.harness, e.stdin = cmd, stdin
 		e.lastOutput.Store(e.cfg.clock().UnixNano())
 	}
 	e.mu.Unlock()
 	if err != nil {
+		stdin.Close()
 		return failed(err)
 	}
 	exited := make(chan struct{})
@@ -492,15 +508,15 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	taskUUID := newUUID()
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
-	// Each write to stdin is under mu, so that an interrupt is never in
-	// the middle of a message.
-	e.mu.Lock()
-	if !e.ending {
+	// The write is not under mu: a harness that does not read its stdin
+	// blocks it, and a stop or a limit must still end the Execution.
+	e.writing.Lock()
+	if _, ending := e.endedEarly(); !ending {
 		if _, err := e.stdin.Write(append(message, '\n')); err != nil {
 			fmt.Fprintln(e.log, "wrapper: write the task:", err)
 		}
 	}
-	e.mu.Unlock()
+	e.writing.Unlock()
 	events := make(chan map[string]any)
 	go func() {
 		defer close(events)
@@ -584,28 +600,38 @@ func (e *execution) startEnd(reason, why string) { e.beginEnd(reason, why, false
 // writes the interrupt control request, so that the agent's turn stops
 // (a long tool call too) before stdin closes. Before the harness starts,
 // it stops the setup, and the harness does not start.
+//
+// The writes to stdin are not under mu, and wait at most writeWait: a
+// harness that does not read its stdin does not hold the end.
 func (e *execution) beginEnd(reason, why string, interrupt bool) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.ending {
+		e.mu.Unlock()
 		return
 	}
 	e.ending, e.endReason, e.endError = true, reason, why
 	if e.cancelWork != nil {
 		e.cancelWork()
 	}
-	if e.stdin == nil {
+	stdin := e.stdin
+	if stdin != nil {
+		e.kill = time.AfterFunc(endWait, e.killAll)
+	}
+	e.mu.Unlock()
+	if stdin == nil {
 		return
 	}
-	if interrupt {
+	// The deadline also ends a write of the task that blocks.
+	if interrupt && stdin.SetWriteDeadline(time.Now().Add(writeWait)) == nil {
 		request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": newUUID(),
 			"request": map[string]any{"subtype": "interrupt"}})
-		if _, err := e.stdin.Write(append(request, '\n')); err != nil {
+		e.writing.Lock()
+		if _, err := stdin.Write(append(request, '\n')); err != nil {
 			fmt.Fprintln(e.log, "wrapper: write the interrupt:", err)
 		}
+		e.writing.Unlock()
 	}
-	e.stdin.Close()
-	e.kill = time.AfterFunc(endWait, e.killAll)
+	stdin.Close()
 }
 
 // endedEarly gives the end call's body when the end started before the
