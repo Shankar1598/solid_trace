@@ -143,7 +143,7 @@ function SessionsList({ view }: { view: Extract<AgentSessionsProps, { on: true }
           </CardContent>
         </Card>
       ) : (
-        view.rows.length > 0 && <SessionsTable rows={view.rows} more={view.more} total={view.totals.agent_sessions} />
+        view.rows.length > 0 && <SessionsTable rows={view.rows} more={view.more} total={view.totals.agent_sessions} path={path} />
       )}
     </div>
   )
@@ -197,7 +197,7 @@ function Totals({ totals, costLabel }: { totals: AgentSessionTotals; costLabel: 
   )
 }
 
-function SessionsTable({ rows, more, total }: { rows: AgentSessionRow[]; more: boolean; total: number }) {
+function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; more: boolean; total: number; path: string }) {
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto border">
@@ -221,7 +221,7 @@ function SessionsTable({ rows, more, total }: { rows: AgentSessionRow[]; more: b
                 <TableCell className="font-mono text-xs whitespace-nowrap">{timeText(row.first)}</TableCell>
                 <TableCell className="font-mono text-xs whitespace-nowrap">{timeText(row.last)}</TableCell>
                 <TableCell>
-                  <span className={row.run ? 'font-mono text-xs' : undefined}>{whoText(row)}</span>
+                  <Link href={`${path}/${row.id}`} className={`underline-offset-2 hover:underline ${row.run ? 'font-mono text-xs' : ''}`}>{whoText(row)}</Link>
                   {row.flags.map(flag => <Badge key={flag} variant="warn" className="ml-1.5">{flag}</Badge>)}
                 </TableCell>
                 <TableCell className="font-mono text-xs">
