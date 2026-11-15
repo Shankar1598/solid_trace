@@ -23,18 +23,19 @@ namespace :factory_demo do
     settings = InstanceSetting.current
     old = { console_url: value.(settings.console_url), dispatcher_url: value.(settings.dispatcher_url) }
     console_url = ENV.fetch("DEMO_CONSOLE_URL")
-    settings.update!(console_url: console_url)
 
     # Agent sessions stay on after the demo: the Runs and their Agent sessions are there to look at.
     turned_on = org.agent_project.nil?
     if turned_on
-      result = AgentSessionsSettings.turn_on(organization: org, user: admin, entries: [ "factory-demo.example/*" ], confirmed: true)
+      result = AgentSessionsSettings.turn_on(organization: org, user: admin, entries: [ "factory-demo.example/demo/*" ], confirmed: true)
       abort "Agent sessions: #{result.errors.inspect}" unless result.done?
     end
     dispatcher, dispatcher_secret = ApiToken.issue!(user: admin, name: "Factory demo: Dispatcher", scopes: Oauth::Scopes::DISPATCHER,
                                                     organization_id: org.id)
     person, person_secret = ApiToken.issue!(user: admin, name: "Factory demo: the person who starts the Runs", scopes: [ "factory" ],
                                             organization_id: org.id)
+    # The last change, so that a failure before it changes no setting.
+    settings.update!(console_url: console_url)
     print({ org: org.slug, project: project.slug, admin: admin.email, console_url: console_url, old: old, turned_on: turned_on,
             dispatcher_token: { id: dispatcher.id, secret: dispatcher_secret },
             person_token: { id: person.id, secret: person_secret } }.to_json)
