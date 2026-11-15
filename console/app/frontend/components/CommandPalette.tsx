@@ -40,6 +40,7 @@ registerPaletteSource('pages', ({ orgSlug }) => (orgSlug ? [
   { id: 'page/issues', group: 'Pages', label: 'Issues', href: `/${orgSlug}/issues` },
   { id: 'page/dashboards', group: 'Pages', label: 'Dashboards', href: `/${orgSlug}/dashboards` },
   { id: 'page/monitors', group: 'Pages', label: 'Monitors', href: `/${orgSlug}/monitors` },
+  { id: 'page/agent_sessions', group: 'Pages', label: 'Agent sessions', href: `/${orgSlug}/agent_sessions` },
   { id: 'page/projects', group: 'Pages', label: 'Projects', href: `/${orgSlug}/projects` },
   { id: 'page/settings', group: 'Pages', label: 'Settings', href: `/${orgSlug}/settings/organization` },
 ] : []))

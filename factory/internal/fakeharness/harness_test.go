@@ -2,6 +2,7 @@ package fakeharness_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -189,6 +190,7 @@ func TestReplayEchoCarriesTheUUIDOfTheMessage(t *testing.T) {
 	if last := lines[len(lines)-1]; last["type"] != "assistant" || last["sessionId"] != sessionID {
 		t.Fatalf("last transcript line %v; want the agent's reply", last)
 	}
+	checkParentChain(t, lines)
 }
 
 // A message after the stream's last turn starts a new turn, as in Claude
@@ -368,8 +370,51 @@ func TestResumeContinuesTheSameTranscript(t *testing.T) {
 	}
 	r.until(is("result", ""))
 	r.end()
-	if got := len(r.transcript(sessionID)); got <= n {
-		t.Fatalf("transcript has %d lines after the resume, %d before; want more", got, n)
+	lines := r.transcript(sessionID)
+	if len(lines) <= n {
+		t.Fatalf("transcript has %d lines after the resume, %d before; want more", len(lines), n)
+	}
+	checkParentChain(t, lines)
+}
+
+// checkParentChain checks that each transcript line with a uuid has the
+// uuid of the line with a uuid before it as its parentUuid, and that the
+// first has none. A transcript reader follows this chain.
+func checkParentChain(t *testing.T, lines []map[string]any) {
+	t.Helper()
+	var previous any
+	n := 0
+	for i, l := range lines {
+		id, ok := l["uuid"]
+		if !ok {
+			continue
+		}
+		if parent, ok := l["parentUuid"]; !ok || parent != previous {
+			t.Fatalf("line %d: parentUuid %v; want %v", i, l["parentUuid"], previous)
+		}
+		previous = id
+		n++
+	}
+	if n < 2 {
+		t.Fatalf("transcript has %d lines with a uuid; want a chain of 2 or more", n)
+	}
+}
+
+func TestStartWithASessionIDThatIsInUseFails(t *testing.T) {
+	config := t.TempDir()
+	s := start(t, "turn-with-tool-call", config, "--session-id", sessionID)
+	s.message(first, "One.")
+	s.until(is("result", ""))
+	s.end()
+	before, _ := os.ReadFile(filepath.Join(config, "projects", "-workspace-repo", sessionID+".jsonl"))
+
+	again := start(t, "turn-with-tool-call", config, "--session-id", sessionID)
+	if code := again.end(); code != 1 || !strings.Contains(again.stderr.String(), "Session ID "+sessionID+" is already in use.") {
+		t.Fatalf("exit %d, stderr %q; want 1 and session ID already in use", code, again.stderr.String())
+	}
+	after, _ := os.ReadFile(filepath.Join(config, "projects", "-workspace-repo", sessionID+".jsonl"))
+	if !bytes.Equal(before, after) {
+		t.Fatalf("the transcript changed:\n%s\nwant:\n%s", after, before)
 	}
 }
 
