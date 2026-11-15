@@ -102,12 +102,14 @@ type RunFilter struct {
 
 // RunList is the last event of each Run of a Project with an event in
 // [From, To], that the filter selects: Active Runs first, then latest
-// event first.
+// event first. It reads only run events (file runs/<run.id>): an Agent
+// session file can also have a path under runs/.
 func (s *ClickHouseLogs) RunList(ctx context.Context, projectID uint32, f RunFilter) ([]RunSummary, error) {
 	logs, err := s.queryLogs(ctx, fmt.Sprintf(`SELECT %s FROM logs
-		WHERE project_id = %d AND startsWith(file, %s) AND time >= %s AND time <= %s
+		WHERE project_id = %d AND startsWith(file, %s) AND file = concat(%s, attributes.run.id.:String)
+			AND time >= %s AND time <= %s
 		ORDER BY file, attributes.run.seq.:Float64 DESC, time DESC LIMIT 1 BY file`,
-		logSelectList, projectID, chsql.String(runsFilePrefix), chsql.Time(f.From), chsql.Time(f.To)))
+		logSelectList, projectID, chsql.String(runsFilePrefix), chsql.String(runsFilePrefix), chsql.Time(f.From), chsql.Time(f.To)))
 	if err != nil {
 		return nil, fmt.Errorf("read runs: %w", err)
 	}

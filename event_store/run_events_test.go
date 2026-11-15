@@ -338,3 +338,25 @@ func TestRunsListAndOneRunFromRunEvents(t *testing.T) {
 		}
 	})
 }
+
+// An Agent session file at a path under runs/ is also a Log in the Agent
+// Project, but it is not a run event: the Runs list does not show it.
+func TestAnAgentSessionFileUnderRunsIsNotARun(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newRunEventsOrganization(t, env)
+	now := env.Clock.Now()
+
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "runs/notes.jsonl", folder: "web", body: jsonl(transcript...)}), 200)
+	run := runSnapshot{id: "real0000000000001", state: "running", executions: 1}
+	expectStatus(t, sendRunEvents(t, env, o.dispatcherSecret, runEvent(run, 1, now.Add(-time.Hour), "execution_started")), 200)
+	if logs := sessionLogs(t, env, o.project, laptopSession); len(logs) != len(transcript) {
+		t.Fatalf("Expected %d Logs of the Agent session, got %d", len(transcript), len(logs))
+	}
+	env.ProcessLogs(t)
+
+	answer := listRuns(t, env, o.project, map[string]any{"from": time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "to": now.Add(time.Hour)})
+	if got := runIDs(answer); !slices.Equal(got, []string{run.id}) {
+		t.Fatalf("Expected only the real Run, got %+v", answer.Runs)
+	}
+}
