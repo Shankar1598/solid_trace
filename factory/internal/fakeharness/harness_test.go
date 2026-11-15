@@ -191,6 +191,33 @@ func TestReplayEchoCarriesTheUUIDOfTheMessage(t *testing.T) {
 	}
 }
 
+// A message after the stream's last turn starts a new turn, as in Claude
+// Code: the Harness does not exit while stdin is open.
+func TestMessageAfterTheLastTurnGetsADefaultTurn(t *testing.T) {
+	s := start(t, "turn-with-tool-call", t.TempDir(), "--session-id", sessionID)
+	s.message(first, "Show the status.")
+	s.until(is("result", "success"))
+	for _, id := range []string{second, "a1b2c3d4-0000-4000-8000-000000000003"} {
+		s.message(id, "And now?")
+		turn := s.until(is("result", "success"))
+		got := types(turn)
+		// As in the recorded second turn: the echo, then a new init event.
+		if turn[0]["uuid"] != id || got[1] != "system/init" || got[len(got)-2] != "assistant" {
+			t.Fatalf("turn for %s = %v; want the echo, init, an assistant reply and a success result", id, got)
+		}
+		if r := turn[len(turn)-1]; r["session_id"] != sessionID || r["is_error"] != false {
+			t.Fatalf("result = %v", r)
+		}
+	}
+	if code := s.end(); code != 0 {
+		t.Fatalf("exit code %d after stdin closed; want 0", code)
+	}
+	lines := s.transcript(sessionID)
+	if last := lines[len(lines)-1]; last["type"] != "assistant" {
+		t.Fatalf("last transcript line %v; want the default turn's reply", last)
+	}
+}
+
 func TestNoEchoWithoutReplayUserMessages(t *testing.T) {
 	program, env := fakeharness.Command("turn-with-tool-call")
 	cmd := exec.Command(program, "-p", "--input-format", "stream-json", "--output-format", "stream-json")

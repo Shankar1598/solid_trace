@@ -15,7 +15,12 @@
 //	{"fake":"sleep","ms":100}              wait in real time
 //	{"fake":"exit","code":1}               exit at once
 //
-// At the end of the stream the Harness exits with code 0. In each event, the
+// At the end of the stream the Harness exits with code 0. A stream that
+// ends with await_message waits between turns, as Claude Code does: for
+// each later message it gives the replay echo, then plays a default turn
+// (the stream's init event, an assistant text and a success result), and
+// waits again, until stdin closes.
+// In each event, the
 // player sets "session_id" to the Agent session id and gives "uuid" a new
 // value; in the init event it also sets "cwd" and "permissionMode" and
 // removes the --disallowedTools from "tools".
@@ -308,7 +313,11 @@ func (h *harness) read(stdin io.Reader) {
 }
 
 func (h *harness) play(script []map[string]any, stderr io.Writer) int {
+	var last map[string]any // the last line that is not notes
 	for _, line := range script {
+		if line["fake"] != "about" {
+			last = line
+		}
 		switch line["fake"] {
 		case nil:
 			h.event(line)
@@ -329,7 +338,39 @@ func (h *harness) play(script []map[string]any, stderr io.Writer) int {
 			return intOf(line["code"])
 		}
 	}
-	return 0
+	if last == nil || last["fake"] != "await_message" {
+		return 0
+	}
+	// A message came after the stream's last turn.
+	for {
+		h.defaultTurn(script)
+		next := <-h.in
+		if next.eof {
+			return intOf(last["eof_code"])
+		}
+		h.deliver(next.msg, false)
+	}
+}
+
+// defaultTurn plays a short turn for a message that the stream does not
+// script: the stream's init event, an assistant text and a success result.
+func (h *harness) defaultTurn(script []map[string]any) {
+	model := "claude-haiku-5-5"
+	for _, line := range script {
+		if line["type"] == "system" && line["subtype"] == "init" {
+			h.event(line)
+			if m, ok := line["model"].(string); ok {
+				model = m
+			}
+			break
+		}
+	}
+	const text = "Done."
+	h.event(map[string]any{"type": "assistant", "message": map[string]any{"model": model, "id": "msg_01FakeDefaultTurn",
+		"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": text}},
+		"stop_reason": "end_turn", "stop_sequence": nil}, "parent_tool_use_id": nil, "session_id": "", "uuid": ""})
+	h.event(map[string]any{"type": "result", "subtype": "success", "is_error": false, "duration_ms": 1, "duration_api_ms": 1,
+		"num_turns": 1, "result": text, "stop_reason": "end_turn", "session_id": "", "total_cost_usd": 0})
 }
 
 // deliver gives the replay echo of a message and writes it to the
