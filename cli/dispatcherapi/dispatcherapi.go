@@ -158,8 +158,28 @@ type Task struct {
 	IngestURL string `json:"ingest_url"`
 	// Uploads is the Execution's child token. Only the wrapper keeps it.
 	Uploads SessionToken `json:"uploads"`
-	// Limits are the Execution's time limits.
+	// Limits are the Execution's time limits: the factory file's, or the
+	// defaults.
 	Limits Limits `json:"limits"`
+	// FactoryFile is the path of the factory file that the Dispatcher
+	// read from the default branch when it dispatched the Execution (""
+	// is none). Setup, Checks and SaveExclude come from it.
+	FactoryFile string `json:"factory_file,omitempty"`
+	// Setup is the setup command: the wrapper runs it with sh -c in the
+	// Project's folder, after the checkout and before the harness starts.
+	// A failure fails the Execution.
+	Setup string `json:"setup,omitempty"`
+	// Checks are the named check commands, in the file's order.
+	Checks []Check `json:"checks,omitempty"`
+	// SaveExclude are more patterns (gitignore syntax) that a
+	// work-in-progress save leaves out.
+	SaveExclude []string `json:"save_exclude,omitempty"`
+}
+
+// Check is one named check command of the factory file.
+type Check struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
 }
 
 // The default limits of an Execution. The factory file can change them.

@@ -123,7 +123,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, runID string) {
 		}
 		return
 	}
-	workload, err := d.runner.Dispatch(ctx, RunnerExecution{Run: runID, Execution: id})
+	file, err := d.dispatchFactoryFile(ctx, runID, id)
+	if err != nil {
+		d.log.Warn("the factory file fails a Run", "run", runID, "execution", id, "error", err)
+		d.endByDispatcher(id, err.Error(), nil)
+		return
+	}
+	workload, err := d.runner.Dispatch(ctx, RunnerExecution{Run: runID, Execution: id, MachineKind: file.MachineKind})
 	if err == nil && workload == "" {
 		err = fmt.Errorf("the Runner gave no workload")
 	}
@@ -135,6 +141,47 @@ func (d *Dispatcher) dispatch(ctx context.Context, runID string) {
 	if err := d.store.setWorkload(id, workload); err != nil {
 		d.log.Error("could not keep an Execution's workload", "execution", id, "error", err)
 	}
+}
+
+// dispatchFactoryFile reads the Run's factory file from the default
+// branch, keeps it for the Execution, and adds its extra hosts to the
+// Squid allowlist before the Execution starts.
+func (d *Dispatcher) dispatchFactoryFile(ctx context.Context, runID, executionID string) (factoryFile, error) {
+	run, err := d.store.runCheckout(runID)
+	if err != nil {
+		return factoryFile{}, fmt.Errorf("the Dispatcher could not read the Run: %w", err)
+	}
+	connection := ""
+	settings, err := d.store.settings(run.organizationID, run.projectID)
+	switch {
+	case err == nil:
+		connection = settings.Connection
+		if run.repository == "" {
+			run.repository = settings.Repository
+		}
+	case !errors.Is(err, errNotFound):
+		return factoryFile{}, fmt.Errorf("the Dispatcher could not read the Factory settings: %w", err)
+	}
+	f, err := d.repositoryForge(run.organizationID, connection)
+	if err != nil {
+		return factoryFile{}, err
+	}
+	file, err := d.readFactoryFile(ctx, f, run.repository, run.folder)
+	if err != nil {
+		return factoryFile{}, err
+	}
+	encoded, err := encodeFactoryFile(file)
+	if err == nil {
+		err = d.store.setFactoryFile(executionID, encoded)
+	}
+	if err == nil {
+		err = d.store.setRepositoryHosts(run.repository, file.AllowedHosts, d.now())
+	}
+	if err != nil {
+		return factoryFile{}, fmt.Errorf("the Dispatcher could not keep the factory file: %w", err)
+	}
+	d.refreshAllowlist()
+	return file, nil
 }
 
 // watchLoop reads the Runner's events. An Execution whose wrapper is gone

@@ -18,8 +18,7 @@ import (
 // from a file and from the environment. The file holds NAME=value lines
 // with the same names as the environment (blank lines and lines that start
 // with # are not read), and a name in the environment wins over the file.
-// Later tickets add the default allowlist, the checkpoint interval and the
-// trigger word.
+// Later tickets add the checkpoint interval and the trigger word.
 type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
@@ -78,6 +77,17 @@ type Config struct {
 	WrapperURL string
 	// WrapperCommand is the path of the wrapper on an agent machine.
 	WrapperCommand string
+
+	// SquidAllowlist is the allowlist file that Squid reads: the
+	// Dispatcher writes it, and runs SquidReload when it changes ("" is
+	// none: the operator keeps the allowlist). DefaultAllowlist is the
+	// operator's default list (one Squid dstdomain on each line, # starts
+	// a comment), such as the reference configuration's
+	// reference/squid/allowlist.txt. SquidReload is a shell command
+	// (DefaultSquidReload when "").
+	SquidAllowlist   string
+	DefaultAllowlist string
+	SquidReload      string
 
 	// ScheduleMinInterval is the shortest time between two fire times of a
 	// schedule, checked at save (DefaultScheduleMinInterval when 0).
@@ -166,6 +176,9 @@ const (
 	EnvDefaultMachineKind = "DISPATCHER_DEFAULT_MACHINE_KIND"
 	EnvWrapperURL         = "DISPATCHER_WRAPPER_URL"
 	EnvWrapperCommand     = "DISPATCHER_WRAPPER_COMMAND"
+	EnvSquidAllowlist     = "DISPATCHER_SQUID_ALLOWLIST"
+	EnvDefaultAllowlist   = "DISPATCHER_DEFAULT_ALLOWLIST"
+	EnvSquidReload        = "DISPATCHER_SQUID_RELOAD"
 	// EnvScheduleMinInterval is a Go duration, such as 1h or 30m.
 	EnvScheduleMinInterval = "DISPATCHER_SCHEDULE_MIN_INTERVAL"
 )
@@ -222,6 +235,9 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		DefaultMachineKind: value(EnvDefaultMachineKind),
 		WrapperURL:         strings.TrimRight(value(EnvWrapperURL), "/"),
 		WrapperCommand:     value(EnvWrapperCommand),
+		SquidAllowlist:     value(EnvSquidAllowlist),
+		DefaultAllowlist:   value(EnvDefaultAllowlist),
+		SquidReload:        value(EnvSquidReload),
 	}
 	c.MachineKinds, c.machineKindsProblem = parseMachineKinds(value(EnvMachineKinds))
 	if v := value(EnvScheduleMinInterval); v != "" {
@@ -282,6 +298,10 @@ func (c Config) Check() error {
 	}
 	if c.scheduleMinIntervalProblem != "" {
 		problems = append(problems, c.scheduleMinIntervalProblem)
+	}
+	if c.SquidAllowlist != "" && c.DefaultAllowlist == "" {
+		problems = append(problems, EnvDefaultAllowlist+" (the default allowlist, such as the reference "+
+			"configuration's squid/allowlist.txt) is not set, and "+EnvSquidAllowlist+" is")
 	}
 	problems = append(problems, c.nomadProblems()...)
 	if len(problems) > 0 {

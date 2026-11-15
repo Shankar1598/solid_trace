@@ -177,6 +177,17 @@ var migrations = []string{
 	);
 	CREATE INDEX commands_by_execution ON commands (execution_id, seq);
 	ALTER TABLE executions ADD COLUMN total_limit INTEGER NOT NULL DEFAULT 0;`,
+	// factory_file is the factory file that the Dispatcher read from the
+	// default branch at the Execution's dispatch, as JSON ('' is the
+	// defaults). repository_hosts are the extra allowed hosts of the last
+	// factory file read of each repository (a JSON list), for the Squid
+	// allowlist.
+	`ALTER TABLE executions ADD COLUMN factory_file TEXT NOT NULL DEFAULT '';
+	CREATE TABLE repository_hosts (
+		repository TEXT PRIMARY KEY,
+		hosts TEXT NOT NULL,
+		read_at INTEGER NOT NULL
+	);`,
 }
 
 // store is the Dispatcher's SQLite database.

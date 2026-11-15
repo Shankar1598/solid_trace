@@ -98,6 +98,8 @@ func (d *Dispatcher) saveSettings(w http.ResponseWriter, r *http.Request, p pers
 		d.serverError(w, "save the Factory settings", err)
 		return
 	}
+	// A repository that no Project names now gives no more hosts.
+	d.refreshAllowlist()
 	settings, err := d.store.settings(p.organization.id, project.id)
 	if err != nil {
 		d.serverError(w, "read the Factory settings", err)
@@ -196,6 +198,9 @@ func (d *Dispatcher) markOrphans(org organization, projects []solidTraceProject,
 	marked, err := d.store.orphan(org.id, gone, d.now().UTC())
 	if err != nil {
 		return nil, err
+	}
+	if len(marked) > 0 {
+		d.refreshAllowlist()
 	}
 	for _, m := range marked {
 		d.warn("SolidTrace no longer has the Project: its Factory settings are marked orphaned",

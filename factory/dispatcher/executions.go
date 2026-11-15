@@ -110,8 +110,12 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 			return
 		}
 	}
-	// Ticket 34 takes the limits from the factory file.
-	run, err := d.store.startExecution(e.id, d.now(), defaultLimits)
+	file, err := d.store.factoryFile(e.id)
+	if err != nil {
+		d.serverError(w, "read the Execution's factory file", err)
+		return
+	}
+	run, err := d.store.startExecution(e.id, d.now(), file.limits())
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, errEnded.Error())
 		return
@@ -166,6 +170,10 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		IngestURL:     d.config.ingestURL(),
 		Limits:        run.limits,
 		Uploads:       uploads,
+		FactoryFile:   file.Path,
+		Setup:         file.Setup,
+		Checks:        file.Checks,
+		SaveExclude:   file.SaveExclude,
 	})
 }
 

@@ -292,7 +292,9 @@ func (b *Bitbucket) send(ctx context.Context, action, repository, method, path s
 	if err != nil {
 		return nil, fail(0, err.Error(), "")
 	}
-	req.Header.Set("Authorization", "Bearer "+b.Token)
+	if b.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+b.Token)
+	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

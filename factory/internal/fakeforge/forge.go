@@ -92,6 +92,8 @@ type Forge struct {
 	// hanging are the repositories whose git requests get no answer, with
 	// the channel that the first request closes.
 	hanging map[string]*hang
+	// refusedGit are the repositories whose git requests get 401.
+	refusedGit map[string]bool
 }
 
 type hang struct {
@@ -361,6 +363,17 @@ func (f *Forge) Hang(repo string) <-chan struct{} {
 	return h.reached
 }
 
+// RefuseGit makes each git request of the repository get 401, as for a
+// token that lacks the access to clone. The API still answers.
+func (f *Forge) RefuseGit(repo string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refusedGit == nil {
+		f.refusedGit = map[string]bool{}
+	}
+	f.refusedGit["/git/"+repo+".git/"] = true
+}
+
 func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	var hung *hang
@@ -378,7 +391,13 @@ func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token {
+	f.mu.Lock()
+	refused := false
+	for prefix := range f.refusedGit {
+		refused = refused || strings.HasPrefix(r.URL.Path, prefix)
+	}
+	f.mu.Unlock()
+	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token || refused {
 		w.Header().Set("WWW-Authenticate", `Basic realm="fake forge"`)
 		http.Error(w, "the token is not valid", http.StatusUnauthorized)
 		return

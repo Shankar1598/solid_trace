@@ -123,6 +123,35 @@ type Env struct {
 	admin    *Person
 	// checked is the clock time of the schedule loop's last pass.
 	checked atomic.Pointer[time.Time]
+	// squid is the folder of the Squid allowlist and its reloads.
+	squid string
+}
+
+// MachineKinds are the operator's machine kinds in the environment's
+// configuration; the first is the default.
+var MachineKinds = []dispatcher.MachineKind{{Name: "standard", MemoryMB: 12288}, {Name: "large", MemoryMB: 28672}}
+
+// DefaultAllowlist is the operator's default allowlist in the
+// environment's configuration.
+const DefaultAllowlist = "# The default list.\napi.anthropic.com\n.bitbucket.org\n\nproxy.golang.org\n"
+
+// Allowlist is the Squid allowlist that the Dispatcher wrote ("" is
+// none), with no comment lines.
+func (e *Env) Allowlist() string {
+	data, _ := os.ReadFile(e.Config.SquidAllowlist)
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// SquidReloads counts the Dispatcher's runs of the reload command.
+func (e *Env) SquidReloads() int {
+	data, _ := os.ReadFile(filepath.Join(e.squid, "reloads"))
+	return strings.Count(string(data), "reload\n")
 }
 
 // scheduleEvery is the wait between two passes of the Dispatcher's
@@ -331,6 +360,11 @@ func New(t testing.TB, options ...Option) *Env {
 		Scope:         "run_events:write issues:comment tokens:create mcp:read",
 		Organizations: []recorder.Organization{{ID: Organization.ID, Slug: Organization.Slug, Name: Organization.Name, Role: "admin"}},
 	})
+	squid := t.TempDir()
+	if err := os.WriteFile(filepath.Join(squid, "default-allowlist.txt"), []byte(DefaultAllowlist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.squid = squid
 	e.Config = dispatcher.Config{
 		SolidTraceURL:   e.SolidTrace.URL(),
 		SolidTraceToken: DispatcherToken,
@@ -339,6 +373,11 @@ func New(t testing.TB, options ...Option) *Env {
 		BitbucketAPIURL: e.Forge.APIURL(),
 		BitbucketGitURL: e.Forge.GitURL(),
 		WebhookURL:      PublicWebhookURL,
+		MachineKinds:    MachineKinds,
+		// Squid's place: the reload command counts the reloads.
+		SquidAllowlist:   filepath.Join(squid, "allowlist.txt"),
+		DefaultAllowlist: filepath.Join(squid, "default-allowlist.txt"),
+		SquidReload:      "echo reload >> " + filepath.Join(squid, "reloads"),
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.current.Load().Handler().ServeHTTP(w, r)

@@ -120,9 +120,12 @@ type Runner struct {
 	mu         sync.Mutex
 	scripts    []string
 	executions []string
-	harness    string
-	broken     bool
-	noDocker   bool
+	// kinds are the machine kinds that the Dispatcher asked for, by
+	// Execution.
+	kinds    map[string]string
+	harness  string
+	broken   bool
+	noDocker bool
 }
 
 // BreakWrapper makes the next Execution's wrapper start with no Dispatcher
@@ -269,6 +272,10 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		r.scripts = r.scripts[1:]
 	}
 	r.executions = append(r.executions, x.Execution)
+	if r.kinds == nil {
+		r.kinds = map[string]string{}
+	}
+	r.kinds[x.Execution] = x.MachineKind
 	program := r.harness
 	broken := r.broken
 	r.broken = false
@@ -373,6 +380,14 @@ func (r *Runner) Dispatched() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string{}, r.executions...)
+}
+
+// MachineKind is the machine kind that the Dispatcher asked for when it
+// dispatched the Execution ("" is the operator's default kind).
+func (r *Runner) MachineKind(execution string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.kinds[execution]
 }
 
 // Workspace is the folder of an Execution's checkouts (WRAPPER_WORKSPACE).
