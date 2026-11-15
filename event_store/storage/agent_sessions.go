@@ -204,7 +204,8 @@ type AgentSessionFilter struct {
 	// Repository is the repository, as host/workspace/name.
 	Repository string
 	// Project is the factory Project of a Run's Agent session: it selects
-	// the Agent sessions of Runs only.
+	// the Agent sessions of Runs only, as only a token of a Run sends a
+	// Project, with its run_id (the upload, handler/agent_files.go).
 	Project string
 	// Run is AgentSessionsOfRuns, AgentSessionsOfNoRun, or "" for both.
 	Run string
@@ -234,7 +235,7 @@ func (s *ClickHouseLogs) AgentSessionList(ctx context.Context, projectID uint32,
 		args = append(args, f.Repository)
 	}
 	if f.Project != "" {
-		selected += ` AND factory_project = ? AND run_id != ''`
+		selected += ` AND factory_project = ?`
 		args = append(args, f.Project)
 	}
 	switch f.Run {
