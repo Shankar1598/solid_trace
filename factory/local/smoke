@@ -13,7 +13,11 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 stack="$here/stack"
-compose() { docker compose -f "$here/compose.yml" "$@"; }
+compose() { docker compose -p factory-local -f "$here/compose.yml" "$@"; }
+
+# A project name in the environment that is not the stack's. The stack and this script
+# must use factory-local all the same, and never touch the project of the environment.
+export COMPOSE_PROJECT_NAME=factory-local-smoke-decoy
 pinned() { sed -n "s/^ARG $1=//p" "$here/agent-machine/Dockerfile"; }
 
 passed=0
@@ -348,8 +352,12 @@ check "a raw_exec task as root starts the run user in a child cgroup, and cgroup
 
 "$stack" down >/dev/null 2>&1
 trap - EXIT
-left="$(docker ps -a -q --filter label=com.docker.compose.project=factory-local; docker volume ls -q --filter label=com.docker.compose.project=factory-local)"
-if [ -z "$left" ]; then echo "PASS  the stack is down, with no container or volume left"; passed=$((passed + 1)); else echo "FAIL  the stack left: $left"; failed=$((failed + 1)); fi
+left="$(for project in factory-local "$COMPOSE_PROJECT_NAME"; do
+  docker ps -a -q --filter label=com.docker.compose.project="$project"
+  docker volume ls -q --filter label=com.docker.compose.project="$project"
+  docker network ls -q --filter label=com.docker.compose.project="$project"
+done)"
+if [ -z "$left" ]; then echo "PASS  the stack is down, with no container, volume or network left (and none of the project in COMPOSE_PROJECT_NAME)"; passed=$((passed + 1)); else echo "FAIL  the stack left: $left"; failed=$((failed + 1)); fi
 if [ "$(dev_containers)" = "$dev_before" ]; then echo "PASS  the dev SolidTrace's containers did not change"; passed=$((passed + 1)); else echo "FAIL  the dev SolidTrace's containers changed"; failed=$((failed + 1)); fi
 
 echo "smoke: $passed passed, $failed failed"

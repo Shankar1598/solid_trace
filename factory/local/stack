@@ -12,7 +12,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-compose() { docker compose -f "$here/compose.yml" "$@"; }
+# "-p" first: COMPOSE_PROJECT_NAME in the environment comes before the file's "name".
+compose() { docker compose -p factory-local -f "$here/compose.yml" "$@"; }
 token_file=/nomad/data/management-token
 
 # Bootstraps Nomad's ACLs one time, and prints the management token.
