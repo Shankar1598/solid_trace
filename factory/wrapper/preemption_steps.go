@@ -128,11 +128,15 @@ func (e *execution) trigger(reason string, at time.Time) {
 			lastCheckpoint: e.saver.lastCheckpoint,
 			end:            e.endPreempted,
 		})
-		// The workspace, the home and the secrets go in the time that
-		// is left. The machine goes in any case.
+		// The secrets go in the time that is left. The workspace and the
+		// run user's home stay: a save or a last upload that did not end
+		// leaves its work only there. The next Execution's setup deletes
+		// them, and a machine that is taken back takes its disk too.
 		if left := at.Add(hardLimit).Sub(e.clock.Now()); left > 0 {
 			within(e.clock, left, func(context.Context) struct{} {
-				e.cleanUp()
+				if err := removeAll(e.cfg.secrets()); err != nil {
+					fmt.Fprintln(e.log, "wrapper: delete the secrets after the preemption:", err)
+				}
 				return struct{}{}
 			})
 		}

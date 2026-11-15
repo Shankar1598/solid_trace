@@ -429,10 +429,10 @@ func (r *Runner) Cache() string { return filepath.Join(r.dir, "cache") }
 const UploadEvery = 100 * time.Millisecond
 
 // ProjectDir is the Claude Code project directory of an Execution: the
-// one folder in <wrapper dir>/claude/projects ("" when there is not one).
-// The wrapper does not delete it at the end.
+// one folder in <home>/.claude/projects ("" when there is not one). The
+// usual end deletes the home; the preemption handler keeps it.
 func (r *Runner) ProjectDir(execution string) string {
-	dirs, _ := filepath.Glob(filepath.Join(r.dir, "executions", execution, "claude", "projects", "*"))
+	dirs, _ := filepath.Glob(filepath.Join(r.Home(execution), ".claude", "projects", "*"))
 	if len(dirs) != 1 {
 		return ""
 	}
