@@ -4,6 +4,7 @@
 # is already up. Exit 0 when each check passes.
 #
 #   factory/local/smoke
+#   SMOKE_ONLY='<regex>' factory/local/smoke   only the checks whose names match (a quick check)
 #
 # It checks the stack's shape, the run user and the take-over rule (and the commands
 # that the rule refuses), Claude Code and hc with no first-run dialog, the network
@@ -28,6 +29,7 @@ skipped=0
 check() {
   local name="$1" out status
   shift
+  [[ -z ${SMOKE_ONLY:-} || $name =~ $SMOKE_ONLY ]] || return 0
   # Each check stops at its first failed step.
   out="$(set -e; "$@" 2>&1)"
   status=$?
