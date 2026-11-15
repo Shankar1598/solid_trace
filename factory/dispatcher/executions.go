@@ -87,17 +87,6 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "read the Factory settings", err)
 		return
 	}
-	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
-	gitURL := strings.TrimRight(d.config.BitbucketGitURL, "/")
-	if gitURL == "" {
-		gitURL = forge.BitbucketGitURL
-	}
-	cloneURL, err := (&forge.Bitbucket{GitURL: gitURL}).CloneURL(settings.Repository)
-	if err != nil {
-		d.endByDispatcher(e.id, err.Error(), nil)
-		writeProblem(w, http.StatusConflict, err.Error())
-		return
-	}
 	var token string
 	if settings.Connection != "" {
 		if token, err = d.store.connectionToken(e.organizationID, settings.Connection); err != nil {
@@ -112,6 +101,23 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 	}
 	if err != nil {
 		d.serverError(w, "start the Execution", err)
+		return
+	}
+	// Each part of the checkout is the Run's. A Run from before the
+	// Dispatcher kept the repository uses the settings' repository.
+	repository := run.repository
+	if repository == "" {
+		repository = settings.Repository
+	}
+	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
+	gitURL := strings.TrimRight(d.config.BitbucketGitURL, "/")
+	if gitURL == "" {
+		gitURL = forge.BitbucketGitURL
+	}
+	cloneURL, err := (&forge.Bitbucket{GitURL: gitURL}).CloneURL(repository)
+	if err != nil {
+		d.endByDispatcher(e.id, err.Error(), nil)
+		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
 	uploads, err := d.sessionToken(r.Context(), e, run.startedAt)
@@ -129,7 +135,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		RunID:         e.runID,
 		ExecutionID:   e.id,
 		Prompt:        run.prompt,
-		Repository:    settings.Repository,
+		Repository:    repository,
 		CloneURL:      cloneURL,
 		BaseBranch:    run.baseBranch,
 		Branch:        dispatcherapi.RunBranch(e.runID),
