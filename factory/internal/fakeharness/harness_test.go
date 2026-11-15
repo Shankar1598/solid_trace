@@ -551,3 +551,119 @@ func localPatterns(t *testing.T) []*regexp.Regexp {
 	}
 	return res
 }
+
+// withStopHook writes a script and the settings of one Stop hook (a shell
+// command), and starts the Harness with them.
+func withStopHook(t *testing.T, hook string, lines ...string) *session {
+	t.Helper()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "script.jsonl")
+	if err := os.WriteFile(script, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings, _ := json.Marshal(map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": hook}}}}}})
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_HARNESS_SCRIPT", script)
+	return start(t, "", t.TempDir(), "--session-id", sessionID, "--settings", path)
+}
+
+func textReply(text string) string {
+	return `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"` + text +
+		`"}]},"session_id":"","uuid":""}`
+}
+
+const successResult = `{"type":"result","subtype":"success","session_id":"","uuid":""}`
+
+func firstText(e map[string]any) string {
+	content, _ := e["message"].(map[string]any)["content"].([]any)
+	if len(content) == 0 {
+		return ""
+	}
+	text, _ := content[0].(map[string]any)["text"].(string)
+	return text
+}
+
+// The stop step runs the Stop hooks of --settings, as Claude Code does at
+// the end of a turn: a refusal (the decision block, or exit code 2) gives
+// the feedback event and the agent's next reply, and the next stop has
+// stop_hook_active. An allowed stop goes on to the result.
+func TestTheStopStepRunsTheStopHookUntilItAllowsTheStop(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "inputs.log")
+	count := filepath.Join(dir, "count")
+	hook := `n=$(( $(cat ` + count + ` 2>/dev/null || echo 0) + 1 )); echo $n > ` + count + `; cat >> ` + log + `; echo >> ` + log + `
+case $n in
+1) echo '{"decision":"block","reason":"Report first."}' ;;
+2) echo 'Still no report.' >&2; exit 2 ;;
+esac`
+	s := withStopHook(t, hook, `{"fake":"await_message"}`, textReply("First."),
+		`{"fake":"stop","replies":[[`+textReply("After one.")+`],[`+textReply("After two.")+`]]}`, successResult)
+	s.message(first, "Fix it.")
+	events := s.until(is("result", ""))
+	if code := s.end(); code != 0 {
+		t.Fatalf("exit %d; stderr %q", code, s.stderr.String())
+	}
+
+	var got []string
+	for _, e := range events {
+		if e["type"] == "assistant" || e["type"] == "user" && e["isSynthetic"] == true {
+			got = append(got, firstText(e))
+		}
+	}
+	want := []string{"First.", "Stop hook feedback:\nReport first.", "After one.", "Stop hook feedback:\nStill no report.", "After two."}
+	if fmt.Sprintf("%q", got) != fmt.Sprintf("%q", want) {
+		t.Errorf("replies and feedback %q; want %q", got, want)
+	}
+	b, _ := os.ReadFile(log)
+	inputs := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(inputs) != 3 {
+		t.Fatalf("the hook ran %d times; want 3: %q", len(inputs), inputs)
+	}
+	for i, in := range inputs {
+		var input map[string]any
+		if err := json.Unmarshal([]byte(in), &input); err != nil {
+			t.Fatalf("hook input %q: %v", in, err)
+		}
+		if input["hook_event_name"] != "Stop" || input["session_id"] != sessionID || input["stop_hook_active"] != (i > 0) {
+			t.Errorf("hook input %d: %v", i, input)
+		}
+	}
+	var meta int
+	for _, line := range s.transcript(sessionID) {
+		if line["isMeta"] == true && strings.HasPrefix(firstText(line), "Stop hook feedback:") {
+			meta++
+		}
+	}
+	if meta != 2 {
+		t.Errorf("%d Stop hook feedback lines with isMeta in the transcript; want 2", meta)
+	}
+}
+
+// A Stop hook that never allows the stop ends the Harness with code 3
+// after 10 refusals, so that a test sees the loop.
+func TestAStopHookThatAlwaysRefusesEndsTheHarness(t *testing.T) {
+	s := withStopHook(t, `echo '{"decision":"block","reason":"No."}'`,
+		`{"fake":"await_message"}`, `{"fake":"stop"}`, successResult)
+	s.message(first, "Fix it.")
+	if code := s.end(); code != 3 || !strings.Contains(s.stderr.String(), "the Stop hook refused 10 times") {
+		t.Fatalf("exit %d, stderr %q; want 3 and the reason", code, s.stderr.String())
+	}
+}
+
+// A Stop hook that fails (an exit code that is not 0 or 2) does not
+// refuse the stop, as in Claude Code. With no Stop hook, the step does
+// nothing.
+func TestAStopHookThatFailsAllowsTheStop(t *testing.T) {
+	s := withStopHook(t, `echo broken >&2; exit 1`, `{"fake":"await_message"}`, `{"fake":"stop"}`, successResult)
+	s.message(first, "Fix it.")
+	for _, e := range s.until(is("result", "")) {
+		if e["isSynthetic"] == true {
+			t.Errorf("feedback for a hook that failed: %v", e)
+		}
+	}
+	s.end()
+}
