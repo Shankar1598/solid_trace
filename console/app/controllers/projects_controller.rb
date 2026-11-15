@@ -70,8 +70,11 @@ class ProjectsController < ApplicationController
       factory_section: {
         path: project_factory_path(@project, org_slug: @current_org.slug),
         runs_path: runs_path(org_slug: @current_org.slug, project: @project.slug),
+        routes_path: project_factory_routes_path(@project, org_slug: @current_org.slug),
       },
-      factory: InertiaRails.defer { FactorySettings.new(user: current_user, project: @project).section },
+      factory: InertiaRails.defer do
+        FactorySettings.new(user: current_user, project: @project).section(admin: policy(@project).update?)
+      end,
     }
   end
 

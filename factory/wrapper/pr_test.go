@@ -53,7 +53,9 @@ func TestPROpensTheRunsPRAndASecondPRUpdatesIt(t *testing.T) {
 	if pr.Source != "agent/"+id || pr.Destination != "main" {
 		t.Errorf("the PR goes from %q to %q, not from agent/%s to main", pr.Source, pr.Destination, id)
 	}
-	if pr.Title != "Fix the flaky cart test" || pr.Description != "It waits on the event now." {
+	// The report then adds the Evidence block after the agent's text.
+	agentText, _, _ := strings.Cut(pr.Description, dispatcherapi.EvidenceStart)
+	if pr.Title != "Fix the flaky cart test" || strings.TrimSpace(agentText) != "It waits on the event now." {
 		t.Errorf("the second pr did not update the PR: title %q, description %q", pr.Title, pr.Description)
 	}
 	if pr.Author != fakeforge.FactoryAuthor {

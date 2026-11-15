@@ -6,12 +6,14 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { FactoryRoutes, FactorySchedules } from '@/components/FactoryRoutesAndSchedules'
 import { factorySectionShown } from '@/lib/dispatcher'
 import type { FactorySectionData, FactorySectionPaths, FactorySettingsValues } from '@/lib/dispatcher'
 
 /**
  * The Factory section of a Project's settings: the repository, folder and
- * default base branch that the Project's Runs use. The page shows it only
+ * default base branch that the Project's Runs use, the tracker routes and
+ * the schedules. The page shows it only
  * with a Dispatcher URL; it loads the settings from the Dispatcher after
  * the page shows. Admins edit; members read.
  *
@@ -69,7 +71,21 @@ function FactoryBody({ factory, paths, canEdit }: {
     )
   }
   // A new key after a save shows what the Dispatcher kept.
-  return <FactoryForm key={JSON.stringify(factory.settings)} paths={paths} canEdit={canEdit} settings={factory.settings} />
+  return (
+    <>
+      <FactoryForm key={JSON.stringify(factory.settings)} paths={paths} canEdit={canEdit} settings={factory.settings} />
+      <CardContent className="space-y-6 border-t pt-6 pb-6">
+        <FactoryRoutes
+          routes={factory.routes}
+          trackerConnections={factory.tracker_connections ?? []}
+          path={paths.routes_path}
+          canEdit={canEdit}
+          hasSettings={factory.settings !== null}
+        />
+        <FactorySchedules schedules={factory.schedules} />
+      </CardContent>
+    </>
+  )
 }
 
 function RunsLink({ paths }: { paths: FactorySectionPaths }) {
