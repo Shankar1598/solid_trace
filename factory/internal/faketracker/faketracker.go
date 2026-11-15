@@ -72,13 +72,16 @@ type Tracker struct {
 	comments map[string][]Comment
 	// refused are the tickets (connection/id) whose comments fail.
 	refused map[string]bool
-	edits   int
+	// statuses are the statuses that the Dispatcher set on each ticket
+	// (connection/id), oldest first.
+	statuses map[string][]string
+	edits    int
 }
 
 // New is a tracker with no tickets.
 func New() *Tracker {
 	return &Tracker{tickets: map[string]map[string]*ticket{}, comments: map[string][]Comment{},
-		refused: map[string]bool{}}
+		refused: map[string]bool{}, statuses: map[string][]string{}}
 }
 
 // Put makes or replaces a ticket of the connection, as the user. It is a
@@ -91,6 +94,14 @@ func (t *Tracker) Put(connection string, tk Ticket, by User) {
 	}
 	t.edits++
 	t.tickets[connection][tk.ID] = &ticket{Ticket: tk, edit: t.edits, statusBy: by}
+}
+
+// Delete deletes a ticket of the connection, as the user. The tracker
+// then answers dispatcher.ErrNoTicket for it.
+func (t *Tracker) Delete(connection, id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.tickets[connection], id)
 }
 
 // SetStatus sets a ticket's status as the user. It is a new edit.
@@ -131,6 +142,21 @@ func (t *Tracker) RefuseComments(connection, id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.refused[connection+"/"+id] = true
+}
+
+// AcceptComments makes the comments on the ticket work again.
+func (t *Tracker) AcceptComments(connection, id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.refused, connection+"/"+id)
+}
+
+// Statuses are the statuses that the Dispatcher set on the ticket,
+// oldest first.
+func (t *Tracker) Statuses(connection, id string) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.statuses[connection+"/"+id])
 }
 
 // Comments are the comments that the Dispatcher posted on the
@@ -222,7 +248,16 @@ func (k kind) SetStatus(_ context.Context, c dispatcher.TrackerConnection, id, s
 	if err := token(c); err != nil {
 		return err
 	}
-	k.t.change(c.Name, id, func(tk *ticket) { tk.Status = status })
+	k.t.mu.Lock()
+	defer k.t.mu.Unlock()
+	tk := k.t.tickets[c.Name][id]
+	if tk == nil {
+		return dispatcher.ErrNoTicket
+	}
+	tk.Status = status
+	k.t.edits++
+	tk.edit = k.t.edits
+	k.t.statuses[c.Name+"/"+id] = append(k.t.statuses[c.Name+"/"+id], status)
 	return nil
 }
 

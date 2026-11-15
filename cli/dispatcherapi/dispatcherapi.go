@@ -509,6 +509,14 @@ type TrackerSettings struct {
 	// Database is the Notion database of a Notion connection: its id, or
 	// a link to it ("" for a kind with no database).
 	Database string `json:"database,omitempty"`
+	// WorkingStatus, ReviewStatus and WaitingStatus are the statuses that
+	// the Dispatcher sets on a Run's ticket (the write-back): when the
+	// first Execution starts ("Agent working"), when the PR opens ("In
+	// review"), and when the Run needs a person, fails, or is done with
+	// no PR ("Waiting on you").
+	WorkingStatus string `json:"working_status"`
+	ReviewStatus  string `json:"review_status"`
+	WaitingStatus string `json:"waiting_status"`
 }
 
 // ProjectList is the answer of the list of the Factory settings of the
