@@ -187,7 +187,8 @@ const (
 // ExecutionEnd is the body of the wrapper's end call.
 type ExecutionEnd struct {
 	Reason string `json:"reason"`
-	// Error says what failed, for EndSetupFailed.
+	// Error says what failed, for EndSetupFailed, and a failure of the
+	// push before the end, for each reason.
 	Error string `json:"error,omitempty"`
 	// ExitCode is the harness's exit code (nil: the harness did not run).
 	ExitCode        *int       `json:"exit_code,omitempty"`

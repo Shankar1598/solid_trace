@@ -202,3 +202,42 @@ func TestTheForgeTokenGoesOnlyToTheForge(t *testing.T) {
 		t.Errorf("the other server got credentials: %q", auth)
 	}
 }
+
+func TestTheWrappersPushRunsNoHookAndNoRemoteOfTheAgent(t *testing.T) {
+	env, ana := newEnv(t)
+	marker := filepath.Join(t.TempDir(), "hook-ran")
+	// The agent's hooks and configuration in the checkout: a pre-push
+	// hook, a hooks path, and an origin that goes nowhere.
+	env.Runner.Agent(takeTask, shell(`printf '#!/bin/sh\ntouch `+marker+`\n' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push && `+
+		`mkdir -p ../hooks && cp .git/hooks/pre-push ../hooks/ && git config core.hooksPath "$PWD/../hooks" && `+
+		`git remote set-url origin /nowhere.git && echo work > work.txt && git add work.txt && git commit -q -m Work && `+
+		`solidtrace report --outcome done --summary "Done"`), reply, result, waitForEnd)
+
+	id := start(t, env, ana, "Do the work")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if body, ok := env.Forge.File("example/shop", "refs/heads/"+dispatcherapi.RunBranch(id), "work.txt"); !ok || body != "work\n" {
+		t.Errorf("work.txt on the Run's branch: %q, %v\n%s", body, ok, env.Runner.Fake.Output(env.Runner.Dispatched()[0]))
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("the agent's pre-push hook ran in the wrapper's push (%v)", err)
+	}
+}
+
+func TestARefusedPushKeepsTheCommitsInTheWIPRefAndTheEndSaysSo(t *testing.T) {
+	env, ana := newEnv(t)
+	// A person pushes to the Run's branch while the agent works: the
+	// wrapper's push is not a fast-forward.
+	env.Runner.Agent(takeTask, shell(`b=$(git rev-parse --abbrev-ref HEAD) && `+
+		`p=$(git commit-tree -p origin/main -m "A person's commit" HEAD^{tree}) && git push -q origin "$p:refs/heads/$b" && `+
+		`echo work > work.txt && git add work.txt && git commit -q -m Work && `+
+		`solidtrace report --outcome done --summary "Done"`), reply, result, waitForEnd)
+
+	id := start(t, env, ana, "Do the work")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if body, ok := env.Forge.File("example/shop", "refs/agent-wip/"+id, "work.txt"); !ok || body != "work\n" {
+		t.Errorf("work.txt in refs/agent-wip/%s: %q, %v\n%s", id, body, ok, env.Runner.Fake.Output(onlyExecution(t, run).ID))
+	}
+	if r := onlyExecution(t, run).EndReason; !strings.Contains(r, "push") || !strings.Contains(r, "refs/agent-wip/"+id) {
+		t.Errorf("the Execution's end reason %q does not say that the push failed and where the commits are", r)
+	}
+}

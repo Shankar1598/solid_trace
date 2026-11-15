@@ -146,6 +146,9 @@ type execution struct {
 	// checkout is the clone ("" before the clone), and workDir the
 	// agent's working directory in it: the Project's folder.
 	checkout, workDir string
+	// startTip is the commit of the Run's branch after the setup: a push
+	// is necessary only when the branch moved.
+	startTip string
 }
 
 // run sets up and runs the harness, then does the end procedure, and gives
@@ -155,7 +158,12 @@ func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.Exe
 	e.finish()
 	// Before the end: each commit that is not pushed. After the
 	// Execution: no workspace and no home of the run user.
-	e.push(environ)
+	if failed := e.push(environ); failed != "" {
+		if end.Error != "" {
+			end.Error += "; "
+		}
+		end.Error += failed
+	}
 	e.cleanUp()
 	// The output stream is read to its end now: the last
 	// background_tasks_changed event counts, also when the harness wrote

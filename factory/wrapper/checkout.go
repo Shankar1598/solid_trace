@@ -2,6 +2,7 @@ package wrapper
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,13 +10,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// pushWait is the limit of the push before the end.
-const pushWait = 2 * time.Minute
+// pushWait is the limit of the push before the end, and pushRetryWait
+// the wait before its second try.
+const (
+	pushWait      = 2 * time.Minute
+	pushRetryWait = 2 * time.Second
+)
 
 // The git identity of the agent's commits on the run user's new home.
 const (
@@ -95,6 +99,11 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 			}
 		}
 	}
+	tip, _, err := e.git(ctx, environ, checkout, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("find the start of the Run's branch %s: %w", branch, err)
+	}
+	e.startTip = strings.TrimSpace(tip)
 	e.workDir = filepath.Join(checkout, folder)
 	if info, err := os.Stat(e.workDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the repository %s has no folder %s, the Project's folder", e.task.Repository, folder)
@@ -155,26 +164,132 @@ func gitValue(s string) string {
 }
 
 // push pushes each commit of the Run's branch that is not on the remote,
-// before the end. A failure goes to the wrapper's log: the end still
-// goes on.
-func (e *execution) push(environ []string) {
+// before the end. It runs after the kill, as the wrapper's user, so it
+// reads nothing that the agent can change: no configuration and no hook
+// of the checkout or of the run user's home. A bare repository of the
+// wrapper borrows the checkout's objects (as data only), and pushes the
+// branch's tip to the clone URL of the task.
+//
+// When the push fails twice (a person pushed to the branch, or the forge
+// did not answer), the commits go to refs/agent-wip/<run id>, which
+// cannot conflict. The text that push gives then goes on the end call.
+func (e *execution) push(environ []string) string {
 	if e.checkout == "" {
-		return
+		return ""
+	}
+	tip, err := readBranch(filepath.Join(e.checkout, ".git"), e.task.Branch)
+	if err != nil {
+		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
+	}
+	if tip == e.startTip {
+		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pushWait)
 	defer cancel()
-	branch := "refs/heads/" + e.task.Branch
-	out, _, err := e.git(ctx, environ, e.checkout, "rev-list", "--count", branch, "--not", "--remotes=origin")
+	dir, err := os.MkdirTemp(e.cfg.dir, "push-")
 	if err != nil {
-		fmt.Fprintln(e.log, "wrapper: find the commits that are not pushed:", err)
-		return
+		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
 	}
-	if n, _ := strconv.Atoi(strings.TrimSpace(out)); n == 0 {
-		return
+	defer os.RemoveAll(dir)
+	env := e.pushEnv(environ, dir)
+	run := func(args ...string) error {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir, cmd.Env = dir, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %s: %v: %s", args[0], err, lastLines(string(out), 5))
+		}
+		return nil
 	}
-	if _, _, err := e.git(ctx, environ, e.checkout, "push", "--quiet", "origin", branch+":"+branch); err != nil {
-		fmt.Fprintln(e.log, "wrapper: push the Run's branch before the end:", err)
+	if err := run("init", "--quiet", "--bare", dir); err != nil {
+		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
 	}
+	alternates := filepath.Join(e.checkout, ".git", "objects") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "objects", "info", "alternates"), []byte(alternates), 0o600); err != nil {
+		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
+	}
+	branch := "refs/heads/" + e.task.Branch
+	err = run("push", "--quiet", "--no-verify", "--", e.task.CloneURL, tip+":"+branch)
+	if err != nil {
+		select {
+		case <-time.After(pushRetryWait):
+		case <-ctx.Done():
+		}
+		err = run("push", "--quiet", "--no-verify", "--", e.task.CloneURL, tip+":"+branch)
+	}
+	if err == nil {
+		return ""
+	}
+	wip := "refs/agent-wip/" + e.task.RunID
+	if werr := run("push", "--quiet", "--no-verify", "--force", "--", e.task.CloneURL, tip+":"+wip); werr != nil {
+		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v), and the save of its commits to %s failed too (%v)", err, wip, werr))
+	}
+	return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v); its commits are in %s", err, wip))
+}
+
+// pushFailed writes the push's failure to the wrapper's log, and gives it.
+func (e *execution) pushFailed(text string) string {
+	fmt.Fprintln(e.log, "wrapper:", text)
+	return text
+}
+
+// pushEnv is the environment of the wrapper's push: no git configuration
+// but the system's, and the forge token in an HTTP header, not in a
+// helper program.
+func (e *execution) pushEnv(environ []string, dir string) []string {
+	var env []string
+	for _, kv := range harnessEnv(environ, "") {
+		if !strings.HasPrefix(kv, "GIT_") && !strings.HasPrefix(kv, "HOME=") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "HOME="+dir, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
+	if e.task.ForgeToken != "" {
+		auth := base64.StdEncoding.EncodeToString([]byte(e.task.ForgeUsername + ":" + e.task.ForgeToken))
+		env = append(env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.extraHeader",
+			"GIT_CONFIG_VALUE_0=Authorization: Basic "+auth)
+	}
+	return env
+}
+
+// readBranch gives the commit of a branch in a git directory, from its
+// loose ref or its packed-refs line. It runs no git, so it reads no
+// configuration of the agent.
+func readBranch(gitDir, branch string) (string, error) {
+	if info, err := os.Lstat(gitDir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("the checkout has no .git folder")
+	}
+	ref := "refs/heads/" + branch
+	if info, err := os.Lstat(filepath.Join(gitDir, ref)); err == nil && info.Mode().IsRegular() {
+		b, err := os.ReadFile(filepath.Join(gitDir, ref))
+		if err != nil {
+			return "", err
+		}
+		if id := strings.TrimSpace(string(b)); objectID(id) {
+			return id, nil
+		}
+		return "", fmt.Errorf("the Run's branch %s is not a commit id", branch)
+	}
+	if b, err := os.ReadFile(filepath.Join(gitDir, "packed-refs")); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if id, name, ok := strings.Cut(line, " "); ok && name == ref && objectID(id) {
+				return id, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("the checkout has no Run's branch %s", branch)
+}
+
+// objectID tells if s is a SHA-1 or SHA-256 object id.
+func objectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // cleanUp deletes the workspace, the run user's home and the secrets after
