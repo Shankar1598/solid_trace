@@ -8,11 +8,15 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,11 +86,36 @@ func Executions(e *Env) {
 		}
 		e.t.Skipf("the wrapper's kill boundary is not available here, so this test skips (run it as root or in a delegated cgroup v2): %v", err)
 	}
-	r, err := newRunner(e)
+	runUser, err := testRunUser()
+	if err != nil {
+		if os.Getenv(killboundary.EnvRequired) != "" {
+			e.t.Fatalf("%v, and %s is set", err, killboundary.EnvRequired)
+		}
+		e.t.Skipf("%v, so this test skips", err)
+	}
+	r, err := newRunner(e, runUser)
 	if err != nil {
 		e.t.Fatalf("start the fake Runner: %v", err)
 	}
 	e.Runner = r
+}
+
+// EnvRunUser names the run user of the wrappers when the tests run as root,
+// as the wrapper runs on an agent machine (the local factory stack runs
+// them so, with the run user agent). As another user, the tests run the
+// wrappers with that user as the run user, and no user changes.
+const EnvRunUser = "FACTORYTEST_RUN_USER"
+
+// testRunUser is the run user of the wrappers.
+func testRunUser() (*user.User, error) {
+	if os.Geteuid() != 0 {
+		return user.Current()
+	}
+	name := os.Getenv(EnvRunUser)
+	if name == "" {
+		return nil, fmt.Errorf("the tests run as root and %s names no run user", EnvRunUser)
+	}
+	return user.Lookup(name)
 }
 
 // Runner is the fake Runner as the Dispatcher sees it: it starts each
@@ -107,6 +136,7 @@ type Runner struct {
 	scripts    []string
 	executions []string
 	harness    string
+	runUser    *user.User
 	broken     bool
 	noDocker   bool
 }
@@ -145,7 +175,7 @@ func (r *Runner) UseHarness(program string) {
 // keyID is the kid of the fake Runner's key.
 const keyID = "fake-runner-key"
 
-func newRunner(e *Env) (*Runner, error) {
+func newRunner(e *Env, runUser *user.User) (*Runner, error) {
 	// A short directory: a Unix socket path has at most 107 bytes.
 	dir, err := os.MkdirTemp("", "factorytest-")
 	if err != nil {
@@ -156,8 +186,13 @@ func newRunner(e *Env) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Runner{env: e, dir: dir, bin: filepath.Join(dir, "bin")}
+	r := &Runner{env: e, dir: dir, bin: filepath.Join(dir, "bin"), runUser: runUser}
 	if err := os.MkdirAll(r.bin, 0o755); err != nil {
+		return nil, err
+	}
+	// As root, the run user reaches the programs, the scripts and the
+	// Executions' directories, and cannot change them.
+	if err := os.Chmod(dir, 0o711); err != nil {
 		return nil, err
 	}
 	for _, name := range []string{wrapperName, harnessName, solidtraceName, dockerName} {
@@ -188,6 +223,9 @@ func newRunner(e *Env) (*Runner, error) {
 	if r.Docker, err = fakedocker.New(filepath.Join(dir, "docker")); err != nil {
 		return nil, err
 	}
+	if err := r.forRunUser(filepath.Join(dir, "docker"), filepath.Join(dir, "agent-config")); err != nil {
+		return nil, err
+	}
 	// After the fakerunner's Close (cleanups run last first): a lost
 	// machine's wrapper leaves its child cgroup, which a real lost machine
 	// takes with it.
@@ -205,6 +243,10 @@ func (r *Runner) Agent(lines ...string) {
 	if err == nil {
 		_, err = f.WriteString(strings.Join(lines, "\n") + "\n")
 		f.Close()
+	}
+	if err == nil {
+		// The harness runs as the run user.
+		err = os.Chmod(f.Name(), 0o644)
 	}
 	if err != nil {
 		r.env.t.Fatal(err)
@@ -247,6 +289,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		wrapper.EnvExecution + "=" + x.Execution,
 		wrapper.EnvIdentityFile + "=" + identity,
 		wrapper.EnvHarness + "=" + program,
+		wrapper.EnvRunUser + "=" + r.runUser.Username,
 		// Never the dev box's real Docker: the end kills each container.
 		wrapper.EnvDocker + "=" + docker,
 		fakedocker.EnvDir + "=" + r.Docker.Dir(),
@@ -265,6 +308,35 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		env = env[1:]
 	}
 	return workload, r.Fake.Dispatch(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
+}
+
+// RunUser is the run user of the wrappers (see EnvRunUser).
+func (r *Runner) RunUser() *user.User { return r.runUser }
+
+// forRunUser gives each directory under each of dirs (made when it is not
+// there) to the run user, when the tests run as root: the agent's fake
+// Docker and solidtrace CLI write there.
+func (r *Runner) forRunUser(dirs ...string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	uid, _ := strconv.Atoi(r.runUser.Uid)
+	gid, _ := strconv.Atoi(r.runUser.Gid)
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return err
+			}
+			return os.Chown(path, uid, gid)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenewIdentity writes a new workload identity JWT for the Execution, at

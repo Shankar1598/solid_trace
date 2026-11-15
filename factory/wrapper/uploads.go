@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -46,9 +47,11 @@ type uploads struct {
 	client     *client
 	task       dispatcherapi.Task
 	projectDir string
-	every      time.Duration
-	log        io.Writer
-	capturer   *capture.Capturer
+	// dir is projectDir, open from before the run user's first process.
+	dir      *os.Root
+	every    time.Duration
+	log      io.Writer
+	capturer *capture.Capturer
 
 	mu    sync.Mutex
 	token dispatcherapi.SessionToken
@@ -75,9 +78,21 @@ func newUploads(cfg config, c *client, task dispatcherapi.Task, log io.Writer) *
 	return u
 }
 
-// prepare makes the project directory and its evidence/ folder.
-func (u *uploads) prepare() error {
-	return os.MkdirAll(filepath.Join(u.projectDir, evidenceDir), 0o700)
+// prepare makes the project directory and its evidence/ folder for the
+// run user, and opens the project directory. It runs before the run
+// user's first process: each upload reads through the open directory, so
+// a link that the agent puts in place of the directory (or of a parent)
+// does not give the wrapper (root) a file of another directory.
+func (u *uploads) prepare(r runUser) error {
+	if err := r.mkdirAll(filepath.Join(u.projectDir, evidenceDir)); err != nil {
+		return err
+	}
+	dir, err := os.OpenRoot(u.projectDir)
+	if err != nil {
+		return err
+	}
+	u.dir = dir
+	return nil
 }
 
 // Token is the Execution's child token (agentapi.Tokens).
@@ -160,13 +175,14 @@ func (u *uploads) finish() {
 	ctx, cancel := context.WithTimeout(context.Background(), finalWait)
 	defer cancel()
 	u.pass(ctx, true)
+	u.dir.Close()
 }
 
 // pass is one upload of each of the Run's Agent sessions on disk. An
 // Agent session id that the Run does not have (a /clear) is added first.
 // final sends each file that is not .jsonl at once.
 func (u *uploads) pass(ctx context.Context, final bool) {
-	entries, err := os.ReadDir(u.projectDir)
+	entries, err := fs.ReadDir(u.dir.FS(), ".")
 	if err != nil {
 		fmt.Fprintln(u.log, "wrapper: upload: read the project directory:", err)
 		return
@@ -200,7 +216,7 @@ func (u *uploads) pass(ctx context.Context, final bool) {
 		if !slices.Contains(tok.AgentSessionIDs, id) || ctx.Err() != nil {
 			continue
 		}
-		r := capture.RunUpload{SessionID: id, ProjectDir: u.projectDir, RunID: u.task.RunID, Project: u.task.Project,
+		r := capture.RunUpload{SessionID: id, ProjectDir: u.projectDir, Dir: u.dir, RunID: u.task.RunID, Project: u.task.Project,
 			Repository: capture.Repository{Name: u.task.Repository, Folder: u.task.Folder}, Final: final}
 		if id == tok.SessionID {
 			r.Extra = []string{evidenceDir}

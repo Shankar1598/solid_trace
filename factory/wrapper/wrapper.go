@@ -70,6 +70,15 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		fmt.Fprintln(stderr, "wrapper: no kill boundary, so the wrapper does not start:", err)
 		return 2
 	}
+	runUser, err := lookupRunUser(getenv(EnvRunUser))
+	if err == nil {
+		err = runUser.checkDir(cfg.dir)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "wrapper:", err)
+		boundary.Remove(emptyWait)
+		return 2
+	}
 	c := newClient(cfg)
 	task, err := c.task(ctx)
 	if err != nil {
@@ -77,7 +86,7 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		boundary.Remove(emptyWait)
 		return 1
 	}
-	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
+	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, runUser: runUser, needsPerson: make(chan struct{}, 1),
 		uploads: newUploads(cfg, c, task, stderr)}
 	end := e.run(ctx, environ)
 	if err := c.end(ctx, end); err != nil {
@@ -116,6 +125,8 @@ type execution struct {
 	task     dispatcherapi.Task
 	log      io.Writer
 	boundary killBoundary
+	// runUser is the user of each process that the wrapper starts.
+	runUser runUser
 
 	// mu holds a report's forward and the start of the end, so that a
 	// report counts only when it reached the Dispatcher before the end.
@@ -239,7 +250,7 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 	if err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
-	if err := e.uploads.prepare(); err != nil {
+	if err := e.uploads.prepare(e.runUser); err != nil {
 		_ = server.Close()
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "make the project directory: " + err.Error()}
 	}
@@ -256,13 +267,19 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 }
 
 // setup writes the forge token and the credential helper outside the
-// checkout, and clones the base branch with them.
+// checkout, and clones the base branch with them, as the run user.
 func (e *execution) setup(ctx context.Context, environ []string) error {
 	secrets := e.cfg.secrets()
 	if strings.ContainsAny(secrets, "'\n") {
 		return fmt.Errorf("the secrets directory %q has a quote or a new line", secrets)
 	}
-	if err := os.MkdirAll(secrets, 0o700); err != nil {
+	if err := os.Mkdir(secrets, 0o700); err != nil {
+		return err
+	}
+	if err := e.runUser.share(secrets, 0o750); err != nil {
+		return err
+	}
+	if err := e.runUser.mkdirAll(e.cfg.checkout()); err != nil {
 		return err
 	}
 	clone := []string{"clone", "--quiet"}
@@ -270,7 +287,7 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	if e.task.ForgeToken != "" {
 		helper = filepath.Join(secrets, "git-credential")
 		token := filepath.Join(secrets, "forge-token")
-		if err := os.WriteFile(token, []byte(e.task.ForgeToken), 0o600); err != nil {
+		if err := writeSecret(e.runUser, token, []byte(e.task.ForgeToken), 0o440); err != nil {
 			return err
 		}
 		if strings.ContainsAny(e.task.ForgeUsername, "\n\x00") {
@@ -280,7 +297,7 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 			"test \"$1\" = get || exit 0\n" +
 			"printf 'username=%s\\n' " + shellQuote(e.task.ForgeUsername) + "\n" +
 			"printf 'password=%s\\n' \"$(cat '" + token + "')\"\n"
-		if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		if err := writeSecret(e.runUser, helper, []byte(script), 0o550); err != nil {
 			return err
 		}
 		clone = append([]string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}, clone...)
@@ -306,7 +323,8 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 func (e *execution) git(ctx context.Context, environ []string, dir string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(harnessEnv(environ, ""), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(e.runUser.env(harnessEnv(environ, "")), "GIT_TERMINAL_PROMPT=0")
+	e.runUser.start(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s: %v: %s", args[len(args)-1], err, lastLines(string(out), 20))
@@ -324,12 +342,23 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// harnessEnv is environ with no WRAPPER_ name and no agent's socket, and
-// the agent's socket at socket ("" sets none).
+// EnvSubprocessScrub is Claude Code's subprocess environment scrub: with
+// it, Claude Code takes the credentials (by name or value) out of the
+// environments of the processes that it starts (Bash commands, hooks,
+// stdio MCP servers), and starts Bash commands in a PID namespace of their
+// own. It removes CLAUDE_CONFIG_DIR, and keeps the names of the agent's
+// socket and evidence/ folder. So a secret that a tool needs is in a file
+// of the secrets directory, never in an environment variable.
+const EnvSubprocessScrub = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+
+// harnessEnv is environ with no WRAPPER_ or NOMAD_ name and no agent's
+// socket, and the agent's socket at socket ("" sets none). The names of
+// the wrapper and of the Runner are not the agent's: NOMAD_TOKEN is a
+// credential when a workload identity has env = true.
 func harnessEnv(environ []string, socket string) []string {
 	var env []string
 	for _, kv := range environ {
-		if strings.HasPrefix(kv, "WRAPPER_") || strings.HasPrefix(kv, agentsocket.Env+"=") {
+		if strings.HasPrefix(kv, "WRAPPER_") || strings.HasPrefix(kv, "NOMAD_") || strings.HasPrefix(kv, agentsocket.Env+"=") {
 			continue
 		}
 		env = append(env, kv)
@@ -349,7 +378,8 @@ func (e *execution) serveSocket() (*http.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("serve the agent's socket: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	// The run user connects (check and report); no other user does.
+	if err := e.runUser.share(path, 0o660); err != nil {
 		listener.Close()
 		return nil, err
 	}
@@ -420,7 +450,11 @@ func (e *execution) headless() []string {
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.cfg.checkout()
-	cmd.Env = append(harnessEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...)
+	cmd.Env = append(append(e.runUser.env(harnessEnv(environ, e.cfg.socket())), e.uploads.claudeEnv(e.cfg)...),
+		// Claude Code takes the credentials out of its tools' environments.
+		// Last, so that the machine's environment cannot turn it off.
+		EnvSubprocessScrub+"=1")
+	e.runUser.start(cmd)
 	cmd.Stderr = e.log
 	failed := func(err error) dispatcherapi.ExecutionEnd {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}
