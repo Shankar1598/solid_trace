@@ -130,7 +130,7 @@ function RunsList({ view }: { view: Extract<RunsProps, { on: true }> }) {
           </CardContent>
         </Card>
       ) : (
-        view.rows.length > 0 && <RunsTable rows={view.rows} more={view.more} projectNames={projectNames} />
+        view.rows.length > 0 && <RunsTable rows={view.rows} more={view.more} projectNames={projectNames} path={path} />
       )}
     </div>
   )
@@ -156,7 +156,7 @@ function FilterSelect({ label, all, value, options, onChange, last }: {
   )
 }
 
-function RunsTable({ rows, more, projectNames }: { rows: RunRow[]; more: boolean; projectNames: Record<string, string> }) {
+function RunsTable({ rows, more, projectNames, path }: { rows: RunRow[]; more: boolean; projectNames: Record<string, string>; path: string }) {
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto border">
@@ -184,7 +184,9 @@ function RunsTable({ rows, more, projectNames }: { rows: RunRow[]; more: boolean
                   {row.reason && <div className="mt-1 max-w-56 text-xs text-muted-foreground">{row.reason}</div>}
                 </TableCell>
                 <TableCell className="align-top">
-                  <div className="max-w-80 text-sm">{row.title || <span className="text-muted-foreground">No title</span>}</div>
+                  <Link href={`${path}/${row.id}`} className="block max-w-80 text-sm underline-offset-2 hover:underline">
+                    {row.title || <span className="text-muted-foreground">No title</span>}
+                  </Link>
                   <div className="font-mono text-xs text-muted-foreground">{row.id}</div>
                 </TableCell>
                 <TableCell className="align-top text-sm">{row.project ? (projectNames[row.project] ?? row.project) : <span className="text-muted-foreground">None</span>}</TableCell>
