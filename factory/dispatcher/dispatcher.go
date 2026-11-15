@@ -209,8 +209,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	d.refreshAllowlist()
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
-	d.loops.Add(4)
+	d.loops.Add(5)
 	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
+	go func() { defer d.loops.Done(); d.writeBackLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.scheduleLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.reconcileLoop(ctx) }()
 	go func() {

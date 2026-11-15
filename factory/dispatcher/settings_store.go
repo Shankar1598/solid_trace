@@ -184,8 +184,8 @@ type storedConnection struct {
 // token and no webhook secret.
 func (s *store) connections(organizationID string) ([]storedConnection, error) {
 	rows, err := s.db.Query(`SELECT id, name, kind, updated_at, updated_by_id, updated_by_name,
-		webhook_secret IS NOT NULL, last_webhook_at, ready_status, routing_field FROM connections WHERE organization_id = ? ORDER BY name`,
-		organizationID)
+		webhook_secret IS NOT NULL, last_webhook_at, `+trackerColumns+` FROM connections WHERE organization_id = ?
+		ORDER BY name`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -195,8 +195,8 @@ func (s *store) connections(organizationID string) ([]storedConnection, error) {
 		var c storedConnection
 		var updated int64
 		var lastWebhook sql.NullInt64
-		if err := rows.Scan(&c.id, &c.Name, &c.Kind, &updated, &c.UpdatedBy.ID, &c.UpdatedBy.Name,
-			&c.WebhookSecret, &lastWebhook, &c.tracker.ReadyStatus, &c.tracker.RoutingField); err != nil {
+		if err := rows.Scan(append([]any{&c.id, &c.Name, &c.Kind, &updated, &c.UpdatedBy.ID, &c.UpdatedBy.Name,
+			&c.WebhookSecret, &lastWebhook}, trackerFields(&c.tracker)...)...); err != nil {
 			return nil, err
 		}
 		c.UpdatedAt = time.UnixMicro(updated).UTC()

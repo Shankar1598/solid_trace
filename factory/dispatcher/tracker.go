@@ -69,16 +69,24 @@ type TrackerUser struct{ ID, Name string }
 // ErrNoTicket is a ticket that a tracker connection does not have.
 var ErrNoTicket = errors.New("the tracker has no such ticket")
 
-// defaultReadyStatus is the ready status of a kind that gives none.
-const defaultReadyStatus = "Ready for agent"
+// The statuses of a kind that gives none.
+const (
+	defaultReadyStatus   = "Ready for agent"
+	defaultWorkingStatus = "Agent working"
+	defaultReviewStatus  = "In review"
+	defaultWaitingStatus = "Waiting on you"
+)
 
 // trackerSettings fills each empty value of saved with the kind's
 // default.
 func trackerSettings(t Tracker, saved dispatcherapi.TrackerSettings) dispatcherapi.TrackerSettings {
 	defaults := t.Defaults()
 	return dispatcherapi.TrackerSettings{
-		ReadyStatus:  cmp.Or(saved.ReadyStatus, defaults.ReadyStatus, defaultReadyStatus),
-		RoutingField: cmp.Or(saved.RoutingField, defaults.RoutingField),
+		ReadyStatus:   cmp.Or(saved.ReadyStatus, defaults.ReadyStatus, defaultReadyStatus),
+		RoutingField:  cmp.Or(saved.RoutingField, defaults.RoutingField),
+		WorkingStatus: cmp.Or(saved.WorkingStatus, defaults.WorkingStatus, defaultWorkingStatus),
+		ReviewStatus:  cmp.Or(saved.ReviewStatus, defaults.ReviewStatus, defaultReviewStatus),
+		WaitingStatus: cmp.Or(saved.WaitingStatus, defaults.WaitingStatus, defaultWaitingStatus),
 	}
 }
 

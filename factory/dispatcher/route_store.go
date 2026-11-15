@@ -120,8 +120,8 @@ func (s *store) matchValues(connectionID string) ([]string, error) {
 // trackerSettings reads the saved settings of the connection with id.
 func (s *store) trackerSettings(connectionID string) (dispatcherapi.TrackerSettings, error) {
 	var t dispatcherapi.TrackerSettings
-	err := s.db.QueryRow(`SELECT ready_status, routing_field FROM connections WHERE id = ?`, connectionID).
-		Scan(&t.ReadyStatus, &t.RoutingField)
+	err := s.db.QueryRow(`SELECT `+trackerColumns+` FROM connections WHERE id = ?`, connectionID).
+		Scan(trackerFields(&t)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, errNotFound
 	}
@@ -131,9 +131,18 @@ func (s *store) trackerSettings(connectionID string) (dispatcherapi.TrackerSetti
 // saveTrackerSettings replaces the settings of the Organization's
 // connection with name.
 func (s *store) saveTrackerSettings(organizationID, name string, t dispatcherapi.TrackerSettings) error {
-	_, err := s.db.Exec(`UPDATE connections SET ready_status = ?, routing_field = ? WHERE organization_id = ? AND name = ?`,
-		t.ReadyStatus, t.RoutingField, organizationID, name)
+	_, err := s.db.Exec(`UPDATE connections SET ready_status = ?, routing_field = ?, working_status = ?,
+		review_status = ?, waiting_status = ? WHERE organization_id = ? AND name = ?`,
+		t.ReadyStatus, t.RoutingField, t.WorkingStatus, t.ReviewStatus, t.WaitingStatus, organizationID, name)
 	return err
+}
+
+// trackerColumns are the columns of a connection's tracker settings, in
+// the order of trackerFields.
+const trackerColumns = `ready_status, routing_field, working_status, review_status, waiting_status`
+
+func trackerFields(t *dispatcherapi.TrackerSettings) []any {
+	return []any{&t.ReadyStatus, &t.RoutingField, &t.WorkingStatus, &t.ReviewStatus, &t.WaitingStatus}
 }
 
 // ticketHasRun is true when a ticket has an Active Run or a Run of its
