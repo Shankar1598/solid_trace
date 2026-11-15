@@ -25,6 +25,11 @@ import (
 //   - execution.id, factory.project, repository, folder
 //   - actor.kind, actor.id, actor.name
 //
+// Some kinds carry more Attributes (run.base_branch, execution.account,
+// execution.vm, execution.reason, execution.exit_code, report.outcome,
+// report.checks, ...), which Console's RunDetail reads
+// (console/app/services/run_detail.rb lists them).
+//
 // Readers order by run.seq and drop repeats of (run.id, run.seq): the
 // Dispatcher's sender delivers at least once.
 
