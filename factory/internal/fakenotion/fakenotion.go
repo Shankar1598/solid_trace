@@ -44,10 +44,12 @@ const BotID = "b0000000-0000-4000-8000-000000000001"
 type User struct{ ID, Name string }
 
 // Block is a block of a page's content. Type is a Notion block type, such
-// as paragraph, heading_2, bulleted_list_item, to_do or code.
+// as paragraph, heading_2, bulleted_list_item, to_do, code, column_list or
+// table. Cells are the texts of a table_row.
 type Block struct {
 	Type, Text string
 	Checked    bool
+	Cells      []string
 	Children   []Block
 }
 
@@ -566,6 +568,13 @@ func blockJSON(id string, b Block) map[string]any {
 	}
 	if b.Type == "code" {
 		content["language"] = "go"
+	}
+	if b.Type == "table_row" {
+		cells := []any{}
+		for _, c := range b.Cells {
+			cells = append(cells, []any{text(c)})
+		}
+		content = map[string]any{"cells": cells}
 	}
 	return map[string]any{"object": "block", "id": id, "type": b.Type, "has_children": len(b.Children) > 0, b.Type: content}
 }

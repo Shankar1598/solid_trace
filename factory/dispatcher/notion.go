@@ -531,6 +531,8 @@ type notionBlock struct {
 	hasChildren bool
 	text        string
 	checked     bool
+	// cells are the texts of a table row.
+	cells []string
 }
 
 func (b *notionBlock) UnmarshalJSON(data []byte) error {
@@ -547,19 +549,36 @@ func (b *notionBlock) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	var content struct {
-		RichText []notionText `json:"rich_text"`
-		Checked  bool         `json:"checked"`
+		RichText []notionText   `json:"rich_text"`
+		Checked  bool           `json:"checked"`
+		Cells    [][]notionText `json:"cells"`
 	}
 	if raw, ok := all[head.Type]; ok {
 		_ = json.Unmarshal(raw, &content) // a block type with no text
 	}
 	*b = notionBlock{id: head.ID, kind: head.Type, hasChildren: head.HasChildren, text: plain(content.RichText),
 		checked: content.Checked}
+	for _, cell := range content.Cells {
+		b.cells = append(b.cells, plain(cell))
+	}
 	return nil
 }
 
+// layout is true for a block that holds no text of its own and shows its
+// children: a column, a synced block, a table, or a toggle or callout with
+// no title. Its children are at its own level.
+func (b notionBlock) layout() bool {
+	switch b.kind {
+	case "column_list", "column", "synced_block", "table":
+		return true
+	case "paragraph", "toggle", "callout":
+		return b.text == ""
+	}
+	return false
+}
+
 // line is a block as one line of plain text: false for a block that holds
-// no text, such as an image, or a child page (another ticket).
+// no text, such as an image, a column, or a child page (another ticket).
 func (b notionBlock) line() (string, bool) {
 	switch b.kind {
 	case "paragraph", "toggle", "callout":
@@ -582,6 +601,8 @@ func (b notionBlock) line() (string, bool) {
 		return "```\n" + b.text + "\n```", true
 	case "divider":
 		return "---", true
+	case "table_row":
+		return "| " + strings.Join(b.cells, " | ") + " |", true
 	}
 	return "", false
 }
@@ -620,11 +641,19 @@ func (n *notion) body(ctx context.Context, c TrackerConnection, pageID string) (
 					lines = append(lines, line)
 					size += len(line) + 1
 				}
-				if ok && b.hasChildren && b.kind != "code" {
-					if depth+1 >= notionMaxDepth {
-						cut = true
-						continue
+				switch {
+				case !b.hasChildren && (ok || b.text == ""):
+				case b.kind == "child_page" || b.kind == "child_database" || b.kind == "code":
+					// Another ticket or database, or no children.
+				case b.layout():
+					if err := walk(b.id, depth); err != nil {
+						return err
 					}
+				case !ok || depth+1 >= notionMaxDepth:
+					// A block type that the kind cannot read, or
+					// too deep.
+					cut = true
+				default:
 					if err := walk(b.id, depth+1); err != nil {
 						return err
 					}

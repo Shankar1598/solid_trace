@@ -344,3 +344,40 @@ func assertNoSecretInDatabase(t *testing.T, env *factorytest.Env, secret string)
 		}
 	}
 }
+
+func TestThePromptOfANotionPageHasTheTextInItsColumnsSyncedBlocksAndTables(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	shop := map[string]string{"Project": "shop"}
+	layout := fakenotion.NewID()
+	env.Notion.Put(db, fakenotion.Page{ID: layout, Title: "Layout", Status: "Ready for agent", Select: shop,
+		Blocks: []fakenotion.Block{
+			{Type: "paragraph", Text: "Intro"},
+			{Type: "column_list", Children: []fakenotion.Block{
+				{Type: "column", Children: []fakenotion.Block{{Type: "paragraph", Text: "In a column"}}},
+				{Type: "column", Children: []fakenotion.Block{{Type: "bulleted_list_item", Text: "In the other column"}}},
+			}},
+			{Type: "synced_block", Children: []fakenotion.Block{{Type: "paragraph", Text: "Synced"}}},
+			{Type: "toggle", Children: []fakenotion.Block{{Type: "paragraph", Text: "In a toggle"}}},
+			{Type: "table", Children: []fakenotion.Block{
+				{Type: "table_row", Cells: []string{"Given", "Then"}},
+				{Type: "table_row", Cells: []string{"a cart", "the total"}},
+			}},
+			// A child page is another ticket.
+			{Type: "child_page", Children: []fakenotion.Block{{Type: "paragraph", Text: "Another ticket"}}},
+		}}, rosaN)
+	// The text of a block type that the kind cannot read gets the note.
+	unknown := fakenotion.NewID()
+	env.Notion.Put(db, fakenotion.Page{ID: unknown, Title: "Template", Status: "Ready for agent", Select: shop,
+		Blocks: []fakenotion.Block{{Type: "paragraph", Text: "Seen"}, {Type: "template", Text: "Not seen"}}}, rosaN)
+
+	env.Clock.Advance(dispatcher.NotionPoll)
+	prompts := promptsByPage(t, env, 2)
+	want := "Layout\n\nIntro\nIn a column\n- In the other column\nSynced\nIn a toggle\n| Given | Then |\n| a cart | the total |"
+	if got := prompts[fakenotion.PageURL(layout)]; got != want {
+		t.Errorf("the prompt is\n%s\nwant\n%s", got, want)
+	}
+	want = "Template\n\nSeen\n\n(The page has more content: read the rest in Notion.)"
+	if got := prompts[fakenotion.PageURL(unknown)]; got != want {
+		t.Errorf("the prompt is\n%s\nwant\n%s", got, want)
+	}
+}
