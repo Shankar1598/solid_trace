@@ -169,6 +169,29 @@ class FactoryRoutesAndSchedulesTest < ActionDispatch::IntegrationTest
     assert_nil weekly["last_run"]
   end
 
+  test "a schedule with an unsafe id is not shown, and the other schedules are" do
+    stub_list(settings)
+    stub_schedules(schedule("sc1", "Nightly upkeep"), schedule("bad/id", "Slash"), schedule("", "Empty"),
+                   schedule("a b", "Space"), schedule("x" * 65, "Too long"))
+    sign_in_as(@member)
+
+    factory = factory_prop
+    assert_nil factory["error"]
+    assert_equal [ "sc1" ], factory["schedules"].map { |s| s["id"] }
+  end
+
+  test "a last Run with an unsafe id shows no last Run, so no Run page link is made from it" do
+    stub_list(settings)
+    stub_schedules(schedule("sc1", "Nightly upkeep", last_run: { id: "bad id/../x", state: "done" }),
+                   schedule("sc2", "Weekly deps", last_run: { id: "../x", state: "done" }))
+    sign_in_as(@member)
+
+    factory = factory_prop
+    assert_nil factory["error"]
+    assert_equal [ "sc1", "sc2" ], factory["schedules"].map { |s| s["id"] }
+    factory["schedules"].each { |s| assert_nil s["last_run"] }
+  end
+
   test "a member pauses a schedule at once, and continues it" do
     stub_request(:post, "#{DISPATCHER}/api/v1/schedules/sc1/pause")
       .to_return(json(schedule("sc1", "Nightly upkeep", paused: true, next_at: nil)))
