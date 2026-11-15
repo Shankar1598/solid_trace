@@ -25,6 +25,11 @@ import (
 // harness and its tools. It is set only inside a Run.
 const Env = "SOLIDTRACE_AGENT_SOCKET"
 
+// EvidenceEnv is the environment variable that holds the path of the
+// Run's evidence/ directory in the harness and its tools. Files that the
+// agent puts there upload with its Agent session, as evidence/<name>.
+const EvidenceEnv = "SOLIDTRACE_EVIDENCE_DIR"
+
 // ReportPath is the path of a report on the socket.
 const ReportPath = "/report"
 

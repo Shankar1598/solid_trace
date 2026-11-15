@@ -122,7 +122,11 @@ type Unit struct {
 	Harness     string
 	Repository  string
 	Folder      string
-	Bytes       []byte
+	// RunID and Project name the Run and its Project: only a token of a
+	// Run (limited to its Agent sessions) sends them.
+	RunID   string
+	Project string
+	Bytes   []byte
 }
 
 // Uploaded is the server's answer to an upload.
@@ -154,6 +158,10 @@ func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploa
 	}
 	if unit.Folder != "" {
 		query.Set("folder", unit.Folder)
+	}
+	if unit.RunID != "" {
+		query.Set("run_id", unit.RunID)
+		query.Set("project", unit.Project)
 	}
 	if unit.ContentHash != "" {
 		query.Set("content_hash", unit.ContentHash)

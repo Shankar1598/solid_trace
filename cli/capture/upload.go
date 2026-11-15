@@ -47,6 +47,8 @@ type upload struct {
 	settledBefore time.Time
 	// pending is true when a file is left for a later call.
 	pending bool
+	// forRun is set for a Run's upload (UploadRun).
+	forRun *RunUpload
 }
 
 func (u *upload) run(ctx context.Context) error {
@@ -100,7 +102,23 @@ func (u *upload) paths() ([]string, error) {
 	if info, err := os.Lstat(filepath.Join(u.root, u.in.SessionID+".jsonl")); err == nil && info.Mode().IsRegular() {
 		paths = append(paths, u.in.SessionID+".jsonl")
 	}
-	dir := filepath.Join(u.root, u.in.SessionID)
+	dirs := []string{u.in.SessionID}
+	if u.forRun != nil {
+		dirs = append(dirs, u.forRun.Extra...)
+	}
+	for _, dir := range dirs {
+		var err error
+		if paths, err = u.walk(paths, filepath.Join(u.root, dir)); err != nil {
+			return nil, err
+		}
+	}
+	// WalkDir gives the files under each directory in lexical order.
+	return paths, nil
+}
+
+// walk adds each regular file under dir, relative to the project
+// directory. A dir that is not there adds nothing.
+func (u *upload) walk(paths []string, dir string) ([]string, error) {
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if p == dir && errors.Is(err, fs.ErrNotExist) {
@@ -120,7 +138,6 @@ func (u *upload) paths() ([]string, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("read the Agent session directory: %w", err)
 	}
-	// WalkDir gives the files under <id>/ in lexical order.
 	return paths, nil
 }
 
@@ -128,6 +145,9 @@ func (u *upload) send(ctx context.Context, unit agentapi.Unit) (agentapi.Uploade
 	unit.Harness = Harness
 	unit.Repository = u.repo.Name
 	unit.Folder = u.repo.Folder
+	if u.forRun != nil {
+		unit.RunID, unit.Project = u.forRun.RunID, u.forRun.Project
+	}
 	return u.c.API.Upload(ctx, u.in.SessionID, unit)
 }
 
@@ -135,7 +155,7 @@ func (u *upload) send(ctx context.Context, unit agentapi.Unit) (agentapi.Uploade
 // offset. A file shorter than that end was trimmed: it goes again from
 // offset 0 as a new version.
 func (u *upload) lines(ctx context.Context, path string) error {
-	f, err := os.Open(filepath.Join(u.root, filepath.FromSlash(path)))
+	f, err := u.open(path)
 	if err != nil {
 		return err
 	}
@@ -204,8 +224,7 @@ func nextLines(f *os.File, offset, end uint64) (body []byte, size uint64, err er
 // does not have that hash, and the file did not change since the last
 // attempt or the Agent session ends. A new hash is a new version.
 func (u *upload) whole(ctx context.Context, path string, previous, next state) error {
-	full := filepath.Join(u.root, filepath.FromSlash(path))
-	f, err := os.Open(full)
+	f, err := u.open(path)
 	if err != nil {
 		return err
 	}
@@ -247,6 +266,21 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 	}
 	_, err = u.send(ctx, unit)
 	return err
+}
+
+// open opens a path of the Agent session. A Run's upload opens it inside
+// the project directory only: the wrapper must not follow a symbolic link
+// that the agent made to a file outside it.
+func (u *upload) open(path string) (*os.File, error) {
+	if u.forRun != nil {
+		root, err := os.OpenRoot(u.root)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		return root.Open(path)
+	}
+	return os.Open(filepath.Join(u.root, filepath.FromSlash(path)))
 }
 
 func hashOf(f *os.File) (string, error) {
