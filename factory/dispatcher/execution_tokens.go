@@ -141,8 +141,8 @@ func (d *Dispatcher) sessionToken(ctx context.Context, e storedExecution, starte
 }
 
 // token is the wrapper's token call: it adds a new Agent session id to
-// the Run (a /clear), and gives a new child token for each of the Run's
-// Agent sessions.
+// the Run (a /clear, or a second Claude Code process), and gives a new
+// child token for each of the Run's Agent sessions.
 func (d *Dispatcher) token(w http.ResponseWriter, r *http.Request, e storedExecution) {
 	var req dispatcherapi.TokenRequest
 	if !decode(w, r, &req, "the body must be a JSON object with agent_session_id") {
@@ -228,9 +228,13 @@ func (s *store) runningSince(executionID string) (time.Time, error) {
 	return time.UnixMicro(started.Int64).UTC(), nil
 }
 
-// addRunSession adds an Agent session id to the running Execution's Run,
-// as its current one. An id that the Run has is no change; an id of
-// another Run gives errOtherRun.
+// addRunSession adds an Agent session id to the running Execution's Run.
+// It does not make it the Run's current Agent session (runs.session_id,
+// which the next Execution resumes and which has evidence/): a new file in
+// the project directory can be the transcript of a second Claude Code
+// process that a tool started. Only a sure signal moves the current one
+// (the take-over, ticket 61). An id that the Run has is no change; an id
+// of another Run gives errOtherRun.
 func (s *store) addRunSession(executionID, sessionID string, at time.Time) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -263,9 +267,6 @@ func (s *store) addRunSession(executionID, sessionID string, at time.Time) error
 	}
 	if _, err := tx.Exec(`INSERT INTO run_sessions (session_id, run_id, added_at) VALUES (?, ?, ?)`,
 		sessionID, runID, at.UnixMicro()); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`UPDATE runs SET session_id = ? WHERE id = ?`, sessionID, runID); err != nil {
 		return err
 	}
 	return tx.Commit()

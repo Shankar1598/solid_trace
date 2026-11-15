@@ -220,6 +220,35 @@ func TestANewAgentSessionIDIsAddedToTheRunWithANewToken(t *testing.T) {
 	}
 }
 
+func TestANewAgentSessionFileDoesNotMoveTheRunsCurrentAgentSession(t *testing.T) {
+	env, ana := newEnv(t)
+	wait, open := gate(t)
+	// A tool starts a second Claude Code process: it gets the harness's
+	// environment, so its transcript goes into the Run's project directory.
+	env.Runner.Agent(takeTask, initLine(t), reply,
+		shell(`printf '{"type":"user","message":{"role":"user","content":"summarise the diff"}}\n' > `+
+			`"$CLAUDE_CONFIG_DIR/projects/$CLAUDE_CODE_PROJECT_DIR_NAME/`+clearedID+`.jsonl"`),
+		wait, shell(`printf 'all green' > "$SOLIDTRACE_EVIDENCE_DIR/check.txt"`),
+		reportStep("--outcome", "done", "--summary", "Fixed"), result, waitForEnd)
+
+	id := start(t, env, ana, "Fix the cart")
+	first := firstToken(t, env).AgentSessionIDs[0]
+	waitUntil(t, "the second Agent session is added to the Run", func() bool {
+		return len(env.SolidTrace.ChildTokens()) == 2
+	})
+	open()
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	// evidence/ stays with the harness's own Agent session, which the
+	// next Execution resumes.
+	if got := string(env.SolidTrace.Stored(first, "evidence/check.txt")); got != "all green" {
+		t.Errorf("evidence/check.txt of the Run's Agent session: %q", got)
+	}
+	if got := env.SolidTrace.Stored(clearedID, "evidence/check.txt"); len(got) != 0 {
+		t.Errorf("evidence/ went with the second Agent session: %q", got)
+	}
+}
+
 func TestAnAgentSessionIDOfAnotherRunIsNotAddedAndNotReached(t *testing.T) {
 	env, ana := newEnv(t)
 	env.Runner.Agent(takeTask, initLine(t), reply, reportStep("--outcome", "done", "--summary", "First"), result, waitForEnd)

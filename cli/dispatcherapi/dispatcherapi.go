@@ -150,7 +150,8 @@ type SessionToken struct {
 }
 
 // TokenRequest is the body of the wrapper's token call. A new Agent
-// session id (a /clear) is added to the Run first; with none, the call
+// session id (a /clear, or a second Claude Code process) is added to the
+// Run first, and the Run's current Agent session stays; with none, the call
 // gives a new token for the same Agent sessions.
 type TokenRequest struct {
 	AgentSessionID string `json:"agent_session_id,omitempty"`
