@@ -268,11 +268,14 @@ func (j issueJSON) issue() Issue {
 		}
 		issue.Labels = append(issue.Labels, label)
 	}
-	// The newest change of the status, in any order of the list.
+	// The newest change of the status, in any order of the list. Of two
+	// changes at the same time, the first in the list wins.
+	found := false
 	for _, h := range j.History.Nodes {
-		if h.ToState == nil || h.CreatedAt.Before(issue.LastStatusChange.At) {
+		if h.ToState == nil || (found && !h.CreatedAt.After(issue.LastStatusChange.At)) {
 			continue
 		}
+		found = true
 		change := StatusChange{At: h.CreatedAt, Status: h.ToState.Name}
 		if h.Actor != nil {
 			change.By = *h.Actor

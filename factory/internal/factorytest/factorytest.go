@@ -382,7 +382,7 @@ func New(t testing.TB, options ...Option) *Env {
 		BitbucketAPIURL: e.Forge.APIURL(),
 		BitbucketGitURL: e.Forge.GitURL(),
 		LinearAPIURL:    e.Linear.URL(),
-		WebhookURL:     PublicWebhookURL,
+		WebhookURL:      PublicWebhookURL,
 		MachineKinds:    MachineKinds,
 		// Squid's place: the reload command counts the reloads.
 		SquidAllowlist:   filepath.Join(squid, "allowlist.txt"),

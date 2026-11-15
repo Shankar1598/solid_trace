@@ -34,7 +34,7 @@ type Env struct {
 	// linear` ("" is LinearAuthorizeURL; the tests set a fake).
 	LinearAuthorizeURL string
 	Now                func() time.Time
-	Sleep       func(ctx context.Context, d time.Duration) error
+	Sleep              func(ctx context.Context, d time.Duration) error
 	// Version is the CLI's version.
 	Version string
 	// ClaudeProjectsDir is where Claude Code keeps the transcripts, for
