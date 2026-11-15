@@ -281,3 +281,55 @@ func TestTheAgentSessionPageRefusesABadRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestAnAgentSessionUploadedLateOverTwoStoredDaysShowsInTheOrderOfItsLines(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	// The lines of the day before the stored day get the stored time, and
+	// keep their own time in original.time.
+	env.Clock.Set(time.Date(2026, 10, 3, 0, 30, 0, 0, time.UTC))
+	first := jsonl(
+		personAt("u1", "2026-10-02T23:50:00.123Z", "One"),
+		personAt("u2", "2026-10-02T23:50:00.124Z", "Two"),
+		personAt("u3", "2026-10-03T00:10:00Z", "Three"),
+	)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: first}), 200)
+	env.ProcessAgentFiles(t)
+	env.Clock.Set(time.Date(2026, 10, 4, 1, 0, 0, 0, time.UTC))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first), body: jsonl(
+		personAt("u4", "2026-10-03T00:20:00Z", "Four"),
+		personAt("u5", "2026-10-04T00:50:00Z", "Five"),
+	)}), 200)
+	env.ProcessAgentFiles(t)
+
+	want := []string{"person: One", "person: Two", "person: Three", "person: Four", "person: Five"}
+	wantTimes := []string{"2026-10-02T23:50:00.123Z", "2026-10-02T23:50:00.124Z", "2026-10-03T00:10:00Z", "2026-10-03T00:20:00Z", "2026-10-04T00:50:00Z"}
+	steps := readTimeline(t, env, o.project, laptopSession, map[string]any{}).Steps
+	expectTexts(t, "the timeline", stepTexts(steps), want)
+	var times []string
+	for _, s := range steps {
+		times = append(times, s.Time)
+	}
+	expectTexts(t, "the steps' own times", times, wantTimes)
+
+	var got []string
+	cursor, pages := "", 0
+	for {
+		body := map[string]any{"limit": 2}
+		if cursor != "" {
+			body["cursor"] = cursor
+		}
+		answer := readTimeline(t, env, o.project, laptopSession, body)
+		pages++
+		got = append(got, stepTexts(answer.Steps)...)
+		if cursor = answer.NextCursor; cursor == "" || pages > 5 {
+			break
+		}
+	}
+	if pages != 3 {
+		t.Errorf("Expected 3 pages, got %d", pages)
+	}
+	expectTexts(t, "the pages together", got, want)
+}
