@@ -260,6 +260,20 @@ func (h *harness) openTranscript(getenv func(string) string) error {
 	case h.flags.resume == "" && statErr == nil:
 		return fmt.Errorf("Session ID %s is already in use.", h.sessionID)
 	}
+	if h.flags.resume != "" {
+		// A resumed session continues the parentUuid chain from the last
+		// line of the transcript that has a uuid.
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			var line map[string]any
+			if json.Unmarshal([]byte(l), &line) == nil && line["uuid"] != nil {
+				h.lastUUID = line["uuid"]
+			}
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(dir, h.sessionID), 0o700); err != nil {
 		return err
 	}
