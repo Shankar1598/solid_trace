@@ -25,10 +25,17 @@ const reconcileTick = 20 * time.Millisecond
 // the path of its webhook URL, such as /webhooks/fake/<id>.
 func (e *Env) WebhookConnection(name, secret string) string {
 	e.t.Helper()
+	return e.WebhookConnectionOf(fakesource.Kind, name, secret)
+}
+
+// WebhookConnectionOf is WebhookConnection for a connection of the kind,
+// fakesource.Kind or fakesource.OtherKind.
+func (e *Env) WebhookConnectionOf(kind, name, secret string) string {
+	e.t.Helper()
 	if e.admin == nil {
 		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
 	}
-	a := e.admin.API("PUT", "/api/v1/connections/"+name, dispatcherapi.SaveConnection{Kind: fakesource.Kind,
+	a := e.admin.API("PUT", "/api/v1/connections/"+name, dispatcherapi.SaveConnection{Kind: kind,
 		Token: "fake-token-" + name})
 	if a.Status != http.StatusOK {
 		e.t.Fatalf("save the connection %s: %d %s", name, a.Status, a.Body)

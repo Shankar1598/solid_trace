@@ -135,3 +135,30 @@ func TestTheWebhookListenerAnswers404ToEachOtherPathAndMethodAndServesNoAPI(t *t
 		t.Errorf("POST %s: %d %s, want 200", path, a.Status, a.Body)
 	}
 }
+
+// The <kind> of a webhook URL must be the connection's kind: a delivery
+// to /webhooks/<kind A>/<connection of kind B> is not checked with B's
+// secret by kind A, and it queues no reconcile step.
+func TestAWebhookURLWhoseKindIsNotTheConnectionsKindAnswers404(t *testing.T) {
+	env := factorytest.New(t)
+	env.WebhookConnection("tickets", "secret-of-tickets")
+	other := env.WebhookConnectionOf(fakesource.OtherKind, "other", secret)
+	reconciledOf(t, env, "other", "")
+	id := strings.TrimPrefix(other, "/webhooks/"+fakesource.OtherKind+"/")
+	if id == other {
+		t.Fatalf("the connection other has the webhook path %s, not one of the kind %s", other, fakesource.OtherKind)
+	}
+
+	if a := deliver(t, env, "/webhooks/"+fakesource.Kind+"/"+id, "d-1", "T-1"); a.Status != http.StatusNotFound {
+		t.Errorf("a delivery to the kind %s for a connection of the kind %s: %d %s, want 404",
+			fakesource.Kind, fakesource.OtherKind, a.Status, a.Body)
+	}
+	settle()
+	if n := stepsOf(env, "other", "T-1"); n != 0 {
+		t.Errorf("a delivery to a URL of another kind ran %d reconcile steps", n)
+	}
+	if a := deliver(t, env, other, "d-2", "T-1"); a.Status != http.StatusOK {
+		t.Errorf("a delivery to %s: %d %s, want 200", other, a.Status, a.Body)
+	}
+	reconciledOf(t, env, "other", "T-1")
+}

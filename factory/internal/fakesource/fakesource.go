@@ -24,6 +24,11 @@ import (
 // Kind is the connection kind of the fake source.
 const Kind = "fake"
 
+// OtherKind is a second kind of the fake source, with the same
+// signature, deliveries and API, for a test of a webhook URL whose
+// <kind> is not the connection's kind.
+const OtherKind = "fakeother"
+
 // The headers of a delivery. The signature is "sha256=" and the hex
 // HMAC-SHA256 of the raw body, as Bitbucket's.
 const (
@@ -151,11 +156,17 @@ func Sign(secret string, body []byte) string {
 }
 
 // WebhookKind is the fake source as a kind of the Dispatcher's webhooks.
-func (s *Source) WebhookKind() dispatcher.WebhookKind { return kind{s} }
+func (s *Source) WebhookKind() dispatcher.WebhookKind { return kind{s, Kind} }
 
-type kind struct{ s *Source }
+// OtherWebhookKind is the fake source as the kind OtherKind.
+func (s *Source) OtherWebhookKind() dispatcher.WebhookKind { return kind{s, OtherKind} }
 
-func (kind) Kind() string { return Kind }
+type kind struct {
+	s    *Source
+	name string
+}
+
+func (k kind) Kind() string { return k.name }
 
 func (kind) Signature(header http.Header, body []byte) ([]byte, []byte, error) {
 	value, ok := strings.CutPrefix(header.Get(SignatureHeader), "sha256=")

@@ -71,7 +71,7 @@ type Env struct {
 	// (else nil: the wrappers reach SolidTrace directly).
 	Proxy *Proxy
 	// Source is the fake webhook source: the API of each connection of
-	// kind fakesource.Kind.
+	// kind fakesource.Kind or fakesource.OtherKind.
 	Source *fakesource.Source
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
@@ -276,7 +276,7 @@ func (e *Env) start() {
 	e.t.Helper()
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
-		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind()}, ReconcileTick: reconcileTick}
+		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
