@@ -316,6 +316,10 @@ _Avoid_: scrub rule, secret filter
 A **Project**'s settings for the **Factory**: its repository and folder, the branch its Runs start from when none is given, and which tracker tickets go to it.
 _Avoid_: factory config, factory.yaml
 
+**Webhook sender**:
+A tool that starts **Runs** with signed requests to the **Dispatcher**'s generic webhook, with the secret that an Admin got when they made it. It belongs to one **Organization**, can be limited to some of its **Projects**, and is the actor of the Runs that it starts. A Log sender is not a Webhook sender.
+_Avoid_: webhook client, integration (alone)
+
 **Evidence**:
 What a **Run** shows to prove its work: the checks that the factory's tool ran, with their results and the end of their output, and the files that the agent attached.
 _Avoid_: proof, test results (alone)
