@@ -117,7 +117,12 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 		fmt.Fprintf(tw, "Reason:\t%s\n", r.Reason)
 	}
 	fmt.Fprintf(tw, "Project:\t%s\n", r.Project)
-	fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	if r.StartedBy.Kind == dispatcherapi.ActorSchedule && r.ScheduledBy != nil {
+		fmt.Fprintf(tw, "Started:\t%s by the schedule %s (%s) of %s\n", r.CreatedAt.UTC().Format(timeFormat),
+			r.StartedBy.Name, r.StartedBy.ID, r.ScheduledBy.Name)
+	} else {
+		fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	}
 	fmt.Fprintf(tw, "Executions:\t%d\n", len(r.Executions))
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
 	tw.Flush()

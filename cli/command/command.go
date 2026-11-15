@@ -94,6 +94,28 @@ Usage:
   solidtrace connections set NAME [--kind bitbucket] [--dispatcher URL] < TOKEN
       Save a forge connection with the token on stdin, or replace its
       token (an Admin only). The Dispatcher keeps the token encrypted.
+  solidtrace schedules list [--project PROJECT] [--dispatcher URL]
+      List your Organization's schedules, with the next fire time and the
+      last Run of each.
+  solidtrace schedules get ID
+      Show one schedule.
+  solidtrace schedules create PROJECT --name NAME --cron CRON
+          [--time-zone ZONE] [--base-branch BRANCH] PROMPT
+      Make a schedule: at each fire time of CRON (five fields: minute,
+      hour, day of the month, month, day of the week) in ZONE (an IANA
+      time zone; none is UTC), it starts a Run of PROJECT with PROMPT.
+      The shortest interval between two fire times is 1 hour, unless your
+      operator sets another. A fire time while the schedule's last Run is
+      active starts no Run.
+  solidtrace schedules update ID [--name NAME] [--cron CRON]
+          [--time-zone ZONE] [--base-branch BRANCH] [--prompt PROMPT]
+      Change the values that you give.
+  solidtrace schedules pause ID
+  solidtrace schedules continue ID
+      Stop the schedule's fire times at once, or start them again from
+      now. A Run that the schedule started continues.
+  solidtrace schedules delete ID
+      Delete the schedule. The Runs that it started continue.
   solidtrace report --outcome done|needs-a-person|failed --summary TEXT
           [--question TEXT]
       Inside a Run only: report the outcome of your work to the wrapper.
@@ -129,6 +151,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return projects(ctx, args[1:], env)
 	case "connections":
 		return connections(ctx, args[1:], env)
+	case "schedules":
+		return schedules(ctx, args[1:], env)
 	case "report":
 		return report(ctx, args[1:], env)
 	case "version", "--version":
