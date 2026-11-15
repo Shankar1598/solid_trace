@@ -18,6 +18,7 @@ module McpTools
                 "newer_event are the ids of the Events either side, for event. When the Event has a trace id, trace_logs gives " \
                 "the query_logs arguments that read that trace's Logs. The Issue's last #{COMMENTS_SHOWN} comments come last."
     read_only!
+    reads_one_project!
     takes_issue
     argument :event, { type: "string", description: "The id of one of the Issue's Events. Its latest when left out." }
 
