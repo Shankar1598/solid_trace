@@ -479,7 +479,8 @@ func (n *notion) ticket(ctx context.Context, c TrackerConnection, p notionPage) 
 	}
 	// last_edited_time has whole minutes: the status and the route are
 	// part of the edit, so that a change of either in the same minute is
-	// a new edit.
+	// a new edit. A page that is back at the same status and route in the
+	// same minute is the same edit.
 	ticket.Edit = p.LastEditedTime + "|" + ticket.Status + "|" + ticket.Route
 	body, err := n.body(ctx, c, id)
 	if err != nil {
