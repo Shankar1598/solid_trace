@@ -84,6 +84,9 @@ var migrations = []string{
 		report_question TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX executions_by_run ON executions (run_id, dispatched_at);`,
+	// background_tasks_killed is the count of the agent's background
+	// tasks that the end of the Execution killed.
+	`ALTER TABLE executions ADD COLUMN background_tasks_killed INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.

@@ -184,8 +184,8 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		endReason += ": " + end.Error
 	}
 	if _, err := tx.Exec(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ?, exit_code = ?,
-		task_delivered_at = ? WHERE id = ?`, dispatcherapi.ExecutionEnded, at.UnixMicro(), endReason, exit, delivered,
-		id); err != nil {
+		task_delivered_at = ?, background_tasks_killed = ? WHERE id = ?`, dispatcherapi.ExecutionEnded, at.UnixMicro(),
+		endReason, exit, delivered, max(end.BackgroundTasksKilled, 0), id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ? WHERE id = ? AND state = ?`,
@@ -225,7 +225,7 @@ func (s *store) failExecution(id, reason string, at time.Time) (bool, error) {
 // executionsOf reads a Run's Executions, oldest first.
 func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 	rows, err := s.db.Query(`SELECT id, state, dispatched_at, started_at, ended_at, task_delivered_at, end_reason,
-		exit_code FROM executions WHERE run_id = ? ORDER BY dispatched_at, id`, runID)
+		exit_code, background_tasks_killed FROM executions WHERE run_id = ? ORDER BY dispatched_at, id`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,8 @@ func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 		var e dispatcherapi.Execution
 		var dispatched int64
 		var started, ended, delivered, exit sql.NullInt64
-		if err := rows.Scan(&e.ID, &e.State, &dispatched, &started, &ended, &delivered, &e.EndReason, &exit); err != nil {
+		if err := rows.Scan(&e.ID, &e.State, &dispatched, &started, &ended, &delivered, &e.EndReason, &exit,
+			&e.BackgroundTasksKilled); err != nil {
 			return nil, err
 		}
 		e.DispatchedAt = time.UnixMicro(dispatched).UTC()

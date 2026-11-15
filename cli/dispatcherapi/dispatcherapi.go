@@ -87,6 +87,9 @@ type Execution struct {
 	// ExitCode is the harness's exit code, when the harness ran. It never
 	// sets the outcome.
 	ExitCode *int `json:"exit_code,omitempty"`
+	// BackgroundTasksKilled is the count of the agent's background tasks
+	// that still ran at the end, and that the end killed.
+	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
 }
 
 // Report outcomes.
@@ -150,6 +153,9 @@ type ExecutionEnd struct {
 	// ExitCode is the harness's exit code (nil: the harness did not run).
 	ExitCode        *int       `json:"exit_code,omitempty"`
 	TaskDeliveredAt *time.Time `json:"task_delivered_at,omitempty"`
+	// BackgroundTasksKilled is the count of the agent's background tasks
+	// that still ran at the end, and that the end killed.
+	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
 }
 
 // StartRun is the body of a start.
