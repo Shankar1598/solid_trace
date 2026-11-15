@@ -23,7 +23,7 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      go vet ./... && go test -race -count=1 ./...
      ```
 
-     The usual `go test ./...` does not build the Nomad Runner's tests (`factory/nomadrunner`, build tag `factorystack`). They are the only tests of the Runner against a real Nomad, with its workload identity check. Run them from the repo root with `factory/local/test-runner`: it starts a local factory stack of its own (compose project `factory-runner-test`), runs the tests, and stops the stack. It needs Docker, and takes about 2 minutes, with the first build of the stack's images more. On a small box, run it when no other stack or suite runs:
+     The usual `go test ./...` runs the Nomad Runner's tests against a fake Nomad HTTP API, but does not build its stack tests (`factory/nomadrunner`, build tag `factorystack`). The stack tests are the only tests of the Runner against a real Nomad, with its workload identity check. Run them from the repo root with `factory/local/test-runner`: it starts a local factory stack of its own (compose project `factory-runner-test`), runs the tests, and stops the stack. It needs Docker, and takes about 2 minutes, with the first build of the stack's images more. On a small box, run it when no other stack or suite runs:
 
      ```bash
      factory/local/test-runner
