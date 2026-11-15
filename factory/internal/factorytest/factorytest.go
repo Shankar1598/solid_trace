@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -60,6 +61,60 @@ type Env struct {
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
 	people  int
+	logs    lockedBuffer
+	// projects counts the Projects that Project made, for their ids.
+	projects int64
+	admin    *Person
+}
+
+// EncryptionKey is the Dispatcher's encryption key in each Env.
+const EncryptionKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Logs are the Dispatcher's own log lines so far (the warnings among
+// them), one text line each.
+func (e *Env) Logs() string { return e.logs.String() }
+
+// Project makes a Project with slug in Organization at SolidTrace, and
+// saves its Factory settings as an Admin: repository
+// bitbucket.org/example/<slug> at the root. It returns the Project.
+func (e *Env) Project(slug string) recorder.Project {
+	e.t.Helper()
+	project := e.SolidTraceProject(slug)
+	if e.admin == nil {
+		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
+	}
+	a := e.admin.API("PUT", "/api/v1/projects/"+slug+"/settings",
+		map[string]string{"repository": "bitbucket.org/example/" + slug})
+	if a.Status != http.StatusOK {
+		e.t.Fatalf("save the Factory settings of %s: %d %s", slug, a.Status, a.Body)
+	}
+	return project
+}
+
+// SolidTraceProject makes a Project with slug in Organization at
+// SolidTrace only, with no Factory settings.
+func (e *Env) SolidTraceProject(slug string) recorder.Project {
+	e.projects++
+	project := recorder.Project{ID: 100 + e.projects, Slug: slug, Name: slug}
+	e.SolidTrace.SetProject(Organization.Slug, project)
+	return project
 }
 
 // New starts the environment. The test's cleanup stops it.
@@ -76,13 +131,14 @@ func New(t testing.TB) *Env {
 	e.SolidTrace.Token(DispatcherToken, recorder.Answer{
 		Sub:           "1",
 		Username:      "dana@example.com",
-		Scope:         "run_events:write issues:comment tokens:create",
+		Scope:         "run_events:write issues:comment tokens:create mcp:read",
 		Organizations: []recorder.Organization{{ID: Organization.ID, Slug: Organization.Slug, Name: Organization.Name, Role: "admin"}},
 	})
 	e.Config = dispatcher.Config{
 		SolidTraceURL:   e.SolidTrace.URL(),
 		SolidTraceToken: DispatcherToken,
 		Database:        filepath.Join(t.TempDir(), "dispatcher.sqlite3"),
+		EncryptionKey:   EncryptionKey,
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.current.Load().Handler().ServeHTTP(w, r)
@@ -95,7 +151,8 @@ func New(t testing.TB) *Env {
 
 func (e *Env) start() {
 	e.t.Helper()
-	d, err := dispatcher.Open(e.Config, dispatcher.Options{Now: e.Clock.Now, Version: e.Version})
+	d, err := dispatcher.Open(e.Config, dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
+		Log: slog.New(slog.NewTextHandler(&e.logs, nil))})
 	if err != nil {
 		e.t.Fatalf("start the Dispatcher: %v", err)
 	}
@@ -177,9 +234,16 @@ type Result struct {
 
 // CLI runs the solidtrace CLI on the person's machine.
 func (p *Person) CLI(args ...string) Result {
+	return p.RunCLI("", "", args...)
+}
+
+// RunCLI runs the solidtrace CLI in the directory dir ("" is the test's
+// own) with stdin as its input.
+func (p *Person) RunCLI(dir, stdin string, args ...string) Result {
 	var stdout, stderr bytes.Buffer
 	code := command.Run(context.Background(), args, command.Env{
-		Stdin:     strings.NewReader(""),
+		Dir:       dir,
+		Stdin:     strings.NewReader(stdin),
 		Stdout:    &stdout,
 		Stderr:    &stderr,
 		ConfigDir: p.configDir,

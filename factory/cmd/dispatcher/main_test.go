@@ -23,7 +23,7 @@ func TestTheDispatcherRefusesToStartAndNamesEachAbsentValue(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
-	for _, want := range []string{"DISPATCHER_SOLIDTRACE_URL", "DISPATCHER_SOLIDTRACE_TOKEN", "DISPATCHER_DATABASE"} {
+	for _, want := range []string{"DISPATCHER_SOLIDTRACE_URL", "DISPATCHER_SOLIDTRACE_TOKEN", "DISPATCHER_DATABASE", "DISPATCHER_ENCRYPTION_KEY"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("the error does not name %s:\n%s", want, stderr.String())
 		}
@@ -50,6 +50,7 @@ func TestTheDispatcherReadsTheFileAndTheEnvironmentWinsOverIt(t *testing.T) {
 		"DISPATCHER_SOLIDTRACE_URL=https://console.example.com\n" +
 		"DISPATCHER_SOLIDTRACE_TOKEN=\"stk_from_file\"\n" +
 		"DISPATCHER_DATABASE=" + filepath.Join(dir, "d.sqlite3") + "\n" +
+		"DISPATCHER_ENCRYPTION_KEY=" + testKey + "\n" +
 		"DISPATCHER_LISTEN=127.0.0.1:1\n"
 	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -88,6 +89,32 @@ func TestTheDispatcherRefusesAConfigurationFileThatIsNotThere(t *testing.T) {
 	code := run(context.Background(), []string{"-config", filepath.Join(t.TempDir(), "none.env")}, env(nil), &stderr)
 	if code != 1 || !strings.Contains(stderr.String(), "configuration file") {
 		t.Errorf("exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+const testKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+
+func TestTheDispatcherRefusesToStartWithAnotherKeyThanTheDatabaseHas(t *testing.T) {
+	values := map[string]string{
+		"DISPATCHER_SOLIDTRACE_URL":   "https://console.example.com",
+		"DISPATCHER_SOLIDTRACE_TOKEN": "stk_x",
+		"DISPATCHER_DATABASE":         filepath.Join(t.TempDir(), "d.sqlite3"),
+		"DISPATCHER_ENCRYPTION_KEY":   testKey,
+		"DISPATCHER_LISTEN":           freeAddress(t),
+	}
+	// The first start makes the database with testKey.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stderr bytes.Buffer
+	if code := run(ctx, nil, env(values), &stderr); code != 0 {
+		t.Fatalf("the first start: exit %d: %s", code, stderr.String())
+	}
+
+	values["DISPATCHER_ENCRYPTION_KEY"] = "HxwbGhkYFxYVFBMSERAPDg0MCwoJCAcGBQQDAgEAAAE="
+	stderr.Reset()
+	code := run(ctx, nil, env(values), &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "DISPATCHER_ENCRYPTION_KEY is not the key") {
+		t.Errorf("exit %d, stderr %q, want 1 and an error that names DISPATCHER_ENCRYPTION_KEY", code, stderr.String())
 	}
 }
 

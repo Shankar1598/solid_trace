@@ -53,6 +53,68 @@ type StartRun struct {
 	Prompt  string `json:"prompt"`
 }
 
+// FactorySettings are a Project's Factory settings, as the Dispatcher
+// gives them.
+type FactorySettings struct {
+	// Project is the Project's slug in SolidTrace.
+	Project string `json:"project"`
+	// Repository is host/workspace/name, such as bitbucket.org/team/shop.
+	Repository string `json:"repository"`
+	// Folder is the Project's folder in the repository ("" is the root).
+	Folder string `json:"folder"`
+	// BaseBranch is the branch that a Run starts from when none is given
+	// ("" is the repository's default branch).
+	BaseBranch string `json:"base_branch"`
+	// Connection is the name of the forge connection that the Project's
+	// Runs use ("" is none).
+	Connection string `json:"connection"`
+	// Orphaned is true when the Dispatcher found that SolidTrace no longer has
+	// the Project.
+	Orphaned  bool      `json:"orphaned"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy Person    `json:"updated_by"`
+}
+
+// SaveFactorySettings is the body of a save of a Project's Factory
+// settings. It replaces each value.
+type SaveFactorySettings struct {
+	Repository string `json:"repository"`
+	Folder     string `json:"folder"`
+	BaseBranch string `json:"base_branch"`
+	Connection string `json:"connection"`
+}
+
+// ProjectList is the answer of the list of the Factory settings of the
+// Organization's Projects.
+type ProjectList struct {
+	Projects []FactorySettings `json:"projects"`
+}
+
+// ForgeBitbucket is the kind of a Bitbucket Cloud connection.
+const ForgeBitbucket = "bitbucket"
+
+// Connection is a forge connection of the Organization. The Dispatcher
+// never gives its token.
+type Connection struct {
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy Person    `json:"updated_by"`
+}
+
+// SaveConnection is the body of a save of a connection. It makes the
+// connection, or replaces its token.
+type SaveConnection struct {
+	Kind  string `json:"kind"`
+	Token string `json:"token"`
+}
+
+// Connections is the answer of the list of the Organization's
+// connections, by name.
+type Connections struct {
+	Connections []Connection `json:"connections"`
+}
+
 // Runs is the answer of a list, newest first.
 type Runs struct {
 	Runs []Run `json:"runs"`
@@ -139,6 +201,41 @@ func (c *Client) List(ctx context.Context) ([]Run, error) {
 	var runs Runs
 	err := c.call(ctx, http.MethodGet, "/runs", nil, &runs)
 	return runs.Runs, err
+}
+
+// Projects reads the Factory settings of the Organization's Projects.
+func (c *Client) Projects(ctx context.Context) ([]FactorySettings, error) {
+	var list ProjectList
+	err := c.call(ctx, http.MethodGet, "/projects", nil, &list)
+	return list.Projects, err
+}
+
+// Settings reads one Project's Factory settings.
+func (c *Client) Settings(ctx context.Context, project string) (FactorySettings, error) {
+	var settings FactorySettings
+	err := c.call(ctx, http.MethodGet, "/projects/"+url.PathEscape(project)+"/settings", nil, &settings)
+	return settings, err
+}
+
+// SaveSettings replaces a Project's Factory settings (an Admin only).
+func (c *Client) SaveSettings(ctx context.Context, project string, save SaveFactorySettings) (FactorySettings, error) {
+	var settings FactorySettings
+	err := c.call(ctx, http.MethodPut, "/projects/"+url.PathEscape(project)+"/settings", save, &settings)
+	return settings, err
+}
+
+// Connections reads the Organization's connections.
+func (c *Client) Connections(ctx context.Context) ([]Connection, error) {
+	var list Connections
+	err := c.call(ctx, http.MethodGet, "/connections", nil, &list)
+	return list.Connections, err
+}
+
+// SaveConnection makes a connection or replaces its token (an Admin only).
+func (c *Client) SaveConnection(ctx context.Context, name string, save SaveConnection) (Connection, error) {
+	var connection Connection
+	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name), save, &connection)
+	return connection, err
 }
 
 func (c *Client) call(ctx context.Context, method, path string, body, into any) error {

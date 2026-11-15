@@ -14,16 +14,21 @@ import (
 // with the same names as the environment (blank lines and lines that start
 // with # are not read), and a name in the environment wins over the file.
 // Later tickets add the Nomad address and token, the machine kinds, the
-// default allowlist, the checkpoint interval, the public webhook URL, the
-// encryption key and the trigger word.
+// default allowlist, the checkpoint interval, the public webhook URL and
+// the trigger word.
 type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
 	SolidTraceURL string
-	// SolidTraceToken is the Dispatcher's own API token.
+	// SolidTraceToken is the Dispatcher's own API token. A token belongs to
+	// one Organization, and the Dispatcher serves only that Organization.
 	SolidTraceToken string
 	// Database is the path of the SQLite database.
 	Database string
+	// EncryptionKey is the key that encrypts each secret in the database:
+	// 32 bytes in standard base64. The Dispatcher refuses to start with a
+	// key that is not the one that encrypted the database's secrets.
+	EncryptionKey string
 	// Listen is the address of the private listener.
 	Listen string
 }
@@ -34,6 +39,7 @@ const (
 	EnvSolidTraceURL   = "DISPATCHER_SOLIDTRACE_URL"
 	EnvSolidTraceToken = "DISPATCHER_SOLIDTRACE_TOKEN"
 	EnvDatabase        = "DISPATCHER_DATABASE"
+	EnvEncryptionKey   = "DISPATCHER_ENCRYPTION_KEY"
 	EnvListen          = "DISPATCHER_LISTEN"
 )
 
@@ -62,6 +68,7 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		SolidTraceURL:   strings.TrimRight(value(EnvSolidTraceURL), "/"),
 		SolidTraceToken: value(EnvSolidTraceToken),
 		Database:        value(EnvDatabase),
+		EncryptionKey:   value(EnvEncryptionKey),
 		Listen:          value(EnvListen),
 	}
 	if c.Listen == "" {
@@ -83,6 +90,12 @@ func (c Config) Check() error {
 	}
 	if c.Database == "" {
 		problems = append(problems, EnvDatabase+" (the path of the SQLite database) is not set")
+	}
+	if c.EncryptionKey == "" {
+		problems = append(problems, EnvEncryptionKey+" (the key that encrypts the secrets in the database; "+
+			"make one with 'openssl rand -base64 32' and keep it) is not set")
+	} else if _, err := c.encryptionKey(); err != nil {
+		problems = append(problems, err.Error())
 	}
 	if len(problems) > 0 {
 		return errors.New("the operator configuration is not complete: " + strings.Join(problems, "; ") +

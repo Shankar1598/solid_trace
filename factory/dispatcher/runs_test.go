@@ -15,6 +15,16 @@ import (
 
 var queuedLine = regexp.MustCompile(`(?m)^Run (\S+) is queued\.$`)
 
+// newEnv is a factory test environment with the Projects checkout and
+// search, each with Factory settings.
+func newEnv(t *testing.T) *factorytest.Env {
+	t.Helper()
+	env := factorytest.New(t)
+	env.Project("checkout")
+	env.Project("search")
+	return env
+}
+
 // start runs 'solidtrace start' and returns the Run id that it printed.
 func start(t *testing.T, p *factorytest.Person, args ...string) (string, factorytest.Result) {
 	t.Helper()
@@ -30,7 +40,7 @@ func start(t *testing.T, p *factorytest.Person, args ...string) (string, factory
 }
 
 func TestStartMakesAQueuedRunAndPrintsItsIDAndConsoleLink(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 
 	id, result := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
@@ -51,7 +61,7 @@ func TestStartMakesAQueuedRunAndPrintsItsIDAndConsoleLink(t *testing.T) {
 }
 
 func TestRunsListShowsEachRunsStateProjectAndPromptNewestFirst(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	first, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
 	env.Clock.Advance(time.Minute)
@@ -76,7 +86,7 @@ func TestRunsListShowsEachRunsStateProjectAndPromptNewestFirst(t *testing.T) {
 }
 
 func TestTheConsoleLinkFollowsTheOrganizationsCurrentSlug(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
 
@@ -99,7 +109,7 @@ func TestTheConsoleLinkFollowsTheOrganizationsCurrentSlug(t *testing.T) {
 }
 
 func TestStartTakesEachWordAfterDoubleDashAsThePrompt(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 
 	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "--", "Fix", "the", "-race", "failure", "--project")
@@ -112,7 +122,7 @@ func TestStartTakesEachWordAfterDoubleDashAsThePrompt(t *testing.T) {
 }
 
 func TestTheDispatcherKeepsItsRunsAfterARestart(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
 
@@ -128,24 +138,21 @@ func TestTheDispatcherKeepsItsRunsAfterARestart(t *testing.T) {
 	}
 }
 
-func TestAPersonSeesOnlyTheRunsOfTheTokensOrganization(t *testing.T) {
-	env := factorytest.New(t)
+func TestAPersonOfAnotherOrganizationGetsNoRun(t *testing.T) {
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
 	other := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
 
-	if a := other.API("GET", "/api/v1/runs/"+id, nil); a.Status != http.StatusNotFound {
-		t.Errorf("another Organization's get: %d %s, want 404", a.Status, a.Body)
-	}
-	var runs dispatcherapi.Runs
-	other.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
-	if len(runs.Runs) != 0 {
-		t.Errorf("another Organization lists %d Runs, want 0", len(runs.Runs))
+	for _, path := range []string{"/api/v1/runs/" + id, "/api/v1/runs"} {
+		if a := other.API("GET", path, nil); a.Status != http.StatusForbidden || strings.Contains(string(a.Body), id) {
+			t.Errorf("another Organization's GET %s: %d %s, want 403 with no Run", path, a.Status, a.Body)
+		}
 	}
 }
 
 func TestTheAPIRefusesNoTokenAndATokenThatIsNotActive(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	body := dispatcherapi.StartRun{Project: "checkout", Prompt: "x"}
 
@@ -163,20 +170,20 @@ func TestTheAPIRefusesNoTokenAndATokenThatIsNotActive(t *testing.T) {
 }
 
 func TestStartRefusesARunWithNoProjectOrPrompt(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	for _, body := range []dispatcherapi.StartRun{{Project: "checkout"}, {Prompt: "Fix it"}, {Project: " ", Prompt: "Fix it"}, {Project: "checkout", Prompt: "  \n\t"}} {
 		if a := ana.API("POST", "/api/v1/runs", body); a.Status != http.StatusBadRequest {
 			t.Errorf("%+v: %d %s, want 400", body, a.Status, a.Body)
 		}
 	}
-	if r := ana.CLI("start", "--dispatcher", env.URL(), "Fix it"); r.Code != 2 {
-		t.Errorf("start with no --project: exit %d, want 2", r.Code)
+	if r := ana.CLI("start", "--dispatcher", env.URL(), "--project", "checkout"); r.Code != 2 {
+		t.Errorf("start with no prompt: exit %d, want 2", r.Code)
 	}
 }
 
 func TestARunVerbWithNoDispatcherURLSaysHowToGiveIt(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	r := env.Member("Ana").CLI("runs", "list")
 	if r.Code != 1 || !strings.Contains(r.Stderr, "--dispatcher") {
 		t.Errorf("exit %d, stderr %q", r.Code, r.Stderr)
@@ -184,11 +191,16 @@ func TestARunVerbWithNoDispatcherURLSaysHowToGiveIt(t *testing.T) {
 }
 
 func TestTheRecorderKeepsEachTokenCheckThatTheDispatcherSends(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix it")
 
-	calls := env.SolidTrace.CallsTo("/oauth/introspect")
+	var calls []recorder.Call
+	for _, c := range env.SolidTrace.CallsTo("/oauth/introspect") {
+		if c.Form.Get("token") == ana.Token {
+			calls = append(calls, c)
+		}
+	}
 	if len(calls) != 1 {
 		t.Fatalf("%d token checks, want 1: %+v", len(calls), env.SolidTrace.Calls())
 	}
@@ -198,7 +210,7 @@ func TestTheRecorderKeepsEachTokenCheckThatTheDispatcherSends(t *testing.T) {
 }
 
 func TestTheAPIRefusesATokenThatActsInNoOrganizationOrInMoreThanOne(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	orgs := map[string][]recorder.Organization{
 		"no Organization": nil,
@@ -223,7 +235,7 @@ func TestTheAPIRefusesATokenThatActsInNoOrganizationOrInMoreThanOne(t *testing.T
 }
 
 func TestStartRefusesABodyThatIsNotAStartRunObject(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	big := `{"project":"checkout","prompt":"` + strings.Repeat("x", 1<<20) + `"}`
 	for name, body := range map[string]string{
@@ -244,7 +256,7 @@ func TestStartRefusesABodyThatIsNotAStartRunObject(t *testing.T) {
 }
 
 func TestTheRunsListGivesTheNewest100Runs(t *testing.T) {
-	env := factorytest.New(t)
+	env := newEnv(t)
 	ana := env.Member("Ana")
 	var newest dispatcherapi.Run
 	for i := range 101 {

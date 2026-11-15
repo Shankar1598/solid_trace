@@ -16,8 +16,12 @@ import (
 
 // Env is the machine that the command runs on.
 type Env struct {
-	// Stdin is the hook input of `capture`.
-	Stdin  io.Reader
+	// Stdin is the hook input of `capture`, and the token of
+	// `connections set`.
+	Stdin io.Reader
+	// Dir is the current directory, in which `start` finds the Project
+	// ("" is the process's own).
+	Dir    string
 	Stdout io.Writer
 	Stderr io.Writer
 	// ConfigDir holds the credentials file.
@@ -59,15 +63,34 @@ Usage:
   solidtrace capture status
       Show the Organization, its captured repositories, and each Agent
       session on this machine as uploaded, not in the list, or failed.
-  solidtrace start --project PROJECT [--dispatcher URL] PROMPT
+  solidtrace start [--project PROJECT] [--dispatcher URL] PROMPT
       Start a Run: an agent works on PROMPT with the Factory settings of
-      PROJECT. It prints the Run's id and its link in Console. The first
-      Run verb needs --dispatcher with the Dispatcher's URL, which your
-      operator gives; later verbs use the same URL.
+      PROJECT. With no --project, the Project is the one whose Factory
+      settings name the current git repository and a folder that holds
+      the current folder (the deepest folder wins). It prints the Run's
+      id and its link in Console. The first Dispatcher verb needs
+      --dispatcher with the Dispatcher's URL, which your operator gives;
+      later verbs use the same URL.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID
       Show one Run: its state, Project and prompt.
+  solidtrace projects list [--dispatcher URL]
+      List the Factory settings of your Organization's Projects.
+  solidtrace projects get [--dispatcher URL] PROJECT
+      Show a Project's Factory settings.
+  solidtrace projects set PROJECT --repository REPOSITORY [--folder FOLDER]
+          [--base-branch BRANCH] [--connection NAME] [--dispatcher URL]
+      Save a Project's Factory settings (an Admin only). REPOSITORY is
+      host/workspace/name or its clone URL. Several Projects can name one
+      repository, each with its folder. Each value that you do not give
+      is cleared: no folder is the root, and no base branch is the
+      repository's default branch.
+  solidtrace connections list [--dispatcher URL]
+      List your Organization's forge connections (never their tokens).
+  solidtrace connections set NAME [--kind bitbucket] [--dispatcher URL] < TOKEN
+      Save a forge connection with the token on stdin, or replace its
+      token (an Admin only). The Dispatcher keeps the token encrypted.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -93,6 +116,10 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return start(ctx, args[1:], env)
 	case "runs":
 		return runs(ctx, args[1:], env)
+	case "projects":
+		return projects(ctx, args[1:], env)
+	case "connections":
+		return connections(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0

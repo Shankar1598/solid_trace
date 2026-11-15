@@ -65,6 +65,10 @@ type tokenCheck struct {
 	ownMu    sync.Mutex
 	own      error
 	ownUntil time.Time
+	// org is the one Organization of the Dispatcher's own token, when a
+	// check of that token found it. A token's Organization never
+	// changes, so the Dispatcher keeps it until it stops.
+	org organization
 }
 
 // ownKeepFor is the time that the Dispatcher keeps the result of the check
@@ -255,5 +259,39 @@ func (c *tokenCheck) checkOwnToken(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("the Dispatcher could not reach SolidTrace at %s: %w", c.url, err)
 	}
+	if len(answer.Organizations) == 1 {
+		c.org = organization{id: answer.Organizations[0].ID.String(), slug: answer.Organizations[0].Slug}
+	}
 	return nil
+}
+
+// errOwnOrganization is a Dispatcher's own token that does not act in
+// exactly one Organization.
+var errOwnOrganization = errors.New("the Dispatcher's SolidTrace token must act in exactly one Organization: " +
+	"an Admin must make a new token for the Dispatcher (DISPATCHER_SOLIDTRACE_TOKEN) and restart it")
+
+// organization gives the Organization that the Dispatcher serves: the
+// one Organization of its own token. A token belongs to one
+// Organization, and the Dispatcher finds each Project at SolidTrace with
+// its own token, so it can serve no other Organization. It checks the
+// token at the first call only. It returns errCallerRefused when
+// SolidTrace refuses the token.
+func (c *tokenCheck) organization(ctx context.Context) (organization, error) {
+	c.ownMu.Lock()
+	defer c.ownMu.Unlock()
+	if c.org.id != "" {
+		return c.org, nil
+	}
+	answer, err := c.introspect(context.WithoutCancel(ctx), c.token)
+	if err == nil && !answer.Active {
+		err = errCallerRefused
+	}
+	if err != nil {
+		return organization{}, err
+	}
+	if len(answer.Organizations) != 1 {
+		return organization{}, errOwnOrganization
+	}
+	c.org = organization{id: answer.Organizations[0].ID.String(), slug: answer.Organizations[0].Slug}
+	return c.org, nil
 }
