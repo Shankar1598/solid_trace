@@ -10,6 +10,7 @@ module McpTools
                 "Each has its Project and number, which get_issue takes, its title, culprit, status, kind, Event count, " \
                 "first and last seen, and assignee. Narrow the list by project, status and text in the title."
     read_only!
+    reads_one_project!
     takes_organization
     argument :project, { type: "string", description: "Only this Project's Issues, by slug. Every Project's when left out. list_projects lists them." }
     argument :status, { type: "string", enum: [ *Issue.statuses.keys, "all" ], description: "Only Issues with this status. all when left out." }
@@ -23,7 +24,8 @@ module McpTools
 
     def run
       filters = { status: arguments[:status], query: arguments[:query].presence, sort: arguments[:sort] }
-      filters[:project_id] = project.id if arguments.key?(:project)
+      # A token with a Project limit lists only that Project's Issues.
+      filters[:project_id] = (arguments.key?(:project) ? project : limited_project)&.id
       list = IssueList.new(organization, page: arguments[:page], **filters)
 
       json({

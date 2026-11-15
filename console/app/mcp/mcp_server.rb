@@ -82,16 +82,26 @@ module McpServer
   #
   # read_only is for a token with mcp:read and not mcp: the server then has
   # only the read tools, so no write tool can run.
-  def self.build(user:, request_url:, organization: nil, read_only: false)
+  #
+  # project is the Project limit of such a token, such as an Issue Run's
+  # token: the server then has only the read tools that read nothing
+  # outside one Project (McpTools::Base.reads_one_project!), in its
+  # Organization, and each refuses another Project. So the token reads no
+  # other Project, the Agent Project included.
+  def self.build(user:, request_url:, organization: nil, read_only: false, project: nil)
+    organization = project.organization if project
     tools = TOOLS.select(&:listed?)
     tools = tools.reject(&:instance_admin_only?) if organization
-    tools = tools.select(&:read_only?) if read_only
+    tools = tools.select(&:read_only?) if read_only || project
+    tools = tools.select(&:reads_one_project?) if project
+    instructions = INSTRUCTIONS
+    instructions += "This token reads only the Project #{project.slug} in #{organization.slug}.\n" if project
     MCP::Server.new(
       name: "solidtrace",
       title: "SolidTrace",
-      instructions: INSTRUCTIONS,
+      instructions: instructions,
       tools: tools,
-      server_context: { user: user, request_url: request_url, organization: organization },
+      server_context: { user: user, request_url: request_url, organization: organization, project: project },
     )
   end
 end

@@ -236,15 +236,143 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
     assert_not response.parsed_body.dig("result", "isError"), tool_text
   end
 
-  # Ticket 81 makes the MCP server read only the limit's Project. Until
-  # then, such a token reads nothing, so it is never wider than its limit.
-  test "an mcp:read token with a Project limit gets 403, not every Project" do
+  # mcp:read with a Project limit (an Issue Run's token): the server reads
+  # only that Project.
+
+  test "a Project-limited token's server has only the tools that read inside one Project" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
     _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
 
-    mcp "tools/call", token: secret, name: "list_projects", arguments: {}
+    mcp "tools/list", token: secret
 
+    assert_response :ok
+    names = response.parsed_body.dig("result", "tools").pluck("name")
+    assert_equal %w[query_logs get_log list_fields query_language_reference run_sql list_transactions get_transaction
+                    get_log_transform preview_log_transform list_issues get_issue], names
+  end
+
+  test "a Project-limited token's server says which Project it reads" do
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+
+    mcp "initialize", token: secret, protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" }
+
+    assert_response :ok
+    assert_match "only the Project shop in acme", response.parsed_body.dig("result", "instructions")
+  end
+
+  test "a Project-limited token reads that Project's Logs, with no organization argument" do
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+      .to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+
+    mcp "tools/call", token: secret, name: "query_logs", arguments: { project: "shop", query: "where level == \"error\"" }
+
+    assert_response :ok
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match "Logs of shop", tool_text
+    assert_requested run
+  end
+
+  test "a Project-limited token reads that Project's Issues" do
+    stub_request(:get, %r{/api/#{@shop.id}/events}).to_raise(Errno::ECONNREFUSED)
+    mine = create(:issue, project: @shop, title: "Payment failed")
+    create(:issue, project: create(:project, organization: @acme, slug: "admin"), title: "Other Project's Issue")
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+
+    mcp "tools/call", token: secret, name: "get_issue", arguments: { project: "shop", issue: mine.number }
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match "Payment failed", tool_text
+
+    mcp "tools/call", token: secret, name: "list_issues", arguments: {}
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match "Payment failed", tool_text
+    assert_no_match "Other Project's Issue", tool_text
+  end
+
+  test "a Project-limited token gets an error for another Project, and EventStore is not asked" do
+    other = create(:project, organization: @acme, name: "Admin", slug: "admin")
+    create(:issue, project: other, title: "Other Project's Issue")
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+
+    mcp "tools/call", token: secret, name: "query_logs", arguments: { project: "admin", query: "" }
+    assert response.parsed_body.dig("result", "isError")
+    assert_match "This token reads only the Project shop", tool_text
+
+    mcp "tools/call", token: secret, name: "list_issues", arguments: { project: "admin" }
+    assert response.parsed_body.dig("result", "isError")
+    assert_no_match "Other Project's Issue", tool_text
+
+    mcp "tools/call", token: secret, name: "get_issue", arguments: { project: "admin", issue: 1 }
+    assert response.parsed_body.dig("result", "isError")
+    assert_match "This token reads only the Project shop", tool_text
+    assert_not_requested :any, %r{/api/#{other.id}/}
+  end
+
+  test "a Project-limited token gets an error for the Agent Project" do
+    agent = create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true)
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+
+    mcp "tools/call", token: secret, name: "query_logs", arguments: { project: "agent-sessions", query: "" }
+    assert response.parsed_body.dig("result", "isError")
+    assert_match "This token reads only the Project shop", tool_text
+
+    [ [ "list_agent_sessions", {} ], [ "list_runs", {} ], [ "get_run", { run: "r1" } ] ].each do |name, arguments|
+      mcp "tools/call", token: secret, name: name, arguments: arguments
+      assert response.parsed_body["error"] || response.parsed_body.dig("result", "isError"), name
+    end
+    assert_not_requested :any, %r{/api/#{agent.id}/}
+  end
+
+  test "a Project-limited token gets an error for a Project of another Organization of its user" do
+    create(:project, organization: @beta, name: "Shop", slug: "shop")
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+
+    mcp "tools/call", token: secret, name: "query_logs", arguments: { organization: "beta", project: "shop", query: "" }
+
+    assert response.parsed_body.dig("result", "isError")
+    assert_match "This sign-in is for acme", tool_text
+  end
+
+  test "a Project-limited token cannot call a tool that reads the Organization beyond its Project" do
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+    create(:project, organization: @acme, name: "Admin", slug: "admin")
+
+    %w[list_projects whoami get_overview list_dashboards get_trace get_project_setup].each do |name|
+      mcp "tools/call", token: secret, name: name, arguments: { project: "shop", trace_id: "abc" }
+      assert response.parsed_body["error"] || response.parsed_body.dig("result", "isError"), name
+      assert_no_match "admin", response.body, name
+    end
+  end
+
+  test "a Project-limited token cannot call a write tool" do
+    target = create(:issue, project: @shop)
+    _, secret = issue(scopes: [ "mcp:read" ], project_id: @shop.id)
+
+    assert_no_difference -> { Comment.count } do
+      mcp "tools/call", token: secret, name: "add_comment", arguments: { project: "shop", issue: target.number, body: "Hi" }
+    end
     assert_response :forbidden
-    assert_match "Project limit", response.parsed_body["error"]
+    assert_match "add_comment changes things", response.parsed_body["error"]
+
+    mcp "tools/call", token: secret, name: "update_issue", arguments: { project: "shop", issue: target.number, status: "resolved" }
+    assert_response :forbidden
+    assert target.reload.unresolved?
+  end
+
+  test "a child token of the Dispatcher's token, limited to one Project, reads only that Project" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+      .to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
+    create(:project, organization: @acme, name: "Admin", slug: "admin")
+    parent, = issue(scopes: [ "run_events:write", "issues:comment", "tokens:create" ], expires_at: 30.days.from_now)
+    _, secret = ApiToken.issue_child!(parent: parent, name: "Run r1", scopes: [ "mcp:read" ], expires_at: 1.hour.from_now,
+                                      project_id: @shop.id)
+
+    mcp "tools/call", token: secret, name: "query_logs", arguments: { project: "shop", query: "" }
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+
+    mcp "tools/call", token: secret, name: "query_logs", arguments: { project: "admin", query: "" }
+    assert response.parsed_body.dig("result", "isError")
+    assert_match "This token reads only the Project shop", tool_text
   end
 
   test "an OAuth token with only mcp:read gets the read tools only" do

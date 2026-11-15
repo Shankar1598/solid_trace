@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_15_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_15_150000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -81,8 +81,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_15_120000) do
   create_table "comments", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "issue_id", null: false
-    t.integer "organization_user_id", null: false
+    t.integer "organization_user_id"
     t.datetime "updated_at", null: false
+    t.string "run_id"
     t.index ["issue_id"], name: "index_comments_on_issue_id"
     t.index ["organization_user_id"], name: "index_comments_on_organization_user_id"
   end
