@@ -256,7 +256,13 @@ func (r *Runner) Claims(workload string) map[string]any {
 func (r *Runner) Identity(workload string) string { return r.Sign(r.Claims(workload)) }
 
 // Sign signs claims with the fake Runner's key.
-func (r *Runner) Sign(claims map[string]any) string { return sign(r.key, claims) }
+func (r *Runner) Sign(claims map[string]any) string { return sign(r.key, "RS256", claims) }
+
+// SignWithAlg signs claims with the fake Runner's key (RS256), with alg in
+// the JWT's header: the signature is correct, and only the alg is wrong.
+func (r *Runner) SignWithAlg(alg string, claims map[string]any) string {
+	return sign(r.key, alg, claims)
+}
 
 // Forged signs claims with a key that is not the fake Runner's, with the
 // Runner's key id.
@@ -265,11 +271,11 @@ func (r *Runner) Forged(claims map[string]any) string {
 	if err != nil {
 		r.env.t.Fatal(err)
 	}
-	return sign(key, claims)
+	return sign(key, "RS256", claims)
 }
 
-func sign(key *rsa.PrivateKey, claims map[string]any) string {
-	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT", "kid": keyID})
+func sign(key *rsa.PrivateKey, alg string, claims map[string]any) string {
+	header, _ := json.Marshal(map[string]string{"alg": alg, "typ": "JWT", "kid": keyID})
 	body, _ := json.Marshal(claims)
 	signed := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(body)
 	digest := sha256.Sum256([]byte(signed))

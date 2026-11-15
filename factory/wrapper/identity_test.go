@@ -64,6 +64,9 @@ func TestTheTaskCallNeedsTheWorkloadIdentityOfItsExecution(t *testing.T) {
 		"a JWT for another audience": env.Runner.Sign(with("aud", "nomad.example")),
 		"a JWT with no subject":      env.Runner.Sign(with("sub", nil)),
 		"a person's token":           ana.Token,
+		// The signature is a correct RS256 signature: only the alg is wrong.
+		"a JWT with alg none":  env.Runner.SignWithAlg("none", valid),
+		"a JWT with alg HS256": env.Runner.SignWithAlg("HS256", valid),
 	}
 	for name, token := range refused {
 		for _, verb := range []string{"task", "report", "end"} {
