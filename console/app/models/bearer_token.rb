@@ -108,9 +108,9 @@ class BearerToken
     scopes.include?(Oauth::Scopes::MCP_READ) && !scopes.include?(Oauth::Scopes::MCP)
   end
 
-  # The ApiToken; nil for an OAuth token.
+  # The ApiToken; nil for an OAuth token or Console's factory token.
   def api_token
-    @record unless oauth?
+    @record if api_token?
   end
 
   # The token that made this child token; nil for every other token.
