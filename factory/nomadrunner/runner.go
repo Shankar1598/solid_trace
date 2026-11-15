@@ -25,7 +25,8 @@ import (
 // Config configures the Runner.
 type Config struct {
 	// Address is the Nomad server's HTTP API, and Token the Dispatcher's
-	// ACL token.
+	// ACL token. Its policy needs, in the namespace, the capabilities
+	// submit-job, dispatch-job, read-job and list-jobs, and node read.
 	Address, Token string
 	// Namespace of the jobs ("" is "default").
 	Namespace string

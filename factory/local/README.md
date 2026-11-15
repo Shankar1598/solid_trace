@@ -37,6 +37,21 @@ factory/local/stack nomad job status    # the Nomad CLI on the server, with the 
 factory/local/stack shell agent         # a shell on the agent machine as the run user
 ```
 
+`FACTORY_STACK_PROJECT=<name>` gives the stack another compose project, so that an agent in a worktree does not use the stack of another agent.
+
+## The Runner's tests
+
+The Nomad Runner's tests (`factory/nomadrunner`, build tag `factorystack`) run against this stack's Nomad. They do not skip: with no stack, they fail. One command starts a stack with the compose project `factory-runner-test`, runs them, and stops the stack:
+
+```sh
+factory/local/test-runner                  # all of them
+factory/local/test-runner -run Lost ./nomadrunner/
+```
+
+For these tests only, `FACTORY_STACK_NOMAD_API=1` adds [compose.nomad-api.yml](compose.nomad-api.yml): a forwarder that publishes Nomad's HTTP API on a free port of 127.0.0.1, because the host has no address on the internal factory network. Then `stack nomad-env` gives `NOMAD_ADDR`, `NOMAD_TOKEN` and `AGENT_MACHINE`. The test process is the Dispatcher. Each task prints what it got (such as its workload identity JWT) in place of the wrapper, and the test reads it through Nomad's API. The lost machine test pauses the agent machine's container (`docker pause`) until Nomad marks its node down.
+
+The agent machine's Nomad client has `max_kill_timeout = "120s"`, as the Runner's job needs ([agent-machine/client.hcl](agent-machine/client.hcl)).
+
 ## The network rules
 
 | From the agent machine | Result |

@@ -153,7 +153,9 @@ HCL
 nomad_image_is_only_in_this_compose_file() {
   local files
   # The tracked files and the new ones; the pattern is split so that this file does not match.
-  files="$(git -C "$repo" grep --untracked -l -I 'hashicorp/''nomad' -- . ':!*.md')"
+  # An image reference has a tag or a digest after the name: the Go module
+  # github.com/hashicorp/nomad/api (the Runner's client) is not an image.
+  files="$(git -C "$repo" grep --untracked -l -I -E 'hashicorp/''nomad(:|@)' -- . ':!*.md')"
   [ "$files" = "factory/local/compose.yml" ] || want "Nomad's image only in factory/local/compose.yml, got: $files"
 }
 
