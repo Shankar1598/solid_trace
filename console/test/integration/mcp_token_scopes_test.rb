@@ -359,11 +359,27 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
     assert target.reload.unresolved?
   end
 
+  # The Dispatcher finds the id of each Factory setting's Project with
+  # list_projects and its own token (factory/dispatcher/projects.go).
+  test "the Dispatcher's token lists the Organization's Projects, and calls no write tool" do
+    target = create(:issue, project: @shop)
+    _, secret = issue(scopes: Oauth::Scopes::DISPATCHER, expires_at: 30.days.from_now)
+
+    mcp "tools/call", token: secret, name: "list_projects", arguments: { organization: @acme.slug }
+    assert_response :success
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match '"slug":"shop"', tool_text
+
+    mcp "tools/call", token: secret, name: "update_issue", arguments: { project: "shop", issue: target.number, status: "resolved" }
+    assert_response :forbidden
+    assert target.reload.unresolved?
+  end
+
   test "a child token of the Dispatcher's token, limited to one Project, reads only that Project" do
     stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
       .to_return(status: 200, body: { logs: [], next_cursor: nil }.to_json)
     create(:project, organization: @acme, name: "Admin", slug: "admin")
-    parent, = issue(scopes: [ "run_events:write", "issues:comment", "tokens:create" ], expires_at: 30.days.from_now)
+    parent, = issue(scopes: Oauth::Scopes::DISPATCHER, expires_at: 30.days.from_now)
     _, secret = ApiToken.issue_child!(parent: parent, name: "Run r1", scopes: [ "mcp:read" ], expires_at: 1.hour.from_now,
                                       project_id: @shop.id)
 

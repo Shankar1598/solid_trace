@@ -47,8 +47,10 @@ module Oauth
     TOKENS_CREATE = "tokens:create"
     # The Scope that adds a comment to an Issue (IssueCommentsController).
     ISSUES_COMMENT = "issues:comment"
-    # The Dispatcher's token has these Scopes, and no others.
-    DISPATCHER = [ "run_events:write", ISSUES_COMMENT, TOKENS_CREATE ].freeze
+    # The Dispatcher's token has these Scopes, and no others. It reads with
+    # mcp:read the Organization's Projects (list_projects), to find the id
+    # of the Project of each Factory setting.
+    DISPATCHER = [ "run_events:write", ISSUES_COMMENT, TOKENS_CREATE, MCP_READ ].freeze
     # The Scopes that the Dispatcher's token gives only to its child tokens,
     # each with its limit: sessions:* for a list of Agent session ids, and
     # mcp:read for one Project.
