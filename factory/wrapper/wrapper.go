@@ -24,9 +24,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentsocket"
@@ -77,17 +79,53 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		boundary.Remove(emptyWait)
 		return 1
 	}
-	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
-		uploads: newUploads(cfg, c, task, stderr)}
-	end := e.run(ctx, environ)
-	if err := c.end(ctx, end); err != nil {
+	notice, err := newMachineNotice(cfg, stderr)
+	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
-		return 1
+		boundary.Remove(emptyWait)
+		return 2
 	}
-	if e.left != nil {
-		return 1
+	e := newExecution(ctx, cfg, c, task, stderr, boundary)
+	// A SIGTERM or a SIGINT with no stop command is the preemption
+	// handler's second trigger. Before the task call, a signal stops the
+	// wrapper at once: there is nothing to save.
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(signals)
+	watching, stopWatching := context.WithCancel(ctx)
+	defer stopWatching()
+	go e.watch(watching, notice, signals)
+
+	ran := make(chan dispatcherapi.ExecutionEnd, 1)
+	go func() { ran <- e.run(e.marked, environ) }()
+	select {
+	case end := <-ran:
+		if e.owner.CompareAndSwap(ownerNone, ownerEnd) {
+			if err := c.end(ctx, end); err != nil {
+				fmt.Fprintln(stderr, "wrapper:", err)
+				return 1
+			}
+			if e.left != nil {
+				return 1
+			}
+			return 0
+		}
+		// The preemption handler has the end.
+		<-e.preempted
+	case <-e.preempted:
 	}
-	return 0
+	return e.preemptionCode()
+}
+
+func newExecution(ctx context.Context, cfg config, c *client, task dispatcherapi.Task, log io.Writer,
+	boundary killBoundary) *execution {
+	e := &execution{cfg: cfg, client: c, task: task, log: log, boundary: boundary, needsPerson: make(chan struct{}, 1),
+		uploads: newUploads(cfg, c, task, log), clock: realClock{}, saver: noSaver{},
+		results: make(chan struct{}, 1), followed: make(chan struct{}), finished: make(chan struct{}),
+		preempted: make(chan struct{})}
+	e.marked, e.mark = context.WithCancel(ctx)
+	e.preemptEnd = errNotSent
+	return e
 }
 
 // killBoundary is the Execution's kill boundary, a *killboundary.Boundary.
@@ -132,19 +170,37 @@ type execution struct {
 
 	needsPerson chan struct{}
 	uploads     *uploads
-	stdin       io.WriteCloser
-	harness     *exec.Cmd
+	// harnessMu holds the start of the harness against the halt: the
+	// halt sees a harness that started, or the harness does not start.
+	harnessMu sync.Mutex
+	stdin     io.WriteCloser
+	harness   *exec.Cmd
+	// stdinMu holds each write to stdin and its close.
+	stdinMu     sync.Mutex
+	stdinClosed bool
 	kill        *time.Timer
 	killOnce    sync.Once
+	// followed closes when the output stream was read to its end and
+	// the harness exited; followEnd is then what follow gave.
+	followed  chan struct{}
+	followEnd dispatcherapi.ExecutionEnd
+	// results gets a signal for each result on the output stream after
+	// the preempting marker.
+	results chan struct{}
+	// finishOnce runs the end procedure once; finished closes after it.
+	finishOnce sync.Once
+	finished   chan struct{}
 	// left is the error when the cgroup was not empty after the end.
 	left error
+
+	preemption
 }
 
 // run sets up and runs the harness, then does the end procedure, and gives
 // the end call's body.
 func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
 	end := e.work(ctx, environ)
-	e.finish()
+	e.endProcedure(context.Background())
 	// The output stream is read to its end now: the last
 	// background_tasks_changed event counts, also when the harness wrote
 	// it just before it exited.
@@ -154,6 +210,21 @@ func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.Exe
 	}
 	e.mu.Unlock()
 	return end
+}
+
+// endProcedure runs finish once, and waits for it until ctx ends. The
+// normal end and the preemption handler's halt share it.
+func (e *execution) endProcedure(ctx context.Context) {
+	e.finishOnce.Do(func() {
+		go func() {
+			defer close(e.finished)
+			e.finish()
+		}()
+	})
+	select {
+	case <-e.finished:
+	case <-ctx.Done():
+	}
 }
 
 // finish is the end procedure after the harness exited (or did not
@@ -246,8 +317,9 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 	e.uploads.start()
 	end := e.runHarness(environ)
 	// The last bytes go before the end call: the end step revokes the
-	// Execution's token.
-	e.uploads.finish()
+	// Execution's token. After the preempting marker, the preemption
+	// handler sends them, so this upload stops at once.
+	e.uploads.finish(ctx)
 	// No report is in flight after this: the end call can go.
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -371,13 +443,25 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only these fields go on: the Run and the Execution are the wrapper's.
 	report = dispatcherapi.Report{Outcome: report.Outcome, Summary: report.Summary, Question: report.Question}
+	// The preempting marker stops a report in flight: the end started.
+	ctx, stop := context.WithCancel(r.Context())
+	defer stop()
+	defer context.AfterFunc(e.marked, stop)()
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.isMarked() {
+		writeProblem(w, http.StatusConflict, errMarked.Error()+": a report now does not count")
+		return
+	}
 	if e.ending {
 		writeProblem(w, http.StatusConflict, "the Execution is ending: a report now does not count")
 		return
 	}
-	a, err := e.client.call(r.Context(), "report", report)
+	a, err := e.client.call(ctx, "report", report)
+	if err != nil && e.isMarked() {
+		writeProblem(w, http.StatusConflict, errMarked.Error()+": the report stopped")
+		return
+	}
 	if err != nil {
 		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the report: "+err.Error())
 		return
@@ -437,12 +521,20 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	}
 	defer stdout.Close()
 	cmd.Stdout = w
+	e.harnessMu.Lock()
+	if e.isMarked() {
+		e.harnessMu.Unlock()
+		w.Close()
+		return failed(errMarked)
+	}
 	err = e.boundary.Start(cmd)
 	w.Close()
 	if err != nil {
+		e.harnessMu.Unlock()
 		return failed(err)
 	}
 	e.harness, e.stdin = cmd, stdin
+	e.harnessMu.Unlock()
 	exited := make(chan struct{})
 	go func() {
 		cmd.Wait()
@@ -458,7 +550,7 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	taskUUID := newUUID()
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
-	if _, err := e.stdin.Write(append(message, '\n')); err != nil {
+	if err := e.writeMessage(message); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write the task:", err)
 	}
 	events := make(chan map[string]any)
@@ -501,6 +593,12 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				e.mu.Unlock()
 			case ev["type"] == "system" && ev["subtype"] == "init" && offers(ev, "AskUserQuestion"):
 				e.startEnd(dispatcherapi.EndSetupFailed, "the harness offers AskUserQuestion, which no person answers in a Run")
+			case ev["type"] == "result" && e.isMarked():
+				// The halt waits for it; the handler ends the Execution.
+				select {
+				case e.results <- struct{}{}:
+				default:
+				}
 			case ev["type"] == "result":
 				e.mu.Lock()
 				reported := e.reported
@@ -513,7 +611,9 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 			}
 		case <-e.needsPerson:
 			// Needs a person ends the Execution at once.
-			e.startEnd(dispatcherapi.EndReported, "")
+			if !e.isMarked() {
+				e.startEnd(dispatcherapi.EndReported, "")
+			}
 		}
 	}
 	if stopReading != nil {
@@ -532,20 +632,53 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	reason, why := e.endReason, e.endError
 	e.mu.Unlock()
 	code := e.harness.ProcessState.ExitCode()
-	return dispatcherapi.ExecutionEnd{Reason: reason, Error: why, ExitCode: &code, TaskDeliveredAt: delivered}
+	e.followEnd = dispatcherapi.ExecutionEnd{Reason: reason, Error: why, ExitCode: &code, TaskDeliveredAt: delivered}
+	close(e.followed)
+	return e.followEnd
 }
 
 // startEnd starts the end once: it closes stdin, and kills the
 // Execution's cgroup if the harness did not exit in endWait.
-func (e *execution) startEnd(reason, why string) {
+func (e *execution) startEnd(reason, why string) { e.startEndWithin(reason, why, endWait) }
+
+// startEndWithin is startEnd with wait in place of endWait.
+func (e *execution) startEndWithin(reason, why string, wait time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.ending {
 		return
 	}
 	e.ending, e.endReason, e.endError = true, reason, why
-	e.stdin.Close()
-	e.kill = time.AfterFunc(endWait, e.killAll)
+	e.closeStdin()
+	e.kill = time.AfterFunc(wait, e.killAll)
+}
+
+// writeMessage writes a user message to the harness's stdin. After the
+// preempting marker, no message is written.
+func (e *execution) writeMessage(line []byte) error { return e.writeStdin(line, e.isMarked) }
+
+// writeStdin writes one line to stdin, unless stdin is closed or refuse
+// says no (refuse is asked under stdinMu).
+func (e *execution) writeStdin(line []byte, refuse func() bool) error {
+	e.stdinMu.Lock()
+	defer e.stdinMu.Unlock()
+	if e.stdinClosed {
+		return errors.New("stdin is closed")
+	}
+	if refuse != nil && refuse() {
+		return errMarked
+	}
+	_, err := e.stdin.Write(append(line, '\n'))
+	return err
+}
+
+func (e *execution) closeStdin() {
+	e.stdinMu.Lock()
+	defer e.stdinMu.Unlock()
+	if !e.stdinClosed {
+		e.stdinClosed = true
+		e.stdin.Close()
+	}
 }
 
 // offers tells if the init event lists tool among the agent's tools.

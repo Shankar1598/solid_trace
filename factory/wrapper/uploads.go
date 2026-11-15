@@ -56,8 +56,9 @@ type uploads struct {
 	// to the Run: the wrapper does not ask for them again.
 	refused map[string]bool
 
-	stop context.CancelFunc
-	done chan struct{}
+	stop     context.CancelFunc
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 func newUploads(cfg config, c *client, task dispatcherapi.Task, log io.Writer) *uploads {
@@ -150,16 +151,56 @@ func (u *uploads) start() {
 	}()
 }
 
+// stopLoop stops the uploads during the Execution, and waits for the
+// pass that runs.
+func (u *uploads) stopLoop() {
+	u.stopOnce.Do(func() {
+		if u.stop != nil {
+			u.stop()
+			<-u.done
+		}
+	})
+}
+
 // finish stops the uploads during the Execution and sends the last bytes
-// of each file.
-func (u *uploads) finish() {
-	if u.stop != nil {
-		u.stop()
-		<-u.done
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), finalWait)
+// of each file, within finalWait or until ctx ends.
+func (u *uploads) finish(ctx context.Context) {
+	u.stopLoop()
+	ctx, cancel := context.WithTimeout(ctx, finalWait)
 	defer cancel()
 	u.pass(ctx, true)
+}
+
+// last is the preemption handler's last upload: it stops the uploads
+// during the Execution, sends the last bytes of each file, and gives how
+// many bytes of the current Agent session's transcript SolidTrace has.
+func (u *uploads) last(ctx context.Context) (*uint64, error) {
+	u.stopLoop()
+	u.pass(ctx, true)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	u.mu.Lock()
+	session := u.token.SessionID
+	u.mu.Unlock()
+	if session == "" {
+		session = u.task.SessionID
+	}
+	files, err := u.capturer.API.AgentSessionFiles(ctx, session)
+	if err != nil {
+		return nil, fmt.Errorf("ask SolidTrace what it has of the transcript: %w", err)
+	}
+	var offset uint64
+	for _, f := range files {
+		if f.Path == session+".jsonl" {
+			offset = f.EndOffset
+		}
+	}
+	info, err := os.Stat(filepath.Join(u.projectDir, session+".jsonl"))
+	if err == nil && uint64(info.Size()) > offset {
+		return nil, fmt.Errorf("SolidTrace has %d of the transcript's %d bytes", offset, info.Size())
+	}
+	return &offset, nil
 }
 
 // pass is one upload of each of the Run's Agent sessions on disk. An

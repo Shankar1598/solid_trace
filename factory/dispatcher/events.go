@@ -27,6 +27,8 @@ const (
 	eventExecutionStarted = "execution_started"
 	eventExecutionEnded   = "execution_ended"
 	eventReport           = "report"
+	eventPreempting       = "preempting"
+	eventPreemption       = "preemption"
 )
 
 // Trigger kinds of a Run (run.trigger).

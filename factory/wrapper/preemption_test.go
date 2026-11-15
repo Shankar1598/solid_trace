@@ -1,0 +1,264 @@
+package wrapper_test
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/internal/factorytest"
+	"github.com/solidtrace/factory/internal/killboundary"
+	"github.com/solidtrace/factory/wrapper"
+)
+
+// Lines of a turn that the interrupt request stops, as Claude Code gives
+// them (the recorded stream interrupt).
+const (
+	awaitInterrupt = `{"fake":"await_interrupt","eof_code":1}`
+	interrupted    = `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"parent_tool_use_id":null,"session_id":"","uuid":""}`
+	errorResult    = `{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":1,"session_id":"","uuid":""}`
+	// exitWhenStdinCloses waits for a message, and exits with code 1
+	// when stdin closes, as Claude Code does after an interrupt.
+	exitWhenStdinCloses = `{"fake":"await_message","eof_code":1}`
+)
+
+// ready is a step that writes an Evidence file, then a file that tells
+// the test that the agent works.
+func ready(t *testing.T) (step string, wait func()) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ready")
+	step = shell(`printf 'the cart total is right' >"$SOLIDTRACE_EVIDENCE_DIR/notes.txt" && touch ` + path)
+	return step, func() {
+		waitUntil(t, "the agent works", func() bool {
+			_, err := os.Stat(path)
+			return err == nil
+		})
+	}
+}
+
+// interruptedTurn is a turn that waits in a tool call until the interrupt
+// request comes.
+func interruptedTurn(t *testing.T, step string) []string {
+	return []string{takeTask, initLine(t), step, reply, awaitInterrupt, interrupted, errorResult, exitWhenStdinCloses}
+}
+
+// eventOf is the run event of kind, or fails the test.
+func eventOf(t *testing.T, events []map[string]any, kind string) map[string]any {
+	t.Helper()
+	for _, ev := range events {
+		if ev["event.kind"] == kind {
+			return ev
+		}
+	}
+	t.Fatalf("no %s event in %v", kind, kinds(events))
+	return nil
+}
+
+// waitForEvent waits until the Run has an event of kind.
+func waitForEvent(t *testing.T, env *factorytest.Env, run, kind string) map[string]any {
+	t.Helper()
+	waitUntil(t, "a "+kind+" event", func() bool { return slices.Contains(kinds(env.RunEvents(run)), kind) })
+	return eventOf(t, env.RunEvents(run), kind)
+}
+
+// checkSaved checks what the preemption handler saved: the last bytes of
+// the transcript and the Evidence files are at SolidTrace, and the
+// preemption event says so.
+func checkSaved(t *testing.T, env *factorytest.Env, run dispatcherapi.Run, reason string) map[string]any {
+	t.Helper()
+	execution := onlyExecution(t, run)
+	if execution.EndReason != reason {
+		t.Errorf("end reason %q, want %q", execution.EndReason, reason)
+	}
+	session := firstToken(t, env).AgentSessionIDs[0]
+	onDisk, err := os.ReadFile(filepath.Join(env.Runner.ProjectDir(execution.ID), session+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(onDisk, []byte("Request interrupted")) {
+		t.Errorf("the agent's turn was not interrupted; transcript:\n%s", onDisk)
+	}
+	if got := env.SolidTrace.Stored(session, session+".jsonl"); !bytes.Equal(got, onDisk) {
+		t.Errorf("SolidTrace has not the last bytes of the transcript:\nstored:  %s\non disk: %s", got, onDisk)
+	}
+	if got := string(env.SolidTrace.Stored(session, "evidence/notes.txt")); got != "the cart total is right" {
+		t.Errorf("the Evidence file at SolidTrace: %q", got)
+	}
+	events := env.WaitForRunEvents(run.ID, 5)
+	order := kinds(events)
+	if i, j, k := slices.Index(order, "preempting"), slices.Index(order, "preemption"),
+		slices.Index(order, "execution_ended"); i < 0 || j < i || k < j {
+		t.Errorf("the run events: %v, want preempting, then preemption, then execution_ended", order)
+	}
+	preemption := eventOf(t, events, "preemption")
+	checkFields(t, preemption, map[string]any{"preemption.reason": reason, "execution.id": execution.ID,
+		"preemption.transcript_offset": float64(len(onDisk))})
+	if s, ok := preemption["preemption.seconds_to_saved"].(float64); !ok || s <= 0 || s >= 100 {
+		t.Errorf("seconds from the notice to the saved state: %v", preemption["preemption.seconds_to_saved"])
+	}
+	if _, ok := preemption["preemption.checkpoint_age_seconds"]; ok {
+		t.Errorf("a checkpoint age with no checkpoint: %v", preemption["preemption.checkpoint_age_seconds"])
+	}
+	checkFields(t, eventOf(t, events, "preempting"), map[string]any{"preemption.reason": reason,
+		"execution.id": execution.ID})
+	return preemption
+}
+
+func TestANoticeOnTheMachineSavesTheWorkAndEndsTheExecutionAsPreempted(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	execution := getRun(t, ana, id).Executions[0].ID
+
+	env.Runner.Preempt(execution)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if run.Reason != dispatcherapi.EndPreempted {
+		t.Errorf("the Run's reason %q", run.Reason)
+	}
+	preemption := checkSaved(t, env, run, dispatcherapi.EndPreempted)
+	if problems, _ := preemption["preemption.problems"].([]any); len(problems) != 1 ||
+		!strings.Contains(problems[0].(string), "no work-in-progress save") {
+		t.Errorf("the problems: %v", preemption["preemption.problems"])
+	}
+	if _, err := killboundary.Reopen(wrapper.CgroupName(execution)); err == nil {
+		t.Errorf("the Execution's child cgroup is not removed")
+	}
+	if code := waitForExit(t, env, execution); code != 0 {
+		t.Errorf("the wrapper exited with code %d", code)
+	}
+}
+
+func TestASIGTERMWithNoStopCommandEndsTheExecutionAsMachineStopped(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT} {
+		t.Run(sig.String(), func(t *testing.T) {
+			env, ana := newEnv(t)
+			step, working := ready(t)
+			env.Runner.Agent(interruptedTurn(t, step)...)
+			id := start(t, env, ana, "Fix the cart")
+			working()
+
+			env.Runner.Signal(getRun(t, ana, id).Executions[0].ID, sig)
+
+			run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+			checkSaved(t, env, run, dispatcherapi.EndMachineStopped)
+		})
+	}
+}
+
+// With a 0-second notice, the shutdown's SIGTERM comes with the notice.
+// The same steps run once, and the reason is preempted.
+func TestWithA0SecondNoticeTheSameStepsRunOnceAndTheReasonIsPreempted(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	execution := getRun(t, ana, id).Executions[0].ID
+
+	env.Runner.Preempt(execution)
+	env.Runner.Signal(execution, syscall.SIGTERM)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	checkSaved(t, env, run, dispatcherapi.EndPreempted)
+	got := kinds(env.RunEvents(id))
+	for _, kind := range []string{"preempting", "preemption", "execution_ended"} {
+		if n := countOf(got, kind); n != 1 {
+			t.Errorf("%d %s events, want 1: %v", n, kind, got)
+		}
+	}
+}
+
+func countOf(list []string, s string) int {
+	n := 0
+	for _, v := range list {
+		if v == s {
+			n++
+		}
+	}
+	return n
+}
+
+// After the notice, a report does not count, and the halt stops an agent
+// that does not answer the interrupt request.
+func TestAReportAfterTheNoticeIsRefusedAndTheHaltStopsAnAgentThatIgnoresTheInterrupt(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := ready(t)
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), step, wait, reportStep("--outcome", "done", "--summary", "Fixed"),
+		shell("sleep 60"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	execution := getRun(t, ana, id).Executions[0].ID
+
+	began := time.Now()
+	env.Runner.Preempt(execution)
+	waitForEvent(t, env, id, "preempting")
+	open()
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if run.Reason != dispatcherapi.EndPreempted || onlyExecution(t, run).EndReason != dispatcherapi.EndPreempted {
+		t.Errorf("the Run is %s (%s): a report after the notice counted", run.State, run.Reason)
+	}
+	if took := time.Since(began); took > 15*time.Second {
+		t.Errorf("the handler took %s, more than the halt's 10 s and the save", took)
+	}
+	if out := env.Runner.Fake.Output(execution); !strings.Contains(out, "the machine is being taken back") {
+		t.Errorf("the agent's report was not refused with the reason; output:\n%s", out)
+	}
+	if _, err := killboundary.Reopen(wrapper.CgroupName(execution)); err == nil {
+		t.Errorf("the Execution's child cgroup is not removed")
+	}
+}
+
+// A last upload that gets no answer stops at its limit, and the
+// Execution still ends with what was saved.
+func TestALastUploadThatHangsStopsAtItsLimitAndTheExecutionStillEnds(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	execution := getRun(t, ana, id).Executions[0].ID
+	env.SolidTrace.HangIngest(true)
+	t.Cleanup(func() { env.SolidTrace.HangIngest(false) })
+
+	began := time.Now()
+	env.Runner.Preempt(execution)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	took := time.Since(began)
+	if onlyExecution(t, run).EndReason != dispatcherapi.EndPreempted {
+		t.Errorf("end reason %q", onlyExecution(t, run).EndReason)
+	}
+	if took < 10*time.Second || took > 20*time.Second {
+		t.Errorf("the Execution ended %s after the notice, want after the last upload's 10 s limit", took)
+	}
+	preemption := eventOf(t, env.WaitForRunEvents(id, 5), "preemption")
+	problems, _ := preemption["preemption.problems"].([]any)
+	if !slices.ContainsFunc(problems, func(p any) bool { return strings.Contains(p.(string), "the last upload did not end") }) {
+		t.Errorf("the problems: %v", problems)
+	}
+}
+
+// waitForExit waits until the Execution's wrapper exited, and gives its
+// exit code.
+func waitForExit(t *testing.T, env *factorytest.Env, execution string) int {
+	t.Helper()
+	waitUntil(t, "the wrapper exits", func() bool {
+		state, _ := env.Runner.Fake.State(execution)
+		return state.Ended()
+	})
+	ev, err := env.Runner.Fake.Wait(t.Context(), execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ev.ExitCode
+}

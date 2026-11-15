@@ -22,6 +22,7 @@ import (
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakedocker"
 	"github.com/solidtrace/factory/internal/fakeharness"
+	"github.com/solidtrace/factory/internal/fakemetadata"
 	"github.com/solidtrace/factory/internal/fakerunner"
 	"github.com/solidtrace/factory/internal/killboundary"
 	"github.com/solidtrace/factory/wrapper"
@@ -98,10 +99,12 @@ type Runner struct {
 	Fake *fakerunner.Runner
 	// Docker is the fake Docker of the agent and of the wrapper's end.
 	Docker *fakedocker.Docker
-	dir    string
-	bin    string
-	key    *rsa.PrivateKey
-	jwks   *httptest.Server
+	// Metadata is the Machine notice of each Execution's machine.
+	Metadata *fakemetadata.Server
+	dir      string
+	bin      string
+	key      *rsa.PrivateKey
+	jwks     *httptest.Server
 
 	mu         sync.Mutex
 	scripts    []string
@@ -188,6 +191,8 @@ func newRunner(e *Env) (*Runner, error) {
 	if r.Docker, err = fakedocker.New(filepath.Join(dir, "docker")); err != nil {
 		return nil, err
 	}
+	r.Metadata = fakemetadata.New()
+	e.t.Cleanup(r.Metadata.Close)
 	// After the fakerunner's Close (cleanups run last first): a lost
 	// machine's wrapper leaves its child cgroup, which a real lost machine
 	// takes with it.
@@ -255,6 +260,10 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),
+		// Each Execution is on a machine of its own, with GCE's Machine
+		// notice.
+		wrapper.EnvMachineNotice + "=gce",
+		wrapper.EnvMetadataURL + "=" + r.Metadata.URL(x.Execution),
 		// The wrapper gives the harness its own Claude Code directories.
 		"CLAUDE_CONFIG_DIR=", "CLAUDE_CODE_PROJECT_DIR_NAME=",
 	}
@@ -265,6 +274,19 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		env = env[1:]
 	}
 	return workload, r.Fake.Dispatch(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
+}
+
+// Preempt says on the Machine notice of the Execution's machine that the
+// machine will be taken back.
+func (r *Runner) Preempt(execution string) { r.Metadata.Preempt(execution) }
+
+// Signal sends sig to the Execution's wrapper, as the machine's shutdown
+// does.
+func (r *Runner) Signal(execution string, sig os.Signal) {
+	r.env.t.Helper()
+	if err := r.Fake.Signal(execution, sig); err != nil {
+		r.env.t.Fatal(err)
+	}
 }
 
 // RenewIdentity writes a new workload identity JWT for the Execution, at

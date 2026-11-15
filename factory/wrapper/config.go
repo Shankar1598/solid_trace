@@ -32,6 +32,12 @@ const (
 	// EnvUploadEvery is how often the wrapper uploads the Run's Agent
 	// sessions during the Execution, as a Go duration (default 5s).
 	EnvUploadEvery = "WRAPPER_UPLOAD_EVERY"
+	// EnvMachineNotice is the Machine notice: gce (the default), GCE's
+	// instance/preempted, or none, for a machine that has no such signal.
+	EnvMachineNotice = "WRAPPER_MACHINE_NOTICE"
+	// EnvMetadataURL is the GCE metadata server's computeMetadata/v1/ root
+	// (default http://metadata.google.internal/computeMetadata/v1/).
+	EnvMetadataURL = "WRAPPER_METADATA_URL"
 )
 
 // projectName is the Claude Code project directory name of a Run when
@@ -47,6 +53,8 @@ type config struct {
 	// sessions under <claudeConfig>/projects/<projectName>.
 	claudeConfig, projectName string
 	uploadEvery               time.Duration
+	// machineNotice is gce or none; metadataURL is GCE's metadata root.
+	machineNotice, metadataURL string
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -60,6 +68,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 		claudeConfig:  getenv("CLAUDE_CONFIG_DIR"),
 		projectName:   getenv("CLAUDE_CODE_PROJECT_DIR_NAME"),
 		uploadEvery:   uploadEvery,
+		machineNotice: getenv(EnvMachineNotice),
+		metadataURL:   getenv(EnvMetadataURL),
 	}
 	var problems []string
 	if c.dispatcherURL == "" {
@@ -77,6 +87,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 			problems = append(problems, EnvUploadEvery+" must be a duration such as 5s, not "+every)
 		}
 		c.uploadEvery = d
+	}
+	switch c.machineNotice {
+	case "":
+		c.machineNotice = noticeGCE
+	case noticeGCE, noticeNone:
+	default:
+		problems = append(problems, EnvMachineNotice+" must be gce or none, not "+c.machineNotice)
+	}
+	if c.metadataURL == "" {
+		c.metadataURL = defaultMetadataURL
 	}
 	if strings.ContainsAny(c.projectName, "/\x00") || c.projectName == "." || c.projectName == ".." {
 		problems = append(problems, "CLAUDE_CODE_PROJECT_DIR_NAME must be one directory name, not "+c.projectName)
