@@ -94,4 +94,54 @@ class ApiTokenTest < ActiveSupport::TestCase
     organization.destroy!
     assert_not ApiToken.exists?(scoped.id)
   end
+
+  # Child tokens: issue_child! always copies the parent's user and
+  # Organization, so these go through issue! with parent: directly.
+  test "a child token acts only as its parent's user, in its parent's Organization" do
+    acme = create(:organization)
+    beta = create(:organization)
+    other = create(:user)
+    create(:organization_user, organization: acme, user: @user, role: :admin)
+    create(:organization_user, organization: beta, user: @user, role: :admin)
+    create(:organization_user, organization: acme, user: other, role: :admin)
+    parent, = dispatcher_token(acme)
+
+    [ { user: other, organization_id: acme.id }, { user: @user, organization_id: beta.id } ].each do |fields|
+      error = assert_raises(ActiveRecord::RecordInvalid) do
+        ApiToken.issue!(name: "Child", scopes: [ "run_events:write" ], expires_at: 1.hour.from_now, parent: parent,
+                        **fields)
+      end
+      assert_match(/parent's user, in its parent's Organization/, error.record.errors[:parent].join, fields.inspect)
+    end
+  end
+
+  test "issue_child! deletes its parent's expired children, and no other token" do
+    acme = create(:organization)
+    create(:organization_user, organization: acme, user: @user, role: :admin)
+    parent, = dispatcher_token(acme)
+    other_parent, = dispatcher_token(acme)
+    expired = child_of(parent)
+    live = child_of(parent)
+    other_expired = child_of(other_parent)
+    [ expired, other_expired ].each { |token| token.update_column(:expires_at, 1.minute.ago) }
+
+    made = child_of(parent)
+
+    assert_not ApiToken.exists?(expired.id)
+    assert ApiToken.exists?(live.id)
+    assert ApiToken.exists?(other_expired.id)
+    assert_equal [ live.id, made.id ].sort, parent.children.pluck(:id).sort
+  end
+
+  private
+
+  def dispatcher_token(organization)
+    ApiToken.issue!(user: @user, name: "Dispatcher", scopes: Oauth::Scopes::DISPATCHER,
+                    organization_id: organization.id, expires_at: 30.days.from_now)
+  end
+
+  def child_of(parent)
+    ApiToken.issue_child!(parent: parent, name: "Execution", scopes: [ "run_events:write" ],
+                          expires_at: 1.hour.from_now).first
+  end
 end
