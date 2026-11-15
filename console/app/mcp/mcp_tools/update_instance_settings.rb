@@ -59,6 +59,11 @@ module McpTools
                    "snippets and get_project_setup use from now on; DSNs already in apps don't change. An empty " \
                    "string clears it, falling back to PUBLIC_INGEST_URL, then Console's host at port 4000 " \
                    "(editable.ingest_url_fallback)." }
+    argument :dispatcher_url, { type: "string",
+      description: "The Dispatcher's private API, http(s)://host[:port][/path], as Console's server reaches it. " \
+                   "Console calls it as the signed-in user, with a token that works for 5 minutes and has only " \
+                   "the factory scope. The Factory's parts that need the Dispatcher show only while it is set. An " \
+                   "empty string clears it." }
     argument :redaction_patterns, { type: "array", items: { type: "string" },
       description: "The whole list of extra Redaction patterns, Go regular expressions (RE2 syntax), after the " \
                    "defaults (editable.redaction_defaults). Before EventStore stores a transcript unit of an Agent " \
