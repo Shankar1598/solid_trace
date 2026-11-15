@@ -94,6 +94,7 @@ Rails.application.routes.draw do
       constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
     get "agent_sessions/:id/line", to: "agent_sessions#line", as: :agent_session_line,
       constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
+    get "runs", to: "runs#index", as: :runs
     resources :dashboards, only: [ :index, :show, :create, :update, :destroy ] do
       member do
         patch :layout

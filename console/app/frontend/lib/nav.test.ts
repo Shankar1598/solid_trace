@@ -35,6 +35,12 @@ describe('the sidebar entry of a page', () => {
     expect(orgSwitchUrl('/acme/agent_sessions?person=3', 'meta')).toBe('/meta/agent_sessions')
   })
 
+  it('is Runs for the Runs page with its filters', () => {
+    expect(navSection('/acme/runs')).toBe('runs')
+    expect(navSection('/acme/runs?state=waiting_on_person&project=shop')).toBe('runs')
+    expect(orgSwitchUrl('/acme/runs?project=shop', 'meta')).toBe('/meta/runs')
+  })
+
   it('is Projects for the list, a new Project and a Project\'s page', () => {
     expect(navSection('/acme/projects')).toBe('projects')
     expect(navSection('/acme/projects/new')).toBe('projects')
