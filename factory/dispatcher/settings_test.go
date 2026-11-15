@@ -358,6 +358,50 @@ func TestTheSettingsFollowTheProjectWhenItsSlugChanges(t *testing.T) {
 	if len(list.Projects) != 1 || list.Projects[0].Project != "cart" || list.Projects[0].Orphaned {
 		t.Errorf("the list is %+v, want cart, not orphaned", list.Projects)
 	}
+
+	// The Dispatcher keeps the new slug: when SolidTrace deletes the
+	// Project, the warning names cart.
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, project.ID)
+	ana.API("GET", "/api/v1/projects", nil).JSON(t, &list)
+	if warning := orphanWarning(env.Logs()); !strings.Contains(warning, "project=cart") {
+		t.Errorf("the orphan warning is %q, want project=cart", warning)
+	}
+}
+
+// orphanWarning is the Log line that says Factory settings are marked
+// orphaned.
+func orphanWarning(logs string) string {
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, "marked orphaned") {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestASaveMakesOrphanedSettingsNotOrphanedAgain(t *testing.T) {
+	env := factorytest.New(t)
+	project := env.Project("checkout")
+	dana := admin(t, env)
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, project.ID)
+	var list dispatcherapi.ProjectList
+	dana.API("GET", "/api/v1/projects", nil).JSON(t, &list)
+	if len(list.Projects) != 1 || !list.Projects[0].Orphaned {
+		t.Fatalf("the list is %+v, want checkout orphaned", list.Projects)
+	}
+
+	env.SolidTrace.SetProject(factorytest.Organization.Slug, project)
+	mustCLI(t, dana, "projects", "set", "checkout", "--repository", "bitbucket.org/example/checkout")
+
+	var settings dispatcherapi.FactorySettings
+	dana.API("GET", "/api/v1/projects/checkout/settings", nil).JSON(t, &settings)
+	if settings.Orphaned {
+		t.Errorf("after the save the settings are %+v, want not orphaned", settings)
+	}
+	dana.API("GET", "/api/v1/projects", nil).JSON(t, &list)
+	if len(list.Projects) != 1 || list.Projects[0].Orphaned {
+		t.Errorf("after the save the list is %+v, want checkout not orphaned", list.Projects)
+	}
 }
 
 // checkout makes a git checkout with remote origin and the folders, and
