@@ -3,11 +3,13 @@
 // workload identity JWT, clones the repository, starts the headless form
 // of the Harness (Claude Code), writes the task as stream-json input,
 // serves the agent's socket, and ends the Execution. The outcome is the
-// agent's last valid report, never the harness's exit code.
+// agent's last valid report, never the harness's exit code. During the
+// Execution and before the end call, it uploads the Run's Agent sessions
+// with the Execution's child token (uploads.go).
 //
 // Later tickets add the cgroup end procedure (31), the fixed paths and the
-// Run's branch (33), the run user (39), the uploads (41), the commands and
-// the limits (32), and the Stop hook (38).
+// Run's branch (33), the run user (39), the restore of the Agent session
+// directory (59), the commands and the limits (32), and the Stop hook (38).
 package wrapper
 
 import (
@@ -50,14 +52,19 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		fmt.Fprintln(stderr, "wrapper:", err)
 		return 2
 	}
+	// The Dispatcher's private listener is reached directly, never
+	// through the proxy that the uploads use.
+	direct := http.DefaultTransport.(*http.Transport).Clone()
+	direct.Proxy = nil
 	c := &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
-		http: &http.Client{Timeout: 30 * time.Second}}
+		http: &http.Client{Timeout: 30 * time.Second, Transport: direct}}
 	task, err := c.task(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
 		return 1
 	}
-	e := &execution{cfg: cfg, client: c, task: task, log: stderr, needsPerson: make(chan struct{}, 1)}
+	e := &execution{cfg: cfg, client: c, task: task, log: stderr, needsPerson: make(chan struct{}, 1),
+		uploads: newUploads(cfg, c, task, stderr)}
 	end := e.run(ctx, environ)
 	if err := c.end(ctx, end); err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
@@ -82,6 +89,7 @@ type execution struct {
 	reported  bool
 
 	needsPerson chan struct{}
+	uploads     *uploads
 	stdin       io.WriteCloser
 	harness     *exec.Cmd
 	kill        *time.Timer
@@ -96,7 +104,15 @@ func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.Exe
 	if err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
+	if err := e.uploads.prepare(); err != nil {
+		_ = server.Close()
+		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "make the project directory: " + err.Error()}
+	}
+	e.uploads.start()
 	end := e.runHarness(environ)
+	// The last bytes go before the end call: the end step revokes the
+	// Execution's token.
+	e.uploads.finish()
 	// No report is in flight after this: the end call can go.
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -268,7 +284,7 @@ func (e *execution) headless() []string {
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.cfg.checkout()
-	cmd.Env = harnessEnv(environ, e.cfg.socket())
+	cmd.Env = append(harnessEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...)
 	cmd.Stderr = e.log
 	// A process group of its own, so that the end can kill what is left.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
