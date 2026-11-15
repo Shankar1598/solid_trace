@@ -74,6 +74,10 @@ Usage:
       id and its link in Console. The first Dispatcher verb needs
       --dispatcher with the Dispatcher's URL, which your operator gives;
       later verbs use the same URL.
+  solidtrace stop [--dispatcher URL] RUN_ID
+      Stop a Run that is queued, running or waiting on a person. The Run
+      is stopped at once; its agent is interrupted and its Execution
+      ends. A message continues a stopped Run.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID
@@ -153,6 +157,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return start(ctx, args[1:], env)
 	case "runs":
 		return runs(ctx, args[1:], env)
+	case "stop":
+		return stop(ctx, args[1:], env)
 	case "projects":
 		return projects(ctx, args[1:], env)
 	case "connections":

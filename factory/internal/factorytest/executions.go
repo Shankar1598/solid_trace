@@ -88,6 +88,11 @@ func Executions(e *Env) {
 		e.t.Fatalf("start the fake Runner: %v", err)
 	}
 	e.Runner = r
+	// The wrappers' limits read the environment's clock.
+	e.Clock.mu.Lock()
+	e.Clock.machines, e.Clock.beforeMove = r.clockFile(), r.renewIdentities
+	writeClock(e.Clock.machines, e.Clock.now)
+	e.Clock.mu.Unlock()
 }
 
 // WithRunner gives the Dispatcher runner in place of the fake Runner,
@@ -126,6 +131,30 @@ func (r *Runner) BreakWrapper() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.broken = true
+}
+
+// HoldClock stops the agent machines' clock at its time: the wrappers'
+// limits do not pass when the environment's clock moves, as when a
+// wrapper's timers fail. The Dispatcher's clock still moves.
+func (r *Runner) HoldClock() {
+	r.env.Clock.mu.Lock()
+	defer r.env.Clock.mu.Unlock()
+	r.env.Clock.held = true
+}
+
+// clockFile is the file of the agent machines' clock.
+func (r *Runner) clockFile() string { return filepath.Join(r.dir, "clock") }
+
+// renewIdentities renews the workload identity JWT of each Execution
+// before the environment's clock moves to next: each new JWT is valid
+// from now until 1 hour after next, so no call of a wrapper finds its JWT
+// not valid while the clock moves.
+func (r *Runner) renewIdentities(next time.Time) {
+	for _, execution := range r.Dispatched() {
+		claims := r.Claims(Workload(execution))
+		claims["exp"] = next.Add(time.Hour).Unix()
+		r.writeIdentity(execution, r.Sign(claims))
+	}
 }
 
 // Wrapper is the wrapper program.
@@ -270,6 +299,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),
+		wrapper.EnvClockFile + "=" + r.clockFile(),
 		// The wrapper gives the harness its own Claude Code directories.
 		"CLAUDE_CONFIG_DIR=", "CLAUDE_CODE_PROJECT_DIR_NAME=",
 	}
@@ -287,8 +317,13 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 // Runner does before the old JWT expires.
 func (r *Runner) RenewIdentity(execution string) {
 	r.env.t.Helper()
+	r.writeIdentity(execution, r.Identity(Workload(execution)))
+}
+
+func (r *Runner) writeIdentity(execution, jwt string) {
+	r.env.t.Helper()
 	path := filepath.Join(r.dir, "identity-"+execution+".jwt")
-	if err := os.WriteFile(path+".new", []byte(r.Identity(Workload(execution))), 0o600); err != nil {
+	if err := os.WriteFile(path+".new", []byte(jwt), 0o600); err != nil {
 		r.env.t.Fatal(err)
 	}
 	if err := os.Rename(path+".new", path); err != nil {

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -31,10 +32,23 @@ import (
 // DispatcherToken is the Dispatcher's own API token at the recorder.
 const DispatcherToken = "stk_dispatcher"
 
-// Clock is a clock that moves only when a test moves it.
+// Clock is a clock that moves only when a test moves it. It is the
+// Dispatcher's clock, the people's, and (with Executions) the clock of
+// the wrappers' limits on the agent machines.
 type Clock struct {
 	mu  sync.Mutex
 	now time.Time
+	// moving keeps one Advance at a time, so the machines see each time
+	// in order.
+	moving sync.Mutex
+	// machines is the file that the wrappers read their clock from (""
+	// with no Executions). held stops it at its time.
+	machines string
+	held     bool
+	// beforeMove runs at each Advance before the clock moves to the new
+	// time: the Runner renews the workload identities, as Nomad does
+	// before they expire.
+	beforeMove func(next time.Time)
 }
 
 // Now is the clock's time.
@@ -44,11 +58,33 @@ func (c *Clock) Now() time.Time {
 	return c.now
 }
 
-// Advance moves the clock by d.
+// Advance moves the clock by d, on the agent machines too.
 func (c *Clock) Advance(d time.Duration) {
+	c.moving.Lock()
+	defer c.moving.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
+	next, before := c.now.Add(d), c.beforeMove
+	c.mu.Unlock()
+	if before != nil {
+		before(next)
+	}
+	c.mu.Lock()
+	c.now = next
+	now, machines, held := c.now, c.machines, c.held
+	c.mu.Unlock()
+	if machines != "" && !held {
+		writeClock(machines, now)
+	}
+}
+
+// writeClock writes now to the machines' clock file in one step.
+func writeClock(path string, now time.Time) {
+	if err := os.WriteFile(path+".new", []byte(now.Format(time.RFC3339Nano)), 0o600); err != nil {
+		panic("factorytest: write the machines' clock: " + err.Error())
+	}
+	if err := os.Rename(path+".new", path); err != nil {
+		panic("factorytest: write the machines' clock: " + err.Error())
+	}
 }
 
 // Env is one Dispatcher and one SolidTrace.
@@ -150,6 +186,11 @@ func (e *Env) Logs() string { return e.logs.String() }
 // eventRetry is the longest wait of the Dispatcher's event sender between
 // two tries, so a test sees the events soon after EventStore is back.
 const eventRetry = 50 * time.Millisecond
+
+// backstopEvery is how often the Dispatcher's backstop looks for
+// Executions past their total limit, so that a test sees its stop soon
+// after it moves the clock.
+const backstopEvery = 20 * time.Millisecond
 
 // RunEvents are the run events of the Run that SolidTrace has, by run.seq,
 // each run.seq one time (a reader drops repeats).
@@ -320,7 +361,8 @@ func (e *Env) start() {
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
 		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
-		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) }}
+		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
+		BackstopEvery: backstopEvery}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
