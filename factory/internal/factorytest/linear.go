@@ -8,6 +8,7 @@ import (
 
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakelinear"
 )
 
@@ -70,6 +71,9 @@ func (e *Env) LinearConnection(name, secret string) string {
 	}
 	return path
 }
+
+// Dispatcher is the running Dispatcher.
+func (e *Env) Dispatcher() *dispatcher.Dispatcher { return e.current.Load() }
 
 // LinearWebhook sends a Linear webhook of the kind (Issue, Comment) about
 // the issue to path, at the clock's time, signed with secret.

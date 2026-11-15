@@ -249,3 +249,68 @@ func TestALinearConnectionWhoseRefreshTokenLinearRefusesStartsNoRunAndLogsWhatTo
 		t.Errorf("the log does not say to install the app again:\n%s", logs)
 	}
 }
+
+func TestALinearTicketGoesToTheProjectOfItsLabelInTheProjectLabelGroup(t *testing.T) {
+	env, path := linearEnv(t)
+	env.Project("admin")
+	mustSaveRoutes(t, env, "admin", route("issues", "Admin app"))
+	env.Linear.Put(fakelinear.Issue{ID: "issue-8", Identifier: "ENG-8", Title: "Fix the login", Status: "Ready for agent",
+		Labels: []fakelinear.Label{{Name: "Bug"}, {Name: "Admin app", Group: "Project"}}}, rosaOnLinear)
+	// A label of that name in another group is not the routing field.
+	env.Linear.Put(fakelinear.Issue{ID: "issue-9", Identifier: "ENG-9", Title: "Fix the cart", Status: "Ready for agent",
+		Labels: []fakelinear.Label{{Name: "Admin app", Group: "Area"}}}, rosaOnLinear)
+	env.LinearWebhook(path, linearSecret, "d-8", "Issue", "issue-8")
+	env.LinearWebhook(path, linearSecret, "d-9", "Issue", "issue-9")
+	projects := map[string]string{}
+	for _, run := range waitForRuns(t, env, 2) {
+		projects[run.Link] = run.Project
+	}
+	if projects[fakelinear.IssueURL("ENG-8")] != "admin" || projects[fakelinear.IssueURL("ENG-9")] != "shop" {
+		t.Errorf("the Runs went to %v, want ENG-8 to admin and ENG-9 to shop", projects)
+	}
+}
+
+func TestTheNoRouteCommentAndAStatusChangeShowAsTheAppOnLinear(t *testing.T) {
+	env := factorytest.New(t)
+	path := env.LinearConnection("issues", linearSecret)
+	env.Project("shop")
+	mustSaveRoutes(t, env, "shop", route("issues", "Shop"))
+	settle()
+	env.Linear.Put(fakelinear.Issue{ID: "issue-10", Identifier: "ENG-10", Title: "Fix the cart", Status: "Ready for agent"},
+		rosaOnLinear)
+	// The comment comes later than the ticket's last change.
+	env.Clock.Advance(time.Second)
+	env.LinearWebhook(path, linearSecret, "d-10", "Issue", "issue-10")
+	deadline := time.Now().Add(10 * time.Second)
+	for len(env.Linear.Comments()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	comments := env.Linear.Comments()
+	if len(comments) != 1 || comments[0].Issue != "issue-10" || comments[0].Author != fakelinear.App ||
+		!strings.Contains(comments[0].Body, "Project") {
+		t.Fatalf("the comments are %+v, want one by the app on issue-10 that names the label group Project", comments)
+	}
+	// The app's own comment is not a new edit of the ticket: the
+	// backstops post no second comment.
+	for range 2 {
+		env.Clock.Advance(5*time.Minute + time.Second)
+		settle()
+	}
+	if n := len(env.Linear.Comments()); n != 1 {
+		t.Errorf("the ticket has %d comments, want 1", n)
+	}
+	if list := runs(t, env); len(list) != 0 {
+		t.Errorf("a ticket with no route started %d Runs", len(list))
+	}
+
+	if err := env.Dispatcher().SetTicketStatus(t.Context(), "issues", "issue-10", "Agent working"); err != nil {
+		t.Fatal(err)
+	}
+	if status, by := env.Linear.Status("issue-10"); status != "Agent working" || by != fakelinear.App {
+		t.Errorf("the ticket is %q, set by %+v, want Agent working by the app", status, by)
+	}
+	if err := env.Dispatcher().SetTicketStatus(t.Context(), "issues", "issue-10", "No such status"); err == nil ||
+		!strings.Contains(err.Error(), "no status") {
+		t.Errorf("a status that the team does not have: %v, want an error that says so", err)
+	}
+}
