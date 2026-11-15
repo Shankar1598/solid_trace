@@ -21,6 +21,7 @@ import (
 type adminWorld struct {
 	t          *testing.T
 	solidTrace *recorder.Recorder
+	d          *Dispatcher
 	handler    http.Handler
 	mu         sync.Mutex
 	now        time.Time
@@ -42,6 +43,7 @@ func newAdminWorld(t *testing.T) *adminWorld {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
+	w.d = d
 	w.handler = d.person(d.admin(func(rw http.ResponseWriter, _ *http.Request, p person) {
 		writeJSON(rw, http.StatusOK, map[string]string{"done_by": p.name})
 	}))
