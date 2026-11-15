@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -246,6 +247,41 @@ func TestADockerThatDoesNotAnswerHoldsTheEndForAtMostItsLimit(t *testing.T) {
 	}
 	if out := env.Runner.Fake.Output(onlyExecution(t, run).ID); !strings.Contains(out, "docker") {
 		t.Errorf("the wrapper did not say that the container step failed:\n%s", out)
+	}
+}
+
+// The agent makes a cgroup in the Execution's cgroup, so that the
+// Execution's cgroup cannot go. The wrapper still sends the end call, and
+// then fails (exit 1), so that the Runner sees the leak.
+func TestTheWrapperFailsWhenTheEndProcedureLeavesTheExecutionsCgroup(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t),
+		shell(`mkdir "/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)/held"`),
+		reportStep("--outcome", "done", "--summary", "Fixed"), reply, result, waitForEnd)
+	// Before the environment removes the Execution's cgroup.
+	t.Cleanup(func() {
+		for _, execution := range env.Runner.Dispatched() {
+			if b, err := killboundary.Reopen(wrapper.CgroupName(execution)); err == nil {
+				os.Remove(filepath.Join(b.Dir(), "held"))
+			}
+		}
+	})
+
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	execution := onlyExecution(t, run).ID
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ev, err := env.Runner.Fake.Wait(ctx, execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.ExitCode != 1 {
+		t.Errorf("the wrapper's exit code %d, want 1", ev.ExitCode)
+	}
+	if out := env.Runner.Fake.Output(execution); !strings.Contains(out, "the end procedure left processes") {
+		t.Errorf("the wrapper did not say that the cgroup is left:\n%s", out)
 	}
 }
 
