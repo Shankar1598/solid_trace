@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/capture"
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -94,7 +96,17 @@ func (d *Dispatcher) saveSettings(w http.ResponseWriter, r *http.Request, p pers
 		}
 		connectionID = id
 	}
-	if err := d.store.saveSettings(p.organization.id, project.id, project.slug, save, connectionID, p, d.now().UTC()); err != nil {
+	routes, ok := d.routes(w, p, save.Routes)
+	if !ok {
+		return
+	}
+	err := d.store.saveSettings(p.organization.id, project.id, project.slug, save, connectionID, routes, p, d.now().UTC())
+	var taken *routeTaken
+	if errors.As(err, &taken) {
+		writeProblem(w, http.StatusConflict, taken.Error())
+		return
+	}
+	if err != nil {
 		d.serverError(w, "save the Factory settings", err)
 		return
 	}
@@ -257,7 +269,54 @@ func cleanSettings(s *dispatcherapi.SaveFactorySettings) string {
 	}
 	s.BaseBranch = branch
 	s.Connection = strings.TrimSpace(s.Connection)
+	if s.Routes != nil {
+		seen := map[dispatcherapi.Route]bool{}
+		for i, r := range *s.Routes {
+			r = dispatcherapi.Route{Connection: strings.TrimSpace(r.Connection), Match: strings.TrimSpace(r.Match)}
+			switch {
+			case r.Connection == "":
+				return "a route needs the name of a tracker connection"
+			case utf8.RuneCountInString(r.Match) > maxMatch || strings.ContainsFunc(r.Match, unicode.IsControl):
+				return "a route's match value is one line of at most 200 characters, not " + quote(r.Match)
+			case seen[r]:
+				return "the route (" + r.Connection + ", " + quote(r.Match) + ") is in the list two times"
+			}
+			seen[r] = true
+			(*s.Routes)[i] = r
+		}
+	}
 	return ""
+}
+
+// maxMatch is the most characters of a route's match value.
+const maxMatch = 200
+
+// routes finds the tracker connection of each route (nil for nil: the
+// save keeps the routes). It answers the request itself when a route names
+// no tracker connection of the Organization.
+func (d *Dispatcher) routes(w http.ResponseWriter, p person, routes *[]dispatcherapi.Route) ([]storedRoute, bool) {
+	if routes == nil {
+		return nil, true
+	}
+	stored := []storedRoute{}
+	for _, r := range *routes {
+		id, kind, err := d.store.connectionKind(p.organization.id, r.Connection)
+		switch {
+		case errors.Is(err, errNotFound):
+			writeProblem(w, http.StatusUnprocessableEntity, "no connection "+r.Connection+" in the Organization "+
+				p.organization.slug+": 'solidtrace connections list' lists them")
+			return nil, false
+		case err != nil:
+			d.serverError(w, "save the Factory settings", err)
+			return nil, false
+		case d.trackers[kind] == nil:
+			writeProblem(w, http.StatusUnprocessableEntity, "a route needs a tracker connection, and "+r.Connection+
+				" is a "+kind+" connection")
+			return nil, false
+		}
+		stored = append(stored, storedRoute{r, id})
+	}
+	return stored, true
 }
 
 func quote(s string) string {
@@ -330,6 +389,10 @@ func (d *Dispatcher) connections(organizationID string) ([]dispatcherapi.Connect
 		if _, ok := d.kinds[c.Kind]; ok && d.config.WebhookURL != "" {
 			c.WebhookURL = d.config.WebhookURL + webhookPath(c.Kind, c.id)
 		}
+		if t := d.trackers[c.Kind]; t != nil {
+			settings := trackerSettings(t, c.tracker)
+			c.Tracker = &settings
+		}
 		connections = append(connections, c.Connection)
 	}
 	return connections, err
@@ -386,6 +449,47 @@ func (d *Dispatcher) saveWebhookSecret(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	d.log.Info("an Admin saved a webhook secret", "organization", p.organization.slug, "connection", name, "by", p.name)
+	d.writeConnection(w, p.organization.id, name)
+}
+
+// maxTrackerSetting is the most characters of a tracker setting.
+const maxTrackerSetting = 200
+
+// saveTrackerSettings replaces the settings of the Organization's tracker
+// connection with the request's {name}. An empty value is the kind's
+// default.
+func (d *Dispatcher) saveTrackerSettings(w http.ResponseWriter, r *http.Request, p person) {
+	name := r.PathValue("name")
+	var save dispatcherapi.TrackerSettings
+	if !decode(w, r, &save, "the body must be a JSON object with ready_status and routing_field") {
+		return
+	}
+	save.ReadyStatus, save.RoutingField = strings.TrimSpace(save.ReadyStatus), strings.TrimSpace(save.RoutingField)
+	for _, v := range []string{save.ReadyStatus, save.RoutingField} {
+		if utf8.RuneCountInString(v) > maxTrackerSetting || strings.ContainsFunc(v, unicode.IsControl) {
+			writeProblem(w, http.StatusBadRequest, "a tracker setting is one line of at most 200 characters, not "+quote(v))
+			return
+		}
+	}
+	_, kind, err := d.store.connectionKind(p.organization.id, name)
+	switch {
+	case errors.Is(err, errNotFound):
+		writeProblem(w, http.StatusNotFound, "no connection "+name+" in the Organization "+p.organization.slug+
+			": 'solidtrace connections list' lists them")
+		return
+	case err != nil:
+		d.serverError(w, "read the connection", err)
+		return
+	case d.trackers[kind] == nil:
+		writeProblem(w, http.StatusUnprocessableEntity, "a "+kind+" connection is not a tracker connection")
+		return
+	}
+	if err := d.store.saveTrackerSettings(p.organization.id, name, save); err != nil {
+		d.serverError(w, "save the tracker settings", err)
+		return
+	}
+	d.log.Info("an Admin saved the tracker settings of a connection", "organization", p.organization.slug,
+		"connection", name, "by", p.name)
 	d.writeConnection(w, p.organization.id, name)
 }
 

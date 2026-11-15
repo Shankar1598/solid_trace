@@ -30,11 +30,18 @@ const (
 	StateFailed          = "failed"
 )
 
-// Person is who started a Run: the SolidTrace user of the token.
+// Person is who started a Run or saved a value: the SolidTrace user of
+// the token. A Run that a tracker ticket started has the tracker user who
+// set the ready status as its starter, with Kind ActorTracker.
 type Person struct {
+	// Kind is "" for a SolidTrace user, or ActorTracker.
+	Kind string `json:"kind,omitempty"`
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
+
+// ActorTracker is the kind of a Run's starter that is a tracker user.
+const ActorTracker = "tracker"
 
 // Run is one unit of work, from its trigger to its PR outcome.
 type Run struct {
@@ -57,6 +64,9 @@ type Run struct {
 	Summary string `json:"summary,omitempty"`
 	// Executions are the Run's Executions, oldest first.
 	Executions []Execution `json:"executions,omitempty"`
+	// Link is the page of what started the Run, such as its tracker
+	// ticket ("" is none).
+	Link string `json:"link,omitempty"`
 	// URL is the Run's page in Console.
 	URL string `json:"url"`
 }
@@ -208,6 +218,8 @@ type FactorySettings struct {
 	// Connection is the name of the forge connection that the Project's
 	// Runs use ("" is none).
 	Connection string `json:"connection"`
+	// Routes are the tracker routes to the Project.
+	Routes []Route `json:"routes"`
 	// Orphaned is true when the Dispatcher found that SolidTrace no longer has
 	// the Project.
 	Orphaned  bool      `json:"orphaned"`
@@ -216,12 +228,35 @@ type FactorySettings struct {
 }
 
 // SaveFactorySettings is the body of a save of a Project's Factory
-// settings. It replaces each value.
+// settings. It replaces each value. Routes nil keeps the Project's routes;
+// an empty list removes them.
 type SaveFactorySettings struct {
-	Repository string `json:"repository"`
-	Folder     string `json:"folder"`
-	BaseBranch string `json:"base_branch"`
+	Repository string   `json:"repository"`
+	Folder     string   `json:"folder"`
+	BaseBranch string   `json:"base_branch"`
+	Connection string   `json:"connection"`
+	Routes     *[]Route `json:"routes,omitempty"`
+}
+
+// Route sends the ready tickets of a tracker connection to a Project:
+// each ticket whose routing field has the value Match. An empty Match is
+// the default of the connection: each ticket that no other route of the
+// connection matches. Two Projects cannot have the same pair.
+type Route struct {
+	// Connection is the name of the tracker connection.
 	Connection string `json:"connection"`
+	Match      string `json:"match"`
+}
+
+// TrackerSettings are the settings of a tracker connection. An empty
+// value is the kind's default.
+type TrackerSettings struct {
+	// ReadyStatus is the status that starts a Run, such as
+	// "Ready for agent".
+	ReadyStatus string `json:"ready_status"`
+	// RoutingField is the ticket's field that the routes match, such as
+	// the Notion select property "Project".
+	RoutingField string `json:"routing_field"`
 }
 
 // ProjectList is the answer of the list of the Factory settings of the
@@ -249,6 +284,9 @@ type Connection struct {
 	// LastWebhookAt is the time of the last verified webhook (nil is
 	// none).
 	LastWebhookAt *time.Time `json:"last_webhook_at,omitempty"`
+	// Tracker is the settings of a tracker connection, with the kind's
+	// default for each empty value (nil for another kind).
+	Tracker *TrackerSettings `json:"tracker,omitempty"`
 }
 
 // SaveWebhookSecret is the body of a save of a connection's webhook
@@ -399,6 +437,14 @@ func (c *Client) SaveWebhookSecret(ctx context.Context, name, secret string) (Co
 	var connection Connection
 	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name)+"/webhook-secret",
 		SaveWebhookSecret{Secret: secret}, &connection)
+	return connection, err
+}
+
+// SaveTrackerSettings replaces the settings of a tracker connection (an
+// Admin only).
+func (c *Client) SaveTrackerSettings(ctx context.Context, name string, save TrackerSettings) (Connection, error) {
+	var connection Connection
+	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name)+"/tracker", save, &connection)
 	return connection, err
 }
 

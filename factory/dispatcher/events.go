@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/solidtrace/cli/dispatcherapi"
 )
 
 // Run events are Logs in the Organization's Agent Project (see the
@@ -30,10 +32,17 @@ const (
 )
 
 // Trigger kinds of a Run (run.trigger).
-const triggerPerson = "person"
+const (
+	triggerPerson  = "person"
+	triggerTracker = "tracker"
+)
 
-// Actor kinds (actor.kind).
-const actorPerson = "person"
+// Actor kinds (actor.kind). The tracker user who set a ticket's ready
+// status is the actor of the Run that it started.
+const (
+	actorPerson  = "person"
+	actorTracker = dispatcherapi.ActorTracker
+)
 
 // runEventsPath is SolidTrace's (EventStore's) route for run events. A
 // token with run_events:write sends a JSON array of Logs.
@@ -65,14 +74,19 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	if err := tx.QueryRow(`UPDATE runs SET seq = seq + 1 WHERE id = ? RETURNING seq`, runID).Scan(&seq); err != nil {
 		return fmt.Errorf("count the run event: %w", err)
 	}
-	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorID, actorName, sessionID string
+	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorKind, actorID, actorName,
+		sessionID, link string
 	var executions int64
 	err := tx.QueryRow(`SELECT state, reason, project, repository, folder, base_branch, trigger_kind, prompt,
-		started_by_id, started_by_name, session_id, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
+		started_by_kind, started_by_id, started_by_name, session_id, link,
+		(SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
 		FROM runs r WHERE id = ?`, runID).Scan(&state, &reason, &project, &repository, &folder, &baseBranch, &trigger,
-		&prompt, &actorID, &actorName, &sessionID, &executions)
+		&prompt, &actorKind, &actorID, &actorName, &sessionID, &link, &executions)
 	if err != nil {
 		return fmt.Errorf("read the Run for its event: %w", err)
+	}
+	if actorKind == "" {
+		actorKind = actorPerson
 	}
 	event := map[string]any{
 		"time":            at.UTC().Format(time.RFC3339Nano),
@@ -93,7 +107,8 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"factory.project": project,
 		"repository":      repository,
 		"folder":          folder,
-		"actor.kind":      actorPerson,
+		"run.link":        link,
+		"actor.kind":      actorKind,
 		"actor.id":        actorID,
 		"actor.name":      actorName,
 	}
@@ -103,7 +118,7 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	for k, v := range details {
 		event[k] = v
 	}
-	event["run.started_by.kind"] = actorPerson
+	event["run.started_by.kind"] = actorKind
 	event["run.started_by.id"] = actorID
 	event["run.started_by.name"] = actorName
 	return addToOutbox(tx, event)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/fakesource"
+	"github.com/solidtrace/factory/internal/faketracker"
 )
 
 // PublicWebhookURL is the Dispatcher's public webhook URL in each Env (the
@@ -91,4 +92,28 @@ func FakeDelivery(secret, delivery string, body []byte) http.Header {
 	h.Set(fakesource.DeliveryHeader, delivery)
 	h.Set("Content-Type", "application/json")
 	return h
+}
+
+// TrackerConnection makes a connection of the fake tracker with name, as
+// an Admin, with secret as its webhook secret ("" is none). Its token is
+// fake-token-<name>. It returns the path of its webhook URL.
+func (e *Env) TrackerConnection(name, secret string) string {
+	e.t.Helper()
+	return e.WebhookConnectionOf(faketracker.Kind, name, secret)
+}
+
+// TrackerWebhook sends a delivery of the fake tracker to path that
+// announces a change of the ticket, signed with secret.
+func (e *Env) TrackerWebhook(path, secret, delivery, ticket string) Answer {
+	e.t.Helper()
+	header, body := faketracker.Delivery(secret, delivery, ticket)
+	return e.Webhook(path, header, body)
+}
+
+// Admin is the Admin of Organization that the Env's helpers act as.
+func (e *Env) Admin() *Person {
+	if e.admin == nil {
+		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
+	}
+	return e.admin
 }
