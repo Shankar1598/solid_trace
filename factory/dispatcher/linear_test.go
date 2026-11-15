@@ -193,3 +193,59 @@ func TestALinearWebhookWithAWrongSignatureOrATimestampOutside60SecondsGets401(t 
 		t.Errorf("the same delivery again: %d %s, want 200 not queued", a.Status, a.Body)
 	}
 }
+
+// readyTicket puts a ready ticket on the fake Linear and sends its
+// webhook.
+func readyTicket(t *testing.T, env *factorytest.Env, path, id string) {
+	t.Helper()
+	env.Linear.Put(fakelinear.Issue{ID: id, Identifier: strings.ToUpper(id), Title: "Fix " + id,
+		Status: "Ready for agent"}, rosaOnLinear)
+	if a := env.LinearWebhook(path, linearSecret, "d-"+id, "Issue", id); a.Status != http.StatusOK {
+		t.Fatalf("the webhook of %s: %d %s", id, a.Status, a.Body)
+	}
+}
+
+func TestAnExpiredLinearAccessTokenIsRefreshedWithTheRotatingRefreshToken(t *testing.T) {
+	env, path := linearEnv(t)
+	// The access token lasts 24 hours.
+	env.Clock.Advance(25 * time.Hour)
+	readyTicket(t, env, path, "issue-4")
+	waitForRuns(t, env, 1)
+	if n := env.Linear.Refreshes(); n != 1 {
+		t.Fatalf("Linear gave %d refreshes, want 1", n)
+	}
+
+	// The next refresh, after a restart, uses the new refresh token: the
+	// fake refuses the old one.
+	env.Restart()
+	env.Clock.Advance(25 * time.Hour)
+	readyTicket(t, env, path, "issue-5")
+	waitForRuns(t, env, 2)
+	if n := env.Linear.Refreshes(); n != 2 {
+		t.Errorf("Linear gave %d refreshes, want 2", n)
+	}
+}
+
+func TestALinearAccessTokenThatLinearRefusesBeforeItsExpiryIsRefreshedOneTime(t *testing.T) {
+	env, path := linearEnv(t)
+	env.Linear.RevokeAccessTokens()
+	readyTicket(t, env, path, "issue-6")
+	waitForRuns(t, env, 1)
+	if n := env.Linear.Refreshes(); n != 1 {
+		t.Errorf("Linear gave %d refreshes, want 1", n)
+	}
+}
+
+func TestALinearConnectionWhoseRefreshTokenLinearRefusesStartsNoRunAndLogsWhatToDo(t *testing.T) {
+	env, path := linearEnv(t)
+	env.Linear.RefuseRefresh()
+	env.Clock.Advance(25 * time.Hour)
+	readyTicket(t, env, path, "issue-7")
+	settle()
+	if list := runs(t, env); len(list) != 0 {
+		t.Errorf("a connection with no valid token started %d Runs", len(list))
+	}
+	if logs := env.Logs(); !strings.Contains(logs, "solidtrace connections add linear issues") {
+		t.Errorf("the log does not say to install the app again:\n%s", logs)
+	}
+}

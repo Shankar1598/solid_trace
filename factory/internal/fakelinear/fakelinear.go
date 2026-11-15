@@ -162,6 +162,14 @@ func (l *Linear) RefuseRefresh() {
 	l.refusedRefresh = true
 }
 
+// RevokeAccessTokens stops each access token before its expiry; the
+// refresh tokens still work.
+func (l *Linear) RevokeAccessTokens() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	clear(l.access)
+}
+
 // Refreshes counts the refreshes that the token endpoint gave.
 func (l *Linear) Refreshes() int {
 	l.mu.Lock()
