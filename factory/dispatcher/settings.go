@@ -427,6 +427,11 @@ func (d *Dispatcher) connections(organizationID string) ([]dispatcherapi.Connect
 			settings := trackerSettings(t, c.tracker)
 			c.Tracker = &settings
 		}
+		if c.Kind == dispatcherapi.TrackerLinear {
+			if credentials, err := d.store.linearCredentials(c.id); err == nil {
+				c.Team = credentials.Team.Key
+			}
+		}
 		connections = append(connections, c.Connection)
 	}
 	return connections, err

@@ -22,8 +22,10 @@ import (
 // CLI gives the approval's code; the Dispatcher exchanges it, keeps the
 // app's client secret and the tokens sealed in the connection's token,
 // and refreshes the access token (24 hours) with the rotating refresh
-// token. A ticket is a Linear issue; its routing field is a label group,
-// and its value is the name of the issue's label in that group.
+// token. A connection is of one team of the workspace: the issues of
+// other teams are not its tickets. A ticket is a Linear issue; its
+// routing field is a label group, and its value is the name of the
+// issue's label in that group.
 
 // linearBackstop is how often the timer reconciles a Linear connection.
 const linearBackstop = 5 * time.Minute
@@ -42,6 +44,8 @@ type linearCredentials struct {
 	// App is the app's own Linear user: the actor of what the factory
 	// does on Linear.
 	App linear.User `json:"app"`
+	// Team is the connection's team.
+	Team linear.Team `json:"team"`
 }
 
 func (c linearCredentials) app() linear.App {
@@ -94,11 +98,15 @@ func (l *linearTracker) Defaults() dispatcherapi.TrackerSettings {
 
 func (l *linearTracker) Ticket(ctx context.Context, c TrackerConnection, id string) (Ticket, error) {
 	var issue linear.Issue
-	err := l.with(ctx, c.WebhookSource, func(token string) (err error) {
-		issue, err = l.api.Issue(ctx, token, id)
+	team := ""
+	err := l.with(ctx, c.WebhookSource, func(credentials linearCredentials) (err error) {
+		team = credentials.Team.ID
+		issue, err = l.api.Issue(ctx, credentials.AccessToken, id)
 		return err
 	})
-	if errors.Is(err, linear.ErrNotFound) {
+	// An issue of another team is not a ticket of the connection, though
+	// the app can read it.
+	if errors.Is(err, linear.ErrNotFound) || (err == nil && issue.Team != team) {
 		return Ticket{}, ErrNoTicket
 	}
 	return linearTicket(issue, c.Settings.RoutingField), err
@@ -106,8 +114,8 @@ func (l *linearTracker) Ticket(ctx context.Context, c TrackerConnection, id stri
 
 func (l *linearTracker) ReadyTickets(ctx context.Context, c TrackerConnection) ([]Ticket, error) {
 	var issues []linear.Issue
-	err := l.with(ctx, c.WebhookSource, func(token string) (err error) {
-		issues, err = l.api.IssuesInStatus(ctx, token, c.Settings.ReadyStatus)
+	err := l.with(ctx, c.WebhookSource, func(credentials linearCredentials) (err error) {
+		issues, err = l.api.IssuesInStatus(ctx, credentials.AccessToken, credentials.Team.ID, c.Settings.ReadyStatus)
 		return err
 	})
 	tickets := make([]Ticket, 0, len(issues))
@@ -118,11 +126,15 @@ func (l *linearTracker) ReadyTickets(ctx context.Context, c TrackerConnection) (
 }
 
 func (l *linearTracker) SetStatus(ctx context.Context, c TrackerConnection, id, status string) error {
-	return l.with(ctx, c.WebhookSource, func(token string) error { return l.api.SetStatus(ctx, token, id, status) })
+	return l.with(ctx, c.WebhookSource, func(credentials linearCredentials) error {
+		return l.api.SetStatus(ctx, credentials.AccessToken, id, status)
+	})
 }
 
 func (l *linearTracker) Comment(ctx context.Context, c TrackerConnection, id, body string) error {
-	return l.with(ctx, c.WebhookSource, func(token string) error { return l.api.Comment(ctx, token, id, body) })
+	return l.with(ctx, c.WebhookSource, func(credentials linearCredentials) error {
+		return l.api.Comment(ctx, credentials.AccessToken, id, body)
+	})
 }
 
 // linearTicket is the ticket of an issue. Its routing value is the name
@@ -156,10 +168,11 @@ func (l *linearTracker) lock(id string) *sync.Mutex {
 	return l.locks[id]
 }
 
-// with runs call with a valid access token of the connection. It
+// with runs call with the credentials of the connection, with a valid
+// access token. It
 // refreshes the token first when it expires in less than
 // linearRefreshBefore, and one time more when Linear refuses it (401).
-func (l *linearTracker) with(ctx context.Context, source WebhookSource, call func(token string) error) error {
+func (l *linearTracker) with(ctx context.Context, source WebhookSource, call func(linearCredentials) error) error {
 	lock := l.lock(source.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -174,14 +187,14 @@ func (l *linearTracker) with(ctx context.Context, source WebhookSource, call fun
 		}
 		refreshed = true
 	}
-	err = call(credentials.AccessToken)
+	err = call(credentials)
 	if !errors.Is(err, linear.ErrUnauthorized) || refreshed {
 		return err
 	}
 	if credentials, err = l.refresh(ctx, source, credentials); err != nil {
 		return err
 	}
-	return call(credentials.AccessToken)
+	return call(credentials)
 }
 
 // refresh gets new tokens and saves them at once: the old refresh token
@@ -246,7 +259,17 @@ func (d *Dispatcher) installLinear(w http.ResponseWriter, r *http.Request, p per
 		writeProblem(w, http.StatusBadGateway, "the Dispatcher could not read the Linear app's user")
 		return
 	}
-	credentials := linearCredentials{ClientID: app.ClientID, ClientSecret: app.ClientSecret, App: appUser}
+	team, problem, err := linearTeam(r.Context(), tracker.api, tokens.AccessToken, strings.TrimSpace(install.Team))
+	if err != nil {
+		d.log.Warn("could not read the Linear app's teams", "connection", name, "error", err)
+		writeProblem(w, http.StatusBadGateway, "the Dispatcher could not read the teams of the Linear app")
+		return
+	}
+	if problem != "" {
+		writeProblem(w, http.StatusUnprocessableEntity, problem)
+		return
+	}
+	credentials := linearCredentials{ClientID: app.ClientID, ClientSecret: app.ClientSecret, App: appUser, Team: team}
 	credentials.use(tokens)
 	sealed, err := json.Marshal(credentials)
 	if err != nil {
@@ -259,8 +282,36 @@ func (d *Dispatcher) installLinear(w http.ResponseWriter, r *http.Request, p per
 		return
 	}
 	d.log.Info("an Admin installed the Linear app as a connection", "organization", p.organization.slug,
-		"connection", name, "made", made, "app", appUser.Name, "by", p.name)
+		"connection", name, "made", made, "app", appUser.Name, "team", team.Key, "by", p.name)
 	d.writeConnection(w, p.organization.id, name)
+}
+
+// linearTeam is the team of an install: the team with the key (in any
+// case), or the one team that the app reads when key is "". problem says
+// why there is none, for the Admin.
+func linearTeam(ctx context.Context, api linear.API, token, key string) (linear.Team, string, error) {
+	teams, err := api.Teams(ctx, token)
+	if err != nil {
+		return linear.Team{}, "", err
+	}
+	keys := make([]string, 0, len(teams))
+	for _, t := range teams {
+		if key != "" && strings.EqualFold(t.Key, key) {
+			return t, "", nil
+		}
+		keys = append(keys, t.Key)
+	}
+	switch {
+	case len(teams) == 0:
+		return linear.Team{}, "the Linear app can read no team of the workspace", nil
+	case key != "":
+		return linear.Team{}, "the Linear app cannot read the team " + quote(key) + ": give one of " +
+			strings.Join(keys, ", ") + " with --team", nil
+	case len(teams) > 1:
+		return linear.Team{}, "the Linear app can read the teams " + strings.Join(keys, ", ") +
+			": give the connection's team with --team KEY", nil
+	}
+	return teams[0], "", nil
 }
 
 // linearCredentials opens the credentials of the Linear connection id.
@@ -275,8 +326,8 @@ func (s *store) linearCredentials(id string) (linearCredentials, error) {
 	if err != nil {
 		return c, err
 	}
-	if err := json.Unmarshal(token, &c); err != nil {
-		return c, errors.New("the token of a Linear connection is not its credentials: install the app again")
+	if err := json.Unmarshal(token, &c); err != nil || c.Team.ID == "" {
+		return c, errors.New("the token of a Linear connection is not its credentials with its team: install the app again")
 	}
 	return c, nil
 }

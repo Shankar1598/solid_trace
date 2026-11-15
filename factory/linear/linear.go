@@ -201,6 +201,23 @@ func (a API) Viewer(ctx context.Context, token string) (User, error) {
 	return data.Viewer, err
 }
 
+// Team is a team of the workspace. Its key is the prefix of its issues'
+// identifiers, such as ENG.
+type Team struct {
+	ID   string `json:"id"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+// Teams lists the teams that the token can read (at most 100).
+func (a API) Teams(ctx context.Context, token string) ([]Team, error) {
+	var data struct {
+		Teams struct{ Nodes []Team }
+	}
+	err := a.graphQL(ctx, token, "Teams", `query Teams { teams(first: 100) { nodes { id key name } } }`, nil, &data)
+	return data.Teams.Nodes, err
+}
+
 // Label is a label of an issue, with the name of its group ("" is a label
 // in no group).
 type Label struct{ Name, Group string }
@@ -217,15 +234,17 @@ type StatusChange struct {
 type Issue struct {
 	ID, Identifier, URL, Title, Description string
 	Status                                  string
-	UpdatedAt                               time.Time
-	Labels                                  []Label
+	// Team is the id of the issue's team.
+	Team      string
+	UpdatedAt time.Time
+	Labels    []Label
 	// LastStatusChange is the newest change of the status that Linear
 	// gives (zero is none).
 	LastStatusChange StatusChange
 }
 
 // issueFields are the fields of Issue.
-const issueFields = `id identifier url title description updatedAt state { name }
+const issueFields = `id identifier url title description updatedAt state { name } team { id }
 labels(first: 50) { nodes { name parent { name } } }
 history(first: 50) { nodes { createdAt actor { id name } toState { name } } }`
 
@@ -239,6 +258,9 @@ type issueJSON struct {
 	State       struct {
 		Name string `json:"name"`
 	} `json:"state"`
+	Team struct {
+		ID string `json:"id"`
+	} `json:"team"`
 	Labels struct {
 		Nodes []struct {
 			Name   string `json:"name"`
@@ -260,7 +282,7 @@ type issueJSON struct {
 
 func (j issueJSON) issue() Issue {
 	issue := Issue{ID: j.ID, Identifier: j.Identifier, URL: j.URL, Title: j.Title, Description: j.Description,
-		Status: j.State.Name, UpdatedAt: j.UpdatedAt}
+		Status: j.State.Name, Team: j.Team.ID, UpdatedAt: j.UpdatedAt}
 	for _, l := range j.Labels.Nodes {
 		label := Label{Name: l.Name}
 		if l.Parent != nil {
@@ -310,9 +332,9 @@ const PageSize = 25
 // one backstop cannot use much of the app's 5,000 requests an hour.
 const MaxPages = 20
 
-// IssuesInStatus lists the issues whose status has the name, in each team
-// that the install can read.
-func (a API) IssuesInStatus(ctx context.Context, token, status string) ([]Issue, error) {
+// IssuesInStatus lists the issues of the team (its id) whose status has
+// the name.
+func (a API) IssuesInStatus(ctx context.Context, token, team, status string) ([]Issue, error) {
 	var issues []Issue
 	var after any
 	for range MaxPages {
@@ -325,10 +347,11 @@ func (a API) IssuesInStatus(ctx context.Context, token, status string) ([]Issue,
 				} `json:"pageInfo"`
 			}
 		}
-		err := a.graphQL(ctx, token, "ReadyTickets", `query ReadyTickets($status: String!, $after: String) {
-  issues(first: `+fmt.Sprint(PageSize)+`, after: $after, filter: { state: { name: { eq: $status } } }) {
+		err := a.graphQL(ctx, token, "ReadyTickets", `query ReadyTickets($team: ID!, $status: String!, $after: String) {
+  issues(first: `+fmt.Sprint(PageSize)+`, after: $after,
+    filter: { team: { id: { eq: $team } }, state: { name: { eq: $status } } }) {
     nodes { `+issueFields+` }
-    pageInfo { hasNextPage endCursor } } }`, map[string]any{"status": status, "after": after}, &data)
+    pageInfo { hasNextPage endCursor } } }`, map[string]any{"team": team, "status": status, "after": after}, &data)
 		if err != nil {
 			return nil, err
 		}

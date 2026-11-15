@@ -42,7 +42,14 @@ var (
 	Installer = User{ID: "user-ana", Name: "Ana"}
 )
 
-// Statuses are the statuses of the one team.
+// Engineering is the team of the workspace at the start. AddTeam adds
+// another.
+var Engineering = Team{ID: "team-eng", Key: "ENG", Name: "Engineering"}
+
+// Team is a team of the workspace.
+type Team struct{ ID, Key, Name string }
+
+// Statuses are the statuses of each team.
 var Statuses = []string{"Backlog", "Ready for agent", "Agent working", "In review", "Waiting on you", "Done"}
 
 // User is a Linear user.
@@ -52,9 +59,10 @@ type User struct{ ID, Name string }
 // none).
 type Label struct{ Name, Group string }
 
-// Issue is one issue.
+// Issue is one issue. Team is the key of its team ("" is Engineering).
 type Issue struct {
 	ID, Identifier, Title, Description, Status string
+	Team                                       string
 	Labels                                     []Label
 }
 
@@ -105,6 +113,7 @@ type Linear struct {
 	refusedRefresh bool
 	actors         []string
 
+	teams    []Team
 	issues   map[string]*issue
 	order    []string
 	comments []Comment
@@ -113,7 +122,7 @@ type Linear struct {
 // New starts the fake with the clock now. The test's cleanup stops it.
 func New(t interface{ Cleanup(func()) }, now func() time.Time) *Linear {
 	l := &Linear{now: now, codes: map[string]grant{}, access: map[string]session{}, refresh: map[string]bool{},
-		issues: map[string]*issue{}}
+		issues: map[string]*issue{}, teams: []Team{Engineering}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /oauth/authorize", l.authorize)
 	mux.HandleFunc("POST /oauth/token", l.token)
@@ -302,6 +311,22 @@ func (l *Linear) token(w http.ResponseWriter, r *http.Request) {
 		"expires_in": int(TokenLife/time.Second) - 1, "scope": "read write", "refresh_token": refreshToken})
 }
 
+// AddTeam adds a team to the workspace, which each install can read.
+func (l *Linear) AddTeam(t Team) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.teams = append(l.teams, t)
+}
+
+func (l *Linear) team(key string) Team {
+	for _, t := range l.teams {
+		if t.Key == key {
+			return t
+		}
+	}
+	return Engineering
+}
+
 // Put adds the issue, or replaces it, as the user by.
 func (l *Linear) Put(i Issue, by User) {
 	l.mu.Lock()
@@ -375,7 +400,7 @@ func Signed(secret, delivery string, body []byte) http.Header {
 	return header
 }
 
-func (i *issue) json() map[string]any {
+func (i *issue) json(team Team) map[string]any {
 	labels := []map[string]any{}
 	for _, label := range i.Labels {
 		var parent any
@@ -392,7 +417,7 @@ func (i *issue) json() map[string]any {
 	}
 	return map[string]any{"id": i.ID, "identifier": i.Identifier, "url": IssueURL(i.Identifier), "title": i.Title,
 		"description": i.Description, "updatedAt": i.updated.Format(time.RFC3339Nano),
-		"state":  map[string]string{"name": i.Status},
+		"state": map[string]string{"name": i.Status}, "team": map[string]string{"id": team.ID},
 		"labels": map[string]any{"nodes": labels}, "history": map[string]any{"nodes": history}}
 }
 
@@ -454,12 +479,19 @@ func (l *Linear) graphQL(w http.ResponseWriter, r *http.Request) {
 			graphQLError(w, err.Error())
 			return
 		}
-		data = map[string]any{"issue": i.json()}
+		data = map[string]any{"issue": i.json(l.team(i.Team))}
+	case "Teams":
+		nodes := []map[string]string{}
+		for _, t := range l.teams {
+			nodes = append(nodes, map[string]string{"id": t.ID, "key": t.Key, "name": t.Name})
+		}
+		data = map[string]any{"teams": map[string]any{"nodes": nodes}}
 	case "ReadyTickets":
 		nodes := []map[string]any{}
 		for _, id := range l.order {
-			if i := l.issues[id]; i.Status == str("status") {
-				nodes = append(nodes, i.json())
+			i := l.issues[id]
+			if team := l.team(i.Team); i.Status == str("status") && team.ID == str("team") {
+				nodes = append(nodes, i.json(team))
 			}
 		}
 		data = map[string]any{"issues": map[string]any{"nodes": nodes,

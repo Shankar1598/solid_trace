@@ -434,6 +434,9 @@ type Connection struct {
 	// Tracker is the settings of a tracker connection, with the kind's
 	// default for each empty value (nil for another kind).
 	Tracker *TrackerSettings `json:"tracker,omitempty"`
+	// Team is the key of a Linear connection's team, such as ENG ("" for
+	// another kind).
+	Team string `json:"team,omitempty"`
 }
 
 // SaveWebhookSecret is the body of a save of a connection's webhook
@@ -462,6 +465,9 @@ type InstallLinear struct {
 	Code         string `json:"code"`
 	RedirectURI  string `json:"redirect_uri"`
 	CodeVerifier string `json:"code_verifier"`
+	// Team is the key of the connection's Linear team, such as ENG (""
+	// is the one team that the app can read).
+	Team string `json:"team,omitempty"`
 }
 
 // Connections is the answer of the list of the Organization's

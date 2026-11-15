@@ -103,15 +103,17 @@ Usage:
   solidtrace connections set NAME [--kind bitbucket] [--dispatcher URL] < TOKEN
       Save a connection with the token on stdin, or replace its token
       (an Admin only). The Dispatcher keeps the token encrypted.
-  solidtrace connections add linear NAME --client-id ID [--port PORT]
+  solidtrace connections add linear NAME --client-id ID [--team KEY] [--port PORT]
           [--dispatcher URL] < CLIENT_SECRET
       Install the Linear OAuth app as the connection NAME (an Admin only),
       with the app's client secret on stdin. It opens Linear's approval
       page with actor=app, so the factory's status changes and comments
       show as the app. The app's callback URL must be
       http://localhost:PORT/callback (PORT 47615 by default). The
-      Dispatcher keeps the tokens encrypted and refreshes them. Run it
-      again to install the app again.
+      Dispatcher keeps the tokens encrypted and refreshes them. The
+      connection is of the Linear team KEY, such as ENG; leave out
+      --team when the app can read only one team. Run it again to
+      install the app again.
   solidtrace connections webhook-secret NAME [--dispatcher URL] < SECRET
       Save the secret that signs the connection's webhooks, with the
       secret on stdin (an Admin only). Paste its webhook URL into the

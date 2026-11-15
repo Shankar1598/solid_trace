@@ -41,12 +41,13 @@ const (
 // Dispatcher, which exchanges it for the tokens. The tokens never reach
 // this machine.
 func addLinear(ctx context.Context, args []string, env Env) int {
-	const use = "solidtrace connections add linear NAME --client-id ID [--port PORT] < CLIENT_SECRET"
+	const use = "solidtrace connections add linear NAME --client-id ID [--team KEY] [--port PORT] < CLIENT_SECRET"
 	flags := flag.NewFlagSet("connections add", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
 	clientID := flags.String("client-id", "", "the client ID of the Linear OAuth app")
 	port := flags.Int("port", LinearCallbackPort, "the loopback port of the app's callback URL")
+	team := flags.String("team", "", "the key of the connection's Linear team, such as ENG (needed when the app can read more than one team)")
 	positional, ok := parseInterspersed(flags, args)
 	if !ok {
 		return 2
@@ -112,12 +113,13 @@ func addLinear(ctx context.Context, args []string, env Env) int {
 		return 1
 	}
 	c, err := client.InstallLinear(ctx, name, dispatcherapi.InstallLinear{ClientID: *clientID, ClientSecret: secret,
-		Code: got.code, RedirectURI: redirectURI, CodeVerifier: verifier})
+		Code: got.code, RedirectURI: redirectURI, CodeVerifier: verifier, Team: *team})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace connections add: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(env.Stdout, "The linear connection %s is saved. The Dispatcher keeps its tokens encrypted and refreshes them.\n", c.Name)
+	fmt.Fprintf(env.Stdout, "The linear connection %s of the team %s is saved. The Dispatcher keeps its tokens encrypted "+
+		"and refreshes them.\n", c.Name, c.Team)
 	if c.WebhookURL != "" {
 		fmt.Fprintf(env.Stdout, "Paste its webhook URL into the Linear app's webhook, with the Issue and Comment events: %s\n"+
 			"Then give the app's signing secret: solidtrace connections webhook-secret %s < secret-file\n", c.WebhookURL, c.Name)

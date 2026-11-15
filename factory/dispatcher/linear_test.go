@@ -317,10 +317,10 @@ func TestTheNoRouteCommentAndAStatusChangeShowAsTheAppOnLinear(t *testing.T) {
 }
 
 // addLinear runs 'connections add linear issues' as p with the client
-// secret, on the callback port.
-func addLinear(env *factorytest.Env, p *factorytest.Person, clientSecret, port string) factorytest.Result {
-	return p.LinearCLI(clientSecret, "connections", "add", "linear", "issues", "--client-id", fakelinear.ClientID,
-		"--port", port, "--dispatcher", env.URL())
+// secret, on the callback port, with the flags.
+func addLinear(env *factorytest.Env, p *factorytest.Person, clientSecret, port string, flags ...string) factorytest.Result {
+	return p.LinearCLI(clientSecret, append([]string{"connections", "add", "linear", "issues", "--client-id",
+		fakelinear.ClientID, "--port", port, "--dispatcher", env.URL()}, flags...)...)
 }
 
 // noConnections checks that the Organization has no connection.
@@ -407,4 +407,63 @@ func TestAnInstallOfLinearAgainKeepsTheWebhookSecretAndUsesTheNewTokens(t *testi
 	}
 	readyTicket(t, env, path, "issue-11")
 	waitForRuns(t, env, 1)
+}
+
+// design is a second team of the workspace.
+var design = fakelinear.Team{ID: "team-des", Key: "DES", Name: "Design"}
+
+func TestALinearConnectionIsOfOneTeamAndATicketOfAnotherTeamStartsNoRun(t *testing.T) {
+	env := factorytest.New(t)
+	env.Linear.AddTeam(design)
+	port := env.LinearCallbackPort()
+	// The app reads two teams: the install must name one.
+	r := addLinear(env, env.Admin(), fakelinear.ClientSecret+"\n", port)
+	if r.Code != 1 || !strings.Contains(r.Stderr, "--team") || !strings.Contains(r.Stderr, "ENG") ||
+		!strings.Contains(r.Stderr, "DES") {
+		t.Fatalf("an install with no team: exit %d, %q, want 1 and a message that names --team, ENG and DES", r.Code, r.Stderr)
+	}
+	noConnections(t, env)
+	r = addLinear(env, env.Admin(), fakelinear.ClientSecret+"\n", port, "--team", "OPS")
+	if r.Code != 1 || !strings.Contains(r.Stderr, "OPS") || !strings.Contains(r.Stderr, "ENG") {
+		t.Fatalf("an install with a team that the app cannot read: exit %d, %q, want 1 and a message that names OPS "+
+			"and the teams", r.Code, r.Stderr)
+	}
+	noConnections(t, env)
+	if r = addLinear(env, env.Admin(), fakelinear.ClientSecret+"\n", port, "--team", "eng"); r.Code != 0 {
+		t.Fatalf("an install for the team eng: exit %d\n%s%s", r.Code, r.Stdout, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "ENG") {
+		t.Errorf("the CLI printed %q, want the team ENG", r.Stdout)
+	}
+	c, _ := connection(t, env, "issues")
+	path, _ := strings.CutPrefix(c.WebhookURL, factorytest.PublicWebhookURL)
+	if a := env.Admin().API("PUT", "/api/v1/connections/issues/webhook-secret",
+		dispatcherapi.SaveWebhookSecret{Secret: linearSecret}); a.Status != http.StatusOK {
+		t.Fatalf("save the webhook secret: %d %s", a.Status, a.Body)
+	}
+	env.Project("shop")
+	mustSaveRoutes(t, env, "shop", route("issues", ""))
+	settle()
+
+	// A ready ticket of Design, through its webhook and the backstop, and
+	// a ready ticket of Engineering through the backstop.
+	env.Linear.Put(fakelinear.Issue{ID: "issue-20", Identifier: "DES-1", Team: "DES", Title: "Draw the icons",
+		Status: "Ready for agent"}, rosaOnLinear)
+	env.LinearWebhook(path, linearSecret, "d-20", "Issue", "issue-20")
+	env.Linear.Put(fakelinear.Issue{ID: "issue-21", Identifier: "ENG-21", Title: "Fix the cart", Status: "Ready for agent"},
+		rosaOnLinear)
+	env.Clock.Advance(5*time.Minute + time.Second)
+	if run := waitForRuns(t, env, 1)[0]; run.Link != fakelinear.IssueURL("ENG-21") {
+		t.Errorf("the Run is of %s, want ENG-21", run.Link)
+	}
+	env.Clock.Advance(5*time.Minute + time.Second)
+	settle()
+	if list := runs(t, env); len(list) != 1 {
+		t.Errorf("the tickets have %d Runs, want 1 (none of the team Design)", len(list))
+	}
+	for _, comment := range env.Linear.Comments() {
+		if comment.Issue == "issue-20" {
+			t.Errorf("the factory commented on the Design ticket: %+v", comment)
+		}
+	}
 }
