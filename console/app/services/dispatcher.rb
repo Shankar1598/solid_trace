@@ -78,7 +78,7 @@ class Dispatcher
       request["Content-Type"] = "application/json"
       request.body = body.to_json
     end
-    response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+    response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https",
                                open_timeout: OPEN_TIMEOUT, read_timeout: READ_TIMEOUT) do |http|
       http.request(request)
     end

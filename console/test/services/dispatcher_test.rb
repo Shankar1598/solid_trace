@@ -49,6 +49,29 @@ class DispatcherTest < ActiveSupport::TestCase
     assert_raises(Dispatcher::Refused) { @dispatcher.request(:get, "/api/v1/runs") }
   end
 
+  # A real server, as WebMock does not see the host that Net::HTTP connects to.
+  test "a Dispatcher URL with an IPv6 address connects to that address" do
+    server = TCPServer.new("::1", 0)
+    port = server.addr[1]
+    answer = Thread.new do
+      client = server.accept
+      client.readpartial(4096)
+      body = { id: "r-1" }.to_json
+      client.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: #{body.bytesize}\r\n" \
+                   "Connection: close\r\n\r\n#{body}")
+      client.close
+    end
+    answer.report_on_exception = false
+    WebMock.allow_net_connect!
+    InstanceSetting.current.update!(dispatcher_url: "http://[::1]:#{port}")
+
+    assert_equal({ "id" => "r-1" }, Dispatcher.new(user: @user, organization: @organization).request(:get, "/api/v1/runs/r-1"))
+  ensure
+    WebMock.disable_net_connect!
+    answer&.join(1)
+    server&.close
+  end
+
   test "with no Dispatcher URL a call raises Unavailable and sends nothing" do
     InstanceSetting.current.update!(dispatcher_url: nil)
     any = stub_request(:any, /.*/)
