@@ -129,6 +129,18 @@ type Runner struct {
 	harness  string
 	broken   bool
 	noDocker bool
+	// keepSessions gives each Execution the same Claude Code directory.
+	keepSessions bool
+}
+
+// KeepAgentSessions gives the next Executions one Claude Code directory
+// that stays after each Execution, so that a later Execution resumes the
+// Run's Agent session, as the restore of the Agent session directory
+// (ticket 59) will do on any machine.
+func (r *Runner) KeepAgentSessions() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.keepSessions = true
 }
 
 // BreakWrapper makes the next Execution's wrapper start with no Dispatcher
@@ -283,6 +295,10 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	broken := r.broken
 	r.broken = false
 	docker := filepath.Join(r.bin, dockerName)
+	claudeConfig := ""
+	if r.keepSessions {
+		claudeConfig = filepath.Join(r.dir, "claude")
+	}
 	if r.noDocker {
 		docker = filepath.Join(r.dir, "no-docker", dockerName)
 	}
@@ -310,7 +326,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),
 		// The wrapper gives the harness its own Claude Code directories.
-		"CLAUDE_CONFIG_DIR=", "CLAUDE_CODE_PROJECT_DIR_NAME=",
+		"CLAUDE_CONFIG_DIR=" + claudeConfig, "CLAUDE_CODE_PROJECT_DIR_NAME=",
 	}
 	// The wrappers' limits read the environment's clock, unless it is the
 	// wall clock.
