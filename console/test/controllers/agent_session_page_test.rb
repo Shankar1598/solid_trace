@@ -109,6 +109,20 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_match(/a resume of this Agent session can fail/i, view["resume_warning"])
   end
 
+  test "each flag that makes a resume fail gives the warning, and a trimmed record does not" do
+    { [ "cut" ] => true, [ "partial" ] => true, [ "trimmed" ] => false }.each do |flags, warns|
+      stub_session(user_id: @admin.id, flags: flags)
+      sign_in_as(@member)
+      page
+      warning = props["resume_warning"]
+      if warns
+        assert_match(/a resume of this Agent session can fail/i, warning, "flags #{flags}")
+      else
+        assert_nil warning, "flags #{flags}"
+      end
+    end
+  end
+
   test "the next page and a subagent's timeline come as JSON" do
     stub_session(body: { "path" => "subagents/agent-a1.jsonl", "cursor" => "c1" }, user_id: @member.id)
     sign_in_as(@member)
@@ -146,4 +160,5 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_nil view["agent_session"]
     assert_equal [], view["steps"]
   end
+
 end
