@@ -88,13 +88,22 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	return 0
 }
 
+// killBoundary is the Execution's kill boundary, a *killboundary.Boundary.
+// A test of the end procedure gives a fake.
+type killBoundary interface {
+	Start(cmd *exec.Cmd) error
+	Populated() (bool, error)
+	Kill() error
+	Remove(within time.Duration) error
+}
+
 // execution is one Execution on this machine.
 type execution struct {
 	cfg      config
 	client   *client
 	task     dispatcherapi.Task
 	log      io.Writer
-	boundary *killboundary.Boundary
+	boundary killBoundary
 
 	// mu holds a report's forward and the start of the end, so that a
 	// report counts only when it reached the Dispatcher before the end.
