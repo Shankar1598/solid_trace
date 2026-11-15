@@ -95,6 +95,9 @@ var migrations = []string{
 	ALTER TABLE runs ADD COLUMN base_branch TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN trigger_kind TEXT NOT NULL DEFAULT '';
 	CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);`,
+	// background_tasks_killed is the count of the agent's background
+	// tasks that the end of the Execution killed.
+	`ALTER TABLE executions ADD COLUMN background_tasks_killed INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.

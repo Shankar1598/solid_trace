@@ -5,13 +5,13 @@
 // serves the agent's socket, and ends the Execution. The outcome is the
 // agent's last valid report, never the harness's exit code.
 //
-// Later tickets add the cgroup end procedure (31), the fixed paths and the
-// Run's branch (33), the run user (39), the uploads (41), the commands and
+// Later tickets add the fixed paths and the Run's branch (33), the run user (39), the uploads (41), the commands and
 // the limits (32), and the Stop hook (38).
 package wrapper
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -25,29 +25,47 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentsocket"
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/internal/killboundary"
 )
 
 // endWait is how long the wrapper waits for the harness to exit after it
-// closes stdin, before it kills the harness's process group.
+// closes stdin, before it kills the Execution's cgroup.
 const endWait = 5 * time.Second
 
+// dockerWait is the limit of the end's container step.
+const dockerWait = 3 * time.Second
+
+// emptyWait is how long the end waits for the Execution's cgroup to be
+// empty after cgroup.kill.
+const emptyWait = 5 * time.Second
+
 // outputWait is how long the wrapper reads the harness's output after the
-// harness exits. A process that the harness started, out of its process
-// group, can hold the output open.
+// harness exits. A process that the harness started can hold the output
+// open until the cgroup kill.
 const outputWait = 2 * time.Second
+
+// CgroupName is the name of the Execution's child cgroup, in the
+// wrapper's own cgroup.
+func CgroupName(execution string) string { return "execution-" + execution }
 
 // Main is the wrapper program. environ is the wrapper's environment; the
 // harness gets it with no WRAPPER_ name. It returns the exit code: 0 when
-// the Dispatcher took the end call.
+// the Dispatcher took the end call and the Execution's cgroup is empty and
+// removed. It refuses to start (code 2) with no kill boundary: cgroup v2
+// with cgroup.kill, in a cgroup that the wrapper can write to.
 func Main(ctx context.Context, getenv func(string) string, environ []string, stderr io.Writer) int {
 	cfg, err := loadConfig(getenv)
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
+		return 2
+	}
+	boundary, err := killboundary.Open(CgroupName(cfg.execution))
+	if err != nil {
+		fmt.Fprintln(stderr, "wrapper: no kill boundary, so the wrapper does not start:", err)
 		return 2
 	}
 	c := &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
@@ -55,23 +73,37 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	task, err := c.task(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
+		boundary.Remove(emptyWait)
 		return 1
 	}
-	e := &execution{cfg: cfg, client: c, task: task, log: stderr, needsPerson: make(chan struct{}, 1)}
+	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1)}
 	end := e.run(ctx, environ)
 	if err := c.end(ctx, end); err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
 		return 1
 	}
+	if e.left != nil {
+		return 1
+	}
 	return 0
+}
+
+// killBoundary is the Execution's kill boundary, a *killboundary.Boundary.
+// A test of the end procedure gives a fake.
+type killBoundary interface {
+	Start(cmd *exec.Cmd) error
+	Populated() (bool, error)
+	Kill() error
+	Remove(within time.Duration) error
 }
 
 // execution is one Execution on this machine.
 type execution struct {
-	cfg    config
-	client *client
-	task   dispatcherapi.Task
-	log    io.Writer
+	cfg      config
+	client   *client
+	task     dispatcherapi.Task
+	log      io.Writer
+	boundary killBoundary
 
 	// mu holds a report's forward and the start of the end, so that a
 	// report counts only when it reached the Dispatcher before the end.
@@ -80,15 +112,113 @@ type execution struct {
 	endReason string
 	endError  string
 	reported  bool
+	// backgroundTasks is the count of the agent's background tasks that
+	// run, from the last background_tasks_changed event. populatedAtKill
+	// tells if a process was in the cgroup when the end killed it.
+	backgroundTasks int
+	populatedAtKill bool
 
 	needsPerson chan struct{}
 	stdin       io.WriteCloser
 	harness     *exec.Cmd
 	kill        *time.Timer
+	killOnce    sync.Once
+	// left is the error when the cgroup was not empty after the end.
+	left error
 }
 
-// run sets up and runs the harness, and gives the end call's body.
+// run sets up and runs the harness, then does the end procedure, and gives
+// the end call's body.
 func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
+	end := e.work(ctx, environ)
+	e.finish()
+	// The output stream is read to its end now: the last
+	// background_tasks_changed event counts, also when the harness wrote
+	// it just before it exited.
+	e.mu.Lock()
+	if e.populatedAtKill {
+		end.BackgroundTasksKilled = e.backgroundTasks
+	}
+	e.mu.Unlock()
+	return end
+}
+
+// finish is the end procedure after the harness exited (or did not
+// start): cgroup.kill, docker kill each running container, and the check
+// that the cgroup is empty, which then goes.
+func (e *execution) finish() {
+	e.killAll()
+	e.stopContainers()
+	err := e.boundary.Remove(emptyWait)
+	if err != nil {
+		// A process that started after the kill (it cannot, but a check
+		// costs nothing): kill again, once.
+		e.boundary.Kill()
+		err = e.boundary.Remove(emptyWait)
+	}
+	if err != nil {
+		e.left = err
+		fmt.Fprintln(e.log, "wrapper: the end procedure left processes of the Execution:", err)
+	}
+}
+
+// killAll writes 1 to cgroup.kill, once. It records if a process was
+// still in the cgroup: the background tasks that the harness listed then
+// count as killed.
+func (e *execution) killAll() {
+	e.killOnce.Do(func() {
+		populated, err := e.boundary.Populated()
+		if err != nil {
+			fmt.Fprintln(e.log, "wrapper: read the Execution's cgroup:", err)
+		}
+		if err := e.boundary.Kill(); err != nil {
+			fmt.Fprintln(e.log, "wrapper: cgroup.kill:", err)
+		}
+		e.mu.Lock()
+		e.populatedAtKill = populated
+		e.mu.Unlock()
+	})
+}
+
+// stopContainers is the end's container step: docker kill each running
+// container, best effort, within dockerWait. Containers run outside the
+// Execution's cgroup, in Docker's own. With no docker program, the step
+// is skipped.
+func (e *execution) stopContainers() {
+	docker, err := exec.LookPath(e.cfg.docker)
+	if err != nil {
+		fmt.Fprintf(e.log, "wrapper: no Docker (%s), so the end skips the container step\n", e.cfg.docker)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), dockerWait)
+	defer cancel()
+	run := func(args ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, docker, args...)
+		cmd.WaitDelay = 500 * time.Millisecond
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		if ctx.Err() != nil {
+			err = fmt.Errorf("no answer in %s", dockerWait)
+		}
+		return out.String(), err
+	}
+	out, err := run("ps", "--quiet")
+	if err != nil {
+		fmt.Fprintf(e.log, "wrapper: the end's container step: docker ps: %v: %s\n", err, lastLines(out, 5))
+		return
+	}
+	ids := strings.Fields(out)
+	if len(ids) == 0 {
+		return
+	}
+	if out, err := run(append([]string{"kill"}, ids...)...); err != nil {
+		fmt.Fprintf(e.log, "wrapper: the end's container step: docker kill: %v: %s\n", err, lastLines(out, 5))
+	}
+}
+
+// work sets up and runs the harness, and gives the end call's body.
+func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
 	if err := e.setup(ctx, environ); err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
@@ -262,16 +392,15 @@ func (e *execution) headless() []string {
 	return append(args, "--session-id", e.task.SessionID)
 }
 
-// runHarness starts the harness, writes the task, reads the output
-// stream until the harness exits, and gives the end call's body. The exit
-// starts the end, also when a process holds the output open.
+// runHarness starts the harness in the Execution's cgroup, writes the
+// task, reads the output stream until the harness exits, and gives the end
+// call's body. The exit starts the end, also when a process holds the
+// output open.
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.cfg.checkout()
 	cmd.Env = harnessEnv(environ, e.cfg.socket())
 	cmd.Stderr = e.log
-	// A process group of its own, so that the end can kill what is left.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	failed := func(err error) dispatcherapi.ExecutionEnd {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}
 	}
@@ -287,7 +416,7 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	}
 	defer stdout.Close()
 	cmd.Stdout = w
-	err = cmd.Start()
+	err = e.boundary.Start(cmd)
 	w.Close()
 	if err != nil {
 		return failed(err)
@@ -327,14 +456,13 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	}()
 	var delivered *time.Time
 	var stopReading *time.Timer
-	pid := e.harness.Process.Pid
 	for open, exit := true, exited; open; {
 		select {
 		case <-exit:
-			// Each tool process that is left in the harness's group goes
-			// too, and closes the output.
+			// Each process that is left in the cgroup goes too, and
+			// closes the output.
 			exit = nil
-			syscall.Kill(-pid, syscall.SIGKILL)
+			e.killAll()
 			stopReading = time.AfterFunc(outputWait, func() { stdout.Close() })
 		case ev, ok := <-events:
 			if !ok {
@@ -345,6 +473,11 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 			case ev["type"] == "user" && ev["isReplay"] == true && ev["uuid"] == taskUUID && delivered == nil:
 				now := time.Now().UTC()
 				delivered = &now
+			case ev["type"] == "system" && ev["subtype"] == "background_tasks_changed":
+				tasks, _ := ev["tasks"].([]any)
+				e.mu.Lock()
+				e.backgroundTasks = len(tasks)
+				e.mu.Unlock()
 			case ev["type"] == "system" && ev["subtype"] == "init" && offers(ev, "AskUserQuestion"):
 				e.startEnd(dispatcherapi.EndSetupFailed, "the harness offers AskUserQuestion, which no person answers in a Run")
 			case ev["type"] == "result":
@@ -366,8 +499,8 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 		stopReading.Stop()
 	}
 	<-exited
-	// The output can end before the exit: the group kill is then here.
-	syscall.Kill(-pid, syscall.SIGKILL)
+	// The output can end before the exit: the kill is then here.
+	e.killAll()
 	e.mu.Lock()
 	if e.kill != nil {
 		e.kill.Stop()
@@ -381,8 +514,8 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	return dispatcherapi.ExecutionEnd{Reason: reason, Error: why, ExitCode: &code, TaskDeliveredAt: delivered}
 }
 
-// startEnd starts the end once: it closes stdin, and kills the harness's
-// process group if the harness did not exit in endWait.
+// startEnd starts the end once: it closes stdin, and kills the
+// Execution's cgroup if the harness did not exit in endWait.
 func (e *execution) startEnd(reason, why string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -391,8 +524,7 @@ func (e *execution) startEnd(reason, why string) {
 	}
 	e.ending, e.endReason, e.endError = true, reason, why
 	e.stdin.Close()
-	pid := e.harness.Process.Pid
-	e.kill = time.AfterFunc(endWait, func() { syscall.Kill(-pid, syscall.SIGKILL) })
+	e.kill = time.AfterFunc(endWait, e.killAll)
 }
 
 // offers tells if the init event lists tool among the agent's tools.

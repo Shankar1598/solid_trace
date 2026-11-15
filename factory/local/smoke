@@ -8,7 +8,8 @@
 #
 # It checks the stack's shape, the run user and the take-over rule (and the commands
 # that the rule refuses), Claude Code and hc with no first-run dialog, the network
-# rules, and a raw_exec task that uses a child cgroup as the wrapper will.
+# rules, a raw_exec task that uses a child cgroup as the wrapper will, and the cgroup
+# cases of the wrapper's kill boundary as root under raw_exec (this needs Go).
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -461,23 +462,52 @@ check "Squid logs each host" squid_logs_each_host
 
 # --- A raw_exec task at the kill boundary ----------------------------------------------
 
-raw_exec_task_uses_a_child_cgroup_as_root_for_the_run_user() {
-  "$stack" nomad job run -detach - <"$here/checks/cgroup-check.nomad.hcl" >/dev/null || want "the check job registered"
-  local alloc status=""
+# Runs the batch job in a file, waits up to 60 seconds for its end, and sets status
+# (complete, failed or pending) and out (the task's stdout and stderr).
+run_batch_job() {
+  local file="$1" id="$2" alloc
+  status=""
+  "$stack" nomad job run -detach - <"$file" >/dev/null || want "the job $id registered"
   for _ in $(seq 1 60); do
-    read -r alloc status < <("$stack" nomad job allocs -json cgroup-check </dev/null 2>/dev/null |
+    read -r alloc status < <("$stack" nomad job allocs -json "$id" </dev/null 2>/dev/null |
       python3 -c 'import json,sys; a=json.load(sys.stdin); print(a[0]["ID"], a[0]["ClientStatus"]) if a else print("-", "pending")')
     [[ $status == complete || $status == failed ]] && break
     sleep 1
   done
-  local out
   out="$("$stack" nomad alloc logs "$alloc" </dev/null 2>&1; "$stack" nomad alloc logs -stderr "$alloc" </dev/null 2>&1)" || true
+}
+
+raw_exec_task_uses_a_child_cgroup_as_root_for_the_run_user() {
+  run_batch_job "$here/checks/cgroup-check.nomad.hcl" cgroup-check
   grep '^PASS' <<<"$out" | sed 's/^/note: /' >&2 || true
   [ "$status" = complete ] || want "the check task complete, got: $status; output: $out"
   grep -q '^PASS' <<<"$out" || want "PASS from the check task, got: $out"
 }
 
+# The cgroup cases of factory/internal/killboundary, built here with no cgo (so the
+# binary runs on the image's C library), as root in a raw_exec task (ticket 31).
+kill_boundary_cases_pass_as_root_under_raw_exec() {
+  command -v go >/dev/null || skip "no Go here to build the kill boundary's tests"
+  local bin
+  bin="$(mktemp -d)"
+  (cd "$repo/factory" && CGO_ENABLED=0 go test -c -o "$bin/killboundary.test" ./internal/killboundary) ||
+    { rm -rf "$bin"; want "the kill boundary's tests built"; }
+  docker exec "$machine" mkdir -p /opt/factory-checks
+  docker cp "$bin/killboundary.test" "$machine:/opt/factory-checks/killboundary.test" >/dev/null
+  rm -rf "$bin"
+  docker exec "$machine" chown root:root /opt/factory-checks/killboundary.test
+  docker exec "$machine" chmod 0755 /opt/factory-checks/killboundary.test
+  run_batch_job "$here/checks/kill-boundary-tests.nomad.hcl" kill-boundary-tests
+  grep -E '^--- (PASS|SKIP|FAIL)' <<<"$out" | sed 's/^/note: /' >&2 || true
+  [ "$status" = complete ] || want "the test task complete, got: $status; output: $(tail -n 30 <<<"$out")"
+  grep -q '^PASS$' <<<"$out" || want "PASS from the tests, got: $(tail -n 30 <<<"$out")"
+  ! grep -q -e '^--- SKIP' -e '^--- FAIL' <<<"$out" || want "no case skipped or failed, got: $out"
+  grep -q '^--- PASS: TestKillStopsEachProcessInTheCgroupAlsoOneThatChangedItsSession' <<<"$out" ||
+    want "the kill case ran, got: $out"
+}
+
 check "a raw_exec task as root starts the run user in a child cgroup, and cgroup.kill stops it" raw_exec_task_uses_a_child_cgroup_as_root_for_the_run_user
+check "the kill boundary's cgroup cases pass as root under raw_exec, with the run user's processes" kill_boundary_cases_pass_as_root_under_raw_exec
 
 # --- The end ---------------------------------------------------------------------------
 

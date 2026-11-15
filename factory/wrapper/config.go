@@ -25,11 +25,14 @@ const (
 	EnvDir = "WRAPPER_DIR"
 	// EnvHarness is the harness program (default claude).
 	EnvHarness = "WRAPPER_HARNESS"
+	// EnvDocker is the docker program of the end's container step
+	// (default docker). When it is not there, the step is skipped.
+	EnvDocker = "WRAPPER_DOCKER"
 )
 
 // config is the wrapper's configuration.
 type config struct {
-	dispatcherURL, execution, identityFile, dir, harness string
+	dispatcherURL, execution, identityFile, dir, harness, docker string
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -39,6 +42,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		identityFile:  getenv(EnvIdentityFile),
 		dir:           getenv(EnvDir),
 		harness:       getenv(EnvHarness),
+		docker:        getenv(EnvDocker),
 	}
 	var problems []string
 	if c.dispatcherURL == "" {
@@ -62,6 +66,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if c.harness == "" {
 		c.harness = "claude"
+	}
+	if c.docker == "" {
+		c.docker = "docker"
 	}
 	return c, nil
 }
