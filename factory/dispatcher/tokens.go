@@ -58,7 +58,21 @@ type tokenCheck struct {
 
 	mu   sync.Mutex
 	kept map[[sha256.Size]byte]keptAnswer
+
+	// own is the kept result of the check of the Dispatcher's own token.
+	// ownMu stays locked during that check, so that status calls at the
+	// same time send only one check.
+	ownMu    sync.Mutex
+	own      error
+	ownUntil time.Time
 }
+
+// ownKeepFor is the time that the Dispatcher keeps the result of the check
+// of its own token. The status call needs no token, and SolidTrace limits
+// introspection for each caller token (120 a minute) for all the
+// Organizations' calls together: without this keep, a loop of status
+// calls stops the check of each person's token.
+const ownKeepFor = 10 * time.Second
 
 type keptAnswer struct {
 	person person
@@ -217,9 +231,23 @@ func (c *tokenCheck) introspect(ctx context.Context, token string) (introspectio
 	return answer, nil
 }
 
-// ownToken checks the Dispatcher's own token now, with no kept answer. It
-// is nil when SolidTrace accepts it.
+// ownToken checks the Dispatcher's own token, and keeps the result for
+// ownKeepFor. It is nil when SolidTrace accepts the token.
 func (c *tokenCheck) ownToken(ctx context.Context) error {
+	c.ownMu.Lock()
+	defer c.ownMu.Unlock()
+	now := c.now()
+	if now.Before(c.ownUntil) {
+		return c.own
+	}
+	// The result is for all status calls: a caller that goes away does
+	// not stop the check.
+	c.own = c.checkOwnToken(context.WithoutCancel(ctx))
+	c.ownUntil = now.Add(ownKeepFor)
+	return c.own
+}
+
+func (c *tokenCheck) checkOwnToken(ctx context.Context) error {
 	answer, err := c.introspect(ctx, c.token)
 	if errors.Is(err, errCallerRefused) || (err == nil && !answer.Active) {
 		return errors.New(callerRefused)

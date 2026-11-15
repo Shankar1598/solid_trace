@@ -150,7 +150,9 @@ func (d *Dispatcher) admin(next personHandler) personHandler {
 // status says whether SolidTrace accepts the Dispatcher's own token. It
 // needs no person's token: when SolidTrace refuses the Dispatcher's
 // token, the Dispatcher cannot check a person's token. It is on the
-// private listener only, and it gives no person's data.
+// private listener only, and it gives no person's data. It keeps its
+// answer for ownKeepFor, so it costs at most one introspection in that
+// time.
 func (d *Dispatcher) status(w http.ResponseWriter, r *http.Request) {
 	status := dispatcherapi.Status{
 		Version:    d.version,

@@ -226,6 +226,7 @@ func TestTheDispatcherSaysWhenSolidTraceRefusesItsOwnToken(t *testing.T) {
 
 	// The Admin who made the Dispatcher's token leaves the Organization.
 	env.SolidTrace.Revoke(factorytest.DispatcherToken)
+	env.Clock.Advance(10 * time.Second) // the status keeps its answer for 10 s
 
 	status = env.API("", "GET", "/api/v1/status", nil)
 	var down dispatcherapi.Status
@@ -238,6 +239,31 @@ func TestTheDispatcherSaysWhenSolidTraceRefusesItsOwnToken(t *testing.T) {
 	a := ana.API("GET", "/api/v1/runs", nil)
 	if a.Status != http.StatusServiceUnavailable || !strings.Contains(string(a.Body), "Dispatcher's SolidTrace token is not active") {
 		t.Errorf("a person's call: %d %s, want 503 that says the Dispatcher's token is not active", a.Status, a.Body)
+	}
+}
+
+func TestTheStatusChecksTheDispatchersOwnTokenAtMostOnceIn10Seconds(t *testing.T) {
+	env := factorytest.New(t)
+	for range 50 {
+		if a := env.API("", "GET", "/api/v1/status", nil); a.Status != http.StatusOK {
+			t.Fatalf("status: %d %s", a.Status, a.Body)
+		}
+	}
+	if n := len(env.SolidTrace.CallsTo("/oauth/introspect")); n != 1 {
+		t.Errorf("%d token checks for 50 status calls, want 1", n)
+	}
+
+	env.SolidTrace.Revoke(factorytest.DispatcherToken)
+	env.Clock.Advance(9 * time.Second)
+	if a := env.API("", "GET", "/api/v1/status", nil); a.Status != http.StatusOK {
+		t.Errorf("9 s after the check: %d %s, want the kept answer (200)", a.Status, a.Body)
+	}
+	env.Clock.Advance(time.Second)
+	if a := env.API("", "GET", "/api/v1/status", nil); a.Status != http.StatusServiceUnavailable {
+		t.Errorf("10 s after the check: %d %s, want 503", a.Status, a.Body)
+	}
+	if n := len(env.SolidTrace.CallsTo("/oauth/introspect")); n != 2 {
+		t.Errorf("%d token checks, want 2 (one at the start, one after 10 s)", n)
 	}
 }
 
