@@ -222,7 +222,11 @@ func (d *Dispatcher) installLinear(w http.ResponseWriter, r *http.Request, p per
 			return
 		}
 	}
-	tracker := d.trackers[dispatcherapi.TrackerLinear].(*linearTracker)
+	tracker, ok := d.trackers[dispatcherapi.TrackerLinear].(*linearTracker)
+	if !ok {
+		d.serverError(w, "install Linear", errors.New("the Dispatcher's linear kind is not its own Linear tracker"))
+		return
+	}
 	app := linear.App{ClientID: install.ClientID, ClientSecret: strings.TrimSpace(install.ClientSecret)}
 	tokens, err := tracker.api.Exchange(r.Context(), app, install.Code, install.RedirectURI, install.CodeVerifier, d.now().UTC())
 	var refused *linear.OAuthError
