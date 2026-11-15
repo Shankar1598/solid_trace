@@ -50,17 +50,26 @@ type Clock struct {
 	// time: the Runner renews the workload identities, as Nomad does
 	// before they expire.
 	beforeMove func(next time.Time)
+	// real makes the clock the wall clock (RealClock).
+	real bool
 }
 
 // Now is the clock's time.
 func (c *Clock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.real {
+		return time.Now()
+	}
 	return c.now
 }
 
-// Advance moves the clock by d, on the agent machines too.
+// Advance moves the clock by d, on the agent machines too. A RealClock
+// does not move.
 func (c *Clock) Advance(d time.Duration) {
+	if c.real {
+		panic("factorytest: a RealClock does not move")
+	}
 	c.moving.Lock()
 	defer c.moving.Unlock()
 	c.mu.Lock()
@@ -115,6 +124,8 @@ type Env struct {
 	Tracker *faketracker.Tracker
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
+	// http is the Dispatcher's client for SolidTrace (nil is its default).
+	http *http.Client
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
@@ -407,7 +418,7 @@ func (e *Env) start() {
 		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
 		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
 		BackstopEvery: backstopEvery,
-		Trackers:      []dispatcher.Tracker{e.Tracker.Tracker()}}
+		Trackers:      []dispatcher.Tracker{e.Tracker.Tracker()}, HTTP: e.http}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
@@ -580,4 +591,33 @@ func (e *Env) APIAs(userAgent, token, method, path string, body any) Answer {
 	defer resp.Body.Close()
 	answer, _ := io.ReadAll(resp.Body)
 	return Answer{resp.StatusCode, resp.Header, answer}
+}
+
+// RealClock makes the environment's clock the wall clock, for a
+// Dispatcher that calls the real SolidTrace (AtSolidTrace): SolidTrace
+// checks the expiry of the tokens with its own clock. The clock does not
+// move, and the wrappers' limits use the wall clock too.
+func RealClock(e *Env) {
+	e.Clock.mu.Lock()
+	defer e.Clock.mu.Unlock()
+	e.Clock.real = true
+}
+
+// AtSolidTrace gives the Dispatcher a real SolidTrace in place of the
+// recorder: Console at consoleURL (the token checks, the child tokens and
+// the MCP server), EventStore's ingest at ingestURL (the run events and
+// the wrappers' uploads), and token, the Dispatcher's own API token there.
+// The recorder still runs, but the Dispatcher does not call it. Seam 5
+// (the flow stack) uses it, with RealClock.
+func AtSolidTrace(consoleURL, ingestURL, token string) Option {
+	return func(e *Env) {
+		e.Config.SolidTraceURL = consoleURL
+		e.Config.SolidTraceIngestURL = ingestURL
+		e.Config.SolidTraceToken = token
+	}
+}
+
+// WithHTTP gives the Dispatcher client for its calls to SolidTrace.
+func WithHTTP(client *http.Client) Option {
+	return func(e *Env) { e.http = client }
 }
