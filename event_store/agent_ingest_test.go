@@ -342,6 +342,11 @@ func TestAgentIngestCapturedRepositories(t *testing.T) {
 		expectStatus(t, capturedRepositories(t, env, "testkey123"), 401)
 	})
 
+	t.Run("Console's factory token gets 401: it is for the Dispatcher only", func(t *testing.T) {
+		// Oauth::ConsoleToken::PREFIX is "stc_".
+		expectStatus(t, capturedRepositories(t, env, "stc_eyJfcmFpbHMiOnsiZGF0YSI6eyJ1c2VyX2lkIjoxfX19--abc"), 401)
+	})
+
 	t.Run("a token's digest finds it, not its secret", func(t *testing.T) {
 		secret, _ := rows.apiToken(apiTokenRow{user: engineer, organization: acme, scopes: []string{"sessions:write"}})
 		expectStatus(t, capturedRepositories(t, env, digestOf(secret)), 401)
