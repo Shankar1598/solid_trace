@@ -4,6 +4,7 @@ package nomadrunner_test
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -183,11 +184,36 @@ func TestALostMachineEndsItsExecutionAsLost(t *testing.T) {
 	r := s.runner(t, `exec sleep 600`)
 	ev := &events{t: t, r: r}
 
-	dispatch(t, r, "run-1", "exec-1", "")
+	workload := dispatch(t, r, "run-1", "exec-1", "")
 	ev.until("exec-1", dispatcher.RunnerRunning, 60*time.Second)
-	s.pause(t)
+	resume := s.pause(t)
 	end := ev.next("exec-1", 90*time.Second)
 	if !end.Ended || !end.Lost || end.State != dispatcher.RunnerLost {
 		t.Fatalf("the event is %+v, want lost", end)
 	}
+
+	// The Dispatcher restores the Run in a new Execution. When the machine
+	// comes back, its old task stops, and Nomad does not place the lost
+	// Execution again (on this machine or on another).
+	resume()
+	settled := time.Now().Add(15 * time.Second)
+	for deadline := time.Now().Add(45 * time.Second); ; time.Sleep(time.Second) {
+		var live []string
+		for _, a := range s.allocs(t, workload) {
+			if a.ClientStatus == api.AllocClientStatusPending || a.ClientStatus == api.AllocClientStatusRunning ||
+				a.ClientStatus == api.AllocClientStatusUnknown {
+				live = append(live, a.ID[:8]+" "+a.ClientStatus)
+			}
+		}
+		if len(live) == 0 && time.Now().After(settled) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the lost Execution's job still has allocations %v after the machine came back", live)
+		}
+	}
+	if out, _ := exec.Command("docker", "exec", s.machine, "pgrep", "-f", "sleep 600").Output(); len(out) != 0 {
+		t.Errorf("the lost Execution's task still runs on the machine: pids %s", out)
+	}
+	ev.none("exec-1", time.Second)
 }

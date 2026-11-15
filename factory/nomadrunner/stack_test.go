@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -230,21 +231,27 @@ func (s *stack) job(t *testing.T, id string) *api.Job {
 }
 
 // pause stops each process of the agent machine (docker pause), so that
-// its Nomad client misses its heartbeats. The cleanup continues it, and
-// waits until its node is ready again.
-func (s *stack) pause(t *testing.T) {
+// its Nomad client misses its heartbeats. resume continues it, and waits
+// until its node is ready again; the cleanup resumes it, if the test did
+// not.
+func (s *stack) pause(t *testing.T) (resume func()) {
 	t.Helper()
 	if out, err := exec.Command("docker", "pause", s.machine).CombinedOutput(); err != nil {
 		t.Fatalf("docker pause: %v %s", err, out)
 	}
-	t.Cleanup(func() {
-		exec.Command("docker", "unpause", s.machine).Run()
-		for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(time.Second) {
-			nodes, _, err := s.api.Nodes().List(nil)
-			if err == nil && len(nodes) > 0 && nodes[0].Status == api.NodeStatusReady {
-				return
+	var once sync.Once
+	resume = func() {
+		once.Do(func() {
+			exec.Command("docker", "unpause", s.machine).Run()
+			for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(time.Second) {
+				nodes, _, err := s.api.Nodes().List(nil)
+				if err == nil && len(nodes) > 0 && nodes[0].Status == api.NodeStatusReady {
+					return
+				}
 			}
-		}
-		t.Error("the agent machine's node is not ready 60 s after docker unpause")
-	})
+			t.Error("the agent machine's node is not ready 60 s after docker unpause")
+		})
+	}
+	t.Cleanup(resume)
+	return resume
 }

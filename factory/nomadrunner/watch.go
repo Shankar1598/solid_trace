@@ -45,7 +45,7 @@ func (r *Runner) watchNodes(ctx context.Context) {
 		}
 		for _, n := range nodes {
 			if n.Status == api.NodeStatusDown {
-				r.nodeDown(n.ID)
+				r.nodeDown(ctx, n.ID)
 			}
 		}
 		return meta.LastIndex, nil
@@ -111,20 +111,43 @@ func (r *Runner) observe(ctx context.Context, a *api.AllocationListStub) error {
 		return nil
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.workloads[a.ID] = a.JobID
 	t := r.tracked[execution]
 	if t == nil {
 		t = &tracked{}
 		r.tracked[execution] = t
 	}
-	t.node = a.NodeID
+	t.node, t.job = a.NodeID, a.JobID
+	// A lost Execution's job has an allocation that is not at its end: the
+	// lost one, which continues when its machine comes back, or a new one
+	// that Nomad placed. Stop the job again (the first stop can fail).
+	again := t.ended && t.state == dispatcher.RunnerLost && !ev.Ended
 	if t.ended || t.state == ev.State {
+		r.mu.Unlock()
+		if again {
+			r.stopLost(ctx, a.JobID)
+		}
 		return nil
 	}
 	t.state, t.ended = ev.State, ev.Ended
 	r.record(ev)
+	r.mu.Unlock()
+	if ev.Lost {
+		r.stopLost(ctx, a.JobID)
+	}
 	return nil
+}
+
+// stopLost stops the dispatched job of a lost Execution. Nomad does not
+// replace a lost allocation, but with disconnect.replace false it keeps
+// the allocation for the time that its machine is away, and the task
+// continues when the machine comes back; and Nomad can place a new
+// allocation of the job. Each one would work on a Run that the Dispatcher
+// restores in a new Execution. A stopped job has no allocation that runs.
+func (r *Runner) stopLost(ctx context.Context, job string) {
+	if _, _, err := r.client.Jobs().Deregister(job, false, (&api.WriteOptions{}).WithContext(ctx)); err != nil && ctx.Err() == nil {
+		r.log.Warn("could not stop the Nomad job of a lost Execution", "job", job, "error", err)
+	}
 }
 
 // execution gives the Execution of a dispatched job: from Dispatch, or,
@@ -151,16 +174,21 @@ func (r *Runner) execution(ctx context.Context, jobID string) (string, error) {
 	return execution, nil
 }
 
-// nodeDown ends each Execution on the node as lost.
-func (r *Runner) nodeDown(node string) {
+// nodeDown ends each Execution on the node as lost, and stops its job.
+func (r *Runner) nodeDown(ctx context.Context, node string) {
+	var lost []string
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	for execution, t := range r.tracked {
 		if t.ended || t.node != node {
 			continue
 		}
 		t.state, t.ended = dispatcher.RunnerLost, true
 		r.record(dispatcher.RunnerEvent{Execution: execution, State: dispatcher.RunnerLost, Ended: true, Lost: true})
+		lost = append(lost, t.job)
+	}
+	r.mu.Unlock()
+	for _, job := range lost {
+		r.stopLost(ctx, job)
 	}
 }
 

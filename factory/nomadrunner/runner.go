@@ -108,6 +108,8 @@ type Runner struct {
 type tracked struct {
 	state string
 	node  string
+	// job is the dispatched job of the Execution.
+	job   string
 	ended bool
 }
 
@@ -278,7 +280,9 @@ func (r *Runner) job(kind dispatcher.MachineKind) *api.Job {
 	group.RestartPolicy = &api.RestartPolicy{Attempts: &zero, Mode: &mode}
 	group.ReschedulePolicy = &api.ReschedulePolicy{Attempts: &zero, Unlimited: &no}
 	// A lost machine's allocation is not replaced: the Dispatcher
-	// restores the Run in a new Execution.
+	// restores the Run in a new Execution. The Runner stops the job of a
+	// lost Execution (stopLost), so that its task does not continue when
+	// the machine comes back.
 	group.Disconnect = &api.DisconnectStrategy{Replace: &no}
 	group.AddTask(task)
 	job.AddTaskGroup(group)
