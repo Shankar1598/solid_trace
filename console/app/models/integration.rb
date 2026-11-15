@@ -1,7 +1,16 @@
 # frozen_string_literal: true
 
 class Integration < ApplicationRecord
-  PROVIDERS = %w[email slack pagerduty].freeze
+  PROVIDERS = %w[email slack pagerduty factory].freeze
+
+  # The 'Factory' provider (W6) starts Runs at the Dispatcher. It has no URL
+  # field: Console sends only to the Dispatcher's URLs of Settings →
+  # Instance, through the Webhook sender that it made for the Integration.
+  FACTORY = "factory"
+
+  # The settings that tell Console where to deliver. The Factory provider
+  # keeps none of them.
+  CONNECTION_SETTINGS = %w[webhook_url routing_key severity recipients].freeze
 
   # Default notification thresholds
   DEFAULT_EVENT_THRESHOLD = 10
@@ -14,9 +23,24 @@ class Integration < ApplicationRecord
   validates :name, presence: true
   validate :webhook_url_is_https, unless: -> { Rails.env.local? }
   before_validation :set_name
+  before_validation :drop_connection_settings, if: :factory?
+
+  # The Factory sender's secret: Console signs each delivery with it. Encrypted
+  # with keys derived from SECRET_KEY_BASE (ADR 0015), and never shown.
+  encrypts :sender_secret
 
   scope :active, -> { where(active: true) }
   scope :by_provider, ->(provider) { where(provider: provider) }
+
+  # The providers that a new Integration can have: the Factory provider only
+  # while the Dispatcher URL is set (Dispatcher.on?).
+  def self.providers_to_make(settings: InstanceSetting.current)
+    Dispatcher.on?(settings: settings) ? PROVIDERS : PROVIDERS - [ FACTORY ]
+  end
+
+  def factory?
+    provider == FACTORY
+  end
 
   # Provider-specific settings
   def webhook_url
@@ -88,6 +112,10 @@ class Integration < ApplicationRecord
 
   def set_name
     self.name = provider.titleize if name.blank?
+  end
+
+  def drop_connection_settings
+    self.settings = (settings || {}).except(*CONNECTION_SETTINGS)
   end
 
   # Console POSTs to a webhook URL over https only (Notifiers::HttpDelivery),
