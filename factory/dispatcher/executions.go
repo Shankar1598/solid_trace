@@ -11,7 +11,7 @@ import (
 )
 
 // maxReportText is the longest summary or question that a report keeps.
-// The full text also goes to evidence/report.md (ticket 36).
+// The full text also goes to evidence/report.md (the wrapper writes it).
 const maxReportText = 64 << 10
 
 type executionHandler func(w http.ResponseWriter, r *http.Request, e storedExecution)
@@ -186,7 +186,11 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 	}
 	report.Summary = strings.TrimSpace(report.Summary)
 	report.Question = strings.TrimSpace(report.Question)
-	if problem := checkReport(report); problem != "" {
+	problem := checkReport(report)
+	if problem == "" {
+		problem = checkEvidence(report)
+	}
+	if problem != "" {
 		writeProblem(w, http.StatusBadRequest, problem)
 		return
 	}
@@ -199,6 +203,7 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 		d.serverError(w, "keep the report", err)
 		return
 	}
+	d.afterReport(e)
 	writeJSON(w, http.StatusOK, report)
 }
 

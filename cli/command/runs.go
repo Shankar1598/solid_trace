@@ -163,6 +163,9 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 	if r.PRURL != "" {
 		fmt.Fprintf(tw, "PR:\t%s\n", r.PRURL)
 	}
+	if len(r.Flags) > 0 {
+		fmt.Fprintf(tw, "Flags:\t%s\n", strings.Join(r.Flags, ", "))
+	}
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
 	if r.Link != "" {
 		fmt.Fprintf(tw, "Trigger link:\t%s\n", r.Link)

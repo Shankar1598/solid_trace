@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestReportSendsTheOutcomeToTheWrapper(t *testing.T) {
 		t.Fatalf("exit %d\n%s%s", code, stdout, stderr)
 	}
 	want := dispatcherapi.Report{Outcome: dispatcherapi.OutcomeNeedsAPerson, Summary: "Two ways", Question: "Which one?"}
-	if len(*got) != 1 || (*got)[0] != want {
+	if len(*got) != 1 || !reflect.DeepEqual((*got)[0], want) {
 		t.Errorf("the wrapper got %+v", *got)
 	}
 }
@@ -91,4 +92,3 @@ func TestReportRefusesAnOutcomeThatItDoesNotKnow(t *testing.T) {
 		t.Errorf("exit %d, sent %d: %s", code, len(*got), stderr)
 	}
 }
-

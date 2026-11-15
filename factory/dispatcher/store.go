@@ -260,6 +260,13 @@ var migrations = []string{
 		read_at INTEGER NOT NULL,
 		PRIMARY KEY (repository, folder)
 	);`,
+	// The report's Evidence (ticket 36): the checks and the Evidence
+	// paths as JSON lists, and the delivered-message counter. flags are
+	// the flags of a done Run (a JSON list), set when its Execution ends.
+	`ALTER TABLE executions ADD COLUMN report_checks TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN report_evidence TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN report_delivered INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE runs ADD COLUMN flags TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -402,19 +409,20 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 }
 
 const runColumns = `id, organization_slug, project, prompt, state, started_by_kind, started_by_id, started_by_name,
-	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes, pr_url`
+	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes, pr_url, flags`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
 	var created int64
 	var scheduledBy dispatcherapi.Person
-	var attributes string
+	var attributes, flags string
 	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.Kind, &r.StartedBy.ID,
 		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name,
-		&r.Title, &r.Link, &attributes, &r.PRURL)
+		&r.Title, &r.Link, &attributes, &r.PRURL, &flags)
 	if err != nil {
 		return r, err
 	}
+	r.Flags = runFlags(r.State, flags)
 	r.CreatedAt = time.UnixMicro(created).UTC()
 	if scheduledBy.ID != "" {
 		r.ScheduledBy = &scheduledBy
