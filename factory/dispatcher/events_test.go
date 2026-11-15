@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 )
 
 func TestAStartSendsTheCreatedAndQueuedEventsWithTheRunsSnapshot(t *testing.T) {
@@ -99,4 +98,3 @@ func TestATriggerForAProjectWithNoSettingsSendsAWarningWithFileDispatcher(t *tes
 		t.Errorf("the warning's time %v is not the Dispatcher's clock", warning["time"])
 	}
 }
-
