@@ -92,6 +92,7 @@ Rails.application.routes.draw do
     get "agent_sessions/:id", to: "agent_sessions#show", as: :agent_session, constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }
     get "agent_sessions/:id/timeline", to: "agent_sessions#timeline", as: :agent_session_timeline,
       constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
+    get "runs", to: "runs#index", as: :runs
     resources :dashboards, only: [ :index, :show, :create, :update, :destroy ] do
       member do
         patch :layout
