@@ -234,12 +234,15 @@ type reconcileQueue struct {
 	// announcedAt is the time of the last webhook of each (connection,
 	// entity), for the warning of the backstop.
 	announcedAt map[string]time.Time
-	wake        chan struct{}
+	// reconciledAt is the queuedAt of each connection's last step of the
+	// whole connection that did not fail.
+	reconciledAt map[string]time.Time
+	wake         chan struct{}
 }
 
 func newReconcileQueue() *reconcileQueue {
 	return &reconcileQueue{pending: map[string]reconcileJob{}, announcedAt: map[string]time.Time{},
-		wake: make(chan struct{}, 1)}
+		reconciledAt: map[string]time.Time{}, wake: make(chan struct{}, 1)}
 }
 
 func (q *reconcileQueue) add(job reconcileJob, now time.Time) {
@@ -277,9 +280,12 @@ func (q *reconcileQueue) next() (reconcileJob, bool) {
 	return job, true
 }
 
-// unannounced are the changes that no webhook announced after the job
-// was queued. It forgets announcements older than a day.
-func (q *reconcileQueue) unannounced(job reconcileJob, changed []string) []string {
+// reconciled records a step of the whole connection that did not fail,
+// and gives the changes that it found and that no webhook announced
+// since the connection's previous such step. A webhook whose own step
+// failed announced its change all the same: the webhooks work. It
+// forgets announcements older than a day.
+func (q *reconcileQueue) reconciled(job reconcileJob, changed []string) []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for key, at := range q.announcedAt {
@@ -287,14 +293,20 @@ func (q *reconcileQueue) unannounced(job reconcileJob, changed []string) []strin
 			delete(q.announcedAt, key)
 		}
 	}
-	whole, ok := q.announcedAt[job.source+"\x00"]
-	if ok && !whole.Before(job.queuedAt) {
+	since, ok := q.reconciledAt[job.source]
+	if !ok || since.After(job.queuedAt) {
+		since = job.queuedAt
+	}
+	if job.queuedAt.After(q.reconciledAt[job.source]) {
+		q.reconciledAt[job.source] = job.queuedAt
+	}
+	if whole, ok := q.announcedAt[job.source+"\x00"]; ok && !whole.Before(since) {
 		return nil
 	}
 	var left []string
 	for _, entity := range changed {
 		at, ok := q.announcedAt[job.source+"\x00"+entity]
-		if !ok || at.Before(job.queuedAt) {
+		if !ok || at.Before(since) {
 			left = append(left, entity)
 		}
 	}
@@ -345,10 +357,11 @@ func (d *Dispatcher) reconcile(ctx context.Context, job reconcileJob) {
 		}
 		return
 	}
-	if !job.backstop {
+	if job.entity != "" {
 		return
 	}
-	if missed := d.reconciles.unannounced(job, changed); len(missed) > 0 {
+	missed := d.reconciles.reconciled(job, changed)
+	if job.backstop && len(missed) > 0 {
 		last := "never"
 		if !source.LastWebhook.IsZero() {
 			last = source.LastWebhook.Format(time.RFC3339)

@@ -100,6 +100,36 @@ func TestAWebhookThatArrivesWhileTheBackstopRunsSuppressesItsWarning(t *testing.
 	}
 }
 
+// A webhook announced the change, but its own step failed: the next
+// backstop acts on the change and does not warn, because the webhooks
+// work. A change after that with no webhook still warns.
+func TestABackstopAfterAFailedWebhookStepDoesNotWarnOfTheAnnouncedChange(t *testing.T) {
+	env := factorytest.New(t)
+	path := env.WebhookConnection("tickets", secret)
+	reconciledOf(t, env, "tickets", "")
+	env.Clock.Advance(time.Minute)
+	env.Source.Change("tickets", "T-1")
+	env.Source.FailNext(1)
+	deliver(t, env, path, "d-1", "T-1")
+	if _, ok := env.Source.WaitFor(func(r fakesource.Reconcile) bool { return r.Entity == "T-1" && r.Failed }); !ok {
+		t.Fatalf("the webhook's step did not fail: %+v", env.Source.Reconciles())
+	}
+	env.Clock.Advance(fakesource.Backstop - time.Minute)
+	if _, ok := env.Source.WaitFor(func(r fakesource.Reconcile) bool { return r.Entity == "" && len(r.Acted) > 0 }); !ok {
+		t.Fatalf("the backstop did not act on T-1: %+v", env.Source.Reconciles())
+	}
+	settle()
+	if warned(env) {
+		t.Fatalf("the backstop warned of a change that a webhook announced before its step failed")
+	}
+
+	env.Source.Change("tickets", "T-2")
+	env.Clock.Advance(fakesource.Backstop)
+	if w := env.WaitForWarning("found a change that no webhook announced"); w["factory.entities"] != "T-2" {
+		t.Errorf("the warning is %v, want one for T-2 only", w)
+	}
+}
+
 func waitForSteps(t *testing.T, env *factorytest.Env, connection, entity string, n int) {
 	t.Helper()
 	if _, ok := env.Source.WaitFor(func(fakesource.Reconcile) bool { return stepsOf(env, connection, entity) >= n }); !ok {

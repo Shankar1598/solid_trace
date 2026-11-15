@@ -54,6 +54,8 @@ type Reconcile struct {
 	Entity     string
 	// Acted are the changes that the step found and acted on.
 	Acted []string
+	// Failed is true for a step that FailNext made fail.
+	Failed bool
 }
 
 // Source is the fake source's API, for all fake connections together.
@@ -63,6 +65,7 @@ type Source struct {
 	reconciles []Reconcile
 	held       chan struct{}
 	changed    chan struct{}
+	fail       int
 }
 
 // New is a source with no changes.
@@ -128,6 +131,18 @@ func (s *Source) Hold() (release func()) {
 	}
 }
 
+// FailNext makes the next n reconcile steps fail, as when the service's
+// API answers 5xx or its rate limit is reached. A failed step acts on
+// nothing.
+func (s *Source) FailNext(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fail = n
+}
+
+// ErrFailed is the error of a step that FailNext made fail.
+var ErrFailed = errors.New("the fake source's API failed")
+
 // Sign is the signature header's value for body with secret.
 func Sign(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
@@ -178,6 +193,15 @@ func (k kind) Reconcile(ctx context.Context, source dispatcher.WebhookSource, en
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() {
+		close(s.changed)
+		s.changed = make(chan struct{})
+	}()
+	if s.fail > 0 {
+		s.fail--
+		s.reconciles = append(s.reconciles, Reconcile{Connection: source.Name, Entity: entity, Failed: true})
+		return nil, ErrFailed
+	}
 	var acted []string
 	var left []change
 	for _, c := range s.changes {
@@ -189,8 +213,6 @@ func (k kind) Reconcile(ctx context.Context, source dispatcher.WebhookSource, en
 	}
 	s.changes = left
 	s.reconciles = append(s.reconciles, Reconcile{Connection: source.Name, Entity: entity, Acted: acted})
-	close(s.changed)
-	s.changed = make(chan struct{})
 	return acted, nil
 }
 
