@@ -199,8 +199,13 @@ func TestARunWhoseAccountIsRemovedBeforeTheTaskCallGoesBackInTheQueueAndGetsAFre
 		env.Runner.Agent(takeTask, initLine(t), recordToken(tokens), done("Fixed"), reply, result, waitForEnd)
 	}
 	// The operator removes pool-1 after the dispatch on it, before the
-	// wrapper's task call.
-	env.Runner.BeforeDispatch(func(string) { env.RemoveAccount(factorytest.DefaultAccount) })
+	// wrapper's task call. The clock moves on, so that the second
+	// Execution has a later dispatch time: the Run lists its Executions
+	// in that order, and with equal times in the order of their random ids.
+	env.Runner.BeforeDispatch(func(string) {
+		env.RemoveAccount(factorytest.DefaultAccount)
+		env.Clock.Advance(time.Second)
+	})
 
 	id := start(t, env, ana, "Fix the cart")
 	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
