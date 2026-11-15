@@ -121,7 +121,11 @@ func TestTheStatusAndTheCommentsOfTheNotionKindReachNotionsAPI(t *testing.T) {
 	env.Notion.Put(elsewhere, fakenotion.Page{ID: other, Title: "Not ours", Status: "Backlog"}, rosaN)
 	trashed := readyPage(env, db, "Trashed")
 	env.Notion.Trash(trashed)
-	for _, id := range []string{other, trashed, fakenotion.NewID(), "../users/me"} {
+	// An id with its dashes in other places than Notion's 8-4-4-4-12 is no
+	// id, also when its digits are the id of a page.
+	compact := strings.ReplaceAll(page, "-", "")
+	misplaced := compact[:4] + "-" + compact[4:]
+	for _, id := range []string{other, trashed, fakenotion.NewID(), "../users/me", misplaced} {
 		if err := kind.SetStatus(ctx, c, id, "Agent working"); !errors.Is(err, dispatcher.ErrNoTicket) {
 			t.Errorf("set the status of %s: %v, want ErrNoTicket", id, err)
 		}
@@ -302,7 +306,8 @@ func TestAnAdminGivesTheNotionDatabaseAsItsIDOrItsLink(t *testing.T) {
 		}
 	}
 	for _, given := range []string{"", "tickets", compact[:31], "https://www.notion.so/acme/Tickets?v=" + compact,
-		"ftp://www.notion.so/" + compact, db + "0"} {
+		"ftp://www.notion.so/" + compact, db + "0", compact[:4] + "-" + compact[4:], db[:8] + "-" + db[8:],
+		compact[:4] + "-" + compact[4:8] + "-" + compact[8:12] + "-" + compact[12:16] + "-" + compact[16:]} {
 		if a := env.Admin().API("PUT", "/api/v1/connections/notion/tracker",
 			dispatcherapi.TrackerSettings{Database: given}); a.Status != http.StatusBadRequest {
 			t.Errorf("the database %q: %d %s, want 400", given, a.Status, a.Body)

@@ -199,16 +199,18 @@ func (*notion) setupToken(header http.Header, body []byte) (string, bool) {
 	return request.VerificationToken, true
 }
 
-// notionHex is an id of Notion with no dashes.
-var notionHex = regexp.MustCompile(`^[0-9a-f]{32}$`)
+// notionIDForm is an id of Notion: 32 hex digits with no dashes, or with
+// the dashes of Notion's own form, 8-4-4-4-12.
+var notionIDForm = regexp.MustCompile(`^(?i)(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
 
 // notionID gives a Notion id (with or without dashes) in Notion's own
-// form, 8-4-4-4-12 lower-case hex digits.
+// form, 8-4-4-4-12 lower-case hex digits. An id with its dashes in other
+// places is no id.
 func notionID(s string) (string, bool) {
-	h := strings.ToLower(strings.ReplaceAll(s, "-", ""))
-	if !notionHex.MatchString(h) || (strings.Contains(s, "-") && len(s) != 36) {
+	if !notionIDForm.MatchString(s) {
 		return "", false
 	}
+	h := strings.ToLower(strings.ReplaceAll(s, "-", ""))
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:], true
 }
 
