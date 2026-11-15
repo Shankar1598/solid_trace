@@ -279,6 +279,31 @@ func TestTheWIPRefDeleteIsTriedAgainAtTheNextCheck(t *testing.T) {
 	}
 }
 
+// After a delete that the forge accepts, the Dispatcher sends no more
+// deletes of the Closed Run's WIP ref: a ref with that name that is made
+// again on the forge stays.
+func TestTheDispatcherDeletesTheWIPRefOfAClosedRunOneTime(t *testing.T) {
+	env, ana := newEnv(t)
+	id, pr := runWithPR(t, env, ana)
+	wip := addWIPRef(t, env, id)
+	env.Forge.SetState("example/shop", pr.ID, "MERGED")
+	env.Clock.Advance(prCheckEvery)
+	env.CheckClosedRuns()
+	closedEvent(t, env, id, dispatcherapi.StateDone, "merged", "pr_merged")
+	if _, ok := env.Forge.Ref("example/shop", wip); ok {
+		t.Fatalf("the WIP ref %s is not deleted at the close", wip)
+	}
+
+	addWIPRef(t, env, id)
+	for range 2 {
+		env.Clock.Advance(prCheckEvery)
+		env.CheckClosedRuns()
+	}
+	if _, ok := env.Forge.Ref("example/shop", wip); !ok {
+		t.Errorf("the Dispatcher deletes the WIP ref %s again after a delete that the forge accepted", wip)
+	}
+}
+
 func TestTheDispatcherStopsTryingToDeleteAWIPRefADayAfterTheClose(t *testing.T) {
 	env, ana := newEnv(t)
 	id, pr := runWithPR(t, env, ana)
