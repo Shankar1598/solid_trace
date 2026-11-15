@@ -109,6 +109,9 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	if info, err := os.Stat(e.workDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the repository %s has no folder %s, the Project's folder", e.task.Repository, folder)
 	}
+	if e.task.Setup != "" {
+		return e.runSetupCommand(ctx, environ)
+	}
 	return nil
 }
 

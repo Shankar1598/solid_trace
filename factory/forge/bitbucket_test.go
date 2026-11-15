@@ -491,3 +491,59 @@ func TestTheCredentialHelperReplacesAHelperOfTheMachine(t *testing.T) {
 		t.Fatalf("the clone used the machine's helper: %v\n%s", err, out)
 	}
 }
+
+func TestTheDefaultBranchFileIsTheFirstPathThatIsOnTheDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	f, b := newForge(t)
+	f.Push(fakeRepo, "main", map[string]string{"apps/shop/.solidtrace/factory.toml": "folder\n",
+		".solidtrace/factory.toml": "root\n"}, "Two factory files")
+	f.Push(fakeRepo, "feature", map[string]string{".solidtrace/factory.toml": "branch\n",
+		"apps/admin/.solidtrace/factory.toml": "branch\n"}, "A change on a branch")
+
+	cases := []struct {
+		name  string
+		paths []string
+		want  string
+		body  string
+	}{
+		{"the folder's file wins", []string{"apps/shop/.solidtrace/factory.toml", ".solidtrace/factory.toml"},
+			"apps/shop/.solidtrace/factory.toml", "folder\n"},
+		{"the root's file when the folder has none", []string{"apps/admin/.solidtrace/factory.toml", ".solidtrace/factory.toml"},
+			".solidtrace/factory.toml", "root\n"},
+		{"none", []string{"apps/admin/.solidtrace/factory.toml", "no/such/file.toml"}, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path, body, err := b.DefaultBranchFile(ctx, repository, c.paths...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if path != c.want || string(body) != c.body {
+				t.Errorf("got %q %q, want %q %q", path, body, c.want, c.body)
+			}
+		})
+	}
+
+	// The default branch is the repository's, not main.
+	f.Git(fakeRepo, "symbolic-ref", "HEAD", "refs/heads/feature")
+	path, body, err := b.DefaultBranchFile(ctx, repository, "apps/admin/.solidtrace/factory.toml")
+	if err != nil || path != "apps/admin/.solidtrace/factory.toml" || string(body) != "branch\n" {
+		t.Errorf("after the default branch changed: %q %q %v", path, body, err)
+	}
+}
+
+func TestADefaultBranchFileThatCannotBeReadGivesAClearReason(t *testing.T) {
+	ctx := context.Background()
+	f, b := newForge(t)
+	f.FailNext(http.StatusForbidden, "Your credentials lack one or more required privilege scopes.")
+	_, _, err := b.DefaultBranchFile(ctx, repository, ".solidtrace/factory.toml")
+	var fe *forge.Error
+	if !errors.As(err, &fe) || fe.Status != http.StatusForbidden || !strings.Contains(err.Error(), "read the factory file") {
+		t.Errorf("err %v", err)
+	}
+	b.Token = "not-the-token"
+	if _, _, err := b.DefaultBranchFile(ctx, repository, ".solidtrace/factory.toml"); err == nil ||
+		!strings.Contains(err.Error(), "401") {
+		t.Errorf("a token that the forge refuses: %v", err)
+	}
+}

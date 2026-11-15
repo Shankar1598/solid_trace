@@ -3,6 +3,7 @@ module github.com/solidtrace/factory
 go 1.27.3
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/hashicorp/cronexpr v1.1.3
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/solidtrace/cli v0.0.0
