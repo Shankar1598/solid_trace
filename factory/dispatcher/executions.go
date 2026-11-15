@@ -103,8 +103,15 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 	}
 	accountToken, err := d.store.accountToken(e.account)
 	if errors.Is(err, errNotFound) {
+		// An operator removed the account after the dispatch. The Run is
+		// not lost: it goes back in the queue, and its next Execution gets
+		// a free account.
 		why := "the account " + e.account + " is no longer in the pool"
-		d.endByDispatcher(e.id, why)
+		if _, err := d.store.requeueExecution(e.id, why, d.now()); err != nil {
+			d.serverError(w, "put the Run back in the queue", err)
+			return
+		}
+		d.wakeDispatch()
 		writeProblem(w, http.StatusConflict, why)
 		return
 	}

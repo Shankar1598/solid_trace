@@ -236,6 +236,33 @@ func (s *store) failExecution(id, reason string, at time.Time) (bool, error) {
 	return true, tx.Commit()
 }
 
+// requeueExecution ends an Execution that has not ended, with reason, and
+// puts its Run back in the queue if the Run is queued or running: the
+// next dispatch gives the Run a new Execution. It is false when the
+// Execution had ended (or is not known).
+func (s *store) requeueExecution(id, reason string, at time.Time) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var runID string
+	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ? WHERE id = ? AND state != ?
+		RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, id, dispatcherapi.ExecutionEnded).
+		Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ? WHERE id = ? AND state IN (?, ?)`,
+		dispatcherapi.StateQueued, reason, runID, dispatcherapi.StateQueued, dispatcherapi.StateRunning); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 // executionsOf reads a Run's Executions, oldest first.
 func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 	rows, err := s.db.Query(`SELECT id, state, dispatched_at, started_at, ended_at, task_delivered_at, end_reason,
