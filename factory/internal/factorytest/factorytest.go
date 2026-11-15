@@ -73,6 +73,8 @@ type Env struct {
 	// Source is the fake webhook source: the API of each connection of
 	// kind fakesource.Kind.
 	Source *fakesource.Source
+	// runner is a Runner that is not the fake (WithRunner).
+	runner dispatcher.Runner
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
@@ -200,7 +202,7 @@ func (e *Env) Project(slug string) recorder.Project {
 		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
 	}
 	settings := map[string]string{"repository": "bitbucket.org/example/" + slug}
-	if e.Runner != nil {
+	if e.Runner != nil || e.runner != nil {
 		e.Forge.AddRepo("example/"+slug, nil)
 		a := e.admin.API("PUT", "/api/v1/connections/"+ForgeConnection,
 			map[string]string{"kind": "bitbucket", "token": e.Forge.Token})
@@ -275,8 +277,11 @@ func (e *Env) start() {
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
 		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind()}, ReconcileTick: reconcileTick}
-	if e.Runner != nil {
+	switch {
+	case e.Runner != nil:
 		options.Runner = e.Runner
+	case e.runner != nil:
+		options.Runner = e.runner
 	}
 	d, err := dispatcher.Open(e.Config, options)
 	if err != nil {

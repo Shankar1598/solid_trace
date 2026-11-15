@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,27 +13,53 @@ import (
 // the MVP; the fake Runner in Seam 3).
 type Runner interface {
 	// Dispatch starts the wrapper of an Execution. It gives the workload:
-	// the subject that the wrapper's workload identity JWT has. The
-	// Dispatcher gives the Execution's task only to a JWT with that
-	// subject.
+	// the name of the one workload on the Runner that runs this
+	// Execution's wrapper (on Nomad, the dispatched job). The Dispatcher
+	// gives the Execution's task only to a JWT that Workload maps to it.
 	Dispatch(ctx context.Context, e RunnerExecution) (workload string, err error)
+	// Workload gives the workload that holds a workload identity JWT
+	// that the Dispatcher checked against the JWKS. It gives
+	// ErrUnknownWorkload when the JWT is of no workload of the Runner.
+	Workload(ctx context.Context, identity Identity) (string, error)
 	// Events gives the Runner's events from number from on, and waits
 	// until there is at least one or ctx ends.
 	Events(ctx context.Context, from int) ([]RunnerEvent, error)
+	// Stop stops the workload that Dispatch gave. The wrapper gets
+	// SIGTERM, and each of its processes is killed after the Runner's
+	// kill timeout. The end comes as an event.
+	Stop(ctx context.Context, workload string) error
 	// JWKSURL is where the Runner gives the keys that sign its workload
 	// identity JWTs.
 	JWKSURL() string
 }
 
+// ErrUnknownWorkload is the error of Runner.Workload for a JWT of no
+// workload of the Runner.
+var ErrUnknownWorkload = errors.New("the JWT is of no workload of the Runner")
+
 // RunnerExecution is what the Runner needs to start an Execution.
 type RunnerExecution struct {
 	Run       string
 	Execution string
+	// MachineKind is the kind of machine that the factory file names; ""
+	// is the operator's default kind.
+	MachineKind string
 }
+
+// The states of an Execution on the Runner (RunnerEvent.State).
+const (
+	RunnerPending  = "pending"
+	RunnerRunning  = "running"
+	RunnerComplete = "complete" // the wrapper exited with code 0
+	RunnerFailed   = "failed"   // the wrapper exited with another code, or did not start
+	RunnerLost     = "lost"     // the machine went with no notice
+)
 
 // RunnerEvent is one change of an Execution on the Runner.
 type RunnerEvent struct {
 	Execution string
+	// State is one of the Runner* states.
+	State string
 	// Ended is true when the wrapper is no longer there.
 	Ended bool
 	// Lost is true when the machine went with no notice.
@@ -131,6 +158,7 @@ func (d *Dispatcher) watchLoop(ctx context.Context) {
 		seen += len(events)
 		for _, ev := range events {
 			if !ev.Ended {
+				d.log.Info("an Execution changed state on the Runner", "execution", ev.Execution, "state", ev.State)
 				continue
 			}
 			if ev.Lost {

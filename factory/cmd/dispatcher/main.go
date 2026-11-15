@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/solidtrace/factory/dispatcher"
+	"github.com/solidtrace/factory/nomadrunner"
 )
 
 // Version is the release that this binary is, such as v0.19.0. A release
@@ -52,7 +53,17 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	if err != nil {
 		return fail(err)
 	}
-	d, err := dispatcher.Open(config, dispatcher.Options{Log: log, Version: Version})
+	options := dispatcher.Options{Log: log, Version: Version}
+	// With no Nomad address there is no Runner: each Run stays queued.
+	if config.NomadAddress != "" {
+		runner, err := nomadrunner.New(nomadrunner.FromConfig(config, log))
+		if err != nil {
+			return fail(err)
+		}
+		defer runner.Close()
+		options.Runner = runner
+	}
+	d, err := dispatcher.Open(config, options)
 	if err != nil {
 		return fail(err)
 	}
