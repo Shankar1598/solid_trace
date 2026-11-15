@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -45,25 +46,45 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 // false outside a git repository, and when no remote matches. A worktree
 // has the remotes of its repository, so it matches through them.
 func Match(ctx context.Context, cwd string, entries []string) (repo Repository, ok bool, err error) {
+	names, folder, ok, err := Remotes(ctx, cwd)
+	if !ok || err != nil {
+		return repo, false, err
+	}
+	for _, name := range names {
+		for _, entry := range entries {
+			if Matches(entry, name) {
+				return Repository{Name: name, Folder: folder}, true, nil
+			}
+		}
+	}
+	return repo, false, nil
+}
+
+// Remotes gives the remotes of the git repository of the working
+// directory as host/workspace/name, each one time, and the working
+// directory's folder in the repository ("" at the root). The remotes as
+// configured come first, then as git rewrites them (url.insteadOf);
+// "origin" comes first in each. ok is false outside a git repository.
+func Remotes(ctx context.Context, cwd string) (names []string, folder string, ok bool, err error) {
 	if cwd == "" {
-		return repo, false, nil
+		return nil, "", false, nil
 	}
 	prefix, err := git(ctx, cwd, "rev-parse", "--show-prefix")
 	if err != nil {
 		// Not a repository, or one that git refuses to read.
-		return repo, false, nil
+		return nil, "", false, nil
 	}
+	folder = strings.Trim(strings.TrimSpace(prefix), "/")
 	// The remotes as configured, then as git rewrites them (url.insteadOf).
 	// "origin" comes first in each, then the others in git's order.
 	configured, err := git(ctx, cwd, "config", "--get-regexp", `^remote\..*\.url$`)
 	if err != nil && configured != "" {
-		return repo, false, err
+		return nil, "", false, err
 	}
 	rewritten, err := git(ctx, cwd, "remote", "-v")
 	if err != nil {
-		return repo, false, err
+		return nil, "", false, err
 	}
-	var names []string
 	add := func(remote, url string) {
 		name, ok := Normalise(url)
 		if !ok {
@@ -87,15 +108,13 @@ func Match(ctx context.Context, cwd string, entries []string) (repo Repository, 
 			add(fields[0], fields[1])
 		}
 	}
-	names = append(first, names...)
-	for _, name := range names {
-		for _, entry := range entries {
-			if Matches(entry, name) {
-				return Repository{Name: name, Folder: strings.Trim(strings.TrimSpace(prefix), "/")}, true, nil
-			}
+	var unique []string
+	for _, name := range append(first, names...) {
+		if !slices.Contains(unique, name) {
+			unique = append(unique, name)
 		}
 	}
-	return repo, false, nil
+	return unique, folder, true, nil
 }
 
 // Normalise gives a git remote URL as host/workspace/name: the ssh, scp
