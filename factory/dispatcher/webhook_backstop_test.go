@@ -245,8 +245,8 @@ func TestTheCLIListOfConnectionsShowsEachWebhookURLAndTheTimeOfItsLastWebhook(t 
 				t.Errorf("the line of tickets has no last webhook at %s and URL %s: %q", at, url, line)
 			}
 		case strings.HasPrefix(line, "forge"):
-			if strings.Contains(line, "/webhooks/") {
-				t.Errorf("a connection whose kind sends no webhooks has a webhook URL: %q", line)
+			if !strings.Contains(line, factorytest.PublicWebhookURL+"/webhooks/bitbucket/") || !strings.Contains(line, "never") {
+				t.Errorf("a Bitbucket connection has no Bitbucket webhook URL and never: %q", line)
 			}
 		}
 	}
@@ -301,12 +301,12 @@ func TestAnAdminSetsAWebhookSecretWithTheCLIAndNoAnswerGivesIt(t *testing.T) {
 		connection, secret string
 		want               int
 	}{
-		"an absent connection":          {"absent", "s", http.StatusNotFound},
-		"an empty secret":               {"tickets", "  ", http.StatusBadRequest},
-		"a secret over 1 KiB":           {"tickets", strings.Repeat("s", 1025), http.StatusBadRequest},
-		"a kind that sends no webhooks": {"forge", "s", http.StatusUnprocessableEntity},
+		"an absent connection":   {"absent", "s", http.StatusNotFound},
+		"an empty secret":        {"tickets", "  ", http.StatusBadRequest},
+		"a secret over 1 KiB":    {"tickets", strings.Repeat("s", 1025), http.StatusBadRequest},
+		"a Bitbucket connection": {"forge", "s", http.StatusOK},
 	} {
-		if name == "a kind that sends no webhooks" {
+		if name == "a Bitbucket connection" {
 			mustCLIIn(t, dana, "forge-token\n", "connections", "set", "forge", "--kind", "bitbucket")
 		}
 		a := dana.API("PUT", "/api/v1/connections/"+c.connection+"/webhook-secret", dispatcherapi.SaveWebhookSecret{Secret: c.secret})
