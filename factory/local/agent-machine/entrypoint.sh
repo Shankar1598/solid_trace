@@ -4,9 +4,10 @@
 #
 # The container gets SYS_ADMIN (and no AppArmor profile) so that this script can make
 # the cgroup file system writable, as it is on a VM, and so that the Nomad client can
-# mount each task's secrets directory. Root on the agent machine is then much as root
-# on a VM; the run user has no capabilities. The container has no NET_ADMIN, so no
-# process here can change the firewall (agent-firewall).
+# mount each task's secrets directory. Root on the agent machine is then root on the
+# dev box, not root on a VM (README), so the run user has no capabilities and no way
+# to root. The container has no NET_ADMIN, so no process here can change the firewall
+# (agent-firewall).
 set -eu
 
 cg=/sys/fs/cgroup

@@ -144,6 +144,19 @@ run_user_is_not_root_and_is_in_the_docker_group() {
 
 sudoers_is_valid() { as root visudo -c; }
 
+# Root on the agent machine is root on the dev box (README), so the run user has no way to root.
+run_user_has_no_way_to_root() {
+  local found expected
+  found="$(as root find / \( -path /proc -o -path /sys \) -prune -o -type f -perm /6000 -print | sort | tr '\n' ' ')"
+  expected="/usr/bin/chage /usr/bin/chfn /usr/bin/chsh /usr/bin/expiry /usr/bin/gpasswd /usr/bin/mount /usr/bin/newgrp /usr/bin/passwd /usr/bin/su /usr/bin/sudo /usr/bin/umount /usr/sbin/unix_chkpwd "
+  [ "$found" = "$expected" ] || want "only Debian's setuid and setgid programs and sudo, got: $found"
+  # su is setuid: root has no password that works.
+  [[ "$(as root getent shadow root | cut -d: -f2)" =~ ^[*!] ]] || want "a locked password for root"
+  [ -z "$(as root getent group sudo | cut -d: -f4)" ] || want "no member of the sudo group"
+  [ "$(as root ls /etc/sudoers.d | tr '\n' ' ')" = "README factory-take-over " ] || want "only the take-over rule in /etc/sudoers.d"
+  as agent sh -c '! command -v dockerd >/dev/null' || want "no Docker daemon"
+}
+
 access_group_member_has_exactly_one_rule() {
   local rules
   rules="$(as engineer sudo -n -l | sed -n '/may run the following commands/,$p' | sed 1d | sed 's/^ *//' | grep -v '^$')"
@@ -201,6 +214,7 @@ agent_vm_target_has_no_local_take_over_user() {
 check "the run user is not root and is in the docker group" run_user_is_not_root_and_is_in_the_docker_group
 check "the image recipe's target (agent-vm) has no local take-over user" agent_vm_target_has_no_local_take_over_user
 check "visudo accepts the sudoers files" sudoers_is_valid
+check "the run user has no way to root: no other setuid program, no password for root, no other sudo rule, no Docker daemon" run_user_has_no_way_to_root
 check "'sudo -l' for a member of the access group shows one rule: hc connect as the run user, no password" access_group_member_has_exactly_one_rule
 check "the run user and other users have no sudo rule" no_other_user_has_a_sudo_rule
 check "sudo refuses each other command, user and option" take_over_rule_refuses_everything_else

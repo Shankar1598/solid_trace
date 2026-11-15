@@ -65,6 +65,7 @@ services:
         condition: service_healthy
     # SYS_ADMIN and no AppArmor profile: cgroup v2 writable, and Nomad's task mounts
     # (see agent-machine/entrypoint.sh). No NET_ADMIN, no Docker socket, not privileged.
+    # Root here is root on the dev box (README), so the run user has no way to root.
     cap_add: [SYS_ADMIN]
     security_opt: ["apparmor:unconfined"]
     cgroup: private
