@@ -409,10 +409,21 @@ func graphQLError(w http.ResponseWriter, message string) {
 func (l *Linear) graphQL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OperationName string         `json:"operationName"`
+		Query         string         `json:"query"`
 		Variables     map[string]any `json:"variables"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		answer(w, http.StatusBadRequest, map[string]any{"errors": []map[string]string{{"message": "bad body"}}})
+		return
+	}
+	// Linear refuses a query above its complexity limit before it runs it.
+	if tenths, err := Complexity(req.Query); err != nil || tenths > MaxComplexity*10 {
+		message := "Syntax Error: the fake cannot read the query"
+		if err == nil {
+			message = complexityError(tenths)
+		}
+		answer(w, http.StatusBadRequest, map[string]any{"errors": []map[string]any{{"message": message,
+			"extensions": map[string]string{"code": "GRAPHQL_VALIDATION_FAILED"}}}})
 		return
 	}
 	l.mu.Lock()

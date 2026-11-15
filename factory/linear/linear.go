@@ -300,9 +300,15 @@ func (a API) Issue(ctx context.Context, token, id string) (Issue, error) {
 	return data.Issue.issue(), nil
 }
 
-// MaxPages is the most pages of 50 issues that IssuesInStatus reads, so
+// PageSize is the number of issues in one page of IssuesInStatus. Linear
+// refuses a query above 10,000 complexity points, and the connection of
+// issues multiplies the points of each issue (about 290 with its labels
+// and history) by its first argument: 25 issues are about 7,300 points.
+const PageSize = 25
+
+// MaxPages is the most pages that IssuesInStatus reads (500 issues), so
 // one backstop cannot use much of the app's 5,000 requests an hour.
-const MaxPages = 10
+const MaxPages = 20
 
 // IssuesInStatus lists the issues whose status has the name, in each team
 // that the install can read.
@@ -320,7 +326,7 @@ func (a API) IssuesInStatus(ctx context.Context, token, status string) ([]Issue,
 			}
 		}
 		err := a.graphQL(ctx, token, "ReadyTickets", `query ReadyTickets($status: String!, $after: String) {
-  issues(first: 50, after: $after, filter: { state: { name: { eq: $status } } }) {
+  issues(first: `+fmt.Sprint(PageSize)+`, after: $after, filter: { state: { name: { eq: $status } } }) {
     nodes { `+issueFields+` }
     pageInfo { hasNextPage endCursor } } }`, map[string]any{"status": status, "after": after}, &data)
 		if err != nil {
