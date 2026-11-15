@@ -82,7 +82,9 @@ type Dispatcher struct {
 	// dispatching holds a channel for each Execution that the Runner is
 	// starting; it closes when the Runner gave the workload.
 	dispatching sync.Map
-	wake        chan struct{}
+	// prLocks holds one pr call of a Run at a time.
+	prLocks runLocks
+	wake    chan struct{}
 
 	// kinds are the kinds of connection that send webhooks, by name.
 	kinds map[string]WebhookKind
@@ -187,6 +189,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		d.identity = &identityCheck{jwksURL: d.runner.JWKSURL(), http: options.HTTP, now: options.Now}
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/task", d.wrapper(d.task))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/report", d.wrapper(d.report))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/pr", d.wrapper(d.pr))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/token", d.wrapper(d.token))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/commands", d.wrapper(d.commands))

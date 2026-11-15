@@ -21,6 +21,8 @@ import (
 type client struct {
 	url, execution, identityFile string
 	http                         *http.Client
+	// prHTTP is for the pr call, which waits on the forge.
+	prHTTP *http.Client
 }
 
 // answer is one answer of the Dispatcher.
@@ -31,6 +33,15 @@ type answer struct {
 }
 
 func (c *client) call(ctx context.Context, verb string, body any) (answer, error) {
+	return c.send(ctx, c.http, verb, body)
+}
+
+// callPR is the pr call, with the longer limit of prHTTP.
+func (c *client) callPR(ctx context.Context, text dispatcherapi.PRText) (answer, error) {
+	return c.send(ctx, c.prHTTP, "pr", text)
+}
+
+func (c *client) send(ctx context.Context, h *http.Client, verb string, body any) (answer, error) {
 	identity, err := os.ReadFile(c.identityFile)
 	if err != nil {
 		return answer{}, fmt.Errorf("read the workload identity: %w", err)
@@ -47,7 +58,7 @@ func (c *client) call(ctx context.Context, verb string, body any) (answer, error
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(identity)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "solidtrace-wrapper")
-	resp, err := c.http.Do(req)
+	resp, err := h.Do(req)
 	if err != nil {
 		return answer{}, fmt.Errorf("reach the Dispatcher: %w", err)
 	}
