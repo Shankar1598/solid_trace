@@ -173,15 +173,15 @@ EventStore's memory of a **Chart**'s time bins of hours that have ended, so a Ch
 _Avoid_: query cache, result cache
 
 **Integration**:
-An outbound notification target owned by an organization.
+An outbound notification target owned by an organization. Its provider is Slack, PagerDuty, email, or the **Factory** provider, which starts a **Run** for each **Issue** or **Monitor** group that it is told about, through a **Webhook sender** that Console makes at the **Dispatcher**. The Factory provider has no URL field.
 _Avoid_: webhook config, notifier job
 
 **Notification**:
-A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
+A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, refused by a receiver that will never take it (the **Factory** provider's 4xx other than 429, which is not retried), or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
 _Avoid_: notification event, alert, event type
 
 **Integration notification**:
-The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches, and each group of a Monitor in order.
+The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches (one at a time to the **Factory** provider, which starts a **Run** for each), and each group of a Monitor in order.
 _Avoid_: notifier, integration notifier
 
 **Organization**:
