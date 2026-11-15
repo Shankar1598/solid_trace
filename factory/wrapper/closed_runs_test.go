@@ -202,16 +202,27 @@ func TestAnOpenPRKeepsTheRunOpenUntil30DaysWithNoActivity(t *testing.T) {
 
 func TestARunDoneWithNoPRClosesWhen30DaysPassWithNoActivity(t *testing.T) {
 	env, ana := newEnv(t)
-	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Nothing to fix"),
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), wait, reportStep("--outcome", "done", "--summary", "Nothing to fix"),
 		reply, result, waitForEnd)
 	id := start(t, env, ana, "Fix the flaky cart test")
+	waitFor(t, env, ana, id, dispatcherapi.StateRunning)
+	// The Execution ends 10 minutes after the Run's start.
+	const works = 10 * time.Minute
+	env.Clock.Advance(works)
+	open()
 	waitFor(t, env, ana, id, dispatcherapi.StateDone)
 	wip := addWIPRef(t, env, id)
 
-	// The end of the Execution was the last activity, at this clock time.
-	env.Clock.Advance(closeAfter - time.Second)
+	// The 30 days count from the end of the Execution, not from the start.
+	env.Clock.Advance(closeAfter - works)
 	env.CheckClosedRuns()
-	notClosed(t, env, ana, id, "1 s before 30 days")
+	notClosed(t, env, ana, id, "30 days after the Run's start")
+
+	// The end of the Execution was the last activity.
+	env.Clock.Advance(works - time.Second)
+	env.CheckClosedRuns()
+	notClosed(t, env, ana, id, "1 s before 30 days after the end of the Execution")
 
 	env.Clock.Advance(time.Second)
 	env.CheckClosedRuns()
