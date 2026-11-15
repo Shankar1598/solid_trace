@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -213,5 +214,45 @@ func TestACloneThatFailsFailsTheRunWithTheReason(t *testing.T) {
 	}
 	if strings.Contains(run.Reason, "a-token-that-the-forge-refuses") {
 		t.Errorf("the reason has the token: %q", run.Reason)
+	}
+}
+
+func TestAHarnessThatExitsEndsTheExecutionAlthoughAProcessHoldsItsOutput(t *testing.T) {
+	// The harness starts a process that holds the harness's stdout for
+	// 60 s, and exits: in its process group, and in a session of its own,
+	// out of the reach of the group kill.
+	for name, prefix := range map[string]string{"in the group": "", "out of the group": "setsid "} {
+		t.Run(name, func(t *testing.T) {
+			env, ana := newEnv(t)
+			dir := t.TempDir()
+			pid := filepath.Join(dir, "pid")
+			program := filepath.Join(dir, "claude-with-a-child")
+			script := "#!/bin/sh\n" + prefix + "sh -c 'echo $$ >" + pid + "; exec sleep 60' </dev/null 2>/dev/null &\n" +
+				"while [ ! -s " + pid + " ]; do sleep 0.01; done\nexec " + env.Runner.Harness() + " \"$@\"\n"
+			if err := os.WriteFile(program, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if b, err := os.ReadFile(pid); err == nil {
+					exec.Command("kill", "-9", strings.TrimSpace(string(b))).Run()
+				}
+			})
+			env.Runner.UseHarness(program)
+			env.Runner.Agent(takeTask, initLine(t), reply, `{"fake":"exit","code":1}`)
+
+			began := time.Now()
+			id := start(t, env, ana, "Fix the cart")
+			run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+
+			if run.Reason != "the harness exited" {
+				t.Errorf("reason %q", run.Reason)
+			}
+			if e := onlyExecution(t, run); e.ExitCode == nil || *e.ExitCode != 1 {
+				t.Errorf("the end has exit code %v, want 1", e.ExitCode)
+			}
+			if took := time.Since(began); took > 20*time.Second {
+				t.Errorf("the end took %s", took)
+			}
+		})
 	}
 }

@@ -36,6 +36,11 @@ import (
 // closes stdin, before it kills the harness's process group.
 const endWait = 5 * time.Second
 
+// outputWait is how long the wrapper reads the harness's output after the
+// harness exits. A process that the harness started, out of its process
+// group, can hold the output open.
+const outputWait = 2 * time.Second
+
 // Main is the wrapper program. environ is the wrapper's environment; the
 // harness gets it with no WRAPPER_ name. It returns the exit code: 0 when
 // the Dispatcher took the end call.
@@ -258,7 +263,8 @@ func (e *execution) headless() []string {
 }
 
 // runHarness starts the harness, writes the task, reads the output
-// stream until the harness exits, and gives the end call's body.
+// stream until the harness exits, and gives the end call's body. The exit
+// starts the end, also when a process holds the output open.
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.cfg.checkout()
@@ -266,20 +272,39 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd.Stderr = e.log
 	// A process group of its own, so that the end can kill what is left.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdin, err := cmd.StdinPipe()
-	if err == nil {
-		var stdout io.ReadCloser
-		if stdout, err = cmd.StdoutPipe(); err == nil {
-			if err = cmd.Start(); err == nil {
-				e.harness, e.stdin = cmd, stdin
-				return e.follow(stdout)
-			}
-		}
+	failed := func(err error) dispatcherapi.ExecutionEnd {
+		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}
 	}
-	return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return failed(err)
+	}
+	// A pipe of the wrapper's own, not cmd.StdoutPipe: the wrapper waits
+	// for the harness's exit while it reads the output.
+	stdout, w, err := os.Pipe()
+	if err != nil {
+		return failed(err)
+	}
+	defer stdout.Close()
+	cmd.Stdout = w
+	err = cmd.Start()
+	w.Close()
+	if err != nil {
+		return failed(err)
+	}
+	e.harness, e.stdin = cmd, stdin
+	exited := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(exited)
+	}()
+	return e.follow(stdout, exited)
 }
 
-func (e *execution) follow(stdout io.Reader) dispatcherapi.ExecutionEnd {
+// follow reads the output stream until the harness exited and the stream
+// ended (or outputWait passed after the exit), and gives the end call's
+// body.
+func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherapi.ExecutionEnd {
 	taskUUID := newUUID()
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
@@ -301,8 +326,16 @@ func (e *execution) follow(stdout io.Reader) dispatcherapi.ExecutionEnd {
 		io.Copy(io.Discard, stdout)
 	}()
 	var delivered *time.Time
-	for open := true; open; {
+	var stopReading *time.Timer
+	pid := e.harness.Process.Pid
+	for open, exit := true, exited; open; {
 		select {
+		case <-exit:
+			// Each tool process that is left in the harness's group goes
+			// too, and closes the output.
+			exit = nil
+			syscall.Kill(-pid, syscall.SIGKILL)
+			stopReading = time.AfterFunc(outputWait, func() { stdout.Close() })
 		case ev, ok := <-events:
 			if !ok {
 				open = false
@@ -329,9 +362,12 @@ func (e *execution) follow(stdout io.Reader) dispatcherapi.ExecutionEnd {
 			e.startEnd(dispatcherapi.EndReported, "")
 		}
 	}
-	e.harness.Wait()
-	// Each tool process that is left in the harness's group goes too.
-	syscall.Kill(-e.harness.Process.Pid, syscall.SIGKILL)
+	if stopReading != nil {
+		stopReading.Stop()
+	}
+	<-exited
+	// The output can end before the exit: the group kill is then here.
+	syscall.Kill(-pid, syscall.SIGKILL)
 	e.mu.Lock()
 	if e.kill != nil {
 		e.kill.Stop()
