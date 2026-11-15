@@ -1,11 +1,13 @@
 package dispatcher
 
 import (
+	"bufio"
 	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"text/tabwriter"
@@ -193,9 +195,13 @@ func AccountsCommand(args []string, getenv func(string) string, now func() time.
 	}
 	var token string
 	if verb == "add" {
-		line, _ := io.ReadAll(io.LimitReader(stdin, 64<<10))
-		token, _, _ = strings.Cut(string(line), "\n")
-		token = strings.TrimSpace(token)
+		// Read to the end of the first line only: an operator pastes the
+		// token and presses Enter, and stdin stays open.
+		line, err := bufio.NewReader(io.LimitReader(stdin, 64<<10)).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return fail("read the token from stdin: %v", err)
+		}
+		token = strings.TrimSpace(line)
 		switch {
 		case token == "":
 			return fail("give the account's token on stdin: the token that 'claude setup-token' prints")
@@ -215,6 +221,14 @@ func AccountsCommand(args []string, getenv func(string) string, now func() time.
 	}
 	key, err := config.encryptionKey()
 	if err != nil {
+		return fail("%v", err)
+	}
+	// SQLite makes a database file that is not there. A wrong path would
+	// then give a new, empty pool that the Dispatcher never reads.
+	if _, err := os.Stat(config.Database); errors.Is(err, os.ErrNotExist) {
+		return fail("there is no Dispatcher database at %s (%s): give the path of the Dispatcher's database; "+
+			"the Dispatcher makes it at its first start", config.Database, EnvDatabase)
+	} else if err != nil {
 		return fail("%v", err)
 	}
 	s, err := openStore(config.Database, key)
