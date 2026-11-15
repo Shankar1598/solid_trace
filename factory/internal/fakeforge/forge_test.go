@@ -139,13 +139,22 @@ func TestPRAndCommentsThatTheFactoryMakes(t *testing.T) {
 	if a := call(t, f, f.Token, "PUT", pr, map[string]string{"description": "Evidence: go test passed"}); a.status != 200 {
 		t.Fatalf("update: %d %v", a.status, a.body)
 	}
+	if a := call(t, f, f.Token, "GET", pr, nil); a.body["title"] != "Fix the bug" || a.body["description"] != "Evidence: go test passed" {
+		t.Fatalf("after a PUT of only the description: %v; want the old title", a.body)
+	}
+	if a := call(t, f, f.Token, "PUT", pr, map[string]string{"title": "Fix the bug in fix.txt"}); a.status != 200 {
+		t.Fatalf("update: %d %v", a.status, a.body)
+	}
+	if a := call(t, f, f.Token, "GET", pr, nil); a.body["title"] != "Fix the bug in fix.txt" || a.body["description"] != "Evidence: go test passed" {
+		t.Fatalf("after a PUT of only the title: %v; want the old description", a.body)
+	}
 	if a := call(t, f, f.Token, "POST", pr+"/comments", map[string]string{"body": "Run r1 is done."}); a.status != 201 {
 		t.Fatalf("comment: %d %v", a.status, a.body)
 	}
 
 	prs := f.PRs(repo)
-	if len(prs) != 1 || prs[0].Title != "Fix the bug" || prs[0].Description != "Evidence: go test passed" || prs[0].Author != fakeforge.FactoryAuthor {
-		t.Fatalf("PRs = %+v; want the one PR with the new description and the old title", prs)
+	if len(prs) != 1 || prs[0].Title != "Fix the bug in fix.txt" || prs[0].Description != "Evidence: go test passed" || prs[0].Author != fakeforge.FactoryAuthor {
+		t.Fatalf("PRs = %+v; want the one PR with the new title and description", prs)
 	}
 	if got := call(t, f, f.Token, "GET", pulls+"?source=agent/r1&state=OPEN", nil).body["values"].([]any); len(got) != 1 {
 		t.Fatalf("PRs from agent/r1: %v", got)
