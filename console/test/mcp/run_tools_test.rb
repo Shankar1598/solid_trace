@@ -73,7 +73,7 @@ class McpRunToolsTest < ActiveSupport::TestCase
   test "get_run answers the Run's fields, Executions, last report with its checks, and events" do
     asked = stub_run("r1", summary("r1", state: "done", seq: 5, kind: "report", executions: 2,
                                          pr: { "url" => "https://bitbucket.org/acme/shop/pull-requests/9", "outcome" => "" }, active: true),
-      [ event(1, "2026-11-15T10:00:00Z", "created", "run.base_branch" => "main"),
+      [ event(1, "2026-11-15T10:00:00Z", "created"),
         event(2, "2026-11-15T10:00:05Z", "execution_started", "execution.id" => "x1", "execution.account" => "acct-1", "execution.vm" => "vm-a"),
         event(3, "2026-11-15T10:20:05Z", "execution_ended", "execution.id" => "x1", "execution.reason" => "needs a person",
               "execution.exit_code" => 0, "execution.account" => "acct-1", "execution.vm" => "vm-a"),
@@ -106,7 +106,11 @@ class McpRunToolsTest < ActiveSupport::TestCase
       report["checks"].map { |check| check.values_at("command", "result", "output_tail") }
 
     assert_equal [ 1, 2, 3, 4, 5 ], got.json["events"].map { |e| e["seq"] }
-    assert_equal({ "run.base_branch" => "main" }, got.json["events"].first["details"])
+    details = got.json["events"].map { |e| e["details"] }
+    assert_equal({}, details[0])
+    assert_equal({ "execution.account" => "acct-1", "execution.vm" => "vm-a" }, details[1])
+    assert_equal({ "execution.reason" => "needs a person", "execution.exit_code" => 0, "execution.account" => "acct-1",
+                   "execution.vm" => "vm-a" }, details[2])
     assert_equal "http://console.test/acme/runs/r1", got.link
   end
 
@@ -155,11 +159,13 @@ class McpRunToolsTest < ActiveSupport::TestCase
       "executions" => executions, "active" => active, "closed" => closed }
   end
 
-  # A run event as EventStore answers it: a Log with flat Attributes.
+  # A run event as EventStore answers it: a Log with flat Attributes,
+  # with the base branch on each event and the file that ingest gives it.
   def event(seq, time, kind, extra = {})
     attributes = { "run.id" => "r1", "run.seq" => seq, "event.id" => "r1-#{seq}", "event.kind" => kind, "run.state" => "running",
                    "run.reason" => "", "factory.project" => "checkout", "repository" => "bitbucket.org/acme/shop", "folder" => "web",
-                   "actor.kind" => "person", "actor.id" => "7", "actor.name" => "Ana" }
+                   "actor.kind" => "person", "actor.id" => "7", "actor.name" => "Ana", "run.base_branch" => "main",
+                   "file" => "runs/r1" }
     { "id" => "0190f0c0-0000-7000-8000-00000000000#{seq}", "time" => time, "level" => "info", "message" => "Run r1: #{kind}",
       "service" => "bitbucket.org/acme/shop", "attributes" => attributes.merge(extra) }
   end

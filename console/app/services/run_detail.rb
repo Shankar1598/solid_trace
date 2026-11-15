@@ -19,11 +19,13 @@ class RunDetail
   EXECUTION_STARTED = "execution_started"
   EXECUTION_ENDED = "execution_ended"
   REPORT = "report"
-  # The Attributes that each event carries as the Run's snapshot. An
-  # event's other Attributes are its details.
+  # The Attributes that each event carries as the Run's snapshot, and the
+  # file that ingest gives each run event (runs/<run id>). An event's other
+  # Attributes are its details.
   SNAPSHOT = %w[
     run.id run.seq event.id event.kind run.state run.reason run.trigger run.title run.executions
-    run.pr.url run.pr.outcome execution.id factory.project repository folder actor.kind actor.id actor.name
+    run.pr.url run.pr.outcome run.base_branch execution.id factory.project repository folder
+    actor.kind actor.id actor.name file
   ].freeze
 
   # answer is EventStore.run!'s answer.
