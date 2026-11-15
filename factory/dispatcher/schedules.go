@@ -384,70 +384,65 @@ func (d *Dispatcher) getSchedule(w http.ResponseWriter, r *http.Request, p perso
 	}
 }
 
+// problem is an error of a change that the person must correct.
+type problem string
+
+func (p problem) Error() string { return string(p) }
+
 func (d *Dispatcher) updateSchedule(w http.ResponseWriter, r *http.Request, p person) {
 	var update dispatcherapi.UpdateSchedule
 	if !decode(w, r, &update, "the body must be a JSON object with any of name, cron, time_zone, prompt and base_branch") {
 		return
 	}
-	sc, ok := d.findSchedule(w, r, p)
-	if !ok {
-		return
-	}
-	before := sc.Schedule
-	for value, to := range map[*string]*string{&sc.Name: update.Name, &sc.Cron: update.Cron,
-		&sc.TimeZone: update.TimeZone, &sc.Prompt: update.Prompt, &sc.BaseBranch: update.BaseBranch} {
-		if to != nil {
-			*value = *to
-		}
-	}
 	now := d.now().UTC().Truncate(time.Microsecond)
-	next, problem := d.cleanSchedule(&sc.Schedule, now)
-	if problem != "" {
-		writeProblem(w, http.StatusBadRequest, problem)
-		return
-	}
-	// A new cron expression or time zone starts its fire times from now.
-	nextChanged := !sc.Paused && (sc.Cron != before.Cron || sc.TimeZone != before.TimeZone)
-	if nextChanged {
-		sc.NextAt = next
-	}
-	d.saveChange(w, p, sc, eventScheduleUpdated, nextChanged, now)
+	d.changeSchedule(w, r, p, eventScheduleUpdated, now, func(sc *storedSchedule) error {
+		before := sc.Schedule
+		for value, to := range map[*string]*string{&sc.Name: update.Name, &sc.Cron: update.Cron,
+			&sc.TimeZone: update.TimeZone, &sc.Prompt: update.Prompt, &sc.BaseBranch: update.BaseBranch} {
+			if to != nil {
+				*value = *to
+			}
+		}
+		next, why := d.cleanSchedule(&sc.Schedule, now)
+		if why != "" {
+			return problem(why)
+		}
+		// A new cron expression or time zone starts its fire times from now.
+		if !sc.Paused && (sc.Cron != before.Cron || sc.TimeZone != before.TimeZone) {
+			sc.NextAt = next
+		}
+		return nil
+	})
 }
 
 // pauseSchedule stops the schedule's fire times at once. A pause of a
 // paused schedule changes nothing.
 func (d *Dispatcher) pauseSchedule(w http.ResponseWriter, r *http.Request, p person) {
-	sc, ok := d.findSchedule(w, r, p)
-	if !ok {
-		return
-	}
-	if sc.Paused {
-		d.answerSchedule(w, http.StatusOK, p, sc.ID)
-		return
-	}
-	sc.Paused, sc.NextAt = true, nil
-	d.saveChange(w, p, sc, eventSchedulePaused, true, d.now().UTC().Truncate(time.Microsecond))
+	now := d.now().UTC().Truncate(time.Microsecond)
+	d.changeSchedule(w, r, p, eventSchedulePaused, now, func(sc *storedSchedule) error {
+		if sc.Paused {
+			return errNoChange
+		}
+		sc.Paused, sc.NextAt = true, nil
+		return nil
+	})
 }
 
 // continueSchedule starts a paused schedule's fire times again, from now:
 // the fire times of the pause give no Run.
 func (d *Dispatcher) continueSchedule(w http.ResponseWriter, r *http.Request, p person) {
-	sc, ok := d.findSchedule(w, r, p)
-	if !ok {
-		return
-	}
-	if !sc.Paused {
-		d.answerSchedule(w, http.StatusOK, p, sc.ID)
-		return
-	}
 	now := d.now().UTC().Truncate(time.Microsecond)
-	expr, loc, err := parseSchedule(sc.Cron, sc.TimeZone)
-	if err != nil {
-		d.serverError(w, "continue the schedule", err)
-		return
-	}
-	sc.Paused, sc.NextAt = false, nextFire(expr, loc, now)
-	d.saveChange(w, p, sc, eventScheduleContinued, true, now)
+	d.changeSchedule(w, r, p, eventScheduleContinued, now, func(sc *storedSchedule) error {
+		if !sc.Paused {
+			return errNoChange
+		}
+		expr, loc, err := parseSchedule(sc.Cron, sc.TimeZone)
+		if err != nil {
+			return err
+		}
+		sc.Paused, sc.NextAt = false, nextFire(expr, loc, now)
+		return nil
+	})
 }
 
 func (d *Dispatcher) deleteSchedule(w http.ResponseWriter, r *http.Request, p person) {
@@ -467,19 +462,23 @@ func (d *Dispatcher) deleteSchedule(w http.ResponseWriter, r *http.Request, p pe
 	writeJSON(w, http.StatusOK, sc.Schedule)
 }
 
-func (d *Dispatcher) saveChange(w http.ResponseWriter, p person, sc storedSchedule, kind string, nextChanged bool,
-	now time.Time) {
-	sc.UpdatedAt, sc.UpdatedBy = now, dispatcherapi.Person{ID: p.id, Name: p.name}
-	err := d.store.saveSchedule(sc, kind, nextChanged, p)
-	if errors.Is(err, errNotFound) {
-		writeProblem(w, http.StatusNotFound, "no schedule "+sc.ID+" in this Organization")
-		return
-	}
-	if err != nil {
+// changeSchedule applies change to the schedule of the request's {id}
+// and answers the request with the schedule.
+func (d *Dispatcher) changeSchedule(w http.ResponseWriter, r *http.Request, p person, kind string, now time.Time,
+	change func(sc *storedSchedule) error) {
+	id := r.PathValue("id")
+	err := d.store.changeSchedule(p.organization.id, id, kind, now, p, change)
+	var wrong problem
+	switch {
+	case errors.Is(err, errNotFound):
+		writeProblem(w, http.StatusNotFound, "no schedule "+id+" in this Organization")
+	case errors.As(err, &wrong):
+		writeProblem(w, http.StatusBadRequest, string(wrong))
+	case err != nil:
 		d.serverError(w, "save the schedule", err)
-		return
+	default:
+		d.answerSchedule(w, http.StatusOK, p, id)
 	}
-	d.answerSchedule(w, http.StatusOK, p, sc.ID)
 }
 
 // findSchedule reads the schedule of the request's {id}. It answers the

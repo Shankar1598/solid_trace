@@ -98,25 +98,43 @@ func (s *store) insertSchedule(sc storedSchedule, by person) error {
 	return s.commit(tx)
 }
 
-// saveSchedule writes the values of sc that a person can change, with the
-// Log of kind. It writes sc.NextAt only when nextChanged, so that a change
-// does not undo a fire of the schedule loop.
-func (s *store) saveSchedule(sc storedSchedule, kind string, nextChanged bool, by person) error {
+// errNoChange is the answer of a schedule change that changes nothing.
+var errNoChange = errors.New("no change")
+
+// changeSchedule reads the schedule id of the Organization, gives it to
+// change, and writes the values that a person can change, with the Log of
+// kind, at at. All of it is one transaction, so that a change works on the
+// values of now: two changes at the same time do not undo each other, and
+// a change does not undo a fire of the schedule loop. change returns
+// errNoChange to write nothing; changeSchedule then returns nil.
+func (s *store) changeSchedule(organizationID, id, kind string, at time.Time, by person,
+	change func(sc *storedSchedule) error) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`UPDATE schedules SET name = ?, cron = ?, time_zone = ?, prompt = ?, base_branch = ?,
-		paused = ?, next_at = CASE WHEN ? THEN ? ELSE next_at END, updated_at = ?, updated_by_id = ?,
-		updated_by_name = ? WHERE organization_id = ? AND id = ?`,
-		sc.Name, sc.Cron, sc.TimeZone, sc.Prompt, sc.BaseBranch, sc.Paused, nextChanged, micros(sc.NextAt),
-		sc.UpdatedAt.UnixMicro(), sc.UpdatedBy.ID, sc.UpdatedBy.Name, sc.organizationID, sc.ID)
+	sc, err := scanSchedule(tx.QueryRow(`SELECT `+scheduleColumns+scheduleFrom+
+		`WHERE sc.organization_id = ? AND sc.id = ?`, organizationID, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return errNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if n, err := result.RowsAffected(); err != nil || n == 0 {
-		return cmp.Or(err, errNotFound)
+	if err := change(&sc); errors.Is(err, errNoChange) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	sc.UpdatedAt, sc.UpdatedBy = at, dispatcherapi.Person{ID: by.id, Name: by.name}
+	_, err = tx.Exec(`UPDATE schedules SET name = ?, cron = ?, time_zone = ?, prompt = ?, base_branch = ?,
+		paused = ?, next_at = ?, updated_at = ?, updated_by_id = ?, updated_by_name = ?
+		WHERE organization_id = ? AND id = ?`,
+		sc.Name, sc.Cron, sc.TimeZone, sc.Prompt, sc.BaseBranch, sc.Paused, micros(sc.NextAt),
+		sc.UpdatedAt.UnixMicro(), sc.UpdatedBy.ID, sc.UpdatedBy.Name, sc.organizationID, sc.ID)
+	if err != nil {
+		return err
 	}
 	if err := addScheduleLog(tx, sc, kind, by); err != nil {
 		return err

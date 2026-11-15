@@ -1,9 +1,11 @@
 package dispatcher_test
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,6 +220,35 @@ func TestPauseStopsTheNextFireAtOnceAndContinueStartsItAgain(t *testing.T) {
 	env.CheckSchedules()
 	if runs := scheduleRuns(t, ana, s.ID); len(runs) != 1 {
 		t.Errorf("after continue the next fire time gave %d Runs, want 1", len(runs))
+	}
+}
+
+func TestAnUpdateAtTheSameTimeAsAPauseDoesNotUndoThePause(t *testing.T) {
+	env := newEnv(t)
+	ana, ben := env.Member("Ana"), env.Member("Ben")
+	s := makeSchedule(t, ana, dispatcherapi.SaveSchedule{Cron: "0 10 * * *"})
+	for round := range 30 {
+		name := fmt.Sprintf("Update dependencies %d", round)
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			if a := ben.API("PATCH", "/api/v1/schedules/"+s.ID, dispatcherapi.UpdateSchedule{Name: &name}); a.Status != http.StatusOK {
+				t.Errorf("update: %d %s", a.Status, a.Body)
+			}
+		})
+		wg.Go(func() {
+			if a := ana.API("POST", "/api/v1/schedules/"+s.ID+"/pause", nil); a.Status != http.StatusOK {
+				t.Errorf("pause: %d %s", a.Status, a.Body)
+			}
+		})
+		wg.Wait()
+		got := getSchedule(t, ana, s.ID)
+		if !got.Paused || got.NextAt != nil || got.Name != name {
+			t.Fatalf("round %d: after an update and a pause at the same time the schedule is paused %t, next %v, "+
+				"name %q; want paused, no next time, name %q", round, got.Paused, got.NextAt, got.Name, name)
+		}
+		if a := ana.API("POST", "/api/v1/schedules/"+s.ID+"/continue", nil); a.Status != http.StatusOK {
+			t.Fatalf("continue: %d %s", a.Status, a.Body)
+		}
 	}
 }
 
