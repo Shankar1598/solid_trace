@@ -91,7 +91,7 @@ func TestJWTsWithAnUnknownKeyReadTheJWKSAtMostOnceInAnInterval(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
 	check := &identityCheck{jwksURL: srv.URL, http: &http.Client{Timeout: 10 * time.Second}, now: clock.Now}
 	ctx := context.Background()
-	if _, err := check.workload(ctx, jwks.sign(t, "k1", clock.Now())); err != nil {
+	if _, err := check.check(ctx, jwks.sign(t, "k1", clock.Now())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +101,7 @@ func TestJWTsWithAnUnknownKeyReadTheJWKSAtMostOnceInAnInterval(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := check.workload(ctx, jwks.sign(t, "r"+strconv.Itoa(i), clock.Now()))
+				_, err := check.check(ctx, jwks.sign(t, "r"+strconv.Itoa(i), clock.Now()))
 				if !errors.Is(err, errBadIdentity) {
 					t.Errorf("a JWT with an unknown key: %v", err)
 				}
@@ -123,7 +123,7 @@ func TestJWTsWithAnUnknownKeyReadTheJWKSAtMostOnceInAnInterval(t *testing.T) {
 	// the interval.
 	jwks.kid.Store("k2")
 	clock.Advance(jwksInterval)
-	if _, err := check.workload(ctx, jwks.sign(t, "k2", clock.Now())); err != nil {
+	if _, err := check.check(ctx, jwks.sign(t, "k2", clock.Now())); err != nil {
 		t.Errorf("a JWT with the Runner's new key: %v", err)
 	}
 }
@@ -133,7 +133,7 @@ func TestAJWTWithAKnownKeyDoesNotWaitForAReadOfTheJWKS(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
 	check := &identityCheck{jwksURL: srv.URL, http: &http.Client{Timeout: 10 * time.Second}, now: clock.Now}
 	ctx := context.Background()
-	if _, err := check.workload(ctx, jwks.sign(t, "k1", clock.Now())); err != nil {
+	if _, err := check.check(ctx, jwks.sign(t, "k1", clock.Now())); err != nil {
 		t.Fatal(err)
 	}
 	<-jwks.asked
@@ -143,14 +143,14 @@ func TestAJWTWithAKnownKeyDoesNotWaitForAReadOfTheJWKS(t *testing.T) {
 	jwks.block.Store(block)
 	slow := make(chan error, 1)
 	go func() {
-		_, err := check.workload(ctx, jwks.sign(t, "unknown", clock.Now()))
+		_, err := check.check(ctx, jwks.sign(t, "unknown", clock.Now()))
 		slow <- err
 	}()
 	<-jwks.asked
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := check.workload(ctx, jwks.sign(t, "k1", clock.Now()))
+		_, err := check.check(ctx, jwks.sign(t, "k1", clock.Now()))
 		done <- err
 	}()
 	select {

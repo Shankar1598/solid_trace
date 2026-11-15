@@ -100,6 +100,14 @@ func Executions(e *Env) {
 	e.Runner = r
 }
 
+// WithRunner gives the Dispatcher runner in place of the fake Runner,
+// such as the Nomad Runner on the local factory stack. As with
+// Executions, Project gives each Project a repository on the fake Forge
+// and a connection.
+func WithRunner(runner dispatcher.Runner) Option {
+	return func(e *Env) { e.runner = runner }
+}
+
 // EnvRunUser names the run user of the wrappers when the tests run as root,
 // as the wrapper runs on an agent machine (the local factory stack runs
 // them so, with the run user agent). As another user, the tests run the
@@ -358,10 +366,32 @@ func (r *Runner) Events(ctx context.Context, from int) ([]dispatcher.RunnerEvent
 	evs, err := r.Fake.Events(ctx, from)
 	out := make([]dispatcher.RunnerEvent, len(evs))
 	for i, ev := range evs {
-		out[i] = dispatcher.RunnerEvent{Execution: ev.Execution, Ended: ev.State.Ended(),
+		out[i] = dispatcher.RunnerEvent{Execution: ev.Execution, State: string(ev.State), Ended: ev.State.Ended(),
 			Lost: ev.State == fakerunner.Lost, ExitCode: ev.ExitCode}
 	}
 	return out, err
+}
+
+// Workload gives the workload of a checked JWT: its subject, which is
+// Workload of the Execution, for a workload that the Runner started.
+func (r *Runner) Workload(_ context.Context, identity dispatcher.Identity) (string, error) {
+	execution, ok := strings.CutPrefix(identity.Subject, Workload(""))
+	if !ok {
+		return "", dispatcher.ErrUnknownWorkload
+	}
+	if _, known := r.Fake.State(execution); !known {
+		return "", dispatcher.ErrUnknownWorkload
+	}
+	return identity.Subject, nil
+}
+
+// Stop stops the Execution's wrapper, as Nomad stops a task.
+func (r *Runner) Stop(ctx context.Context, workload string) error {
+	execution, ok := strings.CutPrefix(workload, Workload(""))
+	if !ok {
+		return fmt.Errorf("factorytest: no workload %q", workload)
+	}
+	return r.Fake.Stop(ctx, execution)
 }
 
 // JWKSURL is the fake Runner's key set.
