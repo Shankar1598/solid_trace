@@ -15,6 +15,8 @@
 //	{"fake":"deliver","message":0}         deliver message 0 (the first message read)
 //	{"fake":"deliver","message":1,"mid_turn":true}  the same, in the middle of a turn
 //	{"fake":"await_interrupt"}             wait for the interrupt control request
+//	{"fake":"await_eof"}                   wait until stdin closes, then go on: a turn that Claude Code
+//	                                       starts by itself, as at a background task's end
 //	{"fake":"busy","ms":20,"event":{...}}  write the event every 20 ms until the interrupt control
 //	                                       request (eof_code as for await_interrupt): an agent that works
 //	                                       for a long time with output
@@ -227,7 +229,7 @@ func ParseScript(b []byte) ([]map[string]any, error) {
 		}
 		if step, ok := o["fake"]; ok {
 			switch step {
-			case "about", "await_message", "await_interrupt", "busy", "deliver", "sleep", "exit", "run", "stop":
+			case "about", "await_message", "await_interrupt", "busy", "deliver", "sleep", "exit", "run", "stop", "await_eof":
 			default:
 				return nil, fmt.Errorf("line %d: no step %q", n+1, step)
 			}
@@ -399,6 +401,15 @@ func (h *harness) step(line map[string]any, stderr io.Writer) (code int, exit bo
 	case "await_interrupt":
 		if _, ok := <-h.interrupts; !ok {
 			return intOf(line["eof_code"]), true
+		}
+	case "await_eof":
+		// The messages that come first are read, not delivered.
+		for next := <-h.in; ; next = <-h.in {
+			if next.eof {
+				h.in <- next
+				break
+			}
+			h.messages = append(h.messages, next.msg)
 		}
 	case "busy":
 		if !h.busy(line) {

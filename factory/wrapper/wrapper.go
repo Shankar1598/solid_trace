@@ -5,12 +5,12 @@
 // serves the agent's socket, and ends the Execution. The outcome is the
 // agent's last valid report, never the harness's exit code. During the
 // Execution and before the end call, it uploads the Run's Agent sessions
-// with the Execution's child token (uploads.go).
+// with the Execution's child token (uploads.go). The harness's Stop hook
+// is the wrapper's own program (stop_hook.go).
 //
 // The checkout is at a fixed path for each repository, on the Run's branch
-// (checkout.go). Later tickets add the run user (39), the restore of the
-// Agent session directory (59), the commands and the limits (32), and the
-// Stop hook (38).
+// (checkout.go). Later tickets add the run user (39) and the restore of
+// the Agent session directory (59).
 package wrapper
 
 import (
@@ -408,6 +408,8 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.reported = true
+	// Before the answer: the agent's next stop finds the report.
+	e.setRunState(func(s *runState) { s.Reported = true })
 	if report.Outcome == dispatcherapi.OutcomeNeedsAPerson {
 		select {
 		case e.needsPerson <- struct{}{}:
@@ -463,7 +465,8 @@ func writeProblem(w http.ResponseWriter, status int, message string) {
 // headless is the command line of the headless form of Claude Code.
 func (e *execution) headless() []string {
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-		"--replay-user-messages", "--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion"}
+		"--replay-user-messages", "--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion",
+		"--settings", e.cfg.harnessSettings()}
 	if e.task.Resume {
 		return append(args, "--resume", e.task.SessionID)
 	}
@@ -477,10 +480,14 @@ func (e *execution) headless() []string {
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.workDir
-	cmd.Env = append(e.gitEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...)
+	cmd.Env = append(append(e.gitEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...),
+		EnvRunState+"="+e.cfg.runState())
 	cmd.Stderr = e.log
 	failed := func(err error) dispatcherapi.ExecutionEnd {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}
+	}
+	if err := e.installStopHook(); err != nil {
+		return failed(err)
 	}
 	// A pipe of the wrapper's own, not cmd.StdinPipe: the end sets a write
 	// deadline on it.
@@ -584,9 +591,13 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				e.mu.Lock()
 				e.backgroundTasks = len(tasks)
 				e.mu.Unlock()
+				e.setRunState(func(s *runState) { s.BackgroundTasks = len(tasks) })
 			case ev["type"] == "system" && ev["subtype"] == "init" && offers(ev, "AskUserQuestion"):
 				e.startEnd(dispatcherapi.EndSetupFailed, "the harness offers AskUserQuestion, which no person answers in a Run")
 			case ev["type"] == "result":
+				// The turn ended: the next stop is in a new turn. This
+				// comes before the end closes stdin.
+				e.setRunState(func(s *runState) { s.Turn++ })
 				e.mu.Lock()
 				reported := e.reported
 				e.mu.Unlock()

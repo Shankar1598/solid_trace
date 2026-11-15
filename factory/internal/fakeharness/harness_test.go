@@ -643,6 +643,23 @@ esac`
 	}
 }
 
+// await_eof waits for the close of stdin, and the stream goes on after it.
+func TestAwaitEOFGoesOnWhenStdinCloses(t *testing.T) {
+	s := withStopHook(t, `true`, `{"fake":"await_message"}`, successResult, `{"fake":"await_eof"}`,
+		textReply("After the close."), `{"fake":"exit","code":4}`)
+	s.message(first, "Fix it.")
+	s.until(is("result", ""))
+	s.message(second, "Not delivered.")
+	s.stdin.Close()
+	events := s.until(is("assistant", ""))
+	if text := firstText(events[len(events)-1]); text != "After the close." {
+		t.Errorf("reply %q", text)
+	}
+	if code := s.end(); code != 4 {
+		t.Errorf("exit %d; want 4", code)
+	}
+}
+
 // A Stop hook that never allows the stop ends the Harness with code 3
 // after 10 refusals, so that a test sees the loop.
 func TestAStopHookThatAlwaysRefusesEndsTheHarness(t *testing.T) {
