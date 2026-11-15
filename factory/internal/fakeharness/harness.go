@@ -17,6 +17,9 @@
 //	{"fake":"await_interrupt"}             wait for the interrupt control request
 //	{"fake":"sleep","ms":100}              wait in real time
 //	{"fake":"exit","code":1}               exit at once
+//	{"fake":"run","args":["solidtrace","report","--outcome","done"]}
+//	                                       run a program in the working directory, as the agent's
+//	                                       Bash tool does; its output goes to stderr
 //
 // At the end of the stream the Harness exits with code 0. A stream that
 // ends with await_message waits between turns, as Claude Code does: for
@@ -43,6 +46,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -210,7 +214,7 @@ func ParseScript(b []byte) ([]map[string]any, error) {
 		}
 		if step, ok := o["fake"]; ok {
 			switch step {
-			case "about", "await_message", "await_interrupt", "deliver", "sleep", "exit":
+			case "about", "await_message", "await_interrupt", "deliver", "sleep", "exit", "run":
 			default:
 				return nil, fmt.Errorf("line %d: no step %q", n+1, step)
 			}
@@ -366,6 +370,8 @@ func (h *harness) play(script []map[string]any, stderr io.Writer) int {
 			time.Sleep(time.Duration(intOf(line["ms"])) * time.Millisecond)
 		case "exit":
 			return intOf(line["code"])
+		case "run":
+			h.run(line, stderr)
 		}
 	}
 	if last == nil || last["fake"] != "await_message" {
@@ -506,6 +512,27 @@ func (h *harness) writeTranscript(line map[string]any) {
 	}
 	b, _ := json.Marshal(line)
 	h.transcript.Write(append(b, '\n'))
+}
+
+// run runs the step's program with the harness's environment, in its
+// working directory, and waits for it.
+func (h *harness) run(line map[string]any, stderr io.Writer) {
+	raw, _ := line["args"].([]any)
+	var args []string
+	for _, a := range raw {
+		s, _ := a.(string)
+		args = append(args, s)
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "fake harness: a run step needs args")
+		return
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = h.cwd
+	cmd.Stdout, cmd.Stderr = stderr, stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(stderr, "fake harness: run %s: %v\n", strings.Join(args, " "), err)
+	}
 }
 
 func intOf(v any) int {

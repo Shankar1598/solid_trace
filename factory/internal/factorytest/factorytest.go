@@ -22,6 +22,7 @@ import (
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/factory/dispatcher"
+	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/recorder"
 )
 
@@ -57,6 +58,10 @@ type Env struct {
 	// Version is the Dispatcher's version ("" is a build from a
 	// checkout). A change applies at the next Restart.
 	Version string
+	// Forge and Runner are the fake Forge and the fake Runner, with the
+	// Executions option (else nil).
+	Forge  *fakeforge.Forge
+	Runner *Runner
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
@@ -93,15 +98,27 @@ func (e *Env) Logs() string { return e.logs.String() }
 
 // Project makes a Project with slug in Organization at SolidTrace, and
 // saves its Factory settings as an Admin: repository
-// bitbucket.org/example/<slug> at the root. It returns the Project.
+// bitbucket.org/example/<slug> at the root. With Executions, the fake
+// Forge has the repository example/<slug> (a README on main), and the
+// settings name the connection ForgeConnection with the Forge's token. It
+// returns the Project.
 func (e *Env) Project(slug string) recorder.Project {
 	e.t.Helper()
 	project := e.SolidTraceProject(slug)
 	if e.admin == nil {
 		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
 	}
-	a := e.admin.API("PUT", "/api/v1/projects/"+slug+"/settings",
-		map[string]string{"repository": "bitbucket.org/example/" + slug})
+	settings := map[string]string{"repository": "bitbucket.org/example/" + slug}
+	if e.Forge != nil {
+		e.Forge.AddRepo("example/"+slug, nil)
+		a := e.admin.API("PUT", "/api/v1/connections/"+ForgeConnection,
+			map[string]string{"kind": "bitbucket", "token": e.Forge.Token})
+		if a.Status/100 != 2 {
+			e.t.Fatalf("save the forge connection: %d %s", a.Status, a.Body)
+		}
+		settings["connection"] = ForgeConnection
+	}
+	a := e.admin.API("PUT", "/api/v1/projects/"+slug+"/settings", settings)
 	if a.Status != http.StatusOK {
 		e.t.Fatalf("save the Factory settings of %s: %d %s", slug, a.Status, a.Body)
 	}
@@ -117,8 +134,9 @@ func (e *Env) SolidTraceProject(slug string) recorder.Project {
 	return project
 }
 
-// New starts the environment. The test's cleanup stops it.
-func New(t testing.TB) *Env {
+// New starts the environment with the options. The test's cleanup stops
+// it.
+func New(t testing.TB, options ...Option) *Env {
 	t.Helper()
 	e := &Env{
 		t:          t,
@@ -144,6 +162,9 @@ func New(t testing.TB) *Env {
 		e.current.Load().Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(e.server.Close)
+	for _, option := range options {
+		option(e)
+	}
 	e.start()
 	t.Cleanup(func() { e.current.Load().Close() })
 	return e
@@ -151,8 +172,12 @@ func New(t testing.TB) *Env {
 
 func (e *Env) start() {
 	e.t.Helper()
-	d, err := dispatcher.Open(e.Config, dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
-		Log: slog.New(slog.NewTextHandler(&e.logs, nil))})
+	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
+		Log: slog.New(slog.NewTextHandler(&e.logs, nil))}
+	if e.Runner != nil {
+		options.Runner, options.Forge = e.Runner, forge{e.Forge}
+	}
+	d, err := dispatcher.Open(e.Config, options)
 	if err != nil {
 		e.t.Fatalf("start the Dispatcher: %v", err)
 	}

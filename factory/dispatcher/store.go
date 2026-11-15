@@ -59,6 +59,31 @@ var migrations = []string{
 	);
 	CREATE INDEX factory_settings_by_organization ON factory_settings (organization_id);
 	ALTER TABLE runs ADD COLUMN project_id TEXT NOT NULL DEFAULT '';`,
+	// session_id is the Run's Agent session id, set at its first
+	// Execution. An Execution's workload is the subject of its wrapper's
+	// workload identity JWT, from the Runner. report_* is the last valid
+	// report of the Execution.
+	`ALTER TABLE runs ADD COLUMN reason TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN question TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN summary TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+	CREATE INDEX runs_by_state ON runs (state, created_at);
+	CREATE TABLE executions (
+		id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		workload TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL,
+		dispatched_at INTEGER NOT NULL,
+		started_at INTEGER,
+		ended_at INTEGER,
+		task_delivered_at INTEGER,
+		end_reason TEXT NOT NULL DEFAULT '',
+		exit_code INTEGER,
+		report_outcome TEXT NOT NULL DEFAULT '',
+		report_summary TEXT NOT NULL DEFAULT '',
+		report_question TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX executions_by_run ON executions (run_id, dispatched_at);`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -134,12 +159,14 @@ func (s *store) insertRun(r storedRun) error {
 	return err
 }
 
-const runColumns = `id, organization_slug, project, prompt, state, started_by_id, started_by_name, created_at`
+const runColumns = `id, organization_slug, project, prompt, state, started_by_id, started_by_name, created_at,
+	reason, question, summary`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
 	var created int64
-	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.ID, &r.StartedBy.Name, &created)
+	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.ID, &r.StartedBy.Name, &created,
+		&r.Reason, &r.Question, &r.Summary)
 	r.CreatedAt = time.UnixMicro(created).UTC()
 	return r, err
 }
