@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/solidtrace/cli/dispatcherapi"
 )
 
 // Run events are Logs in the Organization's Agent Project (see the
@@ -30,10 +32,18 @@ const (
 )
 
 // Trigger kinds of a Run (run.trigger).
-const triggerPerson = "person"
+const (
+	triggerPerson = "person"
+	// triggerWebhook is the generic signed webhook.
+	triggerWebhook = "webhook"
+)
 
-// Actor kinds (actor.kind).
-const actorPerson = "person"
+// Actor kinds (actor.kind). A sender of the generic webhook is the actor
+// of the Runs that it starts.
+const (
+	actorPerson = "person"
+	actorSender = dispatcherapi.ActorSender
+)
 
 // runEventsPath is SolidTrace's (EventStore's) route for run events. A
 // token with run_events:write sends a JSON array of Logs.
@@ -65,14 +75,22 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	if err := tx.QueryRow(`UPDATE runs SET seq = seq + 1 WHERE id = ? RETURNING seq`, runID).Scan(&seq); err != nil {
 		return fmt.Errorf("count the run event: %w", err)
 	}
-	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorID, actorName, sessionID string
+	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorKind, actorID, actorName,
+		sessionID, runTitle, link, attributes string
 	var executions int64
 	err := tx.QueryRow(`SELECT state, reason, project, repository, folder, base_branch, trigger_kind, prompt,
-		started_by_id, started_by_name, session_id, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
+		started_by_kind, started_by_id, started_by_name, session_id, title, link, attributes,
+		(SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
 		FROM runs r WHERE id = ?`, runID).Scan(&state, &reason, &project, &repository, &folder, &baseBranch, &trigger,
-		&prompt, &actorID, &actorName, &sessionID, &executions)
+		&prompt, &actorKind, &actorID, &actorName, &sessionID, &runTitle, &link, &attributes, &executions)
 	if err != nil {
 		return fmt.Errorf("read the Run for its event: %w", err)
+	}
+	if actorKind == "" {
+		actorKind = actorPerson
+	}
+	if runTitle == "" {
+		runTitle = title(prompt)
 	}
 	event := map[string]any{
 		"time":            at.UTC().Format(time.RFC3339Nano),
@@ -85,7 +103,7 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"run.state":       state,
 		"run.reason":      reason,
 		"run.trigger":     trigger,
-		"run.title":       title(prompt),
+		"run.title":       runTitle,
 		"run.executions":  executions,
 		"run.pr.url":      "",
 		"run.pr.outcome":  "",
@@ -93,9 +111,21 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"factory.project": project,
 		"repository":      repository,
 		"folder":          folder,
-		"actor.kind":      actorPerson,
+		"actor.kind":      actorKind,
 		"actor.id":        actorID,
 		"actor.name":      actorName,
+	}
+	if link != "" {
+		event["run.link"] = link
+	}
+	if attributes != "" {
+		var values map[string]string
+		if err := json.Unmarshal([]byte(attributes), &values); err != nil {
+			return fmt.Errorf("read the Run's attributes: %w", err)
+		}
+		for k, v := range values {
+			event["run.attributes."+k] = v
+		}
 	}
 	if _, ok := details["execution.id"]; ok && sessionID != "" {
 		event["agent.session_id"] = sessionID
@@ -103,7 +133,7 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	for k, v := range details {
 		event[k] = v
 	}
-	event["run.started_by.kind"] = actorPerson
+	event["run.started_by.kind"] = actorKind
 	event["run.started_by.id"] = actorID
 	event["run.started_by.name"] = actorName
 	return addToOutbox(tx, event)
@@ -168,11 +198,25 @@ func (d *Dispatcher) warn(message string, args ...string) {
 	}
 }
 
-// warnArgs are the Attributes of a warning about p's trigger for the
+// starter is who starts a Run: a person, or a sender of the generic
+// webhook.
+type starter struct {
+	organization   organization
+	kind, id, name string
+	// projects are the ids of the Projects that the starter can start
+	// Runs in (nil is each Project of the Organization).
+	projects []string
+}
+
+func (p person) starter() starter {
+	return starter{organization: p.organization, kind: actorPerson, id: p.id, name: p.name}
+}
+
+// warnArgs are the Attributes of a warning about s's trigger for the
 // Project slug.
-func (p person) warnArgs(slug string) []string {
-	return []string{"organization", p.organization.slug, "factory.project", slug,
-		"actor.kind", actorPerson, "actor.id", p.id, "actor.name", p.name}
+func (s starter) warnArgs(slug string) []string {
+	return []string{"organization", s.organization.slug, "factory.project", slug,
+		"actor.kind", s.kind, "actor.id", s.id, "actor.name", s.name}
 }
 
 // The outbox's batches: at most this many Logs and bytes in one request

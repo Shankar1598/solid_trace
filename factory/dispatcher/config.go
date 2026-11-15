@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
@@ -47,6 +48,13 @@ type Config struct {
 	// https://factory.example.com: the base of each connection's webhook
 	// URL that the Dispatcher shows ("" shows none).
 	WebhookURL string
+	// SenderStartsPerMinute is the most Runs that one sender of the
+	// generic webhook can start in a minute (0 is
+	// DefaultSenderStartsPerMinute). SenderActiveRuns is the most Runs of
+	// one sender with an Execution queued or live (0 is
+	// DefaultSenderActiveRuns). Above each, a delivery gets 429.
+	SenderStartsPerMinute int
+	SenderActiveRuns      int
 	// BitbucketAPIURL and BitbucketGitURL are the bases of Bitbucket
 	// Cloud's REST API and clone URLs ("" is Bitbucket Cloud's own). The
 	// tests set them to the fake Forge.
@@ -80,6 +88,26 @@ type Config struct {
 
 	// machineKindsProblem is why EnvMachineKinds could not be read.
 	machineKindsProblem string
+	// limitProblems are the sender limits that could not be read.
+	limitProblems []string
+}
+
+// The default limits of each sender of the generic webhook.
+const (
+	DefaultSenderStartsPerMinute = 10
+	DefaultSenderActiveRuns      = 5
+)
+
+// parseLimit reads a whole number of 1 or more ("" is 0, the default).
+func parseLimit(name, value string) (int, string) {
+	if strings.TrimSpace(value) == "" {
+		return 0, ""
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 1 {
+		return 0, name + " must be a whole number of 1 or more, not " + fmt.Sprintf("%q", value)
+	}
+	return n, ""
 }
 
 // parseMachineKinds reads a list of name=memory (MB).
@@ -146,6 +174,10 @@ const (
 	EnvListen          = "DISPATCHER_LISTEN"
 	EnvWebhookListen   = "DISPATCHER_WEBHOOK_LISTEN"
 	EnvWebhookURL      = "DISPATCHER_WEBHOOK_URL"
+	// EnvSenderStartsPerMinute and EnvSenderActiveRuns are the limits of
+	// each sender of the generic webhook.
+	EnvSenderStartsPerMinute = "DISPATCHER_SENDER_STARTS_PER_MINUTE"
+	EnvSenderActiveRuns      = "DISPATCHER_SENDER_ACTIVE_RUNS"
 	EnvBitbucketAPIURL = "DISPATCHER_BITBUCKET_API_URL"
 	EnvBitbucketGitURL = "DISPATCHER_BITBUCKET_GIT_URL"
 	EnvWIPRefs         = "DISPATCHER_WIP_REFS"
@@ -202,6 +234,15 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		WrapperCommand:     value(EnvWrapperCommand),
 	}
 	c.MachineKinds, c.machineKindsProblem = parseMachineKinds(value(EnvMachineKinds))
+	for _, limit := range []struct {
+		name string
+		into *int
+	}{{EnvSenderStartsPerMinute, &c.SenderStartsPerMinute}, {EnvSenderActiveRuns, &c.SenderActiveRuns}} {
+		var problem string
+		if *limit.into, problem = parseLimit(limit.name, value(limit.name)); problem != "" {
+			c.limitProblems = append(c.limitProblems, problem)
+		}
+	}
 	if c.WrapperCommand == "" {
 		c.WrapperCommand = DefaultWrapperCommand
 	}
@@ -250,12 +291,23 @@ func (c Config) Check() error {
 		problems = append(problems, EnvWIPRefs+" (the place of the work-in-progress refs) must be "+
 			forge.WIPOutsideBranches+" or "+forge.WIPInBranches+", not "+fmt.Sprintf("%q", c.WIPRefs))
 	}
+	problems = append(problems, c.limitProblems...)
+	if c.SenderStartsPerMinute < 0 || c.SenderActiveRuns < 0 {
+		problems = append(problems, EnvSenderStartsPerMinute+" and "+EnvSenderActiveRuns+" must be 1 or more")
+	}
 	problems = append(problems, c.nomadProblems()...)
 	if len(problems) > 0 {
 		return errors.New("the operator configuration is not complete: " + strings.Join(problems, "; ") +
 			". Set each in the configuration file or the environment")
 	}
 	return nil
+}
+
+// senderLimits are the limits of each sender: starts in a minute, and Runs
+// with an Execution queued or live.
+func (c Config) senderLimits() (starts, active int) {
+	return cmp.Or(c.SenderStartsPerMinute, DefaultSenderStartsPerMinute),
+		cmp.Or(c.SenderActiveRuns, DefaultSenderActiveRuns)
 }
 
 // ingestURL is where the wrappers upload.
