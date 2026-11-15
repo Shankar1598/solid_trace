@@ -1,6 +1,7 @@
 package wrapper_test
 
 import (
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,6 +62,7 @@ func TestTheLastValidReportIsTheOutcome(t *testing.T) {
 		reportStep("--outcome", "needs-a-person", "--summary", "no question"),
 		reportStep("--outcome", "done", "--summary", "Fixed on the second try"),
 		reportStep("--outcome", "done"),
+		reportStep("--outcome", "done", "--summary", "Done with a question", "--question", "Is this right?"),
 		reply, result, waitForEnd)
 
 	id := start(t, env, ana, "Fix the cart")
@@ -269,5 +271,49 @@ func TestAHarnessThatExitsEndsTheExecutionAlthoughAProcessHoldsItsOutput(t *test
 				t.Errorf("the end took %s", took)
 			}
 		})
+	}
+}
+
+func TestTheDispatcherRefusesAReportThatIsNotValid(t *testing.T) {
+	env, ana := newEnv(t)
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), wait, reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	execution := waitFor(t, env, ana, id, dispatcherapi.StateRunning).Executions[0].ID
+	identity := env.Runner.Identity(factorytest.Workload(execution))
+	limit := strings.Repeat("a", 64<<10)
+
+	cases := []struct {
+		name   string
+		report dispatcherapi.Report
+		status int
+	}{
+		{"a report of done with a question",
+			dispatcherapi.Report{Outcome: dispatcherapi.OutcomeDone, Summary: "x", Question: "q"}, http.StatusBadRequest},
+		{"a report of failed with a question",
+			dispatcherapi.Report{Outcome: dispatcherapi.OutcomeFailed, Summary: "x", Question: "q"}, http.StatusBadRequest},
+		{"a summary of 64 KiB and 1 byte",
+			dispatcherapi.Report{Outcome: dispatcherapi.OutcomeDone, Summary: limit + "a"}, http.StatusBadRequest},
+		{"a question of 64 KiB and 1 byte",
+			dispatcherapi.Report{Outcome: dispatcherapi.OutcomeNeedsAPerson, Summary: "x", Question: limit + "a"},
+			http.StatusBadRequest},
+		{"a summary and a question of 64 KiB",
+			dispatcherapi.Report{Outcome: dispatcherapi.OutcomeNeedsAPerson, Summary: limit, Question: limit}, http.StatusOK},
+		{"a summary of 64 KiB",
+			dispatcherapi.Report{Outcome: dispatcherapi.OutcomeDone, Summary: limit}, http.StatusOK},
+	}
+	for _, c := range cases {
+		got := env.API(identity, "POST", "/api/v1/executions/"+execution+"/report", c.report)
+		if got.Status != c.status {
+			t.Errorf("%s: %d %s, want %d", c.name, got.Status, got.Body, c.status)
+		}
+	}
+	open()
+
+	// The agent sends no report: the last valid report is the Dispatcher's
+	// own report of 64 KiB.
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if run.Summary != limit {
+		t.Errorf("the summary has %d bytes, want %d", len(run.Summary), len(limit))
 	}
 }
