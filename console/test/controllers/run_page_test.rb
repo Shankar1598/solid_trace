@@ -191,6 +191,21 @@ class RunPageTest < ActionDispatch::IntegrationTest
     assert_match "not uploaded", report["report_md_error"]
   end
 
+  test "when EventStore cannot read the Run, the page shows the EventStore error and an empty Run row" do
+    stub_request(:get, "#{EventStore.base_url}/api/#{@project.id}/runs/run_1").to_return(status: 503, body: "down")
+    sign_in_as(@member)
+
+    view = page
+
+    assert_equal false, view.dig("event_store", "available")
+    assert view.dig("event_store", "error").present?
+    run = view["run"]
+    assert_equal "run_1", run["id"]
+    assert_equal({ "kind" => "", "id" => "", "name" => "" }, run["actor"])
+    assert_equal({ "url" => "", "outcome" => "" }, run["pr"])
+    assert_equal false, view.dig("stop", "can")
+  end
+
   test "an Issue Run's report shows its cause report, and is not 'no Evidence'" do
     list = events(report_checks: [])
     list[4][:attributes]["report.cause_report"] = "The cart rounded each line."

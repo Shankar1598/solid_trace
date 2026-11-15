@@ -60,9 +60,11 @@ class RunView
     }
   end
 
-  # The Run as its last event shows it, as a row of the Runs list.
+  # The Run as its last event shows it, as a row of the Runs list. When
+  # EventStore cannot read the Run, an empty row with the Run's id, so that
+  # the page can show its header and the EventStore error.
   def run
-    answer&.dig("run") || {}
+    answer&.dig("run") || empty_run
   end
 
   def stoppable?
@@ -146,6 +148,15 @@ class RunView
   # event.
   def agent_session_ids
     raw_events.filter_map { |log| log.dig("attributes", "agent.session_id").presence }.uniq
+  end
+
+  def empty_run
+    {
+      "id" => id, "seq" => 0, "time" => nil, "kind" => "", "state" => "", "reason" => "", "project" => "",
+      "repository" => "", "folder" => "", "base_branch" => "", "trigger" => "", "title" => "",
+      "actor" => { "kind" => "", "id" => "", "name" => "" }, "pr" => { "url" => "", "outcome" => "" },
+      "executions" => 0, "active" => false, "closed" => false,
+    }
   end
 
   def commands

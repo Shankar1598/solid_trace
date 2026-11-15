@@ -73,7 +73,7 @@ export default function RunShow({ run: view }: { run: RunProps }) {
           </CardContent>
         </Card>
       )}
-      <div className="space-y-4">
+      {view.event_store.available && <div className="space-y-4">
         {view.stop.sent_state && view.stop.sent_state !== run.state && (
           <div className="border border-info/40 bg-info/10 px-3 py-2 text-sm" data-notice="stop-sent">
             The Dispatcher says that the Run is {stateText(view.stop.sent_state).toLowerCase()}. The stop event shows here when it arrives.
@@ -85,7 +85,7 @@ export default function RunShow({ run: view }: { run: RunProps }) {
         <Events title="Interventions" events={view.interventions} empty="No person steered this Run." />
         <Events title="Events" events={view.events} empty="No events." />
         <Commands commands={view.commands} />
-      </div>
+      </div>}
     </DashboardLayout>
   )
 }
