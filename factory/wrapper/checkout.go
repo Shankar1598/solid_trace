@@ -175,6 +175,9 @@ func gitValue(s string) string {
 // did not answer), the commits go to refs/agent-wip/<run id>, which
 // cannot conflict. The text that push gives then goes on the end call.
 func (e *execution) push(environ []string) string {
+	// A pr call that pushes now ends first.
+	e.prMu.Lock()
+	defer e.prMu.Unlock()
 	if e.checkout == "" {
 		return ""
 	}
@@ -182,32 +185,16 @@ func (e *execution) push(environ []string) string {
 	if err != nil {
 		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
 	}
-	if tip == e.startTip {
+	if tip == e.startTip || tip == e.pushedTip {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pushWait)
 	defer cancel()
-	dir, err := os.MkdirTemp(e.cfg.dir, "push-")
+	run, done, err := e.pushRepository(ctx, environ)
 	if err != nil {
 		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
 	}
-	defer os.RemoveAll(dir)
-	env := e.pushEnv(environ, dir)
-	run := func(args ...string) error {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir, cmd.Env = dir, env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git %s: %v: %s", args[0], err, lastLines(string(out), 5))
-		}
-		return nil
-	}
-	if err := run("init", "--quiet", "--bare", dir); err != nil {
-		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
-	}
-	alternates := filepath.Join(e.checkout, ".git", "objects") + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "objects", "info", "alternates"), []byte(alternates), 0o600); err != nil {
-		return e.pushFailed(fmt.Sprintf("the push before the end: %v", err))
-	}
+	defer done()
 	branch := "refs/heads/" + e.task.Branch
 	err = run("push", "--quiet", "--no-verify", "--", e.task.CloneURL, tip+":"+branch)
 	if err != nil {
@@ -225,6 +212,58 @@ func (e *execution) push(environ []string) string {
 		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v), and the save of its commits to %s failed too (%v)", err, wip, werr))
 	}
 	return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v); its commits are in %s", err, wip))
+}
+
+// pushForPR pushes the Run's branch before a pr call, so that the forge
+// has the agent's commits: with no force, in the same way as the push
+// before the end. The caller holds e.prMu. A failure is for the agent to
+// act on, such as a person's push to the branch.
+func (e *execution) pushForPR(ctx context.Context, environ []string) error {
+	tip, err := readBranch(filepath.Join(e.checkout, ".git"), e.task.Branch)
+	if err != nil {
+		return fmt.Errorf("read the Run's branch %s: %w", e.task.Branch, err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, pushWait)
+	defer cancel()
+	run, done, err := e.pushRepository(ctx, environ)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := run("push", "--quiet", "--no-verify", "--", e.task.CloneURL, tip+":refs/heads/"+e.task.Branch); err != nil {
+		return fmt.Errorf("the push of the Run's branch %s failed (pull, merge and try again): %w", e.task.Branch, err)
+	}
+	e.pushedTip = tip
+	return nil
+}
+
+// pushRepository makes the wrapper's bare repository for a push, which
+// borrows the checkout's objects. run runs git in it, and done removes it.
+func (e *execution) pushRepository(ctx context.Context, environ []string) (run func(args ...string) error, done func(), err error) {
+	dir, err := os.MkdirTemp(e.cfg.dir, "push-")
+	if err != nil {
+		return nil, nil, err
+	}
+	done = func() { os.RemoveAll(dir) }
+	env := e.pushEnv(environ, dir)
+	run = func(args ...string) error {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir, cmd.Env = dir, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %s: %v: %s", args[0], err, lastLines(string(out), 5))
+		}
+		return nil
+	}
+	if err := run("init", "--quiet", "--bare", dir); err != nil {
+		done()
+		return nil, nil, err
+	}
+	alternates := filepath.Join(e.checkout, ".git", "objects") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "objects", "info", "alternates"), []byte(alternates), 0o600); err != nil {
+		done()
+		return nil, nil, err
+	}
+	return run, done, nil
 }
 
 // pushFailed writes the push's failure to the wrapper's log, and gives it.

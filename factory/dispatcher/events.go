@@ -29,6 +29,7 @@ const (
 	eventExecutionStarted = "execution_started"
 	eventExecutionEnded   = "execution_ended"
 	eventReport           = "report"
+	eventPROpened         = "pr_opened"
 )
 
 // Trigger kinds of a Run (run.trigger).
@@ -37,15 +38,19 @@ const (
 	triggerSchedule = "schedule"
 	// triggerWebhook is the generic signed webhook.
 	triggerWebhook = "webhook"
+	triggerTracker = "tracker"
 )
 
 // Actor kinds (actor.kind). A schedule is the actor of the Runs that it
 // starts, with schedule.created_by.* the member who made it. A sender of
-// the generic webhook is the actor of the Runs that it starts.
+// the generic webhook is the actor of the Runs that it starts. The tracker
+// user who set a ticket's ready status is the actor of the Run that it
+// started.
 const (
 	actorPerson   = "person"
 	actorSchedule = dispatcherapi.ActorSchedule
 	actorSender   = dispatcherapi.ActorSender
+	actorTracker  = dispatcherapi.ActorTracker
 )
 
 // runEventsPath is SolidTrace's (EventStore's) route for run events. A
@@ -79,15 +84,15 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		return fmt.Errorf("count the run event: %w", err)
 	}
 	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorKind, actorID, actorName,
-		sessionID, runTitle, link, attributes, scheduleID, scheduledByID, scheduledByName string
+		sessionID, runTitle, link, attributes, scheduleID, scheduledByID, scheduledByName, prURL string
 	var executions int64
 	var firedAt sql.NullInt64
 	err := tx.QueryRow(`SELECT state, reason, project, repository, folder, base_branch, trigger_kind, prompt,
 		started_by_kind, started_by_id, started_by_name, session_id, title, link, attributes, schedule_id, fired_at,
-		scheduled_by_id, scheduled_by_name, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
+		scheduled_by_id, scheduled_by_name, pr_url, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
 		FROM runs r WHERE id = ?`, runID).Scan(&state, &reason, &project, &repository, &folder, &baseBranch, &trigger,
 		&prompt, &actorKind, &actorID, &actorName, &sessionID, &runTitle, &link, &attributes, &scheduleID, &firedAt,
-		&scheduledByID, &scheduledByName, &executions)
+		&scheduledByID, &scheduledByName, &prURL, &executions)
 	if err != nil {
 		return fmt.Errorf("read the Run for its event: %w", err)
 	}
@@ -110,7 +115,7 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		"run.trigger":     trigger,
 		"run.title":       runTitle,
 		"run.executions":  executions,
-		"run.pr.url":      "",
+		"run.pr.url":      prURL,
 		"run.pr.outcome":  "",
 		"run.base_branch": baseBranch,
 		"factory.project": project,

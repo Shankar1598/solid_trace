@@ -214,6 +214,38 @@ var migrations = []string{
 	ALTER TABLE runs ADD COLUMN attributes TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN dedupe_key TEXT NOT NULL DEFAULT '';
 	CREATE INDEX runs_by_starter ON runs (started_by_kind, started_by_id, created_at) WHERE started_by_kind != '';`,
+	// A Run that a tracker ticket started has started_by_kind tracker (the
+	// tracker user who set the ready status) and the page of the ticket as
+	// its link. ticket_* is the tracker ticket that started the Run, and its
+	// edit. A connection's ready_status and
+	// routing_field are its tracker settings ('' is the kind's default).
+	// routes send a tracker connection's tickets to a Project. A
+	// ticket_notice is the last edit of a ticket that got the "no route"
+	// comment or warning.
+	`ALTER TABLE runs ADD COLUMN ticket_connection_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN ticket_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN ticket_edit TEXT NOT NULL DEFAULT '';
+	CREATE INDEX runs_by_ticket ON runs (ticket_connection_id, ticket_id) WHERE ticket_id != '';
+	ALTER TABLE connections ADD COLUMN ready_status TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN routing_field TEXT NOT NULL DEFAULT '';
+	CREATE TABLE routes (
+		connection_id TEXT NOT NULL REFERENCES connections (id),
+		match_value TEXT NOT NULL,
+		project_id TEXT NOT NULL REFERENCES factory_settings (project_id),
+		PRIMARY KEY (connection_id, match_value)
+	);
+	CREATE INDEX routes_by_project ON routes (project_id);
+	CREATE TABLE ticket_notices (
+		connection_id TEXT NOT NULL REFERENCES connections (id),
+		ticket_id TEXT NOT NULL,
+		edit TEXT NOT NULL,
+		noticed_at INTEGER NOT NULL,
+		PRIMARY KEY (connection_id, ticket_id)
+	);`,
+	// The Run's PR (ticket 35): its id on the forge (0 = none) and its
+	// link.
+	`ALTER TABLE runs ADD COLUMN pr_id INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -291,6 +323,9 @@ type storedRun struct {
 	// its fire time ("" and zero for another trigger).
 	scheduleID string
 	firedAt    time.Time
+	// ticketConnectionID, ticketID and ticketEdit are the tracker ticket
+	// that started the Run, and its edit ("" for another trigger).
+	ticketConnectionID, ticketID, ticketEdit string
 }
 
 // insertRun adds a queued Run, with its created and queued events at its
@@ -330,12 +365,14 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 	}
 	result, err := tx.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, project_id, prompt, state,
 		started_by_kind, started_by_id, started_by_name, created_at, repository, folder, base_branch, trigger_kind,
-		schedule_id, fired_at, scheduled_by_id, scheduled_by_name, title, link, attributes, dedupe_key)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		schedule_id, fired_at, scheduled_by_id, scheduled_by_name, title, link, attributes, dedupe_key,
+		ticket_connection_id, ticket_id, ticket_edit)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (schedule_id, fired_at) WHERE schedule_id != '' DO NOTHING`,
 		r.ID, r.organizationID, r.Organization, r.Project, r.projectID, r.Prompt, r.State, r.StartedBy.Kind,
 		r.StartedBy.ID, r.StartedBy.Name, r.CreatedAt.UnixMicro(), r.repository, r.folder, r.baseBranch, r.trigger,
-		r.scheduleID, firedAt, scheduledBy.ID, scheduledBy.Name, r.Title, r.Link, string(attributes), r.dedupeKey)
+		r.scheduleID, firedAt, scheduledBy.ID, scheduledBy.Name, r.Title, r.Link, string(attributes), r.dedupeKey,
+		r.ticketConnectionID, r.ticketID, r.ticketEdit)
 	if err != nil {
 		return false, err
 	}
@@ -351,7 +388,7 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 }
 
 const runColumns = `id, organization_slug, project, prompt, state, started_by_kind, started_by_id, started_by_name,
-	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes`
+	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, title, link, attributes, pr_url`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
@@ -360,7 +397,7 @@ func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var attributes string
 	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.Kind, &r.StartedBy.ID,
 		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name,
-		&r.Title, &r.Link, &attributes)
+		&r.Title, &r.Link, &attributes, &r.PRURL)
 	if err != nil {
 		return r, err
 	}

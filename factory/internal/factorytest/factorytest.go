@@ -26,6 +26,7 @@ import (
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/fakesource"
+	"github.com/solidtrace/factory/internal/faketracker"
 	"github.com/solidtrace/factory/internal/recorder"
 )
 
@@ -109,6 +110,9 @@ type Env struct {
 	// Source is the fake webhook source: the API of each connection of
 	// kind fakesource.Kind or fakesource.OtherKind.
 	Source *fakesource.Source
+	// Tracker is the fake tracker: the API of each connection of kind
+	// faketracker.Kind.
+	Tracker *faketracker.Tracker
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
 
@@ -320,6 +324,7 @@ func New(t testing.TB, options ...Option) *Env {
 		SolidTrace: recorder.New(DispatcherToken),
 		Forge:      fakeforge.New(t),
 		Source:     fakesource.New(),
+		Tracker:    faketracker.New(),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	t.Cleanup(e.SolidTrace.Close)
@@ -362,7 +367,8 @@ func (e *Env) start() {
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
 		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
 		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
-		BackstopEvery: backstopEvery}
+		BackstopEvery: backstopEvery,
+		Trackers:      []dispatcher.Tracker{e.Tracker.Tracker()}}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
