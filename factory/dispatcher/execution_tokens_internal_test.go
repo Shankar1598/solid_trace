@@ -3,10 +3,12 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/internal/recorder"
 )
 
 // The wrapper's token call and the end call can run at the same time: the
@@ -86,5 +88,46 @@ func TestAnAgentSessionIDIsNotAddedToTheRunOfAnEndedExecution(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Errorf("the Run's Agent session ids are %v after the end, want %v", after, before)
+	}
+}
+
+// The end step revokes only the tokens that are not revoked yet: an end
+// step that runs again, or a token that a first end step revoked, sends
+// no second revoke to SolidTrace.
+func TestTheEndStepRevokesOnlyTheTokensThatAreNotRevoked(t *testing.T) {
+	w := newAdminWorld(t)
+	d, now := w.d, w.clock()
+	e, started := startedExecution(t, w)
+	for range 2 {
+		if _, err := d.sessionToken(context.Background(), e, started); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tokens := w.solidTrace.ChildTokens()
+	if len(tokens) != 2 {
+		t.Fatalf("want two child tokens, got %+v", tokens)
+	}
+	// The first token is revoked already (by an earlier end step).
+	if err := d.store.tokenRevoked(tokens[0].ID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	revokes := func() []string {
+		var paths []string
+		for _, c := range w.solidTrace.Calls() {
+			if c.Method == "DELETE" && strings.HasPrefix(c.Path, recorder.ChildTokensPath+"/") {
+				paths = append(paths, c.Path)
+			}
+		}
+		return paths
+	}
+	d.revokeTokens("e-1")
+	want := recorder.ChildTokensPath + "/" + tokens[1].ID
+	if got := revokes(); len(got) != 1 || got[0] != want {
+		t.Fatalf("the end step revoked %v, want only %s", got, want)
+	}
+	d.revokeTokens("e-1")
+	if got := revokes(); len(got) != 1 {
+		t.Errorf("a second end step revoked again: %v", got)
 	}
 }
