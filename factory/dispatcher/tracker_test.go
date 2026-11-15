@@ -9,6 +9,7 @@ import (
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
 	"github.com/solidtrace/factory/internal/faketracker"
+	"github.com/solidtrace/factory/internal/recorder"
 )
 
 var rosa = faketracker.User{ID: "u-7", Name: "Rosa"}
@@ -170,6 +171,47 @@ func TestARouteWithAMatchValueWinsOverTheEmptyRouteOfTheSameSource(t *testing.T)
 		if strings.HasPrefix(run.Prompt, "Other ticket") && run.Project != "shop" {
 			t.Errorf("a ticket that no match value takes runs in %s, want shop, the default", run.Project)
 		}
+	}
+}
+
+func TestTheRoutingValueOfATicketIsTrimmedBeforeTheRouteLookup(t *testing.T) {
+	env, path := trackerEnv(t)
+	env.Project("admin")
+	mustSaveRoutes(t, env, "admin", route("board", "Admin app"))
+
+	env.Tracker.Put("board", faketracker.Ticket{ID: "T-1", Title: "Admin ticket", Route: "  Admin app  ",
+		Status: faketracker.ReadyStatus}, rosa)
+	env.TrackerWebhook(path, secret, "d-1", "T-1")
+	if run := waitForRuns(t, env, 1)[0]; run.Project != "admin" {
+		t.Errorf("a ticket with the routing value '  Admin app  ' runs in %s, want admin", run.Project)
+	}
+}
+
+func TestAConnectionOfAnotherOrganizationThanTheDispatchersTokenStartsNoRun(t *testing.T) {
+	env := factorytest.New(t)
+	path := env.TrackerConnection("board", secret)
+	shop := env.Project("shop")
+	mustSaveRoutes(t, env, "shop", route("board", ""))
+
+	// The Dispatcher's token is now of another Organization, which has a
+	// Project with the same id.
+	other := recorder.Organization{ID: 8, Slug: "other", Name: "Other", Role: "admin"}
+	env.SolidTrace.SetProject(other.Slug, recorder.Project{ID: shop.ID, Slug: "web", Name: "web"})
+	env.SolidTrace.Token(factorytest.DispatcherToken, recorder.Answer{Sub: "1", Username: "dana@example.com",
+		Scope: "run_events:write issues:comment tokens:create mcp:read", Organizations: []recorder.Organization{other}})
+	env.Restart()
+
+	env.Tracker.Put("board", faketracker.Ticket{ID: "T-1", Title: "Fix it", Status: faketracker.ReadyStatus}, rosa)
+	env.TrackerWebhook(path, secret, "d-1", "T-1")
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(env.Logs(), "another Organization than the Dispatcher's token") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no refusal of the connection of another Organization after 10 s\nDispatcher log:\n%s", env.Logs())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if logs := env.Logs(); strings.Contains(logs, "a ready ticket started a Run") || strings.Contains(logs, "no longer has") {
+		t.Errorf("the ticket of a connection of another Organization acted:\n%s", logs)
 	}
 }
 
