@@ -130,9 +130,15 @@ func (c *AgentUploadConflict) Error() string { return c.Reason }
 // from a person to an Agent session that another person uploaded.
 var ErrAgentSessionOfAnotherPerson = errors.New("the Agent session is another person's")
 
+// ErrAgentSessionOfAnotherRun is an upload of a token limited to a Run's
+// Agent sessions to an Agent session that is not of the unit's Run: a
+// person's own Agent session, or another Run's.
+var ErrAgentSessionOfAnotherRun = errors.New("the Agent session is not of this Run")
+
 // AgentUpload is a unit to store. AnyPerson lets the upload add to an
 // Agent session of another person: a token limited to a Run's Agent
-// sessions may, as different people continue a Run.
+// sessions may, as different people continue a Run. It adds only to an
+// Agent session of the unit's Run.
 type AgentUpload struct {
 	Unit      AgentFileUnit
 	AnyPerson bool
@@ -300,6 +306,9 @@ func (w *PebbleWriter) WriteAgentFileUnit(projectID uint32, upload AgentUpload) 
 	}
 	if known && !upload.AnyPerson && session.UserID != unit.Session.UserID {
 		return state, false, ErrAgentSessionOfAnotherPerson
+	}
+	if known && upload.AnyPerson && session.RunID != unit.Session.RunID {
+		return state, false, ErrAgentSessionOfAnotherRun
 	}
 	stateKey := append(agentFileStatePrefix(projectID, unit.SessionID), unit.Path...)
 	have, err := w.agentFileState(stateKey)
