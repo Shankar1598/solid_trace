@@ -145,23 +145,37 @@ func (s *store) saveConnection(organizationID, name, kind, token string, by pers
 	return made, tx.Commit()
 }
 
+// storedConnection is a connection with its id, which its webhook URL
+// holds.
+type storedConnection struct {
+	dispatcherapi.Connection
+	id string
+}
+
 // connections reads the Organization's connections, by name, with no
-// token.
-func (s *store) connections(organizationID string) ([]dispatcherapi.Connection, error) {
-	rows, err := s.db.Query(`SELECT name, kind, updated_at, updated_by_id, updated_by_name FROM connections
-		WHERE organization_id = ? ORDER BY name`, organizationID)
+// token and no webhook secret.
+func (s *store) connections(organizationID string) ([]storedConnection, error) {
+	rows, err := s.db.Query(`SELECT id, name, kind, updated_at, updated_by_id, updated_by_name,
+		webhook_secret IS NOT NULL, last_webhook_at FROM connections WHERE organization_id = ? ORDER BY name`,
+		organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	connections := []dispatcherapi.Connection{}
+	var connections []storedConnection
 	for rows.Next() {
-		var c dispatcherapi.Connection
+		var c storedConnection
 		var updated int64
-		if err := rows.Scan(&c.Name, &c.Kind, &updated, &c.UpdatedBy.ID, &c.UpdatedBy.Name); err != nil {
+		var lastWebhook sql.NullInt64
+		if err := rows.Scan(&c.id, &c.Name, &c.Kind, &updated, &c.UpdatedBy.ID, &c.UpdatedBy.Name,
+			&c.WebhookSecret, &lastWebhook); err != nil {
 			return nil, err
 		}
 		c.UpdatedAt = time.UnixMicro(updated).UTC()
+		if lastWebhook.Valid {
+			at := time.UnixMicro(lastWebhook.Int64).UTC()
+			c.LastWebhookAt = &at
+		}
 		connections = append(connections, c)
 	}
 	return connections, rows.Err()
