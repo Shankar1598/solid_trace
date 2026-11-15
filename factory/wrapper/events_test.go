@@ -86,3 +86,20 @@ func TestALostMachineSendsTheExecutionEndedEventWithTheFailedState(t *testing.T)
 		t.Errorf("the warning: %v", warning)
 	}
 }
+
+func TestAWrapperThatExitsBeforeItsEndCallSendsItsExitCodeOnTheExecutionEndedEvent(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.BreakWrapper()
+	id := start(t, env, ana, "Fix the cart")
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	// The wrapper did not ask for its task, so the Execution never started.
+	events := env.WaitForRunEvents(id, 3)
+	reason := "the wrapper exited with code 2 before the end of the Execution"
+	checkFields(t, events[2], map[string]any{"event.kind": "execution_ended", "run.state": "failed",
+		"run.reason": reason, "execution.reason": reason, "execution.exit_code": float64(2),
+		"execution.id": run.Executions[0].ID})
+	if e := onlyExecution(t, run); e.ExitCode == nil || *e.ExitCode != 2 {
+		t.Errorf("the Execution has exit code %v, want 2", e.ExitCode)
+	}
+}

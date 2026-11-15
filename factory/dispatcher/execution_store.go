@@ -221,18 +221,23 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 }
 
 // failExecution ends an Execution that has not ended, with reason, and
-// fails its Run if the Run is queued or running. It is false when the
-// Execution had ended (or is not known).
-func (s *store) failExecution(id, reason string, at time.Time) (bool, error) {
+// fails its Run if the Run is queued or running. exitCode is the
+// wrapper's exit code, or nil. It is false when the Execution had ended
+// (or is not known).
+func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
 	var runID string
-	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ? WHERE id = ? AND state != ?
-		RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, id, dispatcherapi.ExecutionEnded).
-		Scan(&runID)
+	var exit sql.NullInt64
+	if exitCode != nil {
+		exit = sql.NullInt64{Int64: int64(*exitCode), Valid: true}
+	}
+	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ?, exit_code = ? WHERE id = ?
+		AND state != ? RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, exit, id,
+		dispatcherapi.ExecutionEnded).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -244,8 +249,11 @@ func (s *store) failExecution(id, reason string, at time.Time) (bool, error) {
 		dispatcherapi.StateRunning); err != nil {
 		return false, err
 	}
-	err = recordEvent(tx, at, runID, eventExecutionEnded, map[string]any{"execution.id": id, "execution.reason": reason})
-	if err != nil {
+	details := map[string]any{"execution.id": id, "execution.reason": reason}
+	if exitCode != nil {
+		details["execution.exit_code"] = *exitCode
+	}
+	if err := recordEvent(tx, at, runID, eventExecutionEnded, details); err != nil {
 		return false, err
 	}
 	return true, s.commit(tx)
