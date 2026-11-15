@@ -89,9 +89,28 @@ type Run struct {
 	// PRURL is the link of the Run's PR, from the agent's first pr call
 	// ("" when the Run has no PR).
 	PRURL string `json:"pr_url,omitempty"`
+	// Flags are the flags of a done Run: FlagNoEvidence, FlagNoPR, in
+	// this order (none for another state).
+	Flags []string `json:"flags,omitempty"`
 	// URL is the Run's page in Console.
 	URL string `json:"url"`
 }
+
+// The flags of a done Run.
+const (
+	// FlagNoEvidence: no check of the last report passed.
+	FlagNoEvidence = "no Evidence"
+	// FlagNoPR: the Run pushed no branch, or has no open PR.
+	FlagNoPR = "No PR"
+)
+
+// The markers of the Evidence block in a PR's description. After each
+// report, the Dispatcher writes the block between them, and keeps the
+// text outside them.
+const (
+	EvidenceStart = "<!-- solidtrace:evidence -->"
+	EvidenceEnd   = "<!-- /solidtrace:evidence -->"
+)
 
 // PRText is the agent's 'solidtrace pr' call: the title and the
 // description of the Run's PR. The first call opens the PR from the
@@ -164,6 +183,57 @@ type Report struct {
 	Summary string `json:"summary"`
 	// Question is what the agent asks a person (needs a person only).
 	Question string `json:"question,omitempty"`
+	// Checks, Evidence and DeliveredMessages are the wrapper's: it drops
+	// what the agent sends in them. Checks are the checks that the
+	// wrapper ran in this Execution (the last result of each command).
+	Checks []CheckResult `json:"checks,omitempty"`
+	// Evidence are the paths of the files under evidence/ in the Agent
+	// session directory, such as evidence/report.md.
+	Evidence []string `json:"evidence,omitempty"`
+	// DeliveredMessages is the count of the wrapper's messages that the
+	// harness echoed (the proof of delivery) in this Execution.
+	DeliveredMessages int `json:"delivered_messages"`
+}
+
+// CheckRun is the agent's 'solidtrace check' call. With no Command, the
+// wrapper runs each named check of the factory file.
+type CheckRun struct {
+	Command string `json:"command,omitempty"`
+}
+
+// MaxCheckLines is the most lines of output that a check keeps: the
+// last ones.
+const MaxCheckLines = 100
+
+// MaxCheckOutput is the most bytes of output that a check keeps: the
+// last ones.
+const MaxCheckOutput = 16 << 10
+
+// MaxChecks is the most checks that an Execution records.
+const MaxChecks = 20
+
+// MaxEvidence is the most Evidence paths that a report names.
+const MaxEvidence = 200
+
+// CheckResult is the record of one check that the wrapper ran: the
+// command, its exit status, its time and the last lines of its output.
+type CheckResult struct {
+	// Name is the factory file's name of the check ("" for a command
+	// that the agent gave).
+	Name       string    `json:"name,omitempty"`
+	Command    string    `json:"command"`
+	ExitStatus int       `json:"exit_status"`
+	Passed     bool      `json:"passed"`
+	StartedAt  time.Time `json:"started_at"`
+	DurationMS int64     `json:"duration_ms"`
+	// Output is the last MaxCheckLines lines of stdout and stderr
+	// together, at most MaxCheckOutput bytes.
+	Output string `json:"output"`
+}
+
+// CheckAnswer is the answer to a check call: the checks that it ran.
+type CheckAnswer struct {
+	Checks []CheckResult `json:"checks"`
 }
 
 // Task is the Dispatcher's answer to the wrapper's task and secrets call.
