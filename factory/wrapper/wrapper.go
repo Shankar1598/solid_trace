@@ -119,6 +119,11 @@ type killBoundary interface {
 	Remove(within time.Duration) error
 }
 
+// prCallTimeout is the limit of the wrapper's pr call to the Dispatcher.
+// It is longer than the time that the Dispatcher gives the forge, so the
+// wrapper gets the Dispatcher's answer also from a slow forge.
+const prCallTimeout = dispatcherapi.PRBudget + 30*time.Second
+
 // newClient is the client of the Dispatcher's API. The Dispatcher's
 // private listener is reached directly, never through the proxy of the
 // wrapper's environment, which the uploads use.
@@ -126,7 +131,8 @@ func newClient(cfg config) *client {
 	direct := http.DefaultTransport.(*http.Transport).Clone()
 	direct.Proxy = nil
 	return &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
-		http: &http.Client{Timeout: 30 * time.Second, Transport: direct}}
+		http:   &http.Client{Timeout: 30 * time.Second, Transport: direct},
+		prHTTP: &http.Client{Timeout: prCallTimeout, Transport: direct}}
 }
 
 // execution is one Execution on this machine.
@@ -418,7 +424,7 @@ func (e *execution) pr(w http.ResponseWriter, r *http.Request, environ []string)
 		writeProblem(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	a, err := e.client.call(r.Context(), "pr", text)
+	a, err := e.client.callPR(r.Context(), text)
 	if err != nil {
 		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the pr call: "+err.Error())
 		return
