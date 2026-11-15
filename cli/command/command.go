@@ -66,7 +66,7 @@ Usage:
   solidtrace capture status
       Show the Organization, its captured repositories, and each Agent
       session on this machine as uploaded, not in the list, or failed.
-  solidtrace start [--project PROJECT] [--dispatcher URL] PROMPT
+  solidtrace start [--project PROJECT] [--branch BRANCH] [--dispatcher URL] PROMPT
       Start a Run: an agent works on PROMPT with the Factory settings of
       PROJECT. With no --project, the Project is the one whose Factory
       settings name the current git repository and a folder that holds

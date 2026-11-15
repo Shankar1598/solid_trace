@@ -187,9 +187,7 @@ func (e *Env) WaitForWarning(text string) map[string]any {
 func (e *Env) Project(slug string) recorder.Project {
 	e.t.Helper()
 	project := e.SolidTraceProject(slug)
-	if e.admin == nil {
-		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
-	}
+	e.Admin()
 	settings := map[string]string{"repository": "bitbucket.org/example/" + slug}
 	if e.Runner != nil {
 		e.Forge.AddRepo("example/"+slug, nil)
@@ -205,6 +203,15 @@ func (e *Env) Project(slug string) recorder.Project {
 		e.t.Fatalf("save the Factory settings of %s: %d %s", slug, a.Status, a.Body)
 	}
 	return project
+}
+
+// Admin is the Admin of Organization that saves the Factory settings in
+// Project.
+func (e *Env) Admin() *Person {
+	if e.admin == nil {
+		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
+	}
+	return e.admin
 }
 
 // SolidTraceProject makes a Project with slug in Organization at

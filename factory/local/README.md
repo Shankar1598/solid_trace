@@ -84,3 +84,15 @@ The wrapper deletes the run user's home after each Execution, and it sets `CLAUD
 - `/etc/factory/claude.json`: the template of the run user's `.claude.json`, with the onboarding done. For each Execution, the wrapper copies it to `$CLAUDE_CONFIG_DIR/.claude.json` and adds `projects["<checkout>"].hasTrustDialogAccepted`. Claude Code trusts a checkout only at its exact path.
 
 The smoke check starts Claude Code in the same way: from a new, empty home and a new `CLAUDE_CONFIG_DIR`.
+
+## The wrapper's fixed paths
+
+The paths are the same on each agent machine, so that a resume works on any of them:
+
+| Path | Default (environment variable) | After the Execution |
+|---|---|---|
+| The checkout of a repository: `<workspace>/<host>/<workspace>/<name>`, on the Run's branch `agent/<run id>` | `/workspace` (`WRAPPER_WORKSPACE`) | Deleted |
+| The run user's home: `HOME`, `.gitconfig` (the credential helper and git over ssh rewritten to HTTPS), and `CLAUDE_CONFIG_DIR` = `<home>/.claude` | `/home/agent` (`WRAPPER_HOME`) | Deleted |
+| The caches: `XDG_CACHE_HOME` | `/var/cache/factory` (`WRAPPER_CACHE`) | Kept |
+
+`CLAUDE_CODE_PROJECT_DIR_NAME` is the repository with each character that is not a letter or a digit changed to `-`, such as `bitbucket-org-team-shop`. In a monorepo, the agent's working directory is the Project's folder in the checkout. Before each end, the wrapper pushes each commit of the Run's branch that is not on the remote.

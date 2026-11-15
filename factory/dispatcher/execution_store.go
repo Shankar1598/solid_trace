@@ -91,6 +91,8 @@ func (s *store) execution(id string) (storedExecution, error) {
 // startedRun is what the task call needs of the Run.
 type startedRun struct {
 	prompt, sessionID string
+	// project, folder and baseBranch are the Run's, as its start kept them.
+	project, folder, baseBranch string
 	resume            bool
 }
 
@@ -126,9 +128,9 @@ func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
 			return run, err
 		}
 	}
-	err = tx.QueryRow(`SELECT prompt, session_id, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
+	err = tx.QueryRow(`SELECT prompt, session_id, project, folder, base_branch, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
 		AND e.id != ? AND e.started_at IS NOT NULL) FROM runs r WHERE id = ?`, id, runID).
-		Scan(&run.prompt, &run.sessionID, &run.resume)
+		Scan(&run.prompt, &run.sessionID, &run.project, &run.folder, &run.baseBranch, &run.resume)
 	if err != nil {
 		return run, err
 	}

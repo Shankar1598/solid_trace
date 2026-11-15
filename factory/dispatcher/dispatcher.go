@@ -250,9 +250,17 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		writeProblem(w, http.StatusBadRequest, "a Run needs a project and a prompt")
 		return
 	}
+	branch, ok := cleanBranch(start.Branch)
+	if !ok {
+		writeProblem(w, http.StatusBadRequest, "the branch must be a branch name, such as main or release/2.0, not "+quote(start.Branch))
+		return
+	}
 	settings, ok := d.triggerSettings(w, r, p, start.Project)
 	if !ok {
 		return
+	}
+	if branch == "" {
+		branch = settings.BaseBranch
 	}
 	run := storedRun{
 		Run: dispatcherapi.Run{
@@ -268,7 +276,7 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		projectID:      settings.projectID,
 		repository:     settings.Repository,
 		folder:         settings.Folder,
-		baseBranch:     settings.BaseBranch,
+		baseBranch:     branch,
 		trigger:        triggerPerson,
 	}
 	if err := d.store.insertRun(run); err != nil {

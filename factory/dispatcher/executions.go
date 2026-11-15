@@ -88,7 +88,11 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		return
 	}
 	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
-	cloneURL, err := (&forge.Bitbucket{GitURL: d.config.BitbucketGitURL}).CloneURL(settings.Repository)
+	gitURL := strings.TrimRight(d.config.BitbucketGitURL, "/")
+	if gitURL == "" {
+		gitURL = forge.BitbucketGitURL
+	}
+	cloneURL, err := (&forge.Bitbucket{GitURL: gitURL}).CloneURL(settings.Repository)
 	if err != nil {
 		d.endByDispatcher(e.id, err.Error(), nil)
 		writeProblem(w, http.StatusConflict, err.Error())
@@ -116,7 +120,11 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		Prompt:        run.prompt,
 		Repository:    settings.Repository,
 		CloneURL:      cloneURL,
-		BaseBranch:    settings.BaseBranch,
+		BaseBranch:    run.baseBranch,
+		Branch:        dispatcherapi.RunBranch(e.runID),
+		GitURL:        gitURL,
+		Project:       run.project,
+		Folder:        run.folder,
 		ForgeUsername: forge.BitbucketTokenUser,
 		ForgeToken:    token,
 		SessionID:     run.sessionID,

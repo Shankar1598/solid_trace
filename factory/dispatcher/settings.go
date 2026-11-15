@@ -249,14 +249,24 @@ func cleanSettings(s *dispatcherapi.SaveFactorySettings) string {
 	}
 	s.Folder = folder
 
-	branch := strings.TrimSpace(s.BaseBranch)
-	if branch != "" && (!baseBranchPattern.MatchString(branch) || strings.Contains(branch, "..") ||
-		strings.Contains(branch, "//") || strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".lock")) {
+	branch, ok := cleanBranch(s.BaseBranch)
+	if !ok {
 		return "the base branch must be a branch name, such as main or release/2.0, not " + quote(s.BaseBranch)
 	}
 	s.BaseBranch = branch
 	s.Connection = strings.TrimSpace(s.Connection)
 	return ""
+}
+
+// cleanBranch gives a base branch in its stored form ("" is none), and
+// false when it is not a branch name.
+func cleanBranch(branch string) (string, bool) {
+	branch = strings.TrimSpace(branch)
+	if branch != "" && (!baseBranchPattern.MatchString(branch) || strings.Contains(branch, "..") ||
+		strings.Contains(branch, "//") || strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".lock")) {
+		return "", false
+	}
+	return branch, true
 }
 
 func quote(s string) string {

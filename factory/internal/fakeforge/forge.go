@@ -166,6 +166,24 @@ func (f *Forge) Push(repo, branch string, files map[string]string, message strin
 	return strings.TrimSpace(f.run(work, "rev-parse", "HEAD"))
 }
 
+// AddSubmodule is a person's push of a commit on branch that adds the
+// submodule at path, with url in .gitmodules, at the tip of the main
+// branch of the Forge's repository sub.
+func (f *Forge) AddSubmodule(repo, branch, path, url, sub string) {
+	f.t.Helper()
+	commit := strings.TrimSpace(f.Git(sub, "rev-parse", "refs/heads/main"))
+	work := f.t.TempDir()
+	f.run("", "clone", "-q", "--branch", branch, f.bare(repo), work)
+	modules := "[submodule \"" + path + "\"]\n\tpath = " + path + "\n\turl = " + url + "\n"
+	if err := os.WriteFile(filepath.Join(work, ".gitmodules"), []byte(modules), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	f.run(work, "add", ".gitmodules")
+	f.run(work, "update-index", "--add", "--cacheinfo", "160000,"+commit+","+path)
+	f.run(work, "commit", "-q", "-m", "Add the submodule "+path)
+	f.run(work, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
+}
+
 // RefuseRefsOutsideBranches makes the repository refuse a push to a ref
 // outside refs/heads and refs/tags, as a forge that permits only branches
 // and tags does (cluster check 12 finds if Bitbucket Cloud is one).

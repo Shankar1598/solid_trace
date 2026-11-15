@@ -118,9 +118,16 @@ type Task struct {
 	Repository string `json:"repository"`
 	// CloneURL is the HTTPS URL that git clones from. It holds no token.
 	CloneURL string `json:"clone_url"`
-	// BaseBranch is the branch to clone ("" is the repository's default
-	// branch).
+	// BaseBranch is the branch that the Run's branch starts from ("" is
+	// the repository's default branch).
 	BaseBranch string `json:"base_branch"`
+	// Branch is the Run's branch, agent/<run id> (RunBranch). The first
+	// Execution makes it from BaseBranch; later Executions check it out.
+	Branch string `json:"branch"`
+	// GitURL is the base of the forge's HTTPS clone URLs. git over ssh to
+	// the repository's host (git@host: and ssh://git@host/) is rewritten
+	// to it, for submodules and private gems too.
+	GitURL string `json:"git_url"`
 	// ForgeUsername and ForgeToken are what the git credential helper
 	// gives git ("" token: the Project names no connection).
 	ForgeUsername string `json:"forge_username"`
@@ -129,7 +136,14 @@ type Task struct {
 	// Execution, --resume when Resume is true.
 	SessionID string `json:"session_id"`
 	Resume    bool   `json:"resume"`
+	// Project is the Run's Project (its slug), and Folder the Project's
+	// folder in the repository ("" is the root).
+	Project string `json:"project"`
+	Folder  string `json:"folder"`
 }
+
+// RunBranch is the name of a Run's branch.
+func RunBranch(runID string) string { return "agent/" + runID }
 
 // End reasons that the wrapper gives.
 const (
@@ -162,6 +176,9 @@ type ExecutionEnd struct {
 type StartRun struct {
 	Project string `json:"project"`
 	Prompt  string `json:"prompt"`
+	// Branch is the Run's base branch ("" is the Project's default base
+	// branch, else the repository's default branch).
+	Branch string `json:"branch,omitempty"`
 }
 
 // FactorySettings are a Project's Factory settings, as the Dispatcher

@@ -250,6 +250,12 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// Never the dev box's real Docker: the end kills each container.
 		wrapper.EnvDocker + "=" + docker,
 		fakedocker.EnvDir + "=" + r.Docker.Dir(),
+		// Each Execution is on its own machine: its own workspace and run
+		// user's home. The caches are of the Runner, as on a VM that
+		// keeps them across Executions.
+		wrapper.EnvWorkspace + "=" + r.Workspace(x.Execution),
+		wrapper.EnvHome + "=" + r.Home(x.Execution),
+		wrapper.EnvCache + "=" + r.Cache(),
 		harness,
 		"PATH=" + r.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		// The agent's solidtrace has no sign-in of a person.
@@ -296,6 +302,19 @@ func (r *Runner) Dispatched() []string {
 	defer r.mu.Unlock()
 	return append([]string{}, r.executions...)
 }
+
+// Workspace is the folder of an Execution's checkouts (WRAPPER_WORKSPACE).
+func (r *Runner) Workspace(execution string) string {
+	return filepath.Join(r.dir, "machines", execution, "workspace")
+}
+
+// Home is the run user's home of an Execution (WRAPPER_HOME).
+func (r *Runner) Home(execution string) string {
+	return filepath.Join(r.dir, "machines", execution, "home")
+}
+
+// Cache is the caches folder of each Execution (WRAPPER_CACHE).
+func (r *Runner) Cache() string { return filepath.Join(r.dir, "cache") }
 
 // Socket is the path of the agent's socket of an Execution.
 func (r *Runner) Socket(execution string) string {
