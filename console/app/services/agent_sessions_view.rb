@@ -64,7 +64,7 @@ class AgentSessionsView
 
     {
       on: true, range: TransactionsView.range_h(range), filters: filters, event_store: event_store,
-      rows: rows, totals: totals, more: answer&.dig("more") || false, cost_label: COST_LABEL,
+      rows: rows, totals: totals, more: more, cost_label: COST_LABEL,
       people: people, projects: projects, repositories: repositories,
     }
   end
@@ -94,6 +94,11 @@ class AgentSessionsView
     zero = { "agent_sessions" => 0, "input_tokens" => 0, "output_tokens" => 0, "cache_read_tokens" => 0,
              "cache_write_tokens" => 0, "cost_usd" => nil, "no_cost" => 0 }
     zero.merge(answer&.dig("totals")&.slice(*zero.keys) || {})
+  end
+
+  # Whether the limit left some Agent sessions out of the rows.
+  def more
+    answer&.dig("more") || false
   end
 
   # The choices of the person filter: the Organization's members.

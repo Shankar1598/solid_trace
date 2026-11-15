@@ -24,18 +24,20 @@ class AgentSessionView
   STEP_KINDS = { "person" => "person", "assistant" => "agent", "tool" => "tool",
                  "not from a person" => "not from a person", "system" => "system" }.freeze
 
-  attr_reader :organization, :id, :path, :cursor, :search
+  attr_reader :organization, :id, :path, :cursor, :search, :limit
 
   # path is the subagent transcript whose timeline the page gives, nil for
   # the main transcript; cursor, the next_cursor of the page before.
   # search, if given, keeps the steps whose text has it, with any case;
-  # with no path, from all the Agent session's transcripts.
-  def initialize(organization:, id:, path: nil, cursor: nil, search: nil)
+  # with no path, from all the Agent session's transcripts. limit is the
+  # most steps on the page, EventStore's default (200) when nil.
+  def initialize(organization:, id:, path: nil, cursor: nil, search: nil, limit: nil)
     @organization = organization
     @id = id
     @path = path.presence
     @cursor = cursor.presence
     @search = search.to_s.strip.presence
+    @limit = limit
   end
 
   def project
@@ -107,7 +109,7 @@ class AgentSessionView
 
   def answer
     event_store_answer("Agent session") do
-      EventStore.agent_session!(project_id: project.id, id: id, path: path, cursor: cursor, search: search,
+      EventStore.agent_session!(project_id: project.id, id: id, path: path, cursor: cursor, search: search, limit: limit,
         read_timeout: TIMEOUT_SECONDS)
     rescue EventStore::NotFound
       @not_found = true
