@@ -84,8 +84,10 @@ func (t Token) Has(name string) bool {
 // which it opens read-only, as ProjectAuth reads Project keys (ADR 0001).
 // It applies Console's rules (ApiToken#live?, Oauth::Token.find_live_access,
 // Oauth::Grant#live?): a token works when its row exists and is not revoked,
-// it is not expired, a Grant above it is not revoked, and its user is still a
-// member of its Organization.
+// it is not expired, a Grant above it is not revoked, a child token's parent
+// exists and is not expired, and its user is still a member of its
+// Organization. A child has its parent's user and Organization, so the
+// membership check holds for both.
 type Tokens struct {
 	db *sql.DB
 }
@@ -138,16 +140,25 @@ func digest(secret string) string {
 
 func (t *Tokens) checkAPIToken(secret string, now time.Time) (Token, bool, error) {
 	var (
-		organizationID sql.NullInt64
-		scopesJSON     string
-		sessionIDsJSON sql.NullString
-		expiresText    sql.NullString
+		organizationID    sql.NullInt64
+		scopesJSON        string
+		sessionIDsJSON    sql.NullString
+		expiresText       sql.NullString
+		parentID          sql.NullInt64
+		parentFound       sql.NullInt64
+		parentExpiresText sql.NullString
 	)
 	token := Token{Kind: "api_token"}
-	err := t.db.QueryRow(
-		"SELECT id, user_id, organization_id, scopes, agent_session_ids, expires_at FROM api_tokens WHERE token_digest = ?",
+	// A child token (parent_id) works only while its parent, the
+	// Dispatcher's token, works (ApiToken#live?). Console deletes the
+	// children with the parent; this check does not count on that.
+	err := t.db.QueryRow(`
+		SELECT t.id, t.user_id, t.organization_id, t.scopes, t.agent_session_ids, t.expires_at, t.parent_id, p.id, p.expires_at
+		FROM api_tokens t LEFT JOIN api_tokens p ON p.id = t.parent_id
+		WHERE t.token_digest = ?`,
 		digest(secret),
-	).Scan(&token.ID, &token.UserID, &organizationID, &scopesJSON, &sessionIDsJSON, &expiresText)
+	).Scan(&token.ID, &token.UserID, &organizationID, &scopesJSON, &sessionIDsJSON, &expiresText,
+		&parentID, &parentFound, &parentExpiresText)
 	if err == sql.ErrNoRows {
 		return Token{}, false, nil
 	}
@@ -160,6 +171,18 @@ func (t *Tokens) checkAPIToken(secret string, now time.Time) (Token, bool, error
 	}
 	if expiresAt != nil && !expiresAt.After(now) {
 		return Token{}, false, nil
+	}
+	if parentID.Valid {
+		if !parentFound.Valid {
+			return Token{}, false, nil
+		}
+		parentExpiresAt, err := railsTime(parentExpiresText)
+		if err != nil {
+			return Token{}, false, fmt.Errorf("expiry of the parent of API token %d: %w", token.ID, err)
+		}
+		if parentExpiresAt != nil && !parentExpiresAt.After(now) {
+			return Token{}, false, nil
+		}
 	}
 	token.ExpiresAt = expiresAt
 	if err := json.Unmarshal([]byte(scopesJSON), &token.Scopes); err != nil {
