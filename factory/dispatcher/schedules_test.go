@@ -524,3 +524,21 @@ func TestASaveOfAScheduleForOrphanedSettingsIsRefused(t *testing.T) {
 		t.Errorf("save: %d %s, want 422 that names the Project and says orphaned", a.Status, a.Body)
 	}
 }
+
+func TestAnUpdateOfOnlyTheTimeZoneGivesTheNextFireTimeInTheNewZone(t *testing.T) {
+	env := newEnv(t)
+	ana := env.Member("Ana")
+	s := makeSchedule(t, ana, dispatcherapi.SaveSchedule{Cron: "0 9 * * *"})
+	if want := time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC); s.NextAt == nil || !s.NextAt.Equal(want) {
+		t.Fatalf("the new schedule's next time is %v, want %s", s.NextAt, want)
+	}
+	zone := "Asia/Kolkata"
+	a := ana.API("PATCH", "/api/v1/schedules/"+s.ID, dispatcherapi.UpdateSchedule{TimeZone: &zone})
+	var got dispatcherapi.Schedule
+	a.JSON(t, &got)
+	// 09:00 in Kolkata is 03:30 UTC.
+	want := time.Date(2026, 11, 15, 3, 30, 0, 0, time.UTC)
+	if a.Status != http.StatusOK || got.TimeZone != zone || got.NextAt == nil || !got.NextAt.Equal(want) {
+		t.Errorf("update: %d %s, want the next time %s", a.Status, a.Body, want)
+	}
+}
