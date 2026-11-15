@@ -120,6 +120,24 @@ A ticket of a tracker connection (Notion, Linear) that a person sets to the read
 - **No route:** a ready ticket that no route matches starts no Run. It gets one comment that names the routing field and the values that the routes match, and the Dispatcher writes a warning Log. A new edit of the ticket gets the comment and the warning again; the same edit gets none.
 - A ready ticket starts at most one Run for each edit, and no Run while it has an Active Run.
 
+### Connect a Notion database
+
+Each page of one Notion database is a ticket. Its title and its content (text blocks, at most 64 KiB) are the prompt. Its status is the database's property of the type Status (the one named `Status` when there are several), and its routing field is a select property.
+
+1. In Notion, make an internal integration with the capabilities "Read content", "Update content", "Read comments" and "Insert comments". "Read user information without email addresses" is optional: with it, a Run shows the name of the Notion user who set the status; with none, it shows their Notion id. Share the database with the integration (the database's `...` menu → Connections).
+2. Save the integration's token: `solidtrace connections set NAME --kind notion < token-file`. The Dispatcher keeps it encrypted.
+3. Give the database: `PUT /api/v1/connections/NAME/tracker` with `{"database": "...", "ready_status": "...", "routing_field": "..."}`. The database is its id or the link to it. Each save gives all three values (an empty status or field is the default).
+
+The Dispatcher reads the database every 30 seconds while the connection has no verified webhook, so a Notion connection works with no public webhook route. After the first verified webhook, it reads it every 5 minutes, and each webhook makes it read the page at once.
+
+To add Notion's webhooks:
+
+1. In the integration's Webhooks tab, make a subscription with the connection's webhook URL (`solidtrace connections list`), for the page and comment events.
+2. Notion sends a verification token to the URL. The Dispatcher writes it in its own log (not in a SolidTrace Log), with the command to save it. Paste it into Notion to verify the subscription.
+3. Save the same token as the webhook secret: `solidtrace connections webhook-secret NAME < token-file`. Notion signs each event with it (`X-Notion-Signature`).
+
+Notion's `last_edited_time` has whole minutes. So a page that comes back to the same status and the same routing value in the same minute is the same edit, and starts no second Run.
+
 ## Connect a connection's webhooks
 
 A tracker or a forge tells the Dispatcher of a change with a webhook. The Dispatcher has two listeners: the private listener serves the API, and the webhook listener serves only `POST /webhooks/<kind>/<connection id>`. Each other path and method gets 404. Caddy on the server VM sends only `/webhooks/*` from a public name to the webhook listener (`factory/reference/caddy/Caddyfile`). The operator sets the listener's address in `DISPATCHER_WEBHOOK_LISTEN` and the public name in `DISPATCHER_WEBHOOK_URL`.
