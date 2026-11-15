@@ -134,3 +134,62 @@ func TestAPlainSaveOfALinearConnectionIsRefused(t *testing.T) {
 		t.Errorf("the save answered %d %s, want 400 that names 'connections add linear'", a.Status, a.Body)
 	}
 }
+
+func TestALinearWebhookWithAWrongSignatureOrATimestampOutside60SecondsGets401(t *testing.T) {
+	env, path := linearEnv(t)
+	env.Linear.Put(fakelinear.Issue{ID: "issue-3", Identifier: "ENG-3", Title: "Fix the search", Status: "Ready for agent"},
+		rosaOnLinear)
+	now := env.Clock.Now()
+	signed := func(delivery string, at time.Time) (http.Header, []byte) {
+		return fakelinear.Webhook(linearSecret, delivery, "Issue", "issue-3", at)
+	}
+	noTimestamp := []byte(`{"action":"update","type":"Issue","data":{"id":"issue-3"}}`)
+	for _, c := range []struct {
+		name   string
+		header func() (http.Header, []byte)
+	}{
+		{"another secret", func() (http.Header, []byte) {
+			return fakelinear.Webhook("another-secret", "r-1", "Issue", "issue-3", now)
+		}},
+		{"no signature", func() (http.Header, []byte) {
+			h, b := signed("r-2", now)
+			h.Del("Linear-Signature")
+			return h, b
+		}},
+		{"a signature that is not hex", func() (http.Header, []byte) {
+			h, b := signed("r-3", now)
+			h.Set("Linear-Signature", "zz"+h.Get("Linear-Signature")[2:])
+			return h, b
+		}},
+		{"a body changed after the signature", func() (http.Header, []byte) {
+			h, b := signed("r-4", now)
+			return h, []byte(strings.Replace(string(b), "issue-3", "issue-9", 1))
+		}},
+		{"61 seconds old", func() (http.Header, []byte) { return signed("r-5", now.Add(-61*time.Second)) }},
+		{"61 seconds ahead", func() (http.Header, []byte) { return signed("r-6", now.Add(61*time.Second)) }},
+		{"no webhookTimestamp", func() (http.Header, []byte) {
+			return fakelinear.Signed(linearSecret, "r-7", noTimestamp), noTimestamp
+		}},
+	} {
+		header, body := c.header()
+		if a := env.Webhook(path, header, body); a.Status != http.StatusUnauthorized {
+			t.Errorf("a webhook with %s: %d %s, want 401", c.name, a.Status, a.Body)
+		}
+	}
+	settle()
+	if list := runs(t, env); len(list) != 0 {
+		t.Fatalf("the refused webhooks started %d Runs", len(list))
+	}
+
+	// 60 seconds old is in the window; the same delivery again queues
+	// nothing.
+	header, body := signed("ok-1", now.Add(-60*time.Second))
+	a := env.Webhook(path, header, body)
+	if a.Status != http.StatusOK || !strings.Contains(string(a.Body), `"queued":true`) {
+		t.Fatalf("a webhook 60 seconds old: %d %s, want 200 queued", a.Status, a.Body)
+	}
+	waitForRuns(t, env, 1)
+	if a := env.Webhook(path, header, body); a.Status != http.StatusOK || !strings.Contains(string(a.Body), `"queued":false`) {
+		t.Errorf("the same delivery again: %d %s, want 200 not queued", a.Status, a.Body)
+	}
+}
