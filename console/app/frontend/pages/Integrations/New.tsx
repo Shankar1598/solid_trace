@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { providerName } from '@/lib/integrations'
+import { FactoryConnection } from '@/components/IntegrationParts'
 import { SharedProps } from '@/types'
 import { FormEventHandler } from 'react'
 import { toast } from 'sonner'
@@ -151,6 +152,8 @@ export default function IntegrationsNew({ providers, defaults }: IntegrationsNew
                   </div>
                 </div>
               )}
+
+              {data.provider === 'factory' && <FactoryConnection />}
 
               {data.provider === 'email' && (
                 <div className="space-y-6 pt-6 border-t">

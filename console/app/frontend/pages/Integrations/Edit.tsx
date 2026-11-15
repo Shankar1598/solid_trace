@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { providerName } from '@/lib/integrations'
+import { FactoryConnection, LastFailure } from '@/components/IntegrationParts'
 import { SharedProps, Integration } from '@/types'
 import { FormEventHandler } from 'react'
 import { toast } from 'sonner'
@@ -15,9 +16,11 @@ import { toast } from 'sonner'
 interface IntegrationsEditProps {
   integration: Integration
   providers: { [key: string]: string }
+  /** False for a member on a Factory Integration: only an Admin changes it. */
+  can_manage: boolean
 }
 
-export default function IntegrationsEdit({ integration }: IntegrationsEditProps) {
+export default function IntegrationsEdit({ integration, can_manage }: IntegrationsEditProps) {
   const { current_org } = usePage<SharedProps>().props
 
   const { data, setData, put, processing, errors } = useForm({
@@ -56,6 +59,12 @@ export default function IntegrationsEdit({ integration }: IntegrationsEditProps)
         <Card>
           <form onSubmit={submit}>
             <CardContent className="space-y-6 pb-2">
+              {integration.last_failure && <LastFailure failure={integration.last_failure} />}
+              {!can_manage && (
+                <p className="text-sm text-muted-foreground" data-testid="integration-read-only">
+                  Only an Admin of the Organization changes a Factory Integration.
+                </p>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="name">Name (optional)</Label>
                 <Input
@@ -129,6 +138,8 @@ export default function IntegrationsEdit({ integration }: IntegrationsEditProps)
                   </div>
                 </div>
               )}
+
+              {integration.provider === 'factory' && <FactoryConnection />}
 
               {integration.provider === 'email' && (
                 <div className="space-y-6 pt-6 border-t">
@@ -228,7 +239,7 @@ export default function IntegrationsEdit({ integration }: IntegrationsEditProps)
               <Link href={`/${current_org.slug}/settings/integrations`} className={buttonVariants({ variant: 'outline' })}>
                 Cancel
               </Link>
-              <Button type="submit" disabled={processing}>
+              <Button type="submit" disabled={processing || !can_manage}>
                 {processing ? 'Saving…' : 'Save changes'}
               </Button>
             </CardFooter>

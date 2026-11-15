@@ -17,6 +17,9 @@ class Notification < ApplicationRecord
     sent: 2,
     failed: 3,
     skipped: 4,
+    # The receiver answered that it will never take the message (the
+    # Factory provider's 4xx other than 429), so it is not retried.
+    refused: 5,
   }, prefix: true
 
   # Delivery attempts after which a failed Issue row is no longer picked up.
@@ -35,10 +38,11 @@ class Notification < ApplicationRecord
       .or(where(status: :failed, created_at: MONITOR_RETRY_FOR.ago..).where.not(monitor_id: nil))
   }
 
-  # Failed rows no longer retried: their outcome is final.
+  # Failed rows no longer retried, and refused rows: their outcome is final.
   scope :exhausted, -> {
     where(status: :failed, monitor_id: nil, attempts: MAX_ATTEMPTS..)
       .or(where(status: :failed, created_at: ...MONITOR_RETRY_FOR.ago).where.not(monitor_id: nil))
+      .or(where(status: :refused))
   }
 
   validate :one_subject
@@ -53,6 +57,21 @@ class Notification < ApplicationRecord
       payload: payload,
       status: :pending
     )
+  end
+
+  # The Integration's last row that failed or was refused, which its page
+  # shows with the reason. nil when there is none, or when a later delivery
+  # was sent: the Integration then delivers again.
+  def self.last_failure(integration)
+    row = where(integration: integration, status: [ :failed, :refused ]).order(updated_at: :desc, id: :desc).first
+    return if row.nil? || where(integration: integration, status: :sent).where("sent_at > ?", row.updated_at).exists?
+
+    row
+  end
+
+  # Whether a later tick delivers this row again.
+  def retried?
+    self.class.deliverable.exists?(id: id)
   end
 
   def self.pending_for(integration_id, cutoff_at = Time.current)

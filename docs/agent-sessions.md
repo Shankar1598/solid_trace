@@ -184,6 +184,17 @@ The delivery is the truth: the Dispatcher starts the Run at once, with the sende
 
 While an Active Run of the sender has the same `dedupe_key`, a delivery gives that Run and starts none. The Dispatcher also takes a delivery with the same signature as an earlier one as a repeat, because the delivery id is not signed: two deliveries with the same body in the same second give one Run. A refused delivery is not kept, so the sender can send it again.
 
+## Start Runs from Issues and Monitors: the Factory Integration
+
+The **Factory** Integration provider starts a Run for an Issue or a Monitor of SolidTrace. It shows under Settings → Integrations only when an Instance admin set the Dispatcher URL on Settings → Instance. Only an Admin of the Organization adds, changes or deletes a Factory Integration.
+
+- It has no URL field. When an Admin adds it, Console makes a Webhook sender at the Dispatcher as that Admin, with the Integration's name, and keeps the sender's secret encrypted. The sender has no list of Projects, so it starts Runs in each Project of the Organization, and in no other Organization. A Factory Integration has no list of Projects either: the Integration's rules, and the Monitors that name the Integration, decide what starts Runs.
+- Console sends each delivery to `/webhooks/generic/<sender id>` under the Dispatcher URL. Where Console's server has no private path to the Dispatcher, an Instance admin sets the Dispatcher's public webhook URL (its `DISPATCHER_WEBHOOK_URL`) on Settings → Instance; then Console sends under that URL.
+- Each Issue of a Notification is one delivery, with `dedupe_key` `solid-trace-issue-<Issue id>`. Each change of a Monitor's group is one delivery, with `dedupe_key` `solid-trace-monitor-<Monitor id>-<group>`, or `solid-trace-monitor-<Monitor id>` for a Monitor with no group. So one Issue or one group has at most one Active Run. A Monitor's resolve starts no Run. The delivery id is the Notification's id, so a retry gives the Run that an earlier attempt started.
+- The body's `project` is the Project of the Issue or the Monitor. The prompt describes the Issue or the Monitor, `link` opens the Issue page or the Logs explorer, and `attributes` has `solidtrace.notification` (the notification kind) and `solidtrace.issue_number`, or `solidtrace.monitor_id` and `solidtrace.monitor_group`.
+- A 429, another error status, or a Dispatcher that does not answer, is a failed delivery: Console tries it again as for Slack. Console does not try again a 4xx other than 429, such as the 422 for a Project with no Factory settings. The Integration's page shows its last failed delivery, with the reason.
+- When an Admin deletes the Integration, Console deletes its sender at the Dispatcher. When the Dispatcher does not answer, Console still deletes the Integration, and shows a warning with the sender's id: the sender stays in `solidtrace senders list`, and an Admin deletes it with `solidtrace senders delete SENDER_ID`.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.
