@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/factorytest"
 	"github.com/solidtrace/factory/internal/fakenotion"
 )
@@ -66,4 +68,65 @@ func TestANotionPageSetToTheReadyStatusStartsARunThroughTheWebhook(t *testing.T)
 	if !strings.Contains(env.Logs(), "a ready ticket started a Run") {
 		t.Errorf("no log of the start:\n%s", env.Logs())
 	}
+}
+
+// readyPage puts a page of the database in the ready status, routed to
+// shop, as Rosa. It sends no webhook.
+func readyPage(env *factorytest.Env, db, title string) string {
+	page := fakenotion.NewID()
+	env.Notion.Put(db, fakenotion.Page{ID: page, Title: title, Status: "Ready for agent",
+		Select: map[string]string{"Project": "shop"}}, rosaN)
+	return page
+}
+
+func TestWithNoWebhookTheDispatcherPollsNotionEvery30Seconds(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	page := readyPage(env, db, "Fix the cart total")
+
+	env.Clock.Advance(dispatcher.NotionPoll - time.Second)
+	settle()
+	if list := runs(t, env); len(list) != 0 {
+		t.Fatalf("%d Runs before the poll", len(list))
+	}
+	env.Clock.Advance(time.Second)
+	run := waitForRuns(t, env, 1)[0]
+	if run.Link != fakenotion.PageURL(page) {
+		t.Errorf("the Run's link is %q, want the page's URL", run.Link)
+	}
+	// A connection with no webhook secret gets no webhooks: its poll
+	// does not warn.
+	if n := warnings(env, "no webhook announced"); n != 0 {
+		t.Errorf("the poll of a connection with no webhook secret wrote %d warnings", n)
+	}
+}
+
+func TestAfterTheFirstVerifiedWebhookTheBackstopIsEvery5Minutes(t *testing.T) {
+	env, db, path := notionEnv(t, secret)
+	// A page that no route takes: it announces the webhook and starts no
+	// Run.
+	other := fakenotion.NewID()
+	env.Notion.Put(db, fakenotion.Page{ID: other, Title: "Other", Status: "Backlog"}, rosaN)
+	if a := env.NotionWebhook(path, secret, fakenotion.PageEvent(fakenotion.NewID(), "page.created", other)); a.Status != http.StatusOK {
+		t.Fatalf("the webhook: %d %s", a.Status, a.Body)
+	}
+	// The poll that was due before the webhook runs one more time; the
+	// next one is 5 minutes after it.
+	env.Clock.Advance(dispatcher.NotionPoll)
+	settle()
+
+	readyPage(env, db, "Fix the cart total")
+	env.Clock.Advance(dispatcher.NotionPoll + time.Second)
+	settle()
+	if list := runs(t, env); len(list) != 0 {
+		t.Fatalf("a poll 30 s after a verified webhook started %d Runs, want none until 5 minutes", len(list))
+	}
+	env.Clock.Advance(dispatcher.NotionBackstop - dispatcher.NotionPoll - 2*time.Second)
+	settle()
+	if list := runs(t, env); len(list) != 0 {
+		t.Fatalf("%d Runs before the 5-minute backstop", len(list))
+	}
+	env.Clock.Advance(2 * time.Second)
+	waitForRuns(t, env, 1)
+	// The backstop found a ready page that no webhook announced.
+	env.WaitForWarning("no webhook announced")
 }
