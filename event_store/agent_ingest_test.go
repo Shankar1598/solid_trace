@@ -116,6 +116,7 @@ type apiTokenRow struct {
 	scopes       []string
 	expiresAt    *time.Time
 	sessionIDs   []string // nil: no list
+	parent       int64    // 0: none; else the Dispatcher's token that made this child
 }
 
 // apiToken saves token and returns its secret and id.
@@ -126,7 +127,10 @@ func (r *consoleRows) apiToken(token apiTokenRow) (string, int64) {
 	if token.scopes == nil {
 		scopes = []byte("[]")
 	}
-	var organization, expires, sessionIDs any
+	var organization, expires, sessionIDs, parent any
+	if token.parent != 0 {
+		parent = token.parent
+	}
 	if token.organization != 0 {
 		organization = token.organization
 	}
@@ -137,9 +141,9 @@ func (r *consoleRows) apiToken(token apiTokenRow) (string, int64) {
 		ids, _ := json.Marshal(token.sessionIDs)
 		sessionIDs = string(ids)
 	}
-	id := r.insert(`INSERT INTO api_tokens (name, token_digest, user_id, scopes, organization_id, expires_at, agent_session_ids, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "capture", digestOf(secret), token.user, string(scopes), organization, expires,
-		sessionIDs, railsTime(r.now), railsTime(r.now))
+	id := r.insert(`INSERT INTO api_tokens (name, token_digest, user_id, scopes, organization_id, expires_at, agent_session_ids, parent_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "capture", digestOf(secret), token.user, string(scopes), organization, expires,
+		sessionIDs, parent, railsTime(r.now), railsTime(r.now))
 	return secret, id
 }
 

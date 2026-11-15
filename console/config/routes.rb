@@ -38,6 +38,10 @@ Rails.application.routes.draw do
     post :proof_options, on: :collection
   end
   resources :api_tokens, only: [ :create, :destroy ]
+  # Child tokens, which the Dispatcher makes and revokes with its own token
+  # (ChildTokensController).
+  post "api/child_tokens", to: "child_tokens#create", as: :child_tokens, format: false
+  delete "api/child_tokens/:id", to: "child_tokens#destroy", as: :child_token, format: false
   # Revoking one of the user's Signed-in clients on Settings → User (SignedInClientsController).
   resources :signed_in_clients, only: [ :destroy ]
   # The MCP server (McpController).

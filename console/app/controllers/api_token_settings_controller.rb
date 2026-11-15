@@ -16,8 +16,10 @@ class ApiTokenSettingsController < ApplicationController
 
   def show
     render inertia: "Settings/ApiTokens", props: {
-      api_tokens: current_user.api_tokens.includes(:organization, :project).order(created_at: :desc, id: :desc)
-                              .map { |t| ApiTokenSerializer.new(t).as_json },
+      # Child tokens are the Dispatcher's: the page counts them on their
+      # parent, and does not list each one.
+      api_tokens: current_user.api_tokens.where(parent_id: nil).includes(:organization, :project)
+                              .order(created_at: :desc, id: :desc).map { |t| ApiTokenSerializer.new(t).as_json },
       # The Scopes a person can put on their own token, with the text that
       # says what each gives, and the Organizations a token can be for.
       scopes: Oauth::Scopes.for_people.map { |scope| { name: scope.name, text: scope.text } },
@@ -26,6 +28,13 @@ class ApiTokenSettingsController < ApplicationController
       projects: current_user.organizations_by_name.includes(:projects).flat_map do |organization|
         organization.projects.sort_by(&:name).map { |p| { id: p.id, slug: p.slug, name: p.name, organization_id: organization.id } }
       end,
+      # The Dispatcher's token: its fixed Scopes, and the Organizations where
+      # the user is an Admin, the only ones it can be made for.
+      dispatcher: {
+        scopes: Oauth::Scopes::DISPATCHER,
+        organizations: current_user.organizations_by_name.where(organizations_users: { role: OrganizationUser.roles[:admin] })
+                                   .map { |o| { id: o.id, slug: o.slug, name: o.name } },
+      },
       # Where a client adds the MCP server, at Console's URL.
       mcp_url: "#{console_url}/mcp",
       # Why MCP clients cannot sign in through the browser here; nil when

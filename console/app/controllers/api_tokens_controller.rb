@@ -3,8 +3,7 @@
 # A user's own API tokens, made and revoked from Settings → API tokens & MCP
 # (ApiTokenSettingsController).
 class ApiTokensController < ApplicationController
-  # One value of a form field: a String, a number or nothing.
-  SCALAR = [ String, Integer, NilClass ].freeze
+  include ApiTokenFields
 
   # Answers JSON with the token and its secret. The secret is answered only
   # here, and never stored. Each field goes to ApiToken as it was sent, so
@@ -25,30 +24,14 @@ class ApiTokensController < ApplicationController
     render json: { errors: { base: [ e.message ] } }, status: :unprocessable_content
   end
 
-  # Revoking deletes the row, so the token no longer signs anything in.
+  # Revoking deletes the row and each child token's row, so they no longer
+  # sign anything in.
   def destroy
     current_user.api_tokens.find(params[:id]).destroy!
     redirect_back_or_to tokens_page, notice: "API token revoked"
   end
 
   private
-
-  def scalar(fields, key)
-    value = fields[key]
-    raise ArgumentError, "Give #{key} as one value." unless SCALAR.any? { |kind| value.is_a?(kind) }
-
-    value
-  end
-
-  # A list field: nil, or an Array whose items are each one value (an item
-  # in another shape becomes a String that ApiToken refuses).
-  def list(fields, key)
-    value = fields[key]
-    return if value.nil?
-    raise ArgumentError, "Give #{key} as a list." unless value.is_a?(Array)
-
-    value.map { |item| SCALAR.any? { |kind| item.is_a?(kind) } ? item : item.to_s }
-  end
 
   # The page lives under an Organization; a user in none has no page to show.
   def tokens_page
