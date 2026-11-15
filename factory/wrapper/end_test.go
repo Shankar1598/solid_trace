@@ -309,7 +309,8 @@ func TestWhenTheTaskCallFailsTheWrapperRemovesTheChildCgroup(t *testing.T) {
 	cmd := exec.Command(env.Runner.Wrapper())
 	cmd.Dir = t.TempDir()
 	cmd.Env = []string{wrapper.EnvDispatcherURL + "=" + env.URL(), wrapper.EnvExecution + "=ex_unknown",
-		wrapper.EnvIdentityFile + "=" + identity, wrapper.EnvDocker + "=/no/docker", "PATH=" + os.Getenv("PATH")}
+		wrapper.EnvIdentityFile + "=" + identity, wrapper.EnvDocker + "=/no/docker", "PATH=" + os.Getenv("PATH"),
+		wrapper.EnvRunUser + "=" + env.Runner.RunUser().Username}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := b.Start(cmd); err != nil {
@@ -353,7 +354,8 @@ func TestTheWrapperRefusesToStartWhenItCannotMakeTheChildCgroup(t *testing.T) {
 	cmd := exec.Command(env.Runner.Wrapper())
 	cmd.Dir = t.TempDir()
 	cmd.Env = []string{wrapper.EnvDispatcherURL + "=" + env.URL(), wrapper.EnvExecution + "=ex_refused",
-		wrapper.EnvIdentityFile + "=" + identity, wrapper.EnvDocker + "=/no/docker", "PATH=" + os.Getenv("PATH")}
+		wrapper.EnvIdentityFile + "=" + identity, wrapper.EnvDocker + "=/no/docker", "PATH=" + os.Getenv("PATH"),
+		wrapper.EnvRunUser + "=" + env.Runner.RunUser().Username}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := b.Start(cmd); err != nil {

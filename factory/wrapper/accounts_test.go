@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -296,8 +297,14 @@ func TestTheWrapperRefusesATaskWithNoAccountToken(t *testing.T) {
 	}))
 	defer dispatcher.Close()
 
+	// A wrapper that is not root starts its processes as its own user.
+	self, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
 	values := map[string]string{wrapper.EnvDispatcherURL: dispatcher.URL, wrapper.EnvExecution: "x1",
-		wrapper.EnvIdentityFile: identity, wrapper.EnvDir: filepath.Join(dir, "execution"), wrapper.EnvHarness: harness}
+		wrapper.EnvIdentityFile: identity, wrapper.EnvDir: filepath.Join(dir, "execution"), wrapper.EnvHarness: harness,
+		wrapper.EnvRunUser: self.Username}
 	var stderr strings.Builder
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

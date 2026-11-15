@@ -28,6 +28,8 @@ factory/local/smoke         # start the stack, check it, and stop it again
 
 The smoke check also runs the cgroup cases of the wrapper's kill boundary (`factory/internal/killboundary`) as root in a raw_exec task, with the processes of each case as the run user (`checks/kill-boundary-tests.nomad.hcl`). It builds their test binary with Go and no cgo, and copies it to the agent machine. With no Go, that check skips. Only this check: `SMOKE_ONLY='kill boundary' factory/local/smoke`.
 
+It also runs the wrapper's run-user cases (`factory/wrapper`) as root in a raw_exec task, with the run user `agent` (`checks/run-user-tests.nomad.hcl`): the harness, its tools and git run as `agent` (git in the kill boundary), the wrapper makes its own directory, and `agent` cannot read the wrapper's secrets or change its files. Their test binary is static (the tests start a Dispatcher with SQLite through cgo), so the build needs Go and a C compiler. A last check (`checks/identity-file-check.nomad.hcl`) proves that `agent` cannot read a raw_exec task's identity file or reach the task's directory. Only these checks: `SMOKE_ONLY='run-user cases|identity file' factory/local/smoke`.
+
 The images and Docker's build cache take about 1.5 GB of disk. When the disk is nearly full, use `stack clean` when you finish.
 
 The compose project is `factory-local`. It has its own containers, networks and volumes, and publishes no port on the host. It does not touch the dev SolidTrace's containers or data, or a flow stack.

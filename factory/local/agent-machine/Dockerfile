@@ -36,11 +36,14 @@ RUN curl -fsSL -o /tmp/hc.tar.gz \
  && ln -s herdr-core /usr/local/bin/hc
 
 # The run user (not root, in the docker group) and the access group. On a VM, OS Login
-# gives the access group to each person of the Google group.
+# gives the access group to each person of the Google group. The Nomad job gives each
+# wrapper the directory <executions>/<execution>, which the wrapper makes: root owns
+# each parent, and the run user can only search them.
 RUN groupadd --system docker \
  && groupadd --system factory-access \
  && useradd --create-home --shell /bin/bash --groups docker agent \
- && install -d -o agent -g agent -m 755 /work
+ && install -d -o agent -g agent -m 755 /work \
+ && install -d -o root -g root -m 711 /var/lib/factory/executions
 
 COPY sudoers /etc/sudoers.d/factory-take-over
 RUN chmod 440 /etc/sudoers.d/factory-take-over && visudo -c

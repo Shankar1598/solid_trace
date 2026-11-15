@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
@@ -40,7 +41,33 @@ func seedRemote(t *testing.T, dir string) (remote, seed string) {
 
 func testConfig(dir string) config {
 	return config{dir: filepath.Join(dir, "wrapper"), workspace: filepath.Join(dir, "workspace"),
-		home: filepath.Join(dir, "home"), cache: filepath.Join(dir, "cache")}
+		home: filepath.Join(dir, "home"), cache: filepath.Join(dir, "cache"),
+		claudeConfig: filepath.Join(dir, "home", ".claude"), projectName: "bitbucket-org-example-shop"}
+}
+
+// startBoundary is a kill boundary that only starts each process.
+type startBoundary struct{}
+
+func (startBoundary) Start(cmd *exec.Cmd) error  { return cmd.Start() }
+func (startBoundary) Populated() (bool, error)   { return false, nil }
+func (startBoundary) Kill() error                { return nil }
+func (startBoundary) Remove(time.Duration) error { return nil }
+
+// setupExecution is an Execution for a call of setup: the Execution's
+// directory is there (Main makes it), and the run user is the wrapper's
+// user.
+func setupExecution(t *testing.T, cfg config, log *bytes.Buffer, task dispatcherapi.Task) *execution {
+	t.Helper()
+	if err := os.Mkdir(cfg.dir, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	e := &execution{cfg: cfg, log: log, task: task, boundary: startBoundary{}, uploads: &uploads{projectDir: cfg.projectDir()}}
+	t.Cleanup(func() {
+		if e.uploads.dir != nil {
+			e.uploads.dir.Close()
+		}
+	})
+	return e
 }
 
 func TestSetupRemovesTheCheckoutAndHomeThatAnEarlierExecutionLeft(t *testing.T) {
@@ -58,8 +85,8 @@ func TestSetupRemovesTheCheckoutAndHomeThatAnEarlierExecutionLeft(t *testing.T) 
 		}
 	}
 	var log bytes.Buffer
-	e := &execution{cfg: cfg, log: &log, task: dispatcherapi.Task{RunID: "r-1", Repository: repository,
-		CloneURL: remote, Branch: dispatcherapi.RunBranch("r-1")}}
+	e := setupExecution(t, cfg, &log, dispatcherapi.Task{RunID: "r-1", Repository: repository,
+		CloneURL: remote, Branch: dispatcherapi.RunBranch("r-1")})
 
 	if err := e.setup(context.Background(), os.Environ()); err != nil {
 		t.Fatalf("setup over a checkout that an earlier Execution left: %v", err)
@@ -90,8 +117,8 @@ func TestALaterExecutionChecksOutTheRunsBranchThatIsOnTheRemote(t *testing.T) {
 	cfg := testConfig(dir)
 	repository := "bitbucket.org/example/shop"
 	var log bytes.Buffer
-	e := &execution{cfg: cfg, log: &log, task: dispatcherapi.Task{RunID: "r-1", Repository: repository,
-		CloneURL: remote, Branch: branch, BaseBranch: "main"}}
+	e := setupExecution(t, cfg, &log, dispatcherapi.Task{RunID: "r-1", Repository: repository,
+		CloneURL: remote, Branch: branch, BaseBranch: "main"})
 	if err := e.setup(context.Background(), os.Environ()); err != nil {
 		t.Fatalf("setup: %v\n%s", err, log.String())
 	}
@@ -135,8 +162,8 @@ func TestARepositoryOrFolderThatIsNotAPlainPathIsRefused(t *testing.T) {
 	remote, _ := seedRemote(t, dir)
 	cfg := testConfig(dir)
 	var log bytes.Buffer
-	e := &execution{cfg: cfg, log: &log, task: dispatcherapi.Task{RunID: "r-1", Repository: "bitbucket.org/example/shop",
-		Folder: "../x", CloneURL: remote, Branch: dispatcherapi.RunBranch("r-1")}}
+	e := setupExecution(t, cfg, &log, dispatcherapi.Task{RunID: "r-1", Repository: "bitbucket.org/example/shop",
+		Folder: "../x", CloneURL: remote, Branch: dispatcherapi.RunBranch("r-1")})
 	if err := e.setup(context.Background(), os.Environ()); err == nil {
 		t.Errorf("setup with the Project's folder ../x has no error")
 	}

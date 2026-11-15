@@ -9,8 +9,9 @@
 // is the wrapper's own program (stop_hook.go).
 //
 // The checkout is at a fixed path for each repository, on the Run's branch
-// (checkout.go). Later tickets add the run user (39) and the restore of
-// the Agent session directory (59).
+// (checkout.go). Each process that it starts runs as the run user
+// (runuser.go). A later ticket adds the restore of the Agent session
+// directory (59).
 package wrapper
 
 import (
@@ -77,6 +78,18 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		fmt.Fprintln(stderr, "wrapper: no kill boundary, so the wrapper does not start:", err)
 		return 2
 	}
+	runUser, err := lookupRunUser(getenv(EnvRunUser))
+	if err == nil {
+		err = cfg.makeDir()
+	}
+	if err == nil {
+		err = runUser.checkDir(cfg.dir)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "wrapper:", err)
+		boundary.Remove(emptyWait)
+		return 2
+	}
 	c := newClient(cfg)
 	task, err := c.task(ctx)
 	if err != nil {
@@ -91,7 +104,7 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	}
 	work, cancelWork := context.WithCancel(ctx)
 	defer cancelWork()
-	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
+	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, runUser: runUser, needsPerson: make(chan struct{}, 1),
 		uploads: newUploads(cfg, c, task, stderr), cancelWork: cancelWork, inbox: newInbox()}
 	// The commands and the limits count from the task, and stop at the
 	// end call.
@@ -144,6 +157,8 @@ type execution struct {
 	task     dispatcherapi.Task
 	log      io.Writer
 	boundary killBoundary
+	// runUser is the user of each process that the wrapper starts.
+	runUser runUser
 
 	// mu holds a report's forward and the start of the end, so that a
 	// report counts only when it reached the Dispatcher before the end.
@@ -320,10 +335,6 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 	if err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
-	if err := e.uploads.prepare(); err != nil {
-		_ = server.Close()
-		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "make the project directory: " + err.Error()}
-	}
 	e.uploads.start()
 	end := e.runHarness(environ)
 	// The last bytes go before the end call: the end step revokes the
@@ -346,6 +357,21 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// EnvSubprocessScrub is Claude Code's subprocess environment scrub. The
+// wrapper turns it off (0), last in the harness's environment, so that the
+// machine's environment cannot turn it on. In the pinned Claude Code
+// (2.1.325) the scrub is a hardening for untrusted users: it forces the
+// permission mode to default (so headless Bash calls are refused), it
+// needs bubblewrap with user namespaces, and its sandbox stops Bash from
+// writing package.json, the lock files and CLAUDE_CONFIG_DIR (evidence/
+// is there), and from reading the Docker socket. A Run must do each of
+// these. The Harness contract check TestContractSubprocessEnvScrub fails
+// when a new version changes this. So the boundary is: no secret of the
+// wrapper's in the harness's environment, a Run's own secrets in files of
+// the secrets directory, and the redaction patterns for the Claude token,
+// which the run user can read in the harness's environment.
+const EnvSubprocessScrub = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+
 // EnvAccountToken is the name under which the harness (Claude Code) gets
 // the token of the Execution's subscription account.
 const EnvAccountToken = "CLAUDE_CODE_OAUTH_TOKEN"
@@ -356,14 +382,17 @@ const EnvAccountToken = "CLAUDE_CODE_OAUTH_TOKEN"
 // pricing.
 var credentialNames = []string{EnvAccountToken, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 
-// harnessEnv is environ with no WRAPPER_ name, no agent's socket and no
-// Claude credential, and the agent's socket at socket ("" sets none).
-// runHarness adds the account's token for the harness only.
+// harnessEnv is environ with no WRAPPER_ or NOMAD_ name, no agent's
+// socket and no Claude credential, and the agent's socket at socket (""
+// sets none). The names of the wrapper and of the Runner are not the
+// agent's: NOMAD_TOKEN is a credential when a workload identity has env =
+// true. runHarness adds the account's token for the harness only.
 func harnessEnv(environ []string, socket string) []string {
 	var env []string
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, "WRAPPER_") || name == agentsocket.Env || slices.Contains(credentialNames, name) {
+		if strings.HasPrefix(name, "WRAPPER_") || strings.HasPrefix(name, "NOMAD_") || name == agentsocket.Env ||
+			slices.Contains(credentialNames, name) {
 			continue
 		}
 		env = append(env, kv)
@@ -384,7 +413,8 @@ func (e *execution) serveSocket(environ []string) (*http.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("serve the agent's socket: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	// The run user connects (check and report); no other user does.
+	if err := e.runUser.share(path, 0o660); err != nil {
 		listener.Close()
 		return nil, err
 	}
@@ -515,10 +545,13 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.workDir
 	cmd.Env = append(append(e.gitEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...),
-		EnvRunState+"="+e.cfg.runState())
-	// The account's token is in the harness's environment only: not in a
-	// file, and not in git's environment.
-	cmd.Env = append(cmd.Env, EnvAccountToken+"="+e.task.AccountToken)
+		EnvRunState+"="+e.cfg.runState(),
+		// The account's token is in the harness's environment only: not in
+		// a file, and not in git's environment.
+		EnvAccountToken+"="+e.task.AccountToken,
+		// Last, so that the machine's environment cannot turn it on.
+		EnvSubprocessScrub+"=0")
+	e.runUser.start(cmd)
 	cmd.Stderr = e.log
 	failed := func(err error) dispatcherapi.ExecutionEnd {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}

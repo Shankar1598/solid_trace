@@ -20,7 +20,12 @@ func runUpload(t *testing.T) (*upload, string) {
 	if err := os.MkdirAll(filepath.Join(root, "evidence"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return &upload{root: root, forRun: &RunUpload{ProjectDir: root}}, root
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dir.Close() })
+	return &upload{root: root, dir: dir, forRun: &RunUpload{ProjectDir: root, Dir: dir}}, root
 }
 
 func TestARunsUploadOpensNoFileOutsideTheProjectDirectory(t *testing.T) {
