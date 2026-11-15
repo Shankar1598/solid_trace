@@ -37,6 +37,9 @@ type Options struct {
 	// Runner starts the Executions of queued Runs. With none, a Run stays
 	// queued (a Dispatcher with no Runner configured).
 	Runner Runner
+	// DispatchEvery is how often the dispatch loop looks for queued Runs
+	// when nothing wakes it (dispatchEvery when 0).
+	DispatchEvery time.Duration
 	// EventRetry is the longest wait of the event sender between two
 	// tries to send the outbox to SolidTrace (maxEventRetry when 0).
 	EventRetry time.Duration
@@ -115,8 +118,10 @@ type Dispatcher struct {
 	// closing closes when Serve or Close starts to stop.
 	closing     chan struct{}
 	closingOnce sync.Once
-	stop        context.CancelFunc
-	loops       sync.WaitGroup
+	// dispatchEvery is Options.DispatchEvery.
+	dispatchEvery time.Duration
+	stop          context.CancelFunc
+	loops         sync.WaitGroup
 }
 
 // Open checks config and opens the database (it makes it at first use).
@@ -132,6 +137,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	}
 	if options.Log == nil {
 		options.Log = slog.Default()
+	}
+	if options.DispatchEvery <= 0 {
+		options.DispatchEvery = dispatchEvery
 	}
 	if options.Version == "" {
 		options.Version = "dev"
@@ -174,6 +182,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		closeChecked:    options.CloseChecked,
 		closing:         make(chan struct{}),
 		backstopEvery:   cmp.Or(options.BackstopEvery, backstopEvery),
+		dispatchEvery:   options.DispatchEvery,
 	}
 	for _, kind := range options.WebhookKinds {
 		d.kinds[kind.Kind()] = kind

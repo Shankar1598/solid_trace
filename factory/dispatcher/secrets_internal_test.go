@@ -17,7 +17,17 @@ func testStore(t *testing.T, path string) *store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.close() })
+	addTestAccount(t, s)
 	return s
+}
+
+// addTestAccount puts one subscription account in the pool of s, so that
+// addExecution gives a queued Run its Execution.
+func addTestAccount(t *testing.T, s *store) {
+	t.Helper()
+	if _, err := s.addAccount("pool-1", "sk-ant-oat01-test-pool-1", time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // The Forge reads a connection's token for a Run (ticket 37): the token

@@ -310,6 +310,18 @@ var migrations = []string{
 	);
 	CREATE INDEX ticket_writes_pending ON ticket_writes (id) WHERE sent_at IS NULL;
 	CREATE INDEX ticket_writes_by_run ON ticket_writes (run_id, step);`,
+	// accounts is the pool of subscription accounts (the Credential
+	// source). A token is sealed with the purpose "account <name>".
+	// limited_until is the reset time of an account at its usage limit.
+	// An Execution's account is the name of the account that it got.
+	`CREATE TABLE accounts (
+		name TEXT PRIMARY KEY,
+		token BLOB NOT NULL,
+		added_at INTEGER NOT NULL,
+		limited_until INTEGER
+	);
+	ALTER TABLE executions ADD COLUMN account TEXT NOT NULL DEFAULT '';
+	CREATE INDEX executions_by_account ON executions (account, state);`,
 }
 
 // store is the Dispatcher's SQLite database.

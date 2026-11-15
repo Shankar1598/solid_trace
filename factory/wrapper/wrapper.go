@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -315,6 +316,11 @@ func (e *execution) stopContainers() {
 
 // work sets up and runs the harness, and gives the end call's body.
 func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
+	// With no account token the harness would use another login of the
+	// machine, or none: the Execution ends before its setup.
+	if e.task.AccountToken == "" {
+		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "the task has no account token"}
+	}
 	if err := e.setup(ctx, environ); err != nil {
 		// A stop or a limit during the setup stops the clone.
 		if end, ok := e.endedEarly(); ok {
@@ -363,14 +369,27 @@ func lastLines(s string, n int) string {
 // which the run user can read in the harness's environment.
 const EnvSubprocessScrub = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
 
-// harnessEnv is environ with no WRAPPER_ or NOMAD_ name and no agent's
-// socket, and the agent's socket at socket ("" sets none). The names of
-// the wrapper and of the Runner are not the agent's: NOMAD_TOKEN is a
-// credential when a workload identity has env = true.
+// EnvAccountToken is the name under which the harness (Claude Code) gets
+// the token of the Execution's subscription account.
+const EnvAccountToken = "CLAUDE_CODE_OAUTH_TOKEN"
+
+// credentialNames are the names of Claude credentials that no process of
+// the wrapper gets from the machine's environment. An API key would win
+// over the account's token in Claude Code, and a Run never uses API
+// pricing.
+var credentialNames = []string{EnvAccountToken, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+
+// harnessEnv is environ with no WRAPPER_ or NOMAD_ name, no agent's
+// socket and no Claude credential, and the agent's socket at socket (""
+// sets none). The names of the wrapper and of the Runner are not the
+// agent's: NOMAD_TOKEN is a credential when a workload identity has env =
+// true. runHarness adds the account's token for the harness only.
 func harnessEnv(environ []string, socket string) []string {
 	var env []string
 	for _, kv := range environ {
-		if strings.HasPrefix(kv, "WRAPPER_") || strings.HasPrefix(kv, "NOMAD_") || strings.HasPrefix(kv, agentsocket.Env+"=") {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "WRAPPER_") || strings.HasPrefix(name, "NOMAD_") || name == agentsocket.Env ||
+			slices.Contains(credentialNames, name) {
 			continue
 		}
 		env = append(env, kv)
@@ -522,6 +541,9 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd.Dir = e.workDir
 	cmd.Env = append(append(e.gitEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...),
 		EnvRunState+"="+e.cfg.runState(),
+		// The account's token is in the harness's environment only: not in
+		// a file, and not in git's environment.
+		EnvAccountToken+"="+e.task.AccountToken,
 		// Last, so that the machine's environment cannot turn it on.
 		EnvSubprocessScrub+"=0")
 	e.runUser.start(cmd)
