@@ -529,8 +529,17 @@ func (e *execution) pr(w http.ResponseWriter, r *http.Request, environ []string)
 		return
 	}
 	text = dispatcherapi.PRText{Title: text.Title, Description: text.Description}
+	// The preempting marker stops a pr call in flight: the save of the
+	// work pushes the branch.
+	ctx, stop := context.WithCancel(r.Context())
+	defer stop()
+	defer context.AfterFunc(e.marked, stop)()
 	e.prMu.Lock()
 	defer e.prMu.Unlock()
+	if e.isMarked() {
+		writeProblem(w, http.StatusConflict, errMarked.Error()+": the wrapper opens no PR now")
+		return
+	}
 	e.mu.Lock()
 	ending := e.ending
 	e.mu.Unlock()
@@ -538,12 +547,24 @@ func (e *execution) pr(w http.ResponseWriter, r *http.Request, environ []string)
 		writeProblem(w, http.StatusConflict, "the Execution is ending: the wrapper pushes the Run's branch, and opens no PR now")
 		return
 	}
-	if err := e.pushForPR(r.Context(), environ); err != nil {
+	if err := e.pushForPR(ctx, environ); err != nil {
 		fmt.Fprintln(e.log, "wrapper: the push for a pr call:", err)
+		if e.isMarked() {
+			writeProblem(w, http.StatusConflict, errMarked.Error()+": the pr call stopped")
+			return
+		}
 		writeProblem(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	a, err := e.client.callPR(r.Context(), text)
+	if e.isMarked() {
+		writeProblem(w, http.StatusConflict, errMarked.Error()+": the wrapper opens no PR now")
+		return
+	}
+	a, err := e.client.callPR(ctx, text)
+	if err != nil && e.isMarked() {
+		writeProblem(w, http.StatusConflict, errMarked.Error()+": the pr call stopped")
+		return
+	}
 	if err != nil {
 		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the pr call: "+err.Error())
 		return
