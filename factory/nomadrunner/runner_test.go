@@ -146,8 +146,11 @@ func TestTheJobReservesAllTheMemoryOfTheMachine(t *testing.T) {
 
 func TestStopGivesTheWrapperSIGTERMAndTheKillTimeout(t *testing.T) {
 	s := theStack(t)
-	// The wrapper's end takes longer than Nomad's default of 5 seconds.
-	r := s.runner(t, `trap 'echo got TERM; sleep 7; echo stopped; exit 0' TERM; echo ready; while :; do sleep 1; done`)
+	// The wrapper's end takes longer than the job's default kill timeout (5
+	// seconds), and than the client's default max_kill_timeout (30 seconds),
+	// which clamps the job's kill timeout. The job's field does not show the
+	// clamp: only the task's own end does.
+	r := s.runner(t, `trap 'echo got TERM; sleep 35; echo stopped; exit 0' TERM; echo ready; while :; do sleep 1; done`)
 	ev := &events{t: t, r: r}
 
 	workload := dispatch(t, r, "run-1", "exec-1", "")
@@ -166,7 +169,7 @@ func TestStopGivesTheWrapperSIGTERMAndTheKillTimeout(t *testing.T) {
 	if !end.Ended || end.Lost {
 		t.Fatalf("the end is %+v", end)
 	}
-	if took := time.Since(start); took < 7*time.Second {
+	if took := time.Since(start); took < 35*time.Second {
 		t.Errorf("the task ended %s after the stop, before its own end", took)
 	}
 	out := s.stdout(t, alloc.ID)
