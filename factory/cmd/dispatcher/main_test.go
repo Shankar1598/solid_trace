@@ -94,6 +94,23 @@ func TestTheDispatcherRefusesAConfigurationFileThatIsNotThere(t *testing.T) {
 
 const testKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 
+func TestTheDispatcherRefusesAWorkInProgressPlaceThatIsNotOneOfTheTwo(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run(context.Background(), nil, env(map[string]string{
+		"DISPATCHER_SOLIDTRACE_URL":    "https://console.example.com",
+		"DISPATCHER_SOLIDTRACE_TOKEN":  "stk_x",
+		"DISPATCHER_DATABASE":          filepath.Join(t.TempDir(), "d.sqlite3"),
+		"DISPATCHER_ENCRYPTION_KEY":    testKey,
+		"DISPATCHER_WIP_REFS":          "refs/tags/wip",
+		"DISPATCHER_BITBUCKET_API_URL": "api.bitbucket.example",
+	}), &stderr)
+	for _, want := range []string{"DISPATCHER_WIP_REFS", "refs/agent-wip or refs/heads/agent-wip", "DISPATCHER_BITBUCKET_API_URL"} {
+		if code != 1 || !strings.Contains(stderr.String(), want) {
+			t.Errorf("exit %d; the error does not name %q: %s", code, want, stderr.String())
+		}
+	}
+}
+
 func TestTheDispatcherRefusesToStartWithAnotherKeyThanTheDatabaseHas(t *testing.T) {
 	values := map[string]string{
 		"DISPATCHER_SOLIDTRACE_URL":   "https://console.example.com",

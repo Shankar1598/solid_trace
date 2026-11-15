@@ -22,6 +22,7 @@ import (
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/factory/dispatcher"
+	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/recorder"
 )
 
@@ -52,8 +53,12 @@ func (c *Clock) Advance(d time.Duration) {
 type Env struct {
 	t          testing.TB
 	SolidTrace *recorder.Recorder
-	Clock      *Clock
-	Config     dispatcher.Config
+	// Forge is the fake Bitbucket Cloud of the Dispatcher's
+	// configuration. It has no repositories: a test adds them, such as
+	// example/<slug> for the settings that Project saves.
+	Forge  *fakeforge.Forge
+	Clock  *Clock
+	Config dispatcher.Config
 	// Version is the Dispatcher's version ("" is a build from a
 	// checkout). A change applies at the next Restart.
 	Version string
@@ -123,6 +128,7 @@ func New(t testing.TB) *Env {
 	e := &Env{
 		t:          t,
 		SolidTrace: recorder.New(DispatcherToken),
+		Forge:      fakeforge.New(t),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	t.Cleanup(e.SolidTrace.Close)
@@ -139,6 +145,8 @@ func New(t testing.TB) *Env {
 		SolidTraceToken: DispatcherToken,
 		Database:        filepath.Join(t.TempDir(), "dispatcher.sqlite3"),
 		EncryptionKey:   EncryptionKey,
+		BitbucketAPIURL: e.Forge.APIURL(),
+		BitbucketGitURL: e.Forge.GitURL(),
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.current.Load().Handler().ServeHTTP(w, r)
