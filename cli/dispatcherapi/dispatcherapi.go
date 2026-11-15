@@ -129,6 +129,35 @@ type Task struct {
 	// Execution, --resume when Resume is true.
 	SessionID string `json:"session_id"`
 	Resume    bool   `json:"resume"`
+	// Project is the Run's Project (its slug), and Folder the Project's
+	// folder in the repository ("" is the root). An upload names both.
+	Project string `json:"project"`
+	Folder  string `json:"folder"`
+	// IngestURL is where the wrapper uploads the Run's Agent sessions,
+	// with Uploads.
+	IngestURL string `json:"ingest_url"`
+	// Uploads is the Execution's child token. Only the wrapper keeps it.
+	Uploads SessionToken `json:"uploads"`
+}
+
+// SessionToken is a child token of one Execution: sessions:write and
+// sessions:read for the Run's Agent sessions, until the Execution's total
+// limit plus 1 hour. The Dispatcher revokes it at the Execution's end.
+type SessionToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	// AgentSessionIDs are the Run's Agent sessions that the token can
+	// reach. SessionID is the current one: it has the Run's evidence/.
+	AgentSessionIDs []string `json:"agent_session_ids"`
+	SessionID       string   `json:"session_id"`
+}
+
+// TokenRequest is the body of the wrapper's token call. A new Agent
+// session id (a /clear, or a second Claude Code process) is added to the
+// Run first, and the Run's current Agent session stays; with none, the call
+// gives a new token for the same Agent sessions.
+type TokenRequest struct {
+	AgentSessionID string `json:"agent_session_id,omitempty"`
 }
 
 // End reasons that the wrapper gives.

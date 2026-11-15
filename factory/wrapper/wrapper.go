@@ -3,10 +3,12 @@
 // workload identity JWT, clones the repository, starts the headless form
 // of the Harness (Claude Code), writes the task as stream-json input,
 // serves the agent's socket, and ends the Execution. The outcome is the
-// agent's last valid report, never the harness's exit code.
+// agent's last valid report, never the harness's exit code. During the
+// Execution and before the end call, it uploads the Run's Agent sessions
+// with the Execution's child token (uploads.go).
 //
-// Later tickets add the fixed paths and the Run's branch (33), the run user (39), the uploads (41), the commands and
-// the limits (32), and the Stop hook (38).
+// Later tickets add the fixed paths and the Run's branch (33), the run user (39), the restore of the Agent
+// session directory (59), the commands and the limits (32), and the Stop hook (38).
 package wrapper
 
 import (
@@ -68,15 +70,15 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		fmt.Fprintln(stderr, "wrapper: no kill boundary, so the wrapper does not start:", err)
 		return 2
 	}
-	c := &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
-		http: &http.Client{Timeout: 30 * time.Second}}
+	c := newClient(cfg)
 	task, err := c.task(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
 		boundary.Remove(emptyWait)
 		return 1
 	}
-	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1)}
+	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
+		uploads: newUploads(cfg, c, task, stderr)}
 	end := e.run(ctx, environ)
 	if err := c.end(ctx, end); err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
@@ -95,6 +97,16 @@ type killBoundary interface {
 	Populated() (bool, error)
 	Kill() error
 	Remove(within time.Duration) error
+}
+
+// newClient is the client of the Dispatcher's API. The Dispatcher's
+// private listener is reached directly, never through the proxy of the
+// wrapper's environment, which the uploads use.
+func newClient(cfg config) *client {
+	direct := http.DefaultTransport.(*http.Transport).Clone()
+	direct.Proxy = nil
+	return &client{url: cfg.dispatcherURL, execution: cfg.execution, identityFile: cfg.identityFile,
+		http: &http.Client{Timeout: 30 * time.Second, Transport: direct}}
 }
 
 // execution is one Execution on this machine.
@@ -119,6 +131,7 @@ type execution struct {
 	populatedAtKill bool
 
 	needsPerson chan struct{}
+	uploads     *uploads
 	stdin       io.WriteCloser
 	harness     *exec.Cmd
 	kill        *time.Timer
@@ -226,7 +239,15 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 	if err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
+	if err := e.uploads.prepare(); err != nil {
+		_ = server.Close()
+		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "make the project directory: " + err.Error()}
+	}
+	e.uploads.start()
 	end := e.runHarness(environ)
+	// The last bytes go before the end call: the end step revokes the
+	// Execution's token.
+	e.uploads.finish()
 	// No report is in flight after this: the end call can go.
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -399,7 +420,7 @@ func (e *execution) headless() []string {
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.cfg.checkout()
-	cmd.Env = harnessEnv(environ, e.cfg.socket())
+	cmd.Env = append(harnessEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...)
 	cmd.Stderr = e.log
 	failed := func(err error) dispatcherapi.ExecutionEnd {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "start the harness: " + err.Error()}

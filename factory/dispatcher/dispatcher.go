@@ -49,6 +49,8 @@ type Dispatcher struct {
 	store   *store
 	tokens  *tokenCheck
 	handler http.Handler
+	// children makes and revokes the Executions' child tokens.
+	children *childTokens
 
 	// http and eventRetry are for the event sender.
 	http       *http.Client
@@ -97,6 +99,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		store:   s,
 		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP,
 			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
+		children:   &childTokens{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP},
 		http:       options.HTTP,
 		eventRetry: cmp.Or(options.EventRetry, maxEventRetry),
 		runner:     options.Runner,
@@ -116,6 +119,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		d.identity = &identityCheck{jwksURL: d.runner.JWKSURL(), http: options.HTTP, now: options.Now}
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/task", d.wrapper(d.task))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/report", d.wrapper(d.report))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/token", d.wrapper(d.token))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

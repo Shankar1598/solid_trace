@@ -110,6 +110,17 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "start the Execution", err)
 		return
 	}
+	uploads, err := d.sessionToken(r.Context(), e, run.startedAt)
+	if errors.Is(err, errEnded) {
+		writeProblem(w, http.StatusConflict, errEnded.Error())
+		return
+	}
+	if err != nil {
+		d.log.Error("could not make an Execution's token", "execution", e.id, "error", err)
+		d.endByDispatcher(e.id, "the Dispatcher could not make the Execution's token at SolidTrace", nil)
+		writeProblem(w, http.StatusBadGateway, "the Dispatcher could not make the Execution's token at SolidTrace")
+		return
+	}
 	writeJSON(w, http.StatusOK, dispatcherapi.Task{
 		RunID:         e.runID,
 		ExecutionID:   e.id,
@@ -121,6 +132,10 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		ForgeToken:    token,
 		SessionID:     run.sessionID,
 		Resume:        run.resume,
+		Project:       settings.Project,
+		Folder:        settings.Folder,
+		IngestURL:     d.config.ingestURL(),
+		Uploads:       uploads,
 	})
 }
 
@@ -195,5 +210,8 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 		d.serverError(w, "end the Execution", err)
 		return
 	}
+	// The end step: the wrapper uploaded the last bytes before its end
+	// call, so the Execution's tokens go now.
+	d.revokeTokens(e.id)
 	w.WriteHeader(http.StatusNoContent)
 }
