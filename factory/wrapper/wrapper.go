@@ -104,9 +104,10 @@ type execution struct {
 	endError  string
 	reported  bool
 	// backgroundTasks is the count of the agent's background tasks that
-	// run, from the last background_tasks_changed event; tasksKilled is
-	// that count when the end killed the cgroup with a process in it.
-	backgroundTasks, tasksKilled int
+	// run, from the last background_tasks_changed event. populatedAtKill
+	// tells if a process was in the cgroup when the end killed it.
+	backgroundTasks int
+	populatedAtKill bool
 
 	needsPerson chan struct{}
 	stdin       io.WriteCloser
@@ -122,8 +123,13 @@ type execution struct {
 func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
 	end := e.work(ctx, environ)
 	e.finish()
+	// The output stream is read to its end now: the last
+	// background_tasks_changed event counts, also when the harness wrote
+	// it just before it exited.
 	e.mu.Lock()
-	end.BackgroundTasksKilled = e.tasksKilled
+	if e.populatedAtKill {
+		end.BackgroundTasksKilled = e.backgroundTasks
+	}
 	e.mu.Unlock()
 	return end
 }
@@ -147,8 +153,9 @@ func (e *execution) finish() {
 	}
 }
 
-// killAll writes 1 to cgroup.kill, once. The background tasks that the
-// harness listed count as killed when a process was still in the cgroup.
+// killAll writes 1 to cgroup.kill, once. It records if a process was
+// still in the cgroup: the background tasks that the harness listed then
+// count as killed.
 func (e *execution) killAll() {
 	e.killOnce.Do(func() {
 		populated, err := e.boundary.Populated()
@@ -159,9 +166,7 @@ func (e *execution) killAll() {
 			fmt.Fprintln(e.log, "wrapper: cgroup.kill:", err)
 		}
 		e.mu.Lock()
-		if populated {
-			e.tasksKilled = e.backgroundTasks
-		}
+		e.populatedAtKill = populated
 		e.mu.Unlock()
 	})
 }

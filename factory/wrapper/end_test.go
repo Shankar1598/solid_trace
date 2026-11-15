@@ -158,6 +158,41 @@ func TestTheEndKillsTheBackgroundTasksThatStillRunAndCountsThem(t *testing.T) {
 	}
 }
 
+// The harness can write its last background_tasks_changed event and exit
+// before the wrapper reads that event. The count comes from the whole
+// output stream, not from the events that the wrapper read before the
+// kill.
+func TestTheCountOfKilledTasksIncludesTheEventsBeforeTheHarnessExit(t *testing.T) {
+	cases := []struct {
+		name   string
+		last   string
+		killed int
+	}{
+		{"two tasks run when the harness exits", backgroundTasks(2), 2},
+		{"the tasks ended just before the harness exits", backgroundTasks(0), 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env, ana := newEnv(t)
+			leave, _ := leaveProcesses(t)
+			// Many events in the pipe at the exit, so that the wrapper
+			// has not read the last one when it sees the exit.
+			script := []string{takeTask, initLine(t), leave}
+			for i := 0; i < 2000; i++ {
+				script = append(script, backgroundTasks(1))
+			}
+			env.Runner.Agent(append(script, c.last, `{"fake":"exit","code":137}`)...)
+
+			id := start(t, env, ana, "Fix the cart")
+			run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+
+			if e := onlyExecution(t, run); e.BackgroundTasksKilled != c.killed {
+				t.Errorf("background tasks killed %d, want %d", e.BackgroundTasksKilled, c.killed)
+			}
+		})
+	}
+}
+
 func TestTheEndStopsEachRunningContainer(t *testing.T) {
 	env, ana := newEnv(t)
 	env.Runner.Agent(takeTask, initLine(t),
