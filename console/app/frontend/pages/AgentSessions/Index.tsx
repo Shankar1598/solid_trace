@@ -1,6 +1,7 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle, Bot } from 'lucide-react'
+import { AgentSessionSearch } from '@/components/AgentSessionSearch'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { TimeRangePicker } from '@/components/TimeRangePicker'
@@ -12,9 +13,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   agentSessionsSearch,
   costText,
+  searchAcrossHref,
   tokensText,
   totalTokens,
   whoText,
+  type SearchAcross,
   type AgentSessionFilters,
   type AgentSessionRow,
   type AgentSessionTotals,
@@ -39,6 +42,7 @@ type AgentSessionsProps =
       people: { id: number; name: string }[]
       projects: { name: string; slug: string }[]
       repositories: string[]
+      search: SearchAcross
     }
 
 const ALL = '__all'
@@ -88,6 +92,16 @@ function SessionsList({ view }: { view: Extract<AgentSessionsProps, { on: true }
 
   return (
     <div className="space-y-4">
+      <div className="space-y-1">
+        <AgentSessionSearch
+          label="Search across Agent sessions"
+          placeholder="Search the text of all Agent sessions…"
+          onSearch={text => router.visit(searchAcrossHref(view.search, text))}
+        />
+        <p className="text-xs text-muted-foreground">
+          Opens the Logs explorer on the Agent Project, over the last 7 days. Choose a longer range there; it takes longer.
+        </p>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap items-center border">
           <FilterSelect

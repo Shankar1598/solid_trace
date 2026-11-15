@@ -160,4 +160,18 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :not_found
   end
+
+  test "search across Agent sessions opens the Logs explorer on the Agent Project with 7 days, which a member can read" do
+    project = turn_on
+    stub_agent_sessions(project, {})
+    sign_in_as(@member)
+
+    search = page["search"]
+
+    assert_equal({ "logs_path" => "/acme/projects/#{project.slug}/logs", "project" => project.slug, "range" => "7d" }, search)
+    get search["logs_path"], params: { range: "30d", q: "search \"cart\"" }, headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    assert_response :success
+    assert_equal "Logs/Index", response.parsed_body["component"]
+    assert_equal project.slug, response.parsed_body.dig("props", "project", "slug")
+  end
 end

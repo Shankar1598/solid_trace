@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionsSearch, costText, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionsSearch, costText, searchAcrossHref, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
 
@@ -41,5 +41,17 @@ describe('who an Agent session is of', () => {
     expect(whoText({ ...row, run: { id: 'run_42', project: 'shop' } })).toBe('Run run_42 (shop)')
     expect(whoText({ person: null, run: { id: 'run_42', project: null } })).toBe('Run run_42')
     expect(whoText({ person: null, run: null })).toBe('Unknown')
+  })
+})
+
+describe('the search across Agent sessions', () => {
+  it('opens the Logs explorer on the Agent Project with a search over 7 days', () => {
+    const href = searchAcrossHref({ logs_path: '/acme/projects/agent-sessions/logs', project: 'agent-sessions', range: '7d' }, 'the "cart" page')
+    const [path, search] = href.split('?')
+    expect(path).toBe('/acme/projects/agent-sessions/logs')
+    const params = new URLSearchParams(search)
+    expect(params.get('range')).toBe('7d')
+    expect(params.get('mode')).toBe('builder')
+    expect(params.get('q')).toBe(`['agent-sessions']\n| search "the \\"cart\\" page"`)
   })
 })

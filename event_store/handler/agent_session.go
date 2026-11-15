@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -19,6 +20,9 @@ const (
 	// limit.
 	agentTimelineLimit   = 500
 	agentTimelineDefault = 200
+	// agentSearchLimit is the most characters of a search inside an
+	// Agent session.
+	agentSearchLimit = 1000
 )
 
 type agentSessionRequest struct {
@@ -28,6 +32,10 @@ type agentSessionRequest struct {
 	Path   string `json:"path"`
 	Cursor string `json:"cursor"`
 	Limit  int    `json:"limit"`
+	// Search, if set, keeps the steps whose text holds it, with any case.
+	// With no path, it looks in all the Agent session's transcripts, the
+	// subagents' too.
+	Search string `json:"search"`
 }
 
 type (
@@ -96,6 +104,9 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 	if req.Limit < 0 || req.Limit > agentTimelineLimit {
 		return c.Status(400).JSON(fiber.Map{"error": "limit must be from 1 to 500"})
 	}
+	if utf8.RuneCountInString(req.Search) > agentSearchLimit {
+		return c.Status(400).JSON(fiber.Map{"error": "a search must have at most 1000 characters"})
+	}
 	limit := req.Limit
 	if limit == 0 {
 		limit = agentTimelineDefault
@@ -129,14 +140,15 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 		if !strings.HasSuffix(f.Path, ".jsonl") {
 			continue
 		}
-		if req.Path == "" && !storage.IsSubagentFile(f.Path) || req.Path == f.Path {
+		all := req.Path == "" && (req.Search != "" || !storage.IsSubagentFile(f.Path))
+		if all || req.Path == f.Path {
 			paths = append(paths, f.Path)
 		}
 	}
 	if req.Path != "" && len(paths) == 0 {
 		return c.Status(404).JSON(fiber.Map{"error": "the Agent session has no such transcript"})
 	}
-	steps, err := h.sessions.AgentSessionTimeline(ctx, projectID, session, storage.AgentTimelinePage{Paths: paths, After: after, Limit: limit})
+	steps, err := h.sessions.AgentSessionTimeline(ctx, projectID, session, storage.AgentTimelinePage{Paths: paths, After: after, Limit: limit, Search: req.Search})
 	if err != nil {
 		return fail("timeline", err)
 	}
@@ -177,4 +189,50 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 func subagentID(path string) string {
 	name := path[strings.LastIndex(path, "/")+1:]
 	return strings.TrimPrefix(strings.TrimSuffix(name, ".jsonl"), "agent-")
+}
+
+type agentRawLineRequest struct {
+	Path    string `json:"path"`
+	Version uint32 `json:"version"`
+	Offset  uint64 `json:"offset"`
+}
+
+type agentRawLineAnswer struct {
+	// Line is the raw line, redacted as stored, without its newline.
+	Line string `json:"line"`
+	// Cut is true when the raw layer does not hold all of the line.
+	Cut bool `json:"cut"`
+}
+
+// RawLine answers POST /api/:project_id/agent-sessions/:session_id/line,
+// 'Show full' on a cut value: the raw line of a step, by its path, version
+// and offset, from the Agent Project's raw layer. 404 when the Project has
+// no such Agent session or the raw layer has no line there.
+func (h *AgentSessionsHandler) RawLine(c *fiber.Ctx) error {
+	projectID, err := parseProjectID(c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "the Project id must be a number"})
+	}
+	sessionID, err := uuid.Parse(c.Params("session_id"))
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "no such Agent session"})
+	}
+	var req agentRawLineRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "the body must be JSON"})
+	}
+	if req.Path == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "path is required"})
+	}
+	ctx, cancel := context.WithTimeout(storage.TagRead(c.UserContext(), projectID, storage.ReadAgentSession), agentSessionsTimeout)
+	defer cancel()
+	line, found, err := h.sessions.ReadAgentRawLine(ctx, projectID, sessionID, req.Path, req.Version, req.Offset)
+	if err != nil {
+		logger.L.Error("Reading the raw line failed", "project_id", projectID, "session_id", sessionID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	if !found {
+		return c.Status(404).JSON(fiber.Map{"error": "the Agent session has no such line"})
+	}
+	return c.JSON(agentRawLineAnswer{Line: line.Line, Cut: line.Cut})
 }

@@ -1,7 +1,8 @@
 import { Link } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle, Bot, ChevronDown, ChevronRight, Wrench } from 'lucide-react'
-import { useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
+import { AgentSessionSearch } from '@/components/AgentSessionSearch'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
@@ -9,9 +10,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { costText, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
+  fetchRawLine,
   fetchTimelinePage,
   fromText,
+  rawLineText,
   timelineItems,
+  type RawLine,
   type TimelineItem,
   type TimelinePage,
   type TimelineStep,
@@ -28,18 +32,25 @@ interface AgentSessionProps {
   resume_warning: string | null
   list_path: string
   timeline_path: string
+  line_path: string
   parent_path: string | null
 }
+
+/** The URL of the raw lines of this Agent session, for 'Show full'. */
+const LinePath = createContext('')
 
 /**
  * The Agent session page: the header of one Agent session and its
  * timeline of person messages, agent replies and tool calls, with each
  * subagent inside the tool call that started it. A long timeline loads in
- * pages.
+ * pages. A search shows the steps of this Agent session, its subagents'
+ * too, that have the text; 'Show full' on a cut value reads its raw line.
  */
 export default function AgentSessionShow({ agent_session: view }: { agent_session: AgentSessionProps }) {
   const session = view.agent_session
+  const [search, setSearch] = useState<string | null>(null)
   return (
+    <LinePath.Provider value={view.line_path}>
     <DashboardLayout>
       <PageHeader
         breadcrumbs={[{ label: 'Agent sessions', href: view.list_path }, { label: session ? whoText(session) : 'Agent session' }]}
@@ -65,10 +76,56 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
             </div>
           )}
           <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} />
-          <Transcript base={view.timeline_path} subagents={view.subagents} first={{ steps: view.steps, next_cursor: view.next_cursor }} />
+          <AgentSessionSearch
+            label="Search this Agent session"
+            placeholder="Search the steps of this Agent session…"
+            onSearch={setSearch}
+            onClear={() => setSearch(null)}
+            active={search !== null}
+          />
+          {search === null
+            ? <Transcript base={view.timeline_path} subagents={view.subagents} first={{ steps: view.steps, next_cursor: view.next_cursor }} />
+            : <SearchResults key={search} base={view.timeline_path} search={search} />}
         </div>
       )}
     </DashboardLayout>
+    </LinePath.Provider>
+  )
+}
+
+/** The steps of the Agent session, its subagents' too, that have the text, in pages. */
+function SearchResults({ base, search }: { base: string; search: string }) {
+  const [steps, setSteps] = useState<TimelineStep[] | null>(null)
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const load = async (after: string | null) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const page = await fetchTimelinePage(base, { search, cursor: after })
+      setSteps(current => [...(after ? current ?? [] : []), ...page.steps])
+      setCursor(page.next_cursor)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+  // The first page once: a new search makes a new SearchResults (its key).
+  useEffect(() => { void load(null) }, [])
+  return (
+    <div className="space-y-2" data-section="search-results">
+      {steps === null && !error && <p className="text-xs text-muted-foreground">Searching…</p>}
+      {steps?.length === 0 && <p className="text-sm text-muted-foreground">No steps have “{search}”.</p>}
+      {steps?.map(step => <Message key={step.id} step={step} />)}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {cursor !== null && (
+        <Button variant="outline" size="sm" onClick={() => load(cursor)} disabled={loading}>
+          {loading ? 'Loading…' : 'Load more steps'}
+        </Button>
+      )}
+    </div>
   )
 }
 
@@ -186,6 +243,7 @@ function StepTitle({ step, label, icon }: { step: TimelineStep; label: string; i
       {icon}
       <span className="font-medium">{label}</span>
       {step.line.endsWith('/thinking') && <Badge>thinking</Badge>}
+      {step.path.includes('subagents/') && <Badge>subagent {step.path.split('/').pop()?.replace(/^agent-|\.jsonl$/g, '')}</Badge>}
       <span className="font-mono text-muted-foreground">{format(new Date(step.time), 'HH:mm:ss')}</span>
       {step.tokens && (
         <span className="font-mono text-muted-foreground" title={`${step.tokens.input} input, ${step.tokens.output} output, ${step.tokens.cache_read} cache read, ${step.tokens.cache_write} cache write`}>
@@ -207,21 +265,60 @@ function Value({ label, step, error = false }: { label: string; step: TimelineSt
 
 const SHORT = 1200
 
-/** A step's text: a long one opens on request, and a cut one says so. */
+/**
+ * A step's text: a long one opens on request, and a cut one says so and
+ * gives 'Show full', which reads the step's raw line.
+ */
 function Text({ step, mono = false }: { step: TimelineStep; mono?: boolean }) {
+  const linePath = useContext(LinePath)
   const [open, setOpen] = useState(false)
+  const [full, setFull] = useState<RawLine | null>(null)
+  const [showFull, setShowFull] = useState(false)
+  const [loadingFull, setLoadingFull] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const long = step.text.length > SHORT
   const text = long && !open ? `${step.text.slice(0, SHORT)}…` : step.text
+  const toggleFull = async () => {
+    if (showFull || full) {
+      setShowFull(!showFull)
+      return
+    }
+    setLoadingFull(true)
+    setError(null)
+    try {
+      setFull(await fetchRawLine(linePath, step))
+      setShowFull(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoadingFull(false)
+    }
+  }
   return (
     <div>
-      <pre className={`max-w-full whitespace-pre-wrap break-words text-sm ${mono ? 'bg-muted/40 p-2 font-mono text-xs' : 'font-sans'}`}>{text}</pre>
-      <div className="mt-1 flex gap-2">
-        {long && (
+      {showFull && full
+        ? (
+          <div data-raw-line>
+            <div className="mb-1 text-xs text-muted-foreground">
+              The raw line, redacted{full.cut ? '. The record does not hold all of it.' : '.'}
+            </div>
+            <pre className="max-h-[60vh] max-w-full overflow-auto whitespace-pre-wrap break-words bg-muted/40 p-2 font-mono text-xs">{rawLineText(full.line)}</pre>
+          </div>
+        )
+        : <pre className={`max-w-full whitespace-pre-wrap break-words text-sm ${mono ? 'bg-muted/40 p-2 font-mono text-xs' : 'font-sans'}`}>{text}</pre>}
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {long && !showFull && (
           <button type="button" className="text-xs underline underline-offset-2" onClick={() => setOpen(!open)}>
             {open ? 'Show less' : 'Show more'}
           </button>
         )}
         {step.cut && <Badge variant="warn" title="The text was cut at the Log limits. The raw line has all of it.">cut</Badge>}
+        {step.cut && (
+          <button type="button" className="text-xs underline underline-offset-2" onClick={toggleFull} disabled={loadingFull}>
+            {loadingFull ? 'Loading…' : showFull ? 'Show the step' : 'Show full'}
+          </button>
+        )}
+        {error && <span className="text-xs text-destructive">{error}</span>}
       </div>
     </div>
   )

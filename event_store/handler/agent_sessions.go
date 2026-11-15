@@ -18,6 +18,7 @@ type AgentSessionReader interface {
 	AgentSessionTotals(ctx context.Context, projectID uint32, sessionIDs ...uuid.UUID) ([]storage.AgentSessionTotals, error)
 	AgentSessionTimeline(ctx context.Context, projectID uint32, session storage.AgentSessionTotals, page storage.AgentTimelinePage) ([]storage.AgentTimelineStep, error)
 	AgentSubagentCalls(ctx context.Context, projectID uint32, session storage.AgentSessionTotals) (map[string]string, error)
+	ReadAgentRawLine(ctx context.Context, projectID uint32, sessionID uuid.UUID, path string, version uint32, offset uint64) (storage.AgentRawLine, bool, error)
 }
 
 // AgentSessionsHandler answers Console's read of the Agent sessions list.
@@ -37,6 +38,7 @@ func NewAgentSessionsHandler(sessions AgentSessionReader) *AgentSessionsHandler 
 func RegisterAgentQueryRoutes(app *fiber.App, h *AgentSessionsHandler) {
 	app.Post("/api/:project_id/agent-sessions", h.List)
 	app.Post("/api/:project_id/agent-sessions/:session_id", h.Show)
+	app.Post("/api/:project_id/agent-sessions/:session_id/line", h.RawLine)
 }
 
 const (

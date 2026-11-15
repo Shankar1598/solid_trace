@@ -101,21 +101,62 @@ export function fromText(from: StepFrom): string {
   return KIND_TEXT[from.kind] ?? from.kind
 }
 
-/** The URL of one page of a transcript's timeline. */
-export function timelinePath(base: string, { path, cursor }: { path?: string; cursor?: string | null }): string {
+export interface TimelineOptions {
+  path?: string
+  cursor?: string | null
+  /** Keeps the steps that have this text, with any case; with no path, from all transcripts. */
+  search?: string
+}
+
+/** The URL of one page of a transcript's timeline, or of the steps that a search finds. */
+export function timelinePath(base: string, { path, cursor, search }: TimelineOptions): string {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   if (cursor) params.set('cursor', cursor)
+  if (search?.trim()) params.set('search', search.trim())
   const query = params.toString()
   return query ? `${base}?${query}` : base
 }
 
 /** Reads one page of a transcript's timeline from Console. */
-export async function fetchTimelinePage(base: string, options: { path?: string; cursor?: string | null }): Promise<TimelinePage> {
+export async function fetchTimelinePage(base: string, options: TimelineOptions): Promise<TimelinePage> {
   const response = await fetch(timelinePath(base, options), { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
   const body = await response.json().catch(() => null)
   if (!response.ok || !Array.isArray(body?.steps)) {
     throw new Error(body?.error ?? `The timeline could not load (${response.status}).`)
   }
   return body as TimelinePage
+}
+
+/** The raw line of a step, which 'Show full' reads. */
+export interface RawLine {
+  /** The line as stored, redacted. */
+  line: string
+  /** The raw layer does not hold all of the line. */
+  cut: boolean
+}
+
+/** The URL of the raw line of a step, by its path, version and offset. */
+export function linePath(base: string, step: Pick<TimelineStep, 'path' | 'version' | 'offset'>): string {
+  const params = new URLSearchParams({ path: step.path, version: String(step.version), offset: String(step.offset) })
+  return `${base}?${params}`
+}
+
+/** Reads the raw line of a step from Console. */
+export async function fetchRawLine(base: string, step: Pick<TimelineStep, 'path' | 'version' | 'offset'>): Promise<RawLine> {
+  const response = await fetch(linePath(base, step), { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+  const body = await response.json().catch(() => null)
+  if (!response.ok || typeof body?.line !== 'string') {
+    throw new Error(body?.error ?? `The full line could not load (${response.status}).`)
+  }
+  return body as RawLine
+}
+
+/** A raw line as 'Show full' shows it: a JSON line indented, any other text as it is. */
+export function rawLineText(line: string): string {
+  try {
+    return JSON.stringify(JSON.parse(line), null, 2)
+  } catch {
+    return line
+  }
 }

@@ -170,12 +170,24 @@ class EventStore
     # /agent-sessions/:id answers it: {"agent_session" => its totals, as a
     # row of agent_sessions!, "subagents", "steps" => one page of the
     # timeline of the main transcript, or of the subagent transcript at
-    # path, after cursor, "next_cursor"}. Raises NotFound for an Agent
-    # session or a path that the Project does not have, else as
+    # path, after cursor, "next_cursor"}. With search, the steps hold only
+    # those whose text has it, with any case, and with no path they come
+    # from all the Agent session's transcripts. Raises NotFound for an
+    # Agent session or a path that the Project does not have, else as
     # transactions! does.
-    def agent_session!(project_id:, id:, path: nil, cursor: nil, limit: nil, read_timeout: 10)
-      body = { path: path, cursor: cursor, limit: limit }.compact
+    def agent_session!(project_id:, id:, path: nil, cursor: nil, limit: nil, search: nil, read_timeout: 10)
+      body = { path: path, cursor: cursor, limit: limit, search: search }.compact
       post!("#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(id)}", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # One raw line of an Agent session's file, for 'Show full' on a cut
+    # value, as EventStore's POST /agent-sessions/:id/line answers it:
+    # {"line" => the line, redacted as stored, "cut" => true when the raw
+    # layer does not hold all of it}. Raises NotFound when the Project has
+    # no line there, else as transactions! does.
+    def agent_session_line!(project_id:, id:, path:, version:, offset:, read_timeout: 10)
+      body = { path: path, version: version, offset: offset }
+      post!("#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(id)}/line", body, read_timeout: read_timeout, open_timeout: 3)
     end
 
     # The Runs of an Agent Project with a run event in [from, to], as
