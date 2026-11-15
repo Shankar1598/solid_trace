@@ -1,5 +1,35 @@
 import { describe, expect, it } from 'vitest'
-import { actorText, runsSearch, stateText, stateTone, waitingOnPersonFilters } from './runs'
+import { actorText, checkText, durationText, eventKindText, runsSearch, stateText, stateTone, waitingOnPersonFilters } from './runs'
+
+describe('durationText', () => {
+  it('gives hours, minutes and seconds, leaving out the larger parts that are zero', () => {
+    expect(durationText(1830)).toBe('30m 30s')
+    expect(durationText(3720)).toBe('1h 2m')
+    expect(durationText(42)).toBe('42s')
+    expect(durationText(0)).toBe('0s')
+  })
+
+  it('says that an Execution with no end is still live', () => {
+    expect(durationText(null)).toBe('Live')
+  })
+})
+
+describe('eventKindText', () => {
+  it('names each event kind in sentence case', () => {
+    expect(eventKindText('execution_started')).toBe('Execution started')
+    expect(eventKindText('take_over')).toBe('Take-over')
+    expect(eventKindText('pr_opened')).toBe('PR opened')
+    expect(eventKindText('stop')).toBe('Stop')
+  })
+})
+
+describe('checkText', () => {
+  it('says pass, or fail with the exit status', () => {
+    expect(checkText({ passed: true, exit_status: 0 })).toBe('Pass')
+    expect(checkText({ passed: false, exit_status: 2 })).toBe('Fail (exit status 2)')
+    expect(checkText({ passed: false, exit_status: null })).toBe('Fail')
+  })
+})
 
 describe('runsSearch', () => {
   it('keeps a span as a span, and leaves out the filters that are not set', () => {

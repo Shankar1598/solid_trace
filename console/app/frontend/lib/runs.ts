@@ -38,6 +38,8 @@ export interface RunRow {
   project: string
   repository: string
   folder: string
+  /** The branch that the Run starts from; empty is the repository's default branch. */
+  base_branch?: string
   trigger: string
   title: string
   actor: RunActor
@@ -97,6 +99,79 @@ export function actorText(actor: RunActor): string {
 /** The one-click filter 'Waiting on a person': on, or off again when it is on. The Project filter stays. */
 export function waitingOnPersonFilters(filters: RunFilters): RunFilters {
   return { ...filters, state: filters.state === WAITING_ON_PERSON ? null : WAITING_ON_PERSON }
+}
+
+/** An Execution: one time that a Run works on a VM. */
+export interface RunExecution {
+  id: string
+  start: string | null
+  end: string | null
+  reason: string | null
+  exit_code: number | null
+  account: string | null
+  vm: string | null
+  duration_seconds: number | null
+}
+
+/** One run event, in run.seq order. */
+export interface RunEvent {
+  seq: number
+  time: string
+  kind: string
+  state: string
+  reason: string | null
+  actor: RunActor
+  intervention: boolean
+  detail: string | null
+}
+
+/** A check of a report: its command, exit status, time and the last lines of its output. */
+export interface RunCheck {
+  name: string
+  command: string
+  exit_status: number | null
+  passed: boolean
+  time: string
+  output_tail: string
+}
+
+/** The last report of a Run. */
+export interface RunReport {
+  outcome: string
+  summary: string | null
+  question: string | null
+  cause_report: string | null
+  checks: RunCheck[]
+  evidence: { path: string; url: string; image: boolean }[]
+  no_evidence: boolean
+  report_md: string | null
+  report_md_error: string | null
+}
+
+/** How long an Execution took; 'Live' while it has no end. */
+export function durationText(seconds: number | null): string {
+  if (seconds === null) return 'Live'
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`
+  return `${s}s`
+}
+
+const KIND_TEXT: Record<string, string> = { take_over: 'Take-over', pr_opened: 'PR opened', pr_outcome: 'PR outcome' }
+
+/** A run event's kind in sentence case. */
+export function eventKindText(kind: string): string {
+  if (Object.hasOwn(KIND_TEXT, kind)) return KIND_TEXT[kind]
+  const text = kind.replaceAll('_', ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/** A check's result: pass, or fail with its exit status. */
+export function checkText(check: Pick<RunCheck, 'passed' | 'exit_status'>): string {
+  if (check.passed) return 'Pass'
+  return check.exit_status === null ? 'Fail' : `Fail (exit status ${check.exit_status})`
 }
 
 /** The page's search for a range and filters: a span stays a span, and a filter that is not set is left out. */

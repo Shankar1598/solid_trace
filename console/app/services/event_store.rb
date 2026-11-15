@@ -207,6 +207,27 @@ class EventStore
       request!("#{base_url}/api/#{project_id}/runs/#{ERB::Util.url_encode(run_id)}")
     end
 
+    # One Evidence file (a path under evidence/) of an Agent session of an
+    # Agent Project: [its bytes, its media type]. Raises NotFound when the
+    # Agent session has no such file, Rejected for a path that is not under
+    # evidence/, and Unavailable as transactions! does.
+    def agent_evidence!(project_id:, session_id:, path:, read_timeout: 10)
+      url = "#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(session_id)}/evidence"
+      response = RestClient::Request.execute(method: :get, url: url, headers: { params: { path: path } },
+        read_timeout: read_timeout, open_timeout: 3)
+      [ response.body, response.headers[:content_type].presence || "application/octet-stream" ]
+    rescue RestClient::BadRequest => e
+      raise Rejected, parse_body(e.response&.body)
+    rescue RestClient::NotFound => e
+      raise NotFound.new("EventStore error: 404 - #{e.response&.body}", body: parse_body(e.response&.body))
+    rescue RestClient::Exceptions::Timeout => e
+      raise Unavailable, timed_out_message(e, { read_timeout: read_timeout, open_timeout: 3 })
+    rescue RestClient::ExceptionWithResponse => e
+      raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
+    rescue StandardError => e
+      raise Unavailable, "EventStore connection error: #{e.message}"
+    end
+
     # One Transaction name's breakdown over [from, to), as EventStore's POST
     # /transaction answers it: its numbers, "releases", "ops", "groups",
     # "repeats" and "slowest". Raises Unavailable as transactions! does.
