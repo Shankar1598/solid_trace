@@ -187,10 +187,10 @@ func setupOf(kind WebhookKind) (webhookSetupKind, bool) {
 // webhookSetup answers a setup request. The Dispatcher trusts nothing in
 // it: it writes the secret in its own log for the operator, who pastes it
 // into the service and saves it as the connection's webhook secret. It
-// queues nothing. The setup requests count towards the connection's rate
-// limit.
+// queues nothing. The setup requests have a rate limit of their own, so
+// that they cannot use the limit of the verified webhooks.
 func (d *Dispatcher) webhookSetup(w http.ResponseWriter, source WebhookSource, token string) {
-	if wait, ok := d.webhookLimits.take(source.ID, d.now().UTC()); !ok {
+	if wait, ok := d.setupLimits.take(source.ID, d.now().UTC()); !ok {
 		w.Header().Set("Retry-After", retryAfter(wait))
 		writeProblem(w, http.StatusTooManyRequests, "this connection sent more than "+
 			strconv.Itoa(WebhookRateLimit)+" webhooks in a minute")

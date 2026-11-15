@@ -154,6 +154,25 @@ func TestNotionsVerificationRequestGivesTheTokenToTheOperatorOnly(t *testing.T) 
 	waitForRuns(t, env, 1)
 }
 
+func TestVerificationRequestsHaveALimitOfTheirOwn(t *testing.T) {
+	env, db, path := notionEnv(t, secret)
+	h, body := fakenotion.Verification("secret_flood")
+	for i := range dispatcher.WebhookRateLimit {
+		if a := env.Webhook(path, h, body); a.Status != http.StatusOK {
+			t.Fatalf("verification request %d: %d %s", i+1, a.Status, a.Body)
+		}
+	}
+	if a := env.Webhook(path, h, body); a.Status != http.StatusTooManyRequests || a.Header.Get("Retry-After") == "" {
+		t.Errorf("verification request %d: %d %s, want 429 with Retry-After", dispatcher.WebhookRateLimit+1, a.Status, a.Body)
+	}
+	// The verified webhooks of the connection still pass.
+	page := readyPage(env, db, "Fix the cart total")
+	if a := env.NotionWebhook(path, secret, fakenotion.PageEvent(fakenotion.NewID(), "page.created", page)); a.Status != http.StatusOK {
+		t.Fatalf("a signed event after the flood: %d %s", a.Status, a.Body)
+	}
+	waitForRuns(t, env, 1)
+}
+
 func TestANotionEventIDThatTheDispatcherGotIsARepeat(t *testing.T) {
 	env, db, path := notionEnv(t, secret)
 	page := readyPage(env, db, "Fix the cart total")

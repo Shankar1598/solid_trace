@@ -90,7 +90,10 @@ type Dispatcher struct {
 	// kinds too.
 	trackers      map[string]Tracker
 	webhookLimits *webhookLimits
-	reconciles    *reconcileQueue
+	// setupLimits counts the setup requests (Notion's verification
+	// request), which are not verified, apart from the verified webhooks.
+	setupLimits *webhookLimits
+	reconciles  *reconcileQueue
 	// commandsAdded wakes the waiting commands calls.
 	commandsAdded signal
 	backstopEvery time.Duration
@@ -146,6 +149,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		kinds:           map[string]WebhookKind{},
 		trackers:        map[string]Tracker{},
 		webhookLimits:   &webhookLimits{windows: map[string]webhookWindow{}},
+		setupLimits:     &webhookLimits{windows: map[string]webhookWindow{}},
 		reconciles:      newReconcileQueue(),
 		scheduleEvery:   cmp.Or(options.ScheduleEvery, scheduleEvery),
 		scheduleChecked: options.ScheduleChecked,
