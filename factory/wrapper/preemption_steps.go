@@ -63,9 +63,6 @@ type preemption struct {
 	marked     context.Context
 	mark       context.CancelFunc
 	markedFlag atomic.Bool
-	// stopping is true when a stop command came from the Dispatcher: a
-	// SIGTERM after it is the stop's own, and starts no handler.
-	stopping atomic.Bool
 	// preempted closes when the handler returned; preemptEnd is the end
 	// call's error.
 	preempted  chan struct{}
@@ -76,7 +73,9 @@ type preemption struct {
 func (e *execution) isMarked() bool { return e.markedFlag.Load() }
 
 // watch starts the preemption handler at the Machine notice, or at a
-// SIGTERM or a SIGINT with no stop command.
+// SIGTERM or a SIGINT. The wrapper has no stop command yet: the stop
+// commands (32) add the check that a signal after a stop command starts
+// no handler.
 func (e *execution) watch(ctx context.Context, notice machineNotice, signals <-chan os.Signal) {
 	noticed := make(chan time.Time, 1)
 	go func() {
@@ -92,9 +91,6 @@ func (e *execution) watch(ctx context.Context, notice machineNotice, signals <-c
 			e.trigger(dispatcherapi.EndPreempted, at)
 		case sig := <-signals:
 			at := e.clock.Now()
-			if e.stopping.Load() {
-				continue
-			}
 			go func() {
 				// The reason is preempted when the notice says so.
 				read, cancel := context.WithTimeout(ctx, time.Second)
