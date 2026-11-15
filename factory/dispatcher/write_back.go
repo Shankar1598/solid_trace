@@ -230,57 +230,92 @@ func (s *store) wakeWriteBack() {
 }
 
 // writeBackLoop sends the write-back outbox to the trackers. A failure
-// leaves the step in the outbox, and the loop tries again later.
+// leaves the step in the outbox, and the loop tries that Run again
+// later. Each Run has its own wait, so a ticket that fails holds back
+// only its own Run's steps.
 func (d *Dispatcher) writeBackLoop(ctx context.Context) {
-	var wait time.Duration
+	backoff := map[string]*writeBackRetry{}
 	for {
-		retry, err := d.sendWriteBacks(ctx)
+		next, err := d.sendWriteBacks(ctx, backoff)
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil {
 			d.log.Error("could not read the write-back outbox", "error", err)
-			retry = true
+			next = d.now().Add(minWriteBackRetry)
 		}
-		if !retry {
-			wait = 0
-			select {
-			case <-ctx.Done():
-				return
-			case <-d.store.writeBackWake:
-			}
-			continue
+		var timer *time.Timer
+		var due <-chan time.Time
+		if !next.IsZero() {
+			timer = time.NewTimer(max(next.Sub(d.now()), 0))
+			due = timer.C
 		}
-		wait = min(max(2*wait, minWriteBackRetry), maxWriteBackRetry)
 		select {
 		case <-ctx.Done():
-			return
-		case <-time.After(wait):
+		case <-d.store.writeBackWake:
+		case <-due:
+		}
+		if timer != nil {
+			timer.Stop()
 		}
 	}
 }
 
+// writeBackRetry is the wait of a Run whose step failed: the loop tries
+// the step again at next.
+type writeBackRetry struct {
+	wait time.Duration
+	next time.Time
+}
+
 // sendWriteBacks sends each step that is not sent, in order. After a
 // step of a Run fails, the later steps of that Run wait, so a ticket
-// gets its steps in order. It is true when a step must be sent again.
-func (d *Dispatcher) sendWriteBacks(ctx context.Context) (bool, error) {
+// gets its steps in order; the Run's wait in backoff starts at
+// minWriteBackRetry and is two times longer after each failure, up to
+// maxWriteBackRetry. A Run whose wait has not ended is skipped. It gives
+// the earliest end of a wait, or zero when no step waits.
+func (d *Dispatcher) sendWriteBacks(ctx context.Context, backoff map[string]*writeBackRetry) (time.Time, error) {
 	writes, err := d.store.pendingWrites()
 	if err != nil {
-		return false, err
+		return time.Time{}, err
 	}
 	held := map[string]bool{}
 	for _, w := range writes {
 		if ctx.Err() != nil {
-			return true, nil
+			return time.Time{}, nil
 		}
 		if held[w.runID] {
 			continue
 		}
-		if err := d.sendWriteBack(ctx, w); err != nil {
+		r := backoff[w.runID]
+		if r != nil && d.now().Before(r.next) {
 			held[w.runID] = true
+			continue
+		}
+		if err := d.sendWriteBack(ctx, w); err != nil {
+			if r == nil {
+				r = &writeBackRetry{}
+				backoff[w.runID] = r
+			}
+			r.wait = min(max(2*r.wait, minWriteBackRetry), maxWriteBackRetry)
+			r.next = d.now().Add(r.wait)
+			held[w.runID] = true
+			continue
+		}
+		delete(backoff, w.runID)
+	}
+	var next time.Time
+	for id, r := range backoff {
+		if !held[id] {
+			// The Run has no step that waits.
+			delete(backoff, id)
+			continue
+		}
+		if next.IsZero() || r.next.Before(next) {
+			next = r.next
 		}
 	}
-	return len(held) > 0, nil
+	return next, nil
 }
 
 // errGiveUp is a write-back step that can never be sent.

@@ -273,3 +273,40 @@ func TestAStopAfterThePRPostsThePROpenedCommentAndNoStatus(t *testing.T) {
 	wantStatuses(t, env, "Agent working", "In review")
 	wantComment(t, comments[1], "opened a PR", run.PRURL, runLink(env, id))
 }
+
+func TestATicketThatRefusesCommentsDoesNotHoldBackAnotherRun(t *testing.T) {
+	env, ana := trackerEnv(t)
+	env.Tracker.RefuseComments("board", "T-1")
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "The total was right."),
+		reply, result, waitForEnd)
+	first := ticketRun(t, env, ana)
+	waitFor(t, env, ana, first, dispatcherapi.StateDone)
+	// The waits of T-1's started step become seconds long.
+	time.Sleep(4500 * time.Millisecond)
+
+	env.Tracker.Put("board", faketracker.Ticket{ID: "T-2", Title: "Fix the tax", Status: faketracker.ReadyStatus},
+		rosa)
+	if a := env.TrackerWebhook(boardPath, trackerSecret, "d-2", "T-2"); a.Status != http.StatusOK {
+		t.Fatalf("the webhook: %d %s", a.Status, a.Body)
+	}
+	started := time.Now()
+	for {
+		var got []faketracker.Comment
+		for _, c := range env.Tracker.Comments("board") {
+			if c.Ticket == "T-2" {
+				got = append(got, c)
+			}
+		}
+		if len(got) > 0 {
+			wantComment(t, got[0].Body, "started")
+			break
+		}
+		if time.Since(started) > 1500*time.Millisecond {
+			t.Fatalf("T-2 has no started comment 1.5 s after its webhook\nDispatcher log:\n%s", env.Logs())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := env.Tracker.Comments("board"); len(got) != 1 {
+		t.Errorf("the comments are %+v, want only the started comment of T-2", got)
+	}
+}
