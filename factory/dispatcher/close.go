@@ -151,9 +151,14 @@ func (d *Dispatcher) prOutcome(ctx context.Context, r closingRun) (string, error
 	if err != nil {
 		return "", err
 	}
+	return prOutcomeOn(ctx, f, repository, r.prID)
+}
+
+// prOutcomeOn asks f for the state of the PR with id in repository.
+func prOutcomeOn(ctx context.Context, f forge.Forge, repository string, id int) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, forgeCallBudget)
 	defer cancel()
-	pr, err := f.PR(ctx, repository, r.prID)
+	pr, err := f.PR(ctx, repository, id)
 	if err != nil {
 		return "", err
 	}
