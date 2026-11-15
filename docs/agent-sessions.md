@@ -122,9 +122,9 @@ A ticket of a tracker connection (Notion, Linear) that a person sets to the read
 
 ### Connect a Notion database
 
-Each page of one Notion database is a ticket. Its title and its content (text blocks, at most 64 KiB) are the prompt. Its status is the database's property of the type Status (the one named `Status` when there are several), and its routing field is a select property.
+Each page of one Notion database is a ticket. Its title and its content (text blocks, also in columns, synced blocks and tables, at most 64 KiB) are the prompt. The Dispatcher reads the content when it starts the Run. When it cannot read all of the content, such as a block type that it does not know, the prompt ends with a note that the page has more content. Its status is the database's property of the type Status (the one named `Status` when there are several), and its routing field is a select property.
 
-1. In Notion, make an internal integration with the capabilities "Read content", "Update content", "Read comments" and "Insert comments". "Read user information without email addresses" is optional: with it, a Run shows the name of the Notion user who set the status; with none, it shows their Notion id. Share the database with the integration (the database's `...` menu → Connections).
+1. In Notion, make an internal integration with the capabilities "Read content", "Update content", "Read comments" and "Insert comments". "Read user information without email addresses" is optional: with it, a Run shows the name of the Notion user who set the status; with none, it shows their Notion id. After an Admin adds the capability, the names show in at most 10 minutes. Share the database with the integration (the database's `...` menu → Connections).
 2. Save the integration's token: `solidtrace connections set NAME --kind notion < token-file`. The Dispatcher keeps it encrypted.
 3. Give the database: `PUT /api/v1/connections/NAME/tracker` with `{"database": "...", "ready_status": "...", "routing_field": "..."}`. The database is its id or the link to it. Each save gives all three values (an empty status or field is the default).
 
