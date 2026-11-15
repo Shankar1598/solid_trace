@@ -97,3 +97,40 @@ func TestMkdirAllRefusesALinkInPlaceOfADirectory(t *testing.T) {
 		t.Errorf("mkdirAll with no link: %v", err)
 	}
 }
+
+// writeSecret makes a new file: a file or a link that is at the path (the
+// run user can put one where it can write) stops it, so root writes no
+// secret to a path that the run user chose.
+func TestWriteSecretRefusesAFileOrALinkThatIsThere(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("the run user's"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "forge-token")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	self := runUser{name: "me", uid: os.Geteuid(), gid: os.Getegid()}
+	for _, path := range []string{link, target} {
+		if err := writeSecret(self, path, []byte("secret"), 0o440); err == nil {
+			t.Errorf("writeSecret to %s that is there: no error", filepath.Base(path))
+		}
+	}
+	if got, _ := os.ReadFile(target); string(got) != "the run user's" {
+		t.Errorf("the file that was there has %q", got)
+	}
+	if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o666 {
+		t.Errorf("the file that was there: %v, %v", info.Mode(), err)
+	}
+	fresh := filepath.Join(dir, "new")
+	if err := writeSecret(self, fresh, []byte("secret"), 0o440); err != nil {
+		t.Fatalf("writeSecret to a new path: %v", err)
+	}
+	if got, _ := os.ReadFile(fresh); string(got) != "secret" {
+		t.Errorf("the new secret file has %q", got)
+	}
+}
