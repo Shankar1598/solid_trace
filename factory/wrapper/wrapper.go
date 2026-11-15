@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/solidtrace/cli/agentsocket"
@@ -77,9 +78,18 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		boundary.Remove(emptyWait)
 		return 1
 	}
+	work, cancelWork := context.WithCancel(ctx)
+	defer cancelWork()
 	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, needsPerson: make(chan struct{}, 1),
-		uploads: newUploads(cfg, c, task, stderr)}
-	end := e.run(ctx, environ)
+		uploads: newUploads(cfg, c, task, stderr), cancelWork: cancelWork}
+	// The commands and the limits count from the task, and stop at the
+	// end call.
+	watch, stopWatching := context.WithCancel(ctx)
+	defer stopWatching()
+	go e.pollCommands(watch)
+	go e.watchLimits(watch, cfg.clock())
+	end := e.run(work, environ)
+	stopWatching()
 	if err := c.end(ctx, end); err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
 		return 1
@@ -129,6 +139,12 @@ type execution struct {
 	// tells if a process was in the cgroup when the end killed it.
 	backgroundTasks int
 	populatedAtKill bool
+	// cancelWork stops the setup (the clone) when the end starts before
+	// the harness.
+	cancelWork context.CancelFunc
+	// lastOutput is when the last event of the harness's output came, on
+	// cfg.clock, in Unix nanoseconds (0: the harness has not started).
+	lastOutput atomic.Int64
 
 	needsPerson chan struct{}
 	uploads     *uploads
@@ -233,6 +249,10 @@ func (e *execution) stopContainers() {
 // work sets up and runs the harness, and gives the end call's body.
 func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
 	if err := e.setup(ctx, environ); err != nil {
+		// A stop or a limit during the setup stops the clone.
+		if end, ok := e.endedEarly(); ok {
+			return end
+		}
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
 	server, err := e.serveSocket()
@@ -437,12 +457,26 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	}
 	defer stdout.Close()
 	cmd.Stdout = w
+	// The start is under mu: a stop or a limit before it means no start,
+	// and one after it finds stdin.
+	e.mu.Lock()
+	if e.ending {
+		e.mu.Unlock()
+		w.Close()
+		stdin.Close()
+		end, _ := e.endedEarly()
+		return end
+	}
 	err = e.boundary.Start(cmd)
 	w.Close()
+	if err == nil {
+		e.harness, e.stdin = cmd, stdin
+		e.lastOutput.Store(e.cfg.clock().UnixNano())
+	}
+	e.mu.Unlock()
 	if err != nil {
 		return failed(err)
 	}
-	e.harness, e.stdin = cmd, stdin
 	exited := make(chan struct{})
 	go func() {
 		cmd.Wait()
@@ -458,9 +492,15 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	taskUUID := newUUID()
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
-	if _, err := e.stdin.Write(append(message, '\n')); err != nil {
-		fmt.Fprintln(e.log, "wrapper: write the task:", err)
+	// Each write to stdin is under mu, so that an interrupt is never in
+	// the middle of a message.
+	e.mu.Lock()
+	if !e.ending {
+		if _, err := e.stdin.Write(append(message, '\n')); err != nil {
+			fmt.Fprintln(e.log, "wrapper: write the task:", err)
+		}
 	}
+	e.mu.Unlock()
 	events := make(chan map[string]any)
 	go func() {
 		defer close(events)
@@ -490,6 +530,7 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				open = false
 				break
 			}
+			e.lastOutput.Store(e.cfg.clock().UnixNano())
 			switch {
 			case ev["type"] == "user" && ev["isReplay"] == true && ev["uuid"] == taskUUID && delivered == nil:
 				now := time.Now().UTC()
@@ -537,15 +578,42 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 
 // startEnd starts the end once: it closes stdin, and kills the
 // Execution's cgroup if the harness did not exit in endWait.
-func (e *execution) startEnd(reason, why string) {
+func (e *execution) startEnd(reason, why string) { e.beginEnd(reason, why, false) }
+
+// beginEnd starts the end once, with reason. With interrupt, it first
+// writes the interrupt control request, so that the agent's turn stops
+// (a long tool call too) before stdin closes. Before the harness starts,
+// it stops the setup, and the harness does not start.
+func (e *execution) beginEnd(reason, why string, interrupt bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.ending {
 		return
 	}
 	e.ending, e.endReason, e.endError = true, reason, why
+	if e.cancelWork != nil {
+		e.cancelWork()
+	}
+	if e.stdin == nil {
+		return
+	}
+	if interrupt {
+		request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": newUUID(),
+			"request": map[string]any{"subtype": "interrupt"}})
+		if _, err := e.stdin.Write(append(request, '\n')); err != nil {
+			fmt.Fprintln(e.log, "wrapper: write the interrupt:", err)
+		}
+	}
 	e.stdin.Close()
 	e.kill = time.AfterFunc(endWait, e.killAll)
+}
+
+// endedEarly gives the end call's body when the end started before the
+// harness: a stop or a limit.
+func (e *execution) endedEarly() (dispatcherapi.ExecutionEnd, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return dispatcherapi.ExecutionEnd{Reason: e.endReason, Error: e.endError}, e.ending
 }
 
 // offers tells if the init event lists tool among the agent's tools.

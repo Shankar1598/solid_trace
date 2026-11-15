@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,7 +33,17 @@ const (
 	// EnvUploadEvery is how often the wrapper uploads the Run's Agent
 	// sessions during the Execution, as a Go duration (default 5s).
 	EnvUploadEvery = "WRAPPER_UPLOAD_EVERY"
+	// EnvClockFile is for tests only: a file that holds the time (RFC
+	// 3339). The wrapper's limits then read their clock from it, and the
+	// wrapper checks them every 20 ms, not every second.
+	EnvClockFile = "WRAPPER_CLOCK_FILE"
 )
+
+// limitEvery is how often the wrapper checks the Execution's limits.
+const limitEvery = time.Second
+
+// testLimitEvery is limitEvery with a clock file.
+const testLimitEvery = 20 * time.Millisecond
 
 // projectName is the Claude Code project directory name of a Run when
 // CLAUDE_CODE_PROJECT_DIR_NAME does not give one. Ticket 33 fixes one for
@@ -47,6 +58,35 @@ type config struct {
 	// sessions under <claudeConfig>/projects/<projectName>.
 	claudeConfig, projectName string
 	uploadEvery               time.Duration
+	// clock is the clock of the limits, and limitEvery how often the
+	// wrapper checks them.
+	clock      func() time.Time
+	limitEvery time.Duration
+}
+
+// fileClock is a clock that reads the time from path. When the file
+// cannot be read, it gives the last time that it read.
+func fileClock(path string) (func() time.Time, error) {
+	read := func() (time.Time, error) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b)))
+	}
+	last, err := read()
+	if err != nil {
+		return nil, err
+	}
+	var mu sync.Mutex
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		if t, err := read(); err == nil {
+			last = t
+		}
+		return last
+	}, nil
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -60,8 +100,17 @@ func loadConfig(getenv func(string) string) (config, error) {
 		claudeConfig:  getenv("CLAUDE_CONFIG_DIR"),
 		projectName:   getenv("CLAUDE_CODE_PROJECT_DIR_NAME"),
 		uploadEvery:   uploadEvery,
+		clock:         time.Now,
+		limitEvery:    limitEvery,
 	}
 	var problems []string
+	if path := getenv(EnvClockFile); path != "" {
+		clock, err := fileClock(path)
+		if err != nil {
+			problems = append(problems, EnvClockFile+" must name a file with an RFC 3339 time: "+err.Error())
+		}
+		c.clock, c.limitEvery = clock, testLimitEvery
+	}
 	if c.dispatcherURL == "" {
 		problems = append(problems, EnvDispatcherURL+" is not set")
 	}
