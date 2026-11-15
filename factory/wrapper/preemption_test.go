@@ -278,6 +278,47 @@ func TestAnEvidenceFileThatTheLastUploadDidNotSendIsAProblem(t *testing.T) {
 	}
 }
 
+// The preemption event has each part of the wrapper's report: what was
+// saved (a work-in-progress commit, the files left out, the transcript
+// offset), the age of the last checkpoint and the times.
+func TestThePreemptionEventRecordsWhatWasSavedAndTheAgeOfTheLastCheckpoint(t *testing.T) {
+	env, ana := newEnv(t)
+	wait, open := gate(t)
+	t.Cleanup(open)
+	env.Runner.Agent(takeTask, initLine(t), wait, reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	execution := waitFor(t, env, ana, id, dispatcherapi.StateRunning).Executions[0].ID
+	identity := env.Runner.Identity(factorytest.Workload(execution))
+	offset, age := uint64(8192), 240.5
+	notice := time.Date(2026, 11, 15, 3, 0, 0, 0, time.UTC)
+	end := dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndPreempted, Preemption: &dispatcherapi.Preemption{
+		Reason: dispatcherapi.EndPreempted, NoticeAt: notice, SecondsToSaved: 21.5, SecondsToEnd: 22,
+		WIPCommit: "0123abcd", Skipped: []string{"build/big.bin"}, TranscriptOffset: &offset,
+		CheckpointAgeSeconds: &age, Problems: []string{"the halt did not end in 10s"}}}
+	if got := env.API(identity, "POST", dispatcherapi.Path+"/executions/"+execution+"/end", end); got.Status != http.StatusOK &&
+		got.Status != http.StatusNoContent {
+		t.Fatalf("the end call: %d %s", got.Status, got.Body)
+	}
+
+	waitForEvent(t, env, id, "execution_ended")
+	events := env.RunEvents(id)
+	order := kinds(events)
+	if i, j := slices.Index(order, "preemption"), slices.Index(order, "execution_ended"); i < 0 || j < i {
+		t.Errorf("the run events: %v, want preemption, then execution_ended", order)
+	}
+	preemption := eventOf(t, events, "preemption")
+	checkFields(t, preemption, map[string]any{"execution.id": execution, "preemption.reason": dispatcherapi.EndPreempted,
+		"preemption.notice_at": "2026-11-15T03:00:00Z", "preemption.seconds_to_saved": 21.5,
+		"preemption.seconds_to_end": float64(22), "preemption.wip_commit": "0123abcd",
+		"preemption.transcript_offset": float64(8192), "preemption.checkpoint_age_seconds": 240.5})
+	for key, want := range map[string]string{"preemption.skipped": "build/big.bin",
+		"preemption.problems": "the halt did not end in 10s"} {
+		if list, _ := preemption[key].([]any); len(list) != 1 || list[0] != want {
+			t.Errorf("preemption event: %s = %#v, want [%q]", key, preemption[key], want)
+		}
+	}
+}
+
 func TestTheDispatcherRefusesAPreemptionCallThatIsNotValid(t *testing.T) {
 	env, ana := newEnv(t)
 	wait, open := gate(t)
