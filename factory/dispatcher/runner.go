@@ -161,11 +161,16 @@ func (d *Dispatcher) watchLoop(ctx context.Context) {
 				d.log.Info("an Execution changed state on the Runner", "execution", ev.Execution, "state", ev.State)
 				continue
 			}
+			_, stopped := d.runnerStopped.LoadAndDelete(ev.Execution)
 			if ev.Lost {
 				d.endByDispatcher(ev.Execution, "the machine was lost", nil)
 				continue
 			}
 			code := ev.ExitCode
+			if stopped {
+				d.endByDispatcher(ev.Execution, endStoppedByRunner, &code)
+				continue
+			}
 			d.endByDispatcher(ev.Execution,
 				fmt.Sprintf("the wrapper exited with code %d before the end of the Execution", code), &code)
 		}
@@ -192,6 +197,11 @@ func (d *Dispatcher) endByDispatcher(id, reason string, exitCode *int) {
 // with none, failed with the wrapper's reason. It never reads the exit
 // code.
 func outcome(report *dispatcherapi.Report, end dispatcherapi.ExecutionEnd) (state, reason, question, summary string) {
+	// A stop is a person's choice, and wins over a report. The stop call
+	// set the Run's state already; this is the same state.
+	if end.Reason == dispatcherapi.EndStopped {
+		return dispatcherapi.StateStopped, dispatcherapi.EndStopped, "", ""
+	}
 	if report != nil {
 		switch report.Outcome {
 		case dispatcherapi.OutcomeDone:

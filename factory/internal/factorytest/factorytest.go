@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -31,10 +32,23 @@ import (
 // DispatcherToken is the Dispatcher's own API token at the recorder.
 const DispatcherToken = "stk_dispatcher"
 
-// Clock is a clock that moves only when a test moves it.
+// Clock is a clock that moves only when a test moves it. It is the
+// Dispatcher's clock, the people's, and (with Executions) the clock of
+// the wrappers' limits on the agent machines.
 type Clock struct {
 	mu  sync.Mutex
 	now time.Time
+	// moving keeps one Advance at a time, so the machines see each time
+	// in order.
+	moving sync.Mutex
+	// machines is the file that the wrappers read their clock from (""
+	// with no Executions). held stops it at its time.
+	machines string
+	held     bool
+	// beforeMove runs at each Advance before the clock moves to the new
+	// time: the Runner renews the workload identities, as Nomad does
+	// before they expire.
+	beforeMove func(next time.Time)
 }
 
 // Now is the clock's time.
@@ -44,11 +58,33 @@ func (c *Clock) Now() time.Time {
 	return c.now
 }
 
-// Advance moves the clock by d.
+// Advance moves the clock by d, on the agent machines too.
 func (c *Clock) Advance(d time.Duration) {
+	c.moving.Lock()
+	defer c.moving.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(d)
+	next, before := c.now.Add(d), c.beforeMove
+	c.mu.Unlock()
+	if before != nil {
+		before(next)
+	}
+	c.mu.Lock()
+	c.now = next
+	now, machines, held := c.now, c.machines, c.held
+	c.mu.Unlock()
+	if machines != "" && !held {
+		writeClock(machines, now)
+	}
+}
+
+// writeClock writes now to the machines' clock file in one step.
+func writeClock(path string, now time.Time) {
+	if err := os.WriteFile(path+".new", []byte(now.Format(time.RFC3339Nano)), 0o600); err != nil {
+		panic("factorytest: write the machines' clock: " + err.Error())
+	}
+	if err := os.Rename(path+".new", path); err != nil {
+		panic("factorytest: write the machines' clock: " + err.Error())
+	}
 }
 
 // Env is one Dispatcher and one SolidTrace.
@@ -85,6 +121,42 @@ type Env struct {
 	// projects counts the Projects that Project made, for their ids.
 	projects int64
 	admin    *Person
+	// checked is the clock time of the schedule loop's last pass.
+	checked atomic.Pointer[time.Time]
+}
+
+// scheduleEvery is the wait between two passes of the Dispatcher's
+// schedule loop in a test, so that a pass soon follows a move of the
+// clock.
+const scheduleEvery = 5 * time.Millisecond
+
+// CheckSchedules waits up to 10 s until the Dispatcher's schedule loop
+// did a pass at the clock's time now or later. So each fire time that is
+// due now has its Run, or its skip, after it.
+func (e *Env) CheckSchedules() {
+	e.t.Helper()
+	now := e.Clock.Now()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if at := e.checked.Load(); at != nil && !at.Before(now) {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("the schedule loop did no pass at %s after 10 s\nDispatcher log:\n%s", now, e.Logs())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// RestartAfter stops the Dispatcher, moves the clock by d while it is
+// down, and starts it again on the same database.
+func (e *Env) RestartAfter(d time.Duration) {
+	e.t.Helper()
+	if err := e.current.Load().Close(); err != nil {
+		e.t.Fatalf("stop the Dispatcher: %v", err)
+	}
+	e.Clock.Advance(d)
+	e.start()
 }
 
 // EncryptionKey is the Dispatcher's encryption key in each Env.
@@ -114,6 +186,11 @@ func (e *Env) Logs() string { return e.logs.String() }
 // eventRetry is the longest wait of the Dispatcher's event sender between
 // two tries, so a test sees the events soon after EventStore is back.
 const eventRetry = 50 * time.Millisecond
+
+// backstopEvery is how often the Dispatcher's backstop looks for
+// Executions past their total limit, so that a test sees its stop soon
+// after it moves the clock.
+const backstopEvery = 20 * time.Millisecond
 
 // RunEvents are the run events of the Run that SolidTrace has, by run.seq,
 // each run.seq one time (a reader drops repeats).
@@ -198,9 +275,7 @@ func (e *Env) WaitForWarning(text string) map[string]any {
 func (e *Env) Project(slug string) recorder.Project {
 	e.t.Helper()
 	project := e.SolidTraceProject(slug)
-	if e.admin == nil {
-		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
-	}
+	e.Admin()
 	settings := map[string]string{"repository": "bitbucket.org/example/" + slug}
 	if e.Runner != nil || e.runner != nil {
 		e.Forge.AddRepo("example/"+slug, nil)
@@ -216,6 +291,15 @@ func (e *Env) Project(slug string) recorder.Project {
 		e.t.Fatalf("save the Factory settings of %s: %d %s", slug, a.Status, a.Body)
 	}
 	return project
+}
+
+// Admin is the Admin of Organization that saves the Factory settings in
+// Project.
+func (e *Env) Admin() *Person {
+	if e.admin == nil {
+		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
+	}
+	return e.admin
 }
 
 // SolidTraceProject makes a Project with slug in Organization at
@@ -276,7 +360,9 @@ func (e *Env) start() {
 	e.t.Helper()
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
-		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick}
+		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
+		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
+		BackstopEvery: backstopEvery}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner

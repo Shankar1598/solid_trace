@@ -70,8 +70,12 @@ func ingest(t *testing.T, env *factorytest.Env, token, session string) int {
 func TestTheRecorderGetsTheRunsTranscriptDuringTheExecutionAndTheLastBytesAtTheEnd(t *testing.T) {
 	env, ana := newEnv(t)
 	wait, open := gate(t)
+	// The end deletes the run user's home: the agent keeps a copy of the
+	// project directory after its last reply.
+	kept := filepath.Join(t.TempDir(), "kept")
 	env.Runner.Agent(takeTask, initLine(t), reply, wait, secondReply,
-		reportStep("--outcome", "done", "--summary", "Fixed"), result, waitForEnd)
+		reportStep("--outcome", "done", "--summary", "Fixed"),
+		shell(`cp -R "$CLAUDE_CONFIG_DIR/projects/$CLAUDE_CODE_PROJECT_DIR_NAME" `+kept), result, waitForEnd)
 
 	id := start(t, env, ana, "Fix the cart")
 	session := firstToken(t, env).AgentSessionIDs[0]
@@ -84,9 +88,9 @@ func TestTheRecorderGetsTheRunsTranscriptDuringTheExecutionAndTheLastBytesAtTheE
 		t.Fatal("the second reply is uploaded before the agent wrote it")
 	}
 	open()
-	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
 
-	onDisk, err := os.ReadFile(filepath.Join(env.Runner.ProjectDir(run.Executions[0].ID), transcript))
+	onDisk, err := os.ReadFile(filepath.Join(kept, transcript))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +373,8 @@ func TestARefusedTokenGetsANewOneAndTheUploadsGoOn(t *testing.T) {
 func TestAnExecutionWithNoTokenFailsItsRunAndStartsNoHarness(t *testing.T) {
 	env, ana := newEnv(t)
 	env.SolidTrace.RefuseChildTokens(http.StatusServiceUnavailable)
-	env.Runner.Agent(takeTask, initLine(t), shell("touch started"), reply, result, waitForEnd)
+	started := filepath.Join(t.TempDir(), "started")
+	env.Runner.Agent(takeTask, initLine(t), shell("touch "+started), reply, result, waitForEnd)
 
 	id := start(t, env, ana, "Fix the cart")
 	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
@@ -377,7 +382,7 @@ func TestAnExecutionWithNoTokenFailsItsRunAndStartsNoHarness(t *testing.T) {
 	if !strings.Contains(run.Reason, "token") {
 		t.Errorf("reason %q", run.Reason)
 	}
-	if _, err := os.Stat(filepath.Join(env.Runner.ProjectDir(run.Executions[0].ID), "..", "..", "..", "checkout", "started")); err == nil {
+	if _, err := os.Stat(started); err == nil {
 		t.Error("the harness started with no token")
 	}
 }

@@ -103,13 +103,6 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "read the Factory settings", err)
 		return
 	}
-	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
-	cloneURL, err := (&forge.Bitbucket{GitURL: d.config.BitbucketGitURL}).CloneURL(settings.Repository)
-	if err != nil {
-		d.endByDispatcher(e.id, err.Error(), nil)
-		writeProblem(w, http.StatusConflict, err.Error())
-		return
-	}
 	var token string
 	if settings.Connection != "" {
 		if token, err = d.store.connectionToken(e.organizationID, settings.Connection); err != nil {
@@ -117,13 +110,31 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 			return
 		}
 	}
-	run, err := d.store.startExecution(e.id, d.now())
+	// Ticket 34 takes the limits from the factory file.
+	run, err := d.store.startExecution(e.id, d.now(), defaultLimits)
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, errEnded.Error())
 		return
 	}
 	if err != nil {
 		d.serverError(w, "start the Execution", err)
+		return
+	}
+	// Each part of the checkout is the Run's. A Run from before the
+	// Dispatcher kept the repository uses the settings' repository.
+	repository := run.repository
+	if repository == "" {
+		repository = settings.Repository
+	}
+	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
+	gitURL := strings.TrimRight(d.config.BitbucketGitURL, "/")
+	if gitURL == "" {
+		gitURL = forge.BitbucketGitURL
+	}
+	cloneURL, err := (&forge.Bitbucket{GitURL: gitURL}).CloneURL(repository)
+	if err != nil {
+		d.endByDispatcher(e.id, err.Error(), nil)
+		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
 	uploads, err := d.sessionToken(r.Context(), e, run.startedAt)
@@ -141,16 +152,19 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		RunID:         e.runID,
 		ExecutionID:   e.id,
 		Prompt:        run.prompt,
-		Repository:    settings.Repository,
+		Repository:    repository,
 		CloneURL:      cloneURL,
-		BaseBranch:    settings.BaseBranch,
+		BaseBranch:    run.baseBranch,
+		Branch:        dispatcherapi.RunBranch(e.runID),
+		GitURL:        gitURL,
+		Project:       run.project,
+		Folder:        run.folder,
 		ForgeUsername: forge.BitbucketTokenUser,
 		ForgeToken:    token,
 		SessionID:     run.sessionID,
 		Resume:        run.resume,
-		Project:       settings.Project,
-		Folder:        settings.Folder,
 		IngestURL:     d.config.ingestURL(),
+		Limits:        run.limits,
 		Uploads:       uploads,
 	})
 }
@@ -209,7 +223,7 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
-		dispatcherapi.EndSetupFailed:
+		dispatcherapi.EndSetupFailed, dispatcherapi.EndStopped, dispatcherapi.EndTimeout:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
 		return

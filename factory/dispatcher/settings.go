@@ -109,7 +109,12 @@ func (d *Dispatcher) saveSettings(w http.ResponseWriter, r *http.Request, p pers
 // project finds the Project of the request's {project} slug at
 // SolidTrace. It answers the request itself when it finds none.
 func (d *Dispatcher) project(w http.ResponseWriter, r *http.Request, p person) (solidTraceProject, bool) {
-	slug := r.PathValue("project")
+	return d.projectBySlug(w, r, p, r.PathValue("project"))
+}
+
+// projectBySlug finds the Project with slug at SolidTrace. It answers the
+// request itself when it finds none.
+func (d *Dispatcher) projectBySlug(w http.ResponseWriter, r *http.Request, p person, slug string) (solidTraceProject, bool) {
 	projects, err := d.listProjects(r.Context(), p.organization)
 	if err != nil {
 		d.solidTraceFailure(w, p.organization, err)
@@ -255,8 +260,8 @@ func cleanSettings(s *dispatcherapi.SaveFactorySettings) string {
 	}
 	s.Folder = folder
 
-	branch := strings.TrimSpace(s.BaseBranch)
-	if branch != "" && !validBranch(branch) {
+	branch, ok := cleanBranch(s.BaseBranch)
+	if !ok {
 		return "the base branch must be a branch name, such as main or release/2.0, not " + quote(s.BaseBranch)
 	}
 	s.BaseBranch = branch
@@ -268,6 +273,16 @@ func cleanSettings(s *dispatcherapi.SaveFactorySettings) string {
 func validBranch(branch string) bool {
 	return baseBranchPattern.MatchString(branch) && !strings.Contains(branch, "..") &&
 		!strings.Contains(branch, "//") && !strings.HasSuffix(branch, "/") && !strings.HasSuffix(branch, ".lock")
+}
+
+// cleanBranch gives a base branch in its stored form ("" is none), and
+// false when it is not a branch name.
+func cleanBranch(branch string) (string, bool) {
+	branch = strings.TrimSpace(branch)
+	if branch != "" && !validBranch(branch) {
+		return "", false
+	}
+	return branch, true
 }
 
 func quote(s string) string {

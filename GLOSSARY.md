@@ -328,6 +328,10 @@ _Avoid_: proof, test results (alone)
 A person's move from steering a **Run** by messages to working in its **Agent session** at a terminal. It continues the same Agent session in a new **Execution**.
 _Avoid_: attach, hijack
 
+**Schedule**:
+A **Project**'s trigger in the **Dispatcher** that starts a **Run** with its prompt at each fire time of its five-field cron expression, in its time zone. A member makes it, and can pause and continue it. A fire time while its last Run is an **Active Run** starts no Run.
+_Avoid_: cron job, timer, scheduled task
+
 ## Relationships
 
 - An **EventStore** accepts an **Event** through **Event ingest**

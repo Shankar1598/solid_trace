@@ -157,9 +157,6 @@ func deliveryRun(q interface {
 	return runID, err
 }
 
-// activeStates are the states of an Active Run.
-var activeStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson}
-
 // liveStates are the states of a Run with an Execution queued or live.
 var liveStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning}
 
@@ -219,7 +216,7 @@ func (s *store) startForSender(r storedRun, delivery, signature string, at time.
 		if result, err = senderLimits(tx, sender, at, starts, active); err != nil || result.limit != "" {
 			return result, err
 		}
-		if err := insertRun(tx, r); err != nil {
+		if _, err := insertRun(tx, r); err != nil {
 			return senderStart{}, err
 		}
 		result = senderStart{runID: r.ID, started: true}

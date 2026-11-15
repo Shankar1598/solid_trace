@@ -33,16 +33,19 @@ const (
 
 // Trigger kinds of a Run (run.trigger).
 const (
-	triggerPerson = "person"
+	triggerPerson   = "person"
+	triggerSchedule = "schedule"
 	// triggerWebhook is the generic signed webhook.
 	triggerWebhook = "webhook"
 )
 
-// Actor kinds (actor.kind). A sender of the generic webhook is the actor
-// of the Runs that it starts.
+// Actor kinds (actor.kind). A schedule is the actor of the Runs that it
+// starts, with schedule.created_by.* the member who made it. A sender of
+// the generic webhook is the actor of the Runs that it starts.
 const (
-	actorPerson = "person"
-	actorSender = dispatcherapi.ActorSender
+	actorPerson   = "person"
+	actorSchedule = dispatcherapi.ActorSchedule
+	actorSender   = dispatcherapi.ActorSender
 )
 
 // runEventsPath is SolidTrace's (EventStore's) route for run events. A
@@ -76,13 +79,15 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 		return fmt.Errorf("count the run event: %w", err)
 	}
 	var state, reason, project, repository, folder, baseBranch, trigger, prompt, actorKind, actorID, actorName,
-		sessionID, runTitle, link, attributes string
+		sessionID, runTitle, link, attributes, scheduleID, scheduledByID, scheduledByName string
 	var executions int64
+	var firedAt sql.NullInt64
 	err := tx.QueryRow(`SELECT state, reason, project, repository, folder, base_branch, trigger_kind, prompt,
-		started_by_kind, started_by_id, started_by_name, session_id, title, link, attributes,
-		(SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
+		started_by_kind, started_by_id, started_by_name, session_id, title, link, attributes, schedule_id, fired_at,
+		scheduled_by_id, scheduled_by_name, (SELECT COUNT(*) FROM executions e WHERE e.run_id = r.id)
 		FROM runs r WHERE id = ?`, runID).Scan(&state, &reason, &project, &repository, &folder, &baseBranch, &trigger,
-		&prompt, &actorKind, &actorID, &actorName, &sessionID, &runTitle, &link, &attributes, &executions)
+		&prompt, &actorKind, &actorID, &actorName, &sessionID, &runTitle, &link, &attributes, &scheduleID, &firedAt,
+		&scheduledByID, &scheduledByName, &executions)
 	if err != nil {
 		return fmt.Errorf("read the Run for its event: %w", err)
 	}
@@ -127,6 +132,11 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 			event["run.attributes."+k] = v
 		}
 	}
+	if scheduleID != "" {
+		event["schedule.fire_time"] = time.UnixMicro(firedAt.Int64).UTC().Format(time.RFC3339)
+		event["schedule.created_by.id"] = scheduledByID
+		event["schedule.created_by.name"] = scheduledByName
+	}
 	if _, ok := details["execution.id"]; ok && sessionID != "" {
 		event["agent.session_id"] = sessionID
 	}
@@ -167,19 +177,25 @@ func (s *store) wakeSender() {
 // addWarning adds one of the Dispatcher's warning Logs to the outbox. It
 // has no run.id, so EventStore stores it with file dispatcher.
 func (s *store) addWarning(at time.Time, message string, attrs map[string]any) error {
-	log := map[string]any{"time": at.UTC().Format(time.RFC3339Nano), "level": "warn", "message": message}
-	for k, v := range attrs {
-		log[k] = v
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := addToOutbox(tx, log); err != nil {
+	if err := addOwnLog(tx, at, "warn", message, attrs); err != nil {
 		return err
 	}
 	return s.commit(tx)
+}
+
+// addOwnLog adds one of the Dispatcher's own Logs (no run.id) at level to
+// the outbox, in tx: a warning, or a change to a schedule.
+func addOwnLog(tx *sql.Tx, at time.Time, level, message string, attrs map[string]any) error {
+	log := map[string]any{"time": at.UTC().Format(time.RFC3339Nano), "level": level, "message": message}
+	for k, v := range attrs {
+		log[k] = v
+	}
+	return addToOutbox(tx, log)
 }
 
 // warn writes a warning to the Dispatcher's log and sends it to the Agent

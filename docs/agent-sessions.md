@@ -122,6 +122,26 @@ A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the
 
 `solidtrace connections list` shows the time of each connection's last webhook. When a backstop finds a change that no webhook announced since the previous backstop, the Dispatcher writes a warning Log with the Organization, the connection and the time of the last webhook, so that a Monitor can find a connection whose webhooks stopped. A connection with no webhook secret gets no webhooks, so its backstop does not warn.
 
+## Start Runs on a schedule
+
+A **Schedule** starts a Run of a Project at each fire time of a five-field cron expression (minute, hour, day of the month, month, day of the week) in an IANA time zone (UTC if you give none). Each member of the Organization makes and changes schedules with the CLI:
+
+```sh
+solidtrace schedules create checkout --name "Update dependencies" --cron "0 9 * * 1" \
+  --time-zone Europe/Berlin "Update the dependencies and run the tests"
+solidtrace schedules list [--project checkout]
+solidtrace schedules update ID --cron "0 7 * * 1"
+solidtrace schedules pause ID      # stops the next fire at once
+solidtrace schedules continue ID   # starts the fire times again, from now
+solidtrace schedules delete ID
+```
+
+- The Project needs Factory settings. A Run starts from the schedule's base branch (`--base-branch`), else the Project's default base branch.
+- The shortest interval between two fire times is 1 hour. The operator changes it with `DISPATCHER_SCHEDULE_MIN_INTERVAL` (a duration, such as `30m`).
+- A fire time while the schedule's last Run is active starts no Run; the Dispatcher writes the warning Log "skipped: last Run is active".
+- A fire time that the Dispatcher missed while it was down starts one Run when the Dispatcher starts, if it is less than 24 hours old. Older fire times start no Run.
+- The Run's starter is the schedule, with the member who made it. Each change to a schedule is a Log of the Dispatcher (`event.kind` `schedule_created`, `schedule_updated`, `schedule_paused`, `schedule_continued` or `schedule_deleted`) with the person who made it.
+
 ## Start Runs from any tool: the generic webhook
 
 A **Webhook sender** is a tool that starts Runs with signed requests, such as a CI job or a script. An Admin makes one with `solidtrace senders create NAME [--project PROJECT]...`. The command prints the sender's id, its webhook URL (`/webhooks/generic/<sender id>` under `DISPATCHER_WEBHOOK_URL`; the private listener serves the same path) and its secret. The Dispatcher shows the secret this one time only, and keeps it encrypted. With `--project`, the sender can start Runs only in those Projects; with none, in each Project of the Organization. A sender belongs to the Organization of the Admin who made it. `solidtrace senders list` shows each sender, with no secret, and the time of its last delivery. `solidtrace senders delete SENDER_ID` (an Admin only) deletes one; its webhook URL then gets 404, and its Runs stay.

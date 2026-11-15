@@ -91,16 +91,24 @@ func (s *store) execution(id string) (storedExecution, error) {
 // startedRun is what the task call needs of the Run.
 type startedRun struct {
 	prompt, sessionID string
-	resume            bool
+	// project, repository, folder and baseBranch are the Run's, as its
+	// start kept them: a change of the Factory settings after the start
+	// does not change them.
+	project, repository, folder, baseBranch string
+	resume                                  bool
 	// startedAt is when the Execution started: its limits count from it.
 	startedAt time.Time
+	// limits are the Execution's limits: the total limit as it was kept
+	// at the first task call.
+	limits dispatcherapi.Limits
 }
 
 // startExecution marks a dispatched Execution running and its Run
-// running, and gives the Run's prompt and Agent session id (made at the
-// Run's first Execution). A second call on a running Execution changes
-// nothing. An ended Execution gives errEnded.
-func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
+// running, keeps its total limit from limits, and gives the Run's prompt
+// and Agent session id (made at the Run's first Execution). A second call
+// on a running Execution changes nothing. An ended Execution gives
+// errEnded.
+func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Limits) (startedRun, error) {
 	var run startedRun
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -115,8 +123,8 @@ func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
 	case dispatcherapi.ExecutionEnded:
 		return run, errEnded
 	case dispatcherapi.ExecutionDispatched:
-		if _, err := tx.Exec(`UPDATE executions SET state = ?, started_at = ? WHERE id = ?`,
-			dispatcherapi.ExecutionRunning, at.UnixMicro(), id); err != nil {
+		if _, err := tx.Exec(`UPDATE executions SET state = ?, started_at = ?, total_limit = ? WHERE id = ?`,
+			dispatcherapi.ExecutionRunning, at.UnixMicro(), int64(limits.Total()/time.Second), id); err != nil {
 			return run, err
 		}
 		if _, err := tx.Exec(`UPDATE runs SET state = ? WHERE id = ? AND state = ?`,
@@ -133,14 +141,15 @@ func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
 		}
 	}
 	var started int64
-	err = tx.QueryRow(`SELECT prompt, session_id, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
-		AND e.id != ? AND e.started_at IS NOT NULL), (SELECT started_at FROM executions WHERE id = ?)
-		FROM runs r WHERE id = ?`, id, id, runID).
-		Scan(&run.prompt, &run.sessionID, &run.resume, &started)
+	err = tx.QueryRow(`SELECT prompt, session_id, project, repository, folder, base_branch, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
+		AND e.id != ? AND e.started_at IS NOT NULL), (SELECT started_at FROM executions WHERE id = ?),
+		(SELECT total_limit FROM executions WHERE id = ?) FROM runs r WHERE id = ?`, id, id, id, runID).
+		Scan(&run.prompt, &run.sessionID, &run.project, &run.repository, &run.folder, &run.baseBranch, &run.resume, &started, &run.limits.TotalSeconds)
 	if err != nil {
 		return run, err
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
+	run.limits.IdleSeconds = limits.IdleSeconds
 	if state == dispatcherapi.ExecutionDispatched {
 		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
 			return run, err

@@ -28,17 +28,23 @@ const (
 	StateWaitingOnPerson = "waiting_on_person"
 	StateDone            = "done"
 	StateFailed          = "failed"
+	// StateStopped is a Run that a person, or the Dispatcher's backstop,
+	// stopped. A message continues it.
+	StateStopped = "stopped"
 )
 
 // Person is who started a Run or saved a value: the SolidTrace user of
-// the token. A Run that a sender started has the sender as its starter,
-// with Kind ActorSender.
+// the token. A Run that a schedule or a sender started has it as its
+// starter, with Kind ActorSchedule or ActorSender.
 type Person struct {
-	// Kind is "" for a person, or ActorSender.
+	// Kind is "" for a person, ActorSchedule or ActorSender.
 	Kind string `json:"kind,omitempty"`
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
+
+// ActorSchedule is the kind of a Run's starter that is a schedule.
+const ActorSchedule = "schedule"
 
 // ActorSender is the kind of a Run's starter that is a sender of the
 // generic webhook.
@@ -60,9 +66,12 @@ type Run struct {
 	// Attributes are the strings that the Run's trigger gave.
 	Attributes map[string]string `json:"attributes,omitempty"`
 	// Organization is the slug of the Run's Organization.
-	Organization string    `json:"organization"`
-	StartedBy    Person    `json:"started_by"`
-	CreatedAt    time.Time `json:"created_at"`
+	Organization string `json:"organization"`
+	StartedBy    Person `json:"started_by"`
+	// ScheduledBy is the member who made the schedule that started the
+	// Run (nil for another trigger).
+	ScheduledBy *Person   `json:"scheduled_by,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 	// Reason says why the Run is in its state: for failed, the summary of
 	// the agent's report or the wrapper's reason, such as "the harness
 	// exited".
@@ -134,9 +143,16 @@ type Task struct {
 	Repository string `json:"repository"`
 	// CloneURL is the HTTPS URL that git clones from. It holds no token.
 	CloneURL string `json:"clone_url"`
-	// BaseBranch is the branch to clone ("" is the repository's default
-	// branch).
+	// BaseBranch is the branch that the Run's branch starts from ("" is
+	// the repository's default branch).
 	BaseBranch string `json:"base_branch"`
+	// Branch is the Run's branch, agent/<run id> (RunBranch). The first
+	// Execution makes it from BaseBranch; later Executions check it out.
+	Branch string `json:"branch"`
+	// GitURL is the base of the forge's HTTPS clone URLs. git over ssh to
+	// the repository's host (git@host: and ssh://git@host/) is rewritten
+	// to it, for submodules and private gems too.
+	GitURL string `json:"git_url"`
 	// ForgeUsername and ForgeToken are what the git credential helper
 	// gives git ("" token: the Project names no connection).
 	ForgeUsername string `json:"forge_username"`
@@ -154,7 +170,71 @@ type Task struct {
 	IngestURL string `json:"ingest_url"`
 	// Uploads is the Execution's child token. Only the wrapper keeps it.
 	Uploads SessionToken `json:"uploads"`
+	// Limits are the Execution's time limits.
+	Limits Limits `json:"limits"`
 }
+
+// The default limits of an Execution. The factory file can change them.
+const (
+	DefaultIdleLimit  = 30 * time.Minute
+	DefaultTotalLimit = 8 * time.Hour
+)
+
+// Limits are the time limits of an Execution, in seconds. At a limit, the
+// wrapper interrupts the agent and ends the Execution with the reason
+// EndTimeout. 0 is the default limit.
+type Limits struct {
+	// IdleSeconds is the longest time with no event on the harness's
+	// output stream.
+	IdleSeconds int64 `json:"idle_seconds"`
+	// TotalSeconds is the longest time of the Execution, from its task
+	// call.
+	TotalSeconds int64 `json:"total_seconds"`
+}
+
+// Idle is the idle limit, or the default for 0.
+func (l Limits) Idle() time.Duration {
+	if l.IdleSeconds <= 0 {
+		return DefaultIdleLimit
+	}
+	return time.Duration(l.IdleSeconds) * time.Second
+}
+
+// Total is the total limit, or the default for 0.
+func (l Limits) Total() time.Duration {
+	if l.TotalSeconds <= 0 {
+		return DefaultTotalLimit
+	}
+	return time.Duration(l.TotalSeconds) * time.Second
+}
+
+// Command kinds that the Dispatcher gives a wrapper.
+const (
+	// CommandStop: end the Execution with the reason EndStopped.
+	CommandStop = "stop"
+)
+
+// Command is one command to the wrapper of an Execution.
+type Command struct {
+	// Seq orders the commands of an Execution.
+	Seq  int64  `json:"seq"`
+	Kind string `json:"kind"`
+}
+
+// CommandsRequest is the body of the wrapper's commands call, a long
+// poll: the Dispatcher answers when it has a command after After, or
+// after a wait with none.
+type CommandsRequest struct {
+	After int64 `json:"after"`
+}
+
+// Commands is the answer of the commands call, oldest first.
+type Commands struct {
+	Commands []Command `json:"commands"`
+}
+
+// RunBranch is the name of a Run's branch.
+func RunBranch(runID string) string { return "agent/" + runID }
 
 // SessionToken is a child token of one Execution: sessions:write and
 // sessions:read for the Run's Agent sessions, until the Execution's total
@@ -188,12 +268,18 @@ const (
 	// EndSetupFailed: the wrapper could not start the harness; Error says
 	// why.
 	EndSetupFailed = "the setup failed"
+	// EndStopped: a stop command came. The Run is stopped already.
+	EndStopped = "stopped"
+	// EndTimeout: a limit passed; Error says which.
+	EndTimeout = "timeout"
 )
 
 // ExecutionEnd is the body of the wrapper's end call.
 type ExecutionEnd struct {
 	Reason string `json:"reason"`
-	// Error says what failed, for EndSetupFailed.
+	// Error says what failed, for EndSetupFailed, a failure of the push
+	// before the end (for each reason), or which limit passed, for
+	// EndTimeout.
 	Error string `json:"error,omitempty"`
 	// ExitCode is the harness's exit code (nil: the harness did not run).
 	ExitCode        *int       `json:"exit_code,omitempty"`
@@ -207,6 +293,9 @@ type ExecutionEnd struct {
 type StartRun struct {
 	Project string `json:"project"`
 	Prompt  string `json:"prompt"`
+	// Branch is the Run's base branch ("" is the Project's default base
+	// branch, else the repository's default branch).
+	Branch string `json:"branch,omitempty"`
 }
 
 // FactorySettings are a Project's Factory settings, as the Dispatcher
@@ -364,6 +453,65 @@ type GenericWebhookAnswer struct {
 	Started bool   `json:"started"`
 }
 
+// Schedule is a Project's schedule: it starts a Run at each fire time of
+// its cron expression in its time zone.
+type Schedule struct {
+	ID string `json:"id"`
+	// Project is the Project's slug in SolidTrace.
+	Project string `json:"project"`
+	Name    string `json:"name"`
+	// Cron is a five-field cron expression: minute, hour, day of the
+	// month, month and day of the week.
+	Cron string `json:"cron"`
+	// TimeZone is an IANA time zone, such as Europe/Berlin.
+	TimeZone string `json:"time_zone"`
+	Prompt   string `json:"prompt"`
+	// BaseBranch is the branch that its Runs start from ("" is the
+	// Project's default base branch).
+	BaseBranch string `json:"base_branch"`
+	Paused     bool   `json:"paused"`
+	// NextAt is the next fire time (nil while the schedule is paused).
+	NextAt *time.Time `json:"next_at"`
+	// LastRun is the last Run that the schedule started (nil for none).
+	LastRun   *ScheduleRun `json:"last_run"`
+	CreatedAt time.Time    `json:"created_at"`
+	CreatedBy Person       `json:"created_by"`
+	UpdatedAt time.Time    `json:"updated_at"`
+	UpdatedBy Person       `json:"updated_by"`
+}
+
+// ScheduleRun is a Run that a schedule started for the fire time FiredAt.
+type ScheduleRun struct {
+	ID      string    `json:"id"`
+	State   string    `json:"state"`
+	FiredAt time.Time `json:"fired_at"`
+}
+
+// SaveSchedule is the body of a new schedule. An empty TimeZone is UTC.
+type SaveSchedule struct {
+	Project    string `json:"project"`
+	Name       string `json:"name"`
+	Cron       string `json:"cron"`
+	TimeZone   string `json:"time_zone"`
+	Prompt     string `json:"prompt"`
+	BaseBranch string `json:"base_branch"`
+}
+
+// UpdateSchedule is the body of a change to a schedule: each value that is
+// not nil replaces the schedule's value.
+type UpdateSchedule struct {
+	Name       *string `json:"name,omitempty"`
+	Cron       *string `json:"cron,omitempty"`
+	TimeZone   *string `json:"time_zone,omitempty"`
+	Prompt     *string `json:"prompt,omitempty"`
+	BaseBranch *string `json:"base_branch,omitempty"`
+}
+
+// Schedules is the answer of a list of schedules, by Project and name.
+type Schedules struct {
+	Schedules []Schedule `json:"schedules"`
+}
+
 // Runs is the answer of a list, newest first.
 type Runs struct {
 	Runs []Run `json:"runs"`
@@ -452,6 +600,14 @@ func (c *Client) List(ctx context.Context) ([]Run, error) {
 	return runs.Runs, err
 }
 
+// Stop stops a Run. The Run is stopped at once, and its live Execution
+// ends with the reason EndStopped.
+func (c *Client) Stop(ctx context.Context, id string) (Run, error) {
+	var run Run
+	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/stop", nil, &run)
+	return run, err
+}
+
 // Projects reads the Factory settings of the Organization's Projects.
 func (c *Client) Projects(ctx context.Context) ([]FactorySettings, error) {
 	var list ProjectList
@@ -494,6 +650,61 @@ func (c *Client) SaveWebhookSecret(ctx context.Context, name, secret string) (Co
 	err := c.call(ctx, http.MethodPut, "/connections/"+url.PathEscape(name)+"/webhook-secret",
 		SaveWebhookSecret{Secret: secret}, &connection)
 	return connection, err
+}
+
+// Schedules reads the Organization's schedules, or the schedules of the
+// Project with the slug project ("" is each Project).
+func (c *Client) Schedules(ctx context.Context, project string) ([]Schedule, error) {
+	var list Schedules
+	path := "/schedules"
+	if project != "" {
+		path += "?project=" + url.QueryEscape(project)
+	}
+	err := c.call(ctx, http.MethodGet, path, nil, &list)
+	return list.Schedules, err
+}
+
+// Schedule reads one schedule.
+func (c *Client) Schedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodGet, "/schedules/"+url.PathEscape(id), nil, &schedule)
+	return schedule, err
+}
+
+// CreateSchedule makes a schedule.
+func (c *Client) CreateSchedule(ctx context.Context, save SaveSchedule) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPost, "/schedules", save, &schedule)
+	return schedule, err
+}
+
+// UpdateSchedule changes each value of a schedule that update gives.
+func (c *Client) UpdateSchedule(ctx context.Context, id string, update UpdateSchedule) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPatch, "/schedules/"+url.PathEscape(id), update, &schedule)
+	return schedule, err
+}
+
+// PauseSchedule stops a schedule's fire times until ContinueSchedule.
+func (c *Client) PauseSchedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPost, "/schedules/"+url.PathEscape(id)+"/pause", nil, &schedule)
+	return schedule, err
+}
+
+// ContinueSchedule starts a paused schedule's fire times again, from now.
+func (c *Client) ContinueSchedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodPost, "/schedules/"+url.PathEscape(id)+"/continue", nil, &schedule)
+	return schedule, err
+}
+
+// DeleteSchedule deletes a schedule and gives it as it was. Its Runs
+// continue.
+func (c *Client) DeleteSchedule(ctx context.Context, id string) (Schedule, error) {
+	var schedule Schedule
+	err := c.call(ctx, http.MethodDelete, "/schedules/"+url.PathEscape(id), nil, &schedule)
+	return schedule, err
 }
 
 // Senders reads the Organization's senders, with no secret.

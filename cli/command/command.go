@@ -66,7 +66,7 @@ Usage:
   solidtrace capture status
       Show the Organization, its captured repositories, and each Agent
       session on this machine as uploaded, not in the list, or failed.
-  solidtrace start [--project PROJECT] [--dispatcher URL] PROMPT
+  solidtrace start [--project PROJECT] [--branch BRANCH] [--dispatcher URL] PROMPT
       Start a Run: an agent works on PROMPT with the Factory settings of
       PROJECT. With no --project, the Project is the one whose Factory
       settings name the current git repository and a folder that holds
@@ -74,6 +74,10 @@ Usage:
       id and its link in Console. The first Dispatcher verb needs
       --dispatcher with the Dispatcher's URL, which your operator gives;
       later verbs use the same URL.
+  solidtrace stop [--dispatcher URL] RUN_ID
+      Stop a Run that is queued, running or waiting on a person. The Run
+      is stopped at once; its agent is interrupted and its Execution
+      ends. A message continues a stopped Run.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID
@@ -110,6 +114,28 @@ Usage:
       each Project). It prints the sender's secret one time only.
   solidtrace senders delete SENDER_ID [--dispatcher URL]
       Delete a sender (an Admin only). Its webhook URL then gets 404.
+  solidtrace schedules list [--project PROJECT] [--dispatcher URL]
+      List your Organization's schedules, with the next fire time and the
+      last Run of each.
+  solidtrace schedules get ID
+      Show one schedule.
+  solidtrace schedules create PROJECT --name NAME --cron CRON
+          [--time-zone ZONE] [--base-branch BRANCH] PROMPT
+      Make a schedule: at each fire time of CRON (five fields: minute,
+      hour, day of the month, month, day of the week) in ZONE (an IANA
+      time zone; none is UTC), it starts a Run of PROJECT with PROMPT.
+      The shortest interval between two fire times is 1 hour, unless your
+      operator sets another. A fire time while the schedule's last Run is
+      active starts no Run.
+  solidtrace schedules update ID [--name NAME] [--cron CRON]
+          [--time-zone ZONE] [--base-branch BRANCH] [--prompt PROMPT]
+      Change the values that you give.
+  solidtrace schedules pause ID
+  solidtrace schedules continue ID
+      Stop the schedule's fire times at once, or start them again from
+      now. A Run that the schedule started continues.
+  solidtrace schedules delete ID
+      Delete the schedule. The Runs that it started continue.
   solidtrace report --outcome done|needs-a-person|failed --summary TEXT
           [--question TEXT]
       Inside a Run only: report the outcome of your work to the wrapper.
@@ -141,12 +167,16 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return start(ctx, args[1:], env)
 	case "runs":
 		return runs(ctx, args[1:], env)
+	case "stop":
+		return stop(ctx, args[1:], env)
 	case "projects":
 		return projects(ctx, args[1:], env)
 	case "connections":
 		return connections(ctx, args[1:], env)
 	case "senders":
 		return senders(ctx, args[1:], env)
+	case "schedules":
+		return schedules(ctx, args[1:], env)
 	case "report":
 		return report(ctx, args[1:], env)
 	case "version", "--version":
