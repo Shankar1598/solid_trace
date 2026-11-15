@@ -245,6 +245,22 @@ class FactoryIntegrationTest < ActionDispatch::IntegrationTest
     assert failure["at"].present?
   end
 
+  test "an Integration's page shows no failure when a later delivery was sent" do
+    integration = factory_integration
+    issue = create(:issue, project: create(:project, organization: @organization))
+    refused = Notification.enqueue!(integration: integration, issue: issue, kind: IntegrationNotification::ISSUE_CREATED)
+    Notification.mark_rows([ refused.id ], :refused, "HTTP 422: the Project shop has no Factory settings")
+    travel 1.hour do
+      sent = Notification.enqueue!(integration: integration, issue: issue, kind: IntegrationNotification::ISSUE_CREATED)
+      Notification.mark_rows([ sent.id ], :sent)
+      sign_in_as(@member)
+
+      get edit_integration_url(integration, org_slug: @organization.slug), headers: inertia
+
+      assert_nil response.parsed_body.dig("props", "integration", "last_failure")
+    end
+  end
+
   private
 
   def new_page

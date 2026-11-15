@@ -98,7 +98,7 @@ export interface Integration {
   enabled: boolean
   settings: Record<string, unknown>
   created_at: string
-  /** The last delivery that failed, on the Edit page only; null when none. */
+  /** The last delivery that failed, on the Edit page only; null when none, or when a later delivery was sent. */
   last_failure?: IntegrationFailure | null
 }
 

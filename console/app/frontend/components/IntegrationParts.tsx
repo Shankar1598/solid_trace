@@ -17,7 +17,11 @@ export function FactoryConnection() {
   )
 }
 
-/** The Integration's last delivery that failed, with the reason. */
+/**
+ * The Integration's last delivery that failed, with the reason. A sent
+ * delivery after it hides it, but Console keeps sent rows for 1 day only,
+ * so the text does not say that this delivery was the last one.
+ */
 export function LastFailure({ failure }: { failure: IntegrationFailure }) {
   return (
     <div
@@ -28,7 +32,7 @@ export function LastFailure({ failure }: { failure: IntegrationFailure }) {
       <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
       <div className="space-y-1">
         <p className="font-medium">
-          The last delivery failed {formatDistanceToNow(new Date(failure.at))} ago
+          A delivery failed {formatDistanceToNow(new Date(failure.at))} ago
           {failure.retried ? '. Console tries it again.' : ', and Console does not try it again.'}
         </p>
         <p className="font-mono text-xs text-muted-foreground break-all">{failure.reason}</p>

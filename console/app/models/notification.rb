@@ -60,9 +60,13 @@ class Notification < ApplicationRecord
   end
 
   # The Integration's last row that failed or was refused, which its page
-  # shows with the reason, or nil.
+  # shows with the reason. nil when there is none, or when a later delivery
+  # was sent: the Integration then delivers again.
   def self.last_failure(integration)
-    where(integration: integration, status: [ :failed, :refused ]).order(updated_at: :desc, id: :desc).first
+    row = where(integration: integration, status: [ :failed, :refused ]).order(updated_at: :desc, id: :desc).first
+    return if row.nil? || where(integration: integration, status: :sent).where("sent_at > ?", row.updated_at).exists?
+
+    row
   end
 
   # Whether a later tick delivers this row again.
