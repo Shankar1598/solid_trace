@@ -145,17 +145,17 @@ type ticketStep struct {
 
 // ready acts on a ticket in the ready status: it starts a Run on its
 // route's Project, or says that no route matches it. It does nothing for
-// a ticket that has an Active Run, or for an edit that it acted on. It is
-// true when it acted.
+// a ticket that has an Active Run or a Run of its edit, and says a refusal
+// one time for each edit. It is true when it acted.
 func (s *ticketStep) ready(ctx context.Context, ticket Ticket) (bool, error) {
 	d, c := s.d, s.c
-	if seen, err := d.store.ticketSeen(c.ID, ticket); err != nil || seen {
+	if seen, err := d.store.ticketRun(c.ID, ticket); err != nil || seen {
 		return false, err
 	}
 	value := strings.TrimSpace(ticket.Route)
 	projectID, err := d.store.route(c.ID, value)
 	if errors.Is(err, errNotFound) {
-		return true, s.noRoute(ctx, ticket, value)
+		return s.noRoute(ctx, ticket, value)
 	}
 	if err != nil {
 		return false, err
@@ -173,7 +173,7 @@ func (s *ticketStep) ready(ctx context.Context, ticket Ticket) (bool, error) {
 	}
 	slug, ok := slugOf(s.projects, projectID)
 	if !ok {
-		return true, s.orphaned(ticket, projectID)
+		return s.orphaned(ticket, projectID)
 	}
 	if err := d.store.followSlug(projectID, slug); err != nil {
 		return false, err
@@ -221,30 +221,36 @@ func (s *ticketStep) ready(ctx context.Context, ticket Ticket) (bool, error) {
 // orphaned refuses the Run of a ticket whose route names a Project that
 // SolidTrace no longer has, with a warning Log, one time for each edit of
 // the ticket. It marks the Project's Factory settings orphaned.
-func (s *ticketStep) orphaned(ticket Ticket, projectID string) error {
+func (s *ticketStep) orphaned(ticket Ticket, projectID string) (bool, error) {
 	d := s.d
+	if noticed, err := d.store.ticketNoticed(s.c.ID, ticket); err != nil || noticed {
+		return false, err
+	}
 	marked, err := d.store.orphan(s.org.id, []string{projectID}, d.now().UTC())
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := d.store.noticeTicket(s.c.ID, ticket, d.now().UTC()); err != nil {
-		return err
+		return false, err
 	}
 	message := "the route of a ready ticket names a Project that SolidTrace no longer has: the Run is refused"
 	if len(marked) > 0 {
 		message += ", and its Factory settings are marked orphaned"
 	}
 	d.warn(message, s.ticketArgs(ticket, "factory.project", strings.Join(marked, ", "))...)
-	return nil
+	return true, nil
 }
 
 // noRoute posts the comment on a ready ticket that no route matches, and
 // writes a warning Log, one time for each edit of the ticket.
-func (s *ticketStep) noRoute(ctx context.Context, ticket Ticket, value string) error {
+func (s *ticketStep) noRoute(ctx context.Context, ticket Ticket, value string) (bool, error) {
 	d, c := s.d, s.c
+	if noticed, err := d.store.ticketNoticed(c.ID, ticket); err != nil || noticed {
+		return false, err
+	}
 	values, err := d.store.matchValues(c.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	comment := "SolidTrace Factory: no Project takes this ticket, so no Run started. "
 	if len(values) > 0 {
@@ -257,14 +263,14 @@ func (s *ticketStep) noRoute(ctx context.Context, ticket Ticket, value string) e
 		comment += "An Admin adds a route of the tracker connection " + c.Name + " to a Project's Factory settings."
 	}
 	if err := s.t.Comment(ctx, c, ticket.ID, comment); err != nil {
-		return err
+		return false, err
 	}
 	if err := d.store.noticeTicket(c.ID, ticket, d.now().UTC()); err != nil {
-		return err
+		return false, err
 	}
 	d.warn("a ready ticket matches no route: no Run started", s.ticketArgs(ticket,
 		"factory.routing_field", c.Settings.RoutingField, "factory.routing_value", value)...)
-	return nil
+	return true, nil
 }
 
 // ticketArgs are the Attributes of a warning about a ticket, and more.

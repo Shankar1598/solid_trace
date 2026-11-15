@@ -269,6 +269,31 @@ func TestAReadyTicketThatNoRouteMatchesGetsOneCommentAndOneWarningForEachEdit(t 
 	}
 }
 
+func TestARouteSavedAfterTheNoRouteCommentStartsTheRunOfTheSameEdit(t *testing.T) {
+	env := factorytest.New(t)
+	path := env.TrackerConnection("board", secret)
+	env.Project("shop")
+	mustSaveRoutes(t, env, "shop")
+
+	env.Tracker.Put("board", faketracker.Ticket{ID: "T-9", Title: "Lost ticket", Status: faketracker.ReadyStatus}, rosa)
+	env.TrackerWebhook(path, secret, "d-1", "T-9")
+	comments := waitForComments(t, env, "board", 1)
+	if c := comments[0].Body; !strings.Contains(c, `"Project"`) || !strings.Contains(c, "board") {
+		t.Errorf("the comment is %q, want one that names the field Project and the connection board", c)
+	}
+	env.WaitForWarning("no route")
+
+	// The Admin adds the route; the backstop starts the Run with no new edit.
+	mustSaveRoutes(t, env, "shop", route("board", ""))
+	env.Clock.Advance(faketracker.Backstop + time.Second)
+	if run := waitForRuns(t, env, 1)[0]; run.Project != "shop" {
+		t.Errorf("the Run is in %s, want shop", run.Project)
+	}
+	if n := len(env.Tracker.Comments("board")); n != 1 {
+		t.Errorf("the ticket got %d comments, want 1", n)
+	}
+}
+
 func TestATicketWithAnActiveRunStartsNoSecondRun(t *testing.T) {
 	env, path := trackerEnv(t)
 	env.Tracker.Put("board", faketracker.Ticket{ID: "T-1", Title: "Fix it", Status: faketracker.ReadyStatus}, rosa)

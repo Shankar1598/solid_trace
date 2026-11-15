@@ -146,15 +146,22 @@ func ticketHasRunArgs(connectionID, ticketID, edit string) []any {
 		dispatcherapi.StateWaitingOnPerson}
 }
 
-// ticketSeen is true when the ticket of the connection needs nothing
-// more: it has an Active Run, a Run of its edit, or the "no route"
-// notice of its edit.
-func (s *store) ticketSeen(connectionID string, t Ticket) (bool, error) {
+// ticketRun is true when the ticket of the connection has an Active Run
+// or a Run of its edit.
+func (s *store) ticketRun(connectionID string, t Ticket) (bool, error) {
 	var seen bool
-	err := s.db.QueryRow(`SELECT `+ticketHasRun+`
-		OR EXISTS (SELECT 1 FROM ticket_notices WHERE connection_id = ? AND ticket_id = ? AND edit = ?)`,
-		append(ticketHasRunArgs(connectionID, t.ID, t.Edit), connectionID, t.ID, t.Edit)...).Scan(&seen)
+	err := s.db.QueryRow(`SELECT `+ticketHasRun, ticketHasRunArgs(connectionID, t.ID, t.Edit)...).Scan(&seen)
 	return seen, err
+}
+
+// ticketNoticed is true when the ticket's edit got the "no route" (or the
+// orphaned) notice. The notice stops only a second comment or warning for
+// the edit: a route that an Admin saves later still starts its Run.
+func (s *store) ticketNoticed(connectionID string, t Ticket) (bool, error) {
+	var noticed bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM ticket_notices WHERE connection_id = ? AND ticket_id = ? AND edit = ?)`,
+		connectionID, t.ID, t.Edit).Scan(&noticed)
+	return noticed, err
 }
 
 // noticeTicket keeps the ticket's edit as the one that got the "no
