@@ -47,6 +47,9 @@ const (
 func MainIfAsked() {
 	switch filepath.Base(os.Args[0]) {
 	case wrapperName:
+		if len(os.Args) > 1 && os.Args[1] == wrapper.StopHookCommand {
+			os.Exit(wrapper.StopHook(os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+		}
 		os.Exit(wrapper.Main(context.Background(), os.Getenv, os.Environ(), os.Stderr))
 	case harnessName:
 		os.Exit(fakeharness.Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
@@ -348,9 +351,13 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),
-		wrapper.EnvClockFile + "=" + r.clockFile(),
 		// The wrapper gives the harness its own Claude Code directories.
 		"CLAUDE_CONFIG_DIR=", "CLAUDE_CODE_PROJECT_DIR_NAME=",
+	}
+	// The wrappers' limits read the environment's clock, unless it is the
+	// wall clock.
+	if !r.env.Clock.real {
+		env = append(env, wrapper.EnvClockFile+"="+r.clockFile())
 	}
 	if r.env.Proxy != nil {
 		env = append(env, "HTTP_PROXY="+r.env.Proxy.URL(), "NO_PROXY=", "no_proxy=")

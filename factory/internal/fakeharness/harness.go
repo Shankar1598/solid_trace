@@ -15,6 +15,8 @@
 //	{"fake":"deliver","message":0}         deliver message 0 (the first message read)
 //	{"fake":"deliver","message":1,"mid_turn":true}  the same, in the middle of a turn
 //	{"fake":"await_interrupt"}             wait for the interrupt control request
+//	{"fake":"await_eof"}                   wait until stdin closes, then go on: a turn that Claude Code
+//	                                       starts by itself, as at a background task's end
 //	{"fake":"busy","ms":20,"event":{...}}  write the event every 20 ms until the interrupt control
 //	                                       request (eof_code as for await_interrupt): an agent that works
 //	                                       for a long time with output
@@ -23,6 +25,12 @@
 //	{"fake":"run","args":["solidtrace","report","--outcome","done"]}
 //	                                       run a program in the working directory, as the agent's
 //	                                       Bash tool does; its output goes to stderr
+//	{"fake":"stop","replies":[[...],[...]]}  end the turn: run the Stop hooks of --settings, as Claude
+//	                                       Code does before the result. Each refusal gives the feedback
+//	                                       event, then the lines of the next reply (the last one again
+//	                                       when there are more refusals), and the hooks run again, until
+//	                                       they allow the stop. After 10 refusals the Harness exits
+//	                                       with code 3.
 //
 // At the end of the stream the Harness exits with code 0. A stream that
 // ends with await_message waits between turns, as Claude Code does: for
@@ -42,6 +50,7 @@ package fakeharness
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/json"
@@ -127,6 +136,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(
 
 type flags struct {
 	sessionID, resume, permissionMode string
+	settings                          string
 	replay                            bool
 	disallowed                        map[string]bool
 }
@@ -171,7 +181,9 @@ func parseFlags(args []string) (flags, error) {
 			for _, t := range strings.FieldsFunc(get(), func(r rune) bool { return r == ',' || r == ' ' }) {
 				f.disallowed[t] = true
 			}
-		case "--model", "--settings", "--setting-sources", "--mcp-config", "--append-system-prompt", "--allowedTools", "--allowed-tools", "--add-dir":
+		case "--settings":
+			f.settings = get()
+		case "--model", "--setting-sources", "--mcp-config", "--append-system-prompt", "--allowedTools", "--allowed-tools", "--add-dir":
 			get()
 		}
 	}
@@ -217,7 +229,7 @@ func ParseScript(b []byte) ([]map[string]any, error) {
 		}
 		if step, ok := o["fake"]; ok {
 			switch step {
-			case "about", "await_message", "await_interrupt", "busy", "deliver", "sleep", "exit", "run":
+			case "about", "await_message", "await_interrupt", "busy", "deliver", "sleep", "exit", "run", "stop", "await_eof":
 			default:
 				return nil, fmt.Errorf("line %d: no step %q", n+1, step)
 			}
@@ -345,40 +357,8 @@ func (h *harness) play(script []map[string]any, stderr io.Writer) int {
 		if line["fake"] != "about" {
 			last = line
 		}
-		switch line["fake"] {
-		case nil:
-			h.event(line)
-		case "await_message":
-			next := <-h.in
-			if next.eof {
-				h.in <- next
-				return intOf(line["eof_code"])
-			}
-			h.messages = append(h.messages, next.msg)
-			if line["echo"] != false {
-				h.deliver(next.msg, line["mid_turn"] == true)
-			}
-		case "deliver":
-			n := intOf(line["message"])
-			if n >= len(h.messages) {
-				fmt.Fprintf(stderr, "fake harness: deliver message %d, but %d messages were read\n", n, len(h.messages))
-				return 2
-			}
-			h.deliver(h.messages[n], line["mid_turn"] == true)
-		case "await_interrupt":
-			if _, ok := <-h.interrupts; !ok {
-				return intOf(line["eof_code"])
-			}
-		case "busy":
-			if !h.busy(line) {
-				return intOf(line["eof_code"])
-			}
-		case "sleep":
-			time.Sleep(time.Duration(intOf(line["ms"])) * time.Millisecond)
-		case "exit":
-			return intOf(line["code"])
-		case "run":
-			h.run(line, stderr)
+		if code, exit := h.step(line, stderr); exit {
+			return code
 		}
 	}
 	if last == nil || last["fake"] != "await_message" {
@@ -394,6 +374,145 @@ func (h *harness) play(script []map[string]any, stderr io.Writer) int {
 		h.messages = append(h.messages, next.msg)
 		h.deliver(next.msg, false)
 	}
+}
+
+// step plays one line of a stream. With exit, the Harness exits with code.
+func (h *harness) step(line map[string]any, stderr io.Writer) (code int, exit bool) {
+	switch line["fake"] {
+	case nil:
+		h.event(line)
+	case "await_message":
+		next := <-h.in
+		if next.eof {
+			h.in <- next
+			return intOf(line["eof_code"]), true
+		}
+		h.messages = append(h.messages, next.msg)
+		if line["echo"] != false {
+			h.deliver(next.msg, line["mid_turn"] == true)
+		}
+	case "deliver":
+		n := intOf(line["message"])
+		if n >= len(h.messages) {
+			fmt.Fprintf(stderr, "fake harness: deliver message %d, but %d messages were read\n", n, len(h.messages))
+			return 2, true
+		}
+		h.deliver(h.messages[n], line["mid_turn"] == true)
+	case "await_interrupt":
+		if _, ok := <-h.interrupts; !ok {
+			return intOf(line["eof_code"]), true
+		}
+	case "await_eof":
+		// The messages that come first are read, not delivered.
+		for next := <-h.in; ; next = <-h.in {
+			if next.eof {
+				h.in <- next
+				break
+			}
+			h.messages = append(h.messages, next.msg)
+		}
+	case "busy":
+		if !h.busy(line) {
+			return intOf(line["eof_code"]), true
+		}
+	case "sleep":
+		time.Sleep(time.Duration(intOf(line["ms"])) * time.Millisecond)
+	case "exit":
+		return intOf(line["code"]), true
+	case "run":
+		h.run(line, stderr)
+	case "stop":
+		return h.stop(line, stderr)
+	}
+	return 0, false
+}
+
+// maxStopRefusals is how many refusals of one stop the Harness takes
+// before it exits with code 3: a hook that never allows a stop is a fault
+// that a test must see.
+const maxStopRefusals = 10
+
+// stop runs the Stop hooks until they allow the stop. After each refusal
+// it gives the feedback event, and plays the agent's next reply.
+func (h *harness) stop(line map[string]any, stderr io.Writer) (int, bool) {
+	replies, _ := line["replies"].([]any)
+	for refusals := 0; ; refusals++ {
+		reason, refused := h.runStopHooks(refusals > 0, stderr)
+		if !refused {
+			return 0, false
+		}
+		if refusals == maxStopRefusals {
+			fmt.Fprintf(stderr, "fake harness: the Stop hook refused %d times\n", maxStopRefusals)
+			return 3, true
+		}
+		content := []any{map[string]any{"type": "text", "text": "Stop hook feedback:\n" + reason}}
+		h.event(map[string]any{"type": "user", "isSynthetic": true, "message": map[string]any{"role": "user",
+			"content": content}, "parent_tool_use_id": nil, "session_id": "", "timestamp": timestamp(), "uuid": ""})
+		if len(replies) == 0 {
+			continue
+		}
+		reply, _ := replies[min(refusals, len(replies)-1)].([]any)
+		for _, l := range reply {
+			l, _ := l.(map[string]any)
+			if code, exit := h.step(l, stderr); exit {
+				return code, true
+			}
+		}
+	}
+}
+
+// runStopHooks runs each Stop hook command of the --settings file with the
+// hook input on stdin, as Claude Code does. A hook refuses the stop with
+// the decision block on stdout (exit code 0), or with exit code 2 (the
+// reason on stderr). Another exit code is an error that does not refuse.
+func (h *harness) runStopHooks(active bool, stderr io.Writer) (reason string, refused bool) {
+	if h.flags.settings == "" {
+		return "", false
+	}
+	b, err := os.ReadFile(h.flags.settings)
+	if err != nil {
+		b = []byte(h.flags.settings) // --settings can be the JSON text
+	}
+	var settings struct {
+		Hooks struct {
+			Stop []struct {
+				Hooks []struct {
+					Type    string `json:"type"`
+					Command string `json:"command"`
+				} `json:"hooks"`
+			} `json:"Stop"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(b, &settings); err != nil {
+		fmt.Fprintln(stderr, "fake harness: the --settings are not JSON:", err)
+		return "", false
+	}
+	input, _ := json.Marshal(map[string]any{"session_id": h.sessionID, "transcript_path": h.transcript.Name(),
+		"cwd": h.cwd, "permission_mode": h.flags.permissionMode, "hook_event_name": "Stop", "stop_hook_active": active})
+	var reasons []string
+	for _, matcher := range settings.Hooks.Stop {
+		for _, hook := range matcher.Hooks {
+			if hook.Type != "command" {
+				continue
+			}
+			cmd := exec.Command("sh", "-c", hook.Command)
+			cmd.Dir = h.cwd
+			cmd.Stdin = bytes.NewReader(input)
+			var out, errOut bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &out, &errOut
+			err := cmd.Run()
+			var decision struct{ Decision, Reason string }
+			switch {
+			case err == nil && json.Unmarshal(out.Bytes(), &decision) == nil && decision.Decision == "block":
+				reasons = append(reasons, decision.Reason)
+			case cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == 2:
+				reasons = append(reasons, strings.TrimSpace(errOut.String()))
+			case err != nil:
+				fmt.Fprintf(stderr, "fake harness: the Stop hook failed (%v): %s\n", err, strings.TrimSpace(errOut.String()))
+			}
+		}
+	}
+	return strings.Join(reasons, "\n"), len(reasons) > 0
 }
 
 // defaultTurn plays a short turn for a message that the stream does not
@@ -484,8 +603,12 @@ func (h *harness) event(line map[string]any) {
 	}
 	h.write(e)
 	// Claude Code keeps the messages in the transcript, not the stream's
-	// system and result events, and not the Stop hook's feedback.
-	if (e["type"] == "assistant" || e["type"] == "user") && e["isSynthetic"] != true {
+	// system and result events. The Stop hook's feedback is a line with
+	// isMeta.
+	switch {
+	case e["type"] == "user" && e["isSynthetic"] == true:
+		h.writeTranscript(map[string]any{"type": "user", "isMeta": true, "message": e["message"], "uuid": e["uuid"]})
+	case e["type"] == "assistant" || e["type"] == "user":
 		h.writeTranscript(map[string]any{"type": e["type"], "message": e["message"], "uuid": e["uuid"]})
 	}
 }

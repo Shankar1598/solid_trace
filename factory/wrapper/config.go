@@ -216,6 +216,12 @@ func (c config) gitConfig() string { return filepath.Join(c.home, ".gitconfig") 
 func (c config) secrets() string { return filepath.Join(c.dir, "secrets") }
 func (c config) socket() string  { return filepath.Join(c.dir, "agent.sock") }
 
+// runState is the file that the wrapper and the Stop hook share, and
+// harnessSettings the harness's --settings file, which installs the hook.
+// Both are outside the checkout.
+func (c config) runState() string        { return filepath.Join(c.dir, "run-state.json") }
+func (c config) harnessSettings() string { return filepath.Join(c.dir, "harness-settings.json") }
+
 // projectDir is the Claude Code project directory of the Run: its Agent
 // sessions and its evidence/.
 func (c config) projectDir() string { return filepath.Join(c.claudeConfig, "projects", c.projectName) }

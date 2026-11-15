@@ -10,7 +10,7 @@ require "test_helper"
 class IssueCommentsApiTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
 
-  DISPATCHER_SCOPES = [ "run_events:write", "issues:comment", "tokens:create" ].freeze
+  DISPATCHER_SCOPES = [ "run_events:write", "issues:comment", "tokens:create", "mcp:read" ].freeze
 
   setup do
     @admin = create(:user, name: "Dana", email: "dana@example.com")

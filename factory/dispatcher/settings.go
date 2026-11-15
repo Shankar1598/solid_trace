@@ -500,14 +500,15 @@ const maxTrackerSetting = 200
 func (d *Dispatcher) saveTrackerSettings(w http.ResponseWriter, r *http.Request, p person) {
 	name := r.PathValue("name")
 	var save dispatcherapi.TrackerSettings
-	if !decode(w, r, &save, "the body must be a JSON object with ready_status, routing_field and database") {
+	if !decode(w, r, &save, "the body must be a JSON object with ready_status, routing_field, database, working_status, "+
+		"review_status and waiting_status") {
 		return
 	}
-	save.ReadyStatus, save.RoutingField = strings.TrimSpace(save.ReadyStatus), strings.TrimSpace(save.RoutingField)
-	save.Database = strings.TrimSpace(save.Database)
-	for _, v := range []string{save.ReadyStatus, save.RoutingField, save.Database} {
-		if utf8.RuneCountInString(v) > maxTrackerSetting || strings.ContainsFunc(v, unicode.IsControl) {
-			writeProblem(w, http.StatusBadRequest, "a tracker setting is one line of at most 200 characters, not "+quote(v))
+	for _, v := range []*string{&save.ReadyStatus, &save.RoutingField, &save.Database, &save.WorkingStatus,
+		&save.ReviewStatus, &save.WaitingStatus} {
+		*v = strings.TrimSpace(*v)
+		if utf8.RuneCountInString(*v) > maxTrackerSetting || strings.ContainsFunc(*v, unicode.IsControl) {
+			writeProblem(w, http.StatusBadRequest, "a tracker setting is one line of at most 200 characters, not "+quote(*v))
 			return
 		}
 	}
@@ -532,6 +533,16 @@ func (d *Dispatcher) saveTrackerSettings(w http.ResponseWriter, r *http.Request,
 	} else if save.Database != "" {
 		writeProblem(w, http.StatusBadRequest, "a "+kind+" connection has no database")
 		return
+	}
+	// A write-back status that is the ready status would start a new Run
+	// at each write-back.
+	effective := trackerSettings(d.trackers[kind], save)
+	for _, status := range []string{effective.WorkingStatus, effective.ReviewStatus, effective.WaitingStatus} {
+		if status == effective.ReadyStatus {
+			writeProblem(w, http.StatusBadRequest, "the ready status "+quote(status)+
+				" cannot also be a status that the Dispatcher sets on a Run's ticket")
+			return
+		}
 	}
 	if err := d.store.saveTrackerSettings(p.organization.id, name, save); err != nil {
 		d.serverError(w, "save the tracker settings", err)

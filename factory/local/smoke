@@ -531,7 +531,7 @@ run_user_cases_pass_as_root_under_raw_exec() {
   ! grep -q -e '--- SKIP' -e '--- FAIL' <<<"$out" || want "no case skipped or failed, got: $(grep -e '--- SKIP' -e '--- FAIL' -A 3 <<<"$out")"
   local name
   for name in TestTheHarnessAndItsToolsRunAsTheRunUserInItsGroups TestTheRunUserCannotReadTheWrappersSecretsOrChangeItsFiles \
-    TestTheWrapperAsRootRefusesARunUserThatIsRootOrCanChangeItsDirectory; do
+    TestTheWrapperAsRootRefusesARunUserThatIsRootOrCanChangeItsDirectory TestTheRunUsersStopHookRefusesAStopWithNoReport; do
     grep -q "^--- PASS: $name" <<<"$out" || want "the case $name ran, got: $(tail -n 30 <<<"$out")"
   done
 }

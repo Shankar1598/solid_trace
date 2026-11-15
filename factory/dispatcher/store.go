@@ -278,6 +278,38 @@ var migrations = []string{
 	CREATE INDEX runs_wip_delete_due ON runs (closed_at) WHERE wip_delete_due = 1;`,
 	// A Notion connection's notion_database is the id of its database.
 	`ALTER TABLE connections ADD COLUMN notion_database TEXT NOT NULL DEFAULT '';`,
+	// The write-back (ticket 73). A connection's working_status,
+	// review_status and waiting_status are its tracker settings ('' is the
+	// kind's default). ticket_writes is the outbox of the write-back to
+	// the tickets of tracker Runs: each row is one step, with the status
+	// to set ('' is none: working, review or waiting, whose names the
+	// sender reads from the connection's settings at the send) and
+	// whether it posts the step's comment. text is the summary, the
+	// question or the reason of the step. status_set and sent_at record
+	// what the sender did; a row that the sender gave up has sent_at and
+	// gave_up 1.
+	`ALTER TABLE connections ADD COLUMN working_status TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN review_status TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN waiting_status TEXT NOT NULL DEFAULT '';
+	CREATE TABLE ticket_writes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		execution_id TEXT NOT NULL,
+		connection_id TEXT NOT NULL,
+		ticket_id TEXT NOT NULL,
+		step TEXT NOT NULL,
+		status TEXT NOT NULL,
+		comment INTEGER NOT NULL,
+		text TEXT NOT NULL,
+		pr_url TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		status_set INTEGER NOT NULL DEFAULT 0,
+		failures INTEGER NOT NULL DEFAULT 0,
+		sent_at INTEGER,
+		gave_up INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX ticket_writes_pending ON ticket_writes (id) WHERE sent_at IS NULL;
+	CREATE INDEX ticket_writes_by_run ON ticket_writes (run_id, step);`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -287,6 +319,9 @@ type store struct {
 	// sendWake wakes the event sender after a commit that can hold run
 	// events.
 	sendWake chan struct{}
+	// writeBackWake wakes the write-back loop after a commit that can hold
+	// write-back steps.
+	writeBackWake chan struct{}
 }
 
 var errNotFound = errors.New("not found")
@@ -310,7 +345,7 @@ func openStore(path string, key []byte) (*store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &store{db: db, sealer: s, sendWake: make(chan struct{}, 1)}, nil
+	return &store{db: db, sealer: s, sendWake: make(chan struct{}, 1), writeBackWake: make(chan struct{}, 1)}, nil
 }
 
 func migrate(db *sql.DB) error {

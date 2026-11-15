@@ -382,3 +382,22 @@ func TestTheWrappersGitRunsInTheKillBoundaryAfterTheProjectDirectoryIsMade(t *te
 		t.Errorf("the project directory was not there when the run user's first process started: %q", project)
 	}
 }
+
+// The Stop hook runs as the run user, as the harness does: it reads the
+// harness's settings and changes the run state file of the Execution's
+// directory (root's), so it refuses a stop with no report.
+func TestTheRunUsersStopHookRefusesAStopWithNoReport(t *testing.T) {
+	needsRoot(t)
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), reply, stopStep([]string{reply}), result, waitForEnd)
+
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+
+	if got := kindsOf(t, feedback(t, env)); strings.Join(got, ", ") != "no report, no report" {
+		t.Errorf("refusals %q, want two for no report", got)
+	}
+	if e := onlyExecution(t, run); e.EndReason != dispatcherapi.EndNoReport {
+		t.Errorf("end reason %q", e.EndReason)
+	}
+}

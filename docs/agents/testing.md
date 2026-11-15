@@ -38,6 +38,7 @@ Day to day, run the tests for what you changed. Before a release, run all three 
    - Playwright, from `console/`, takes about 10 min:
      - Run `bin/rails db:migrate` first, so the dev database has any new migration.
      - Then run `bun run e2e --reporter=line`.
+     - `e2e/flows/runs.spec.ts` (Seam 5) builds the factory's flow stack (`factory/internal/flowstack`): the real Dispatcher and wrapper against the dev stack's Console and EventStore, with the Seam 3 fakes for the Runner, the Harness, the Forge and the Tracker. Its wrappers need a kill boundary, as the factory tests do: run the flows from a shell whose cgroup your user can write to (a delegated scope, as above). The dev stack's EventStore must be built from the same commit, as the factory calls its agent API.
 3. **Run the Rails suite after the Go suite has finished.** EventStore's root tests use Console's test database (they run `bin/rails db:reset` in `console/`), so the two suites can't run at once.
    - From `console/`, takes about 1 min:
 

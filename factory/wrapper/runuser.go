@@ -114,7 +114,8 @@ func (r runUser) give(path string) error {
 }
 
 // share makes path root's, with the run user's group: with a mode of
-// 0440, 0550 or 0750 the run user reads it and cannot change it.
+// 0440, 0550 or 0750 the run user reads it and cannot change it; with
+// 0660 it reads and writes the file, and cannot replace it.
 func (r runUser) share(path string, mode os.FileMode) error {
 	if r.changes() {
 		if err := os.Lchown(path, 0, r.gid); err != nil {
