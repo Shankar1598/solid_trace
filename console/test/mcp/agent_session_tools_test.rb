@@ -82,6 +82,15 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     assert call_tool(:list_agent_sessions, user: @member, run: "maybe").error?
   end
 
+  test "list_agent_sessions says when some Agent sessions were left out of the rows" do
+    stub_list(from: "2026-09-26T12:00:00.000Z", to: "2026-10-03T12:00:00.000Z", more: true)
+
+    got = call_tool(:list_agent_sessions, user: @member)
+
+    assert_not got.error?
+    assert_equal true, got.json["more"]
+  end
+
   test "list_agent_sessions says so when EventStore cannot answer" do
     stub_request(:post, "#{EventStore.base_url}/api/#{@agent.id}/agent-sessions").to_return(status: 500, body: "boom")
 
@@ -132,6 +141,15 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     assert_match "is not an Agent session id", call_tool(:get_agent_session, user: @member, agent_session: "../runs").text
   end
 
+  test "get_agent_session says so when EventStore cannot answer" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@agent.id}/agent-sessions/#{CART}").to_return(status: 500, body: "boom")
+
+    got = call_tool(:get_agent_session, user: @member, agent_session: CART)
+
+    assert got.error?
+    assert_match "Try again shortly", got.text
+  end
+
   # Both
 
   test "a user who is not a member of the Organization gets an error, and EventStore is not asked" do
@@ -166,7 +184,7 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     }
   end
 
-  def stub_list(from:, to:, **filters)
+  def stub_list(from:, to:, more: false, **filters)
     stub_request(:post, "#{EventStore.base_url}/api/#{@agent.id}/agent-sessions")
       .with(body: hash_including({ from: from, to: to }.merge(filters).stringify_keys))
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: {
@@ -174,7 +192,7 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
                           row(CART, user_id: @member.id, cost: 0.00174) ],
         totals: { agent_sessions: 2, input_tokens: 20, output_tokens: 100, cache_read_tokens: 2000, cache_write_tokens: 200,
                   cost_usd: 0.00174, no_cost: 1 },
-        more: false, repositories: [ "github.com/acme/shop" ],
+        more: more, repositories: [ "github.com/acme/shop" ],
       }.to_json)
   end
 
