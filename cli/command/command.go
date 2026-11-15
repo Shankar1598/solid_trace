@@ -128,6 +128,11 @@ Usage:
       The last report sets the Run's outcome. needs-a-person needs
       --question, and ends the Execution at once; a person's answer
       continues the Run.
+  solidtrace pr --title TEXT [--description TEXT]
+      Inside a Run only: push the Run's branch, and open its PR to the
+      base branch. Each later pr updates the title and description of
+      the same PR (a flag that you do not give stays as it is). pr never
+      merges.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -161,6 +166,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return schedules(ctx, args[1:], env)
 	case "report":
 		return report(ctx, args[1:], env)
+	case "pr":
+		return pr(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0

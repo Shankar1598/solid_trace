@@ -125,6 +125,9 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 		fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
 	}
 	fmt.Fprintf(tw, "Executions:\t%d\n", len(r.Executions))
+	if r.PRURL != "" {
+		fmt.Fprintf(tw, "PR:\t%s\n", r.PRURL)
+	}
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
 	tw.Flush()
 	fmt.Fprintf(out, "\nPrompt:\n%s\n", r.Prompt)

@@ -67,8 +67,31 @@ type Run struct {
 	Summary string `json:"summary,omitempty"`
 	// Executions are the Run's Executions, oldest first.
 	Executions []Execution `json:"executions,omitempty"`
+	// PRURL is the link of the Run's PR, from the agent's first pr call
+	// ("" when the Run has no PR).
+	PRURL string `json:"pr_url,omitempty"`
 	// URL is the Run's page in Console.
 	URL string `json:"url"`
+}
+
+// PRText is the agent's 'solidtrace pr' call: the title and the
+// description of the Run's PR. The first call opens the PR from the
+// Run's branch to its base branch, and needs a title. A later call
+// updates the same PR; an empty field stays as it is. The agent sends it
+// to the wrapper on the agent's socket; the wrapper pushes the Run's
+// branch, then sends the call to the Dispatcher for its own Execution.
+type PRText struct {
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// PR is the answer to a pr call: the Run's PR.
+type PR struct {
+	ID  int    `json:"id"`
+	URL string `json:"url"`
+	// Opened is true when this call opened the PR, and false when it
+	// updated it.
+	Opened bool `json:"opened"`
 }
 
 // Execution states.

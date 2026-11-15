@@ -166,6 +166,10 @@ var migrations = []string{
 	ALTER TABLE runs ADD COLUMN scheduled_by_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN scheduled_by_name TEXT NOT NULL DEFAULT '';
 	CREATE UNIQUE INDEX runs_by_fire ON runs (schedule_id, fired_at) WHERE schedule_id != '';`,
+	// The Run's PR (ticket 35): its id on the forge (0 = none) and its
+	// link.
+	`ALTER TABLE runs ADD COLUMN pr_id INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -293,14 +297,14 @@ func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
 }
 
 const runColumns = `id, organization_slug, project, prompt, state, started_by_kind, started_by_id, started_by_name,
-	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name`
+	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name, pr_url`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
 	var created int64
 	var scheduledBy dispatcherapi.Person
 	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.Kind, &r.StartedBy.ID,
-		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name)
+		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name, &r.PRURL)
 	r.CreatedAt = time.UnixMicro(created).UTC()
 	if scheduledBy.ID != "" {
 		r.ScheduledBy = &scheduledBy

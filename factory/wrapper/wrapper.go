@@ -149,6 +149,11 @@ type execution struct {
 	// startTip is the commit of the Run's branch after the setup: a push
 	// is necessary only when the branch moved.
 	startTip string
+	// prMu holds one pr call at a time, and the push before the end until
+	// a pr call's push ended. pushedTip is the commit that the last pr
+	// call pushed.
+	prMu      sync.Mutex
+	pushedTip string
 }
 
 // run sets up and runs the harness, then does the end procedure, and gives
@@ -255,7 +260,7 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 	if err := e.setup(ctx, environ); err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
-	server, err := e.serveSocket()
+	server, err := e.serveSocket(environ)
 	if err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
@@ -301,9 +306,10 @@ func harnessEnv(environ []string, socket string) []string {
 	return env
 }
 
-// serveSocket serves the agent's socket. A report goes to the Dispatcher
-// for this Execution only: what the agent sends names no Run.
-func (e *execution) serveSocket() (*http.Server, error) {
+// serveSocket serves the agent's socket. A report or a pr call goes to
+// the Dispatcher for this Execution only: what the agent sends names no
+// Run.
+func (e *execution) serveSocket(environ []string) (*http.Server, error) {
 	path := e.cfg.socket()
 	_ = os.Remove(path)
 	listener, err := net.Listen("unix", path)
@@ -316,6 +322,7 @@ func (e *execution) serveSocket() (*http.Server, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+agentsocket.ReportPath, e.report)
+	mux.HandleFunc("POST "+agentsocket.PRPath, func(w http.ResponseWriter, r *http.Request) { e.pr(w, r, environ) })
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "the agent's socket has no "+r.Method+" "+r.URL.Path)
 	})
@@ -353,6 +360,42 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 		case e.needsPerson <- struct{}{}:
 		default:
 		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(a.body)
+}
+
+// pr pushes the Run's branch, then sends the agent's pr call to the
+// Dispatcher, which opens or updates the Run's PR through its Forge.
+func (e *execution) pr(w http.ResponseWriter, r *http.Request, environ []string) {
+	var text dispatcherapi.PRText
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&text); err != nil {
+		writeProblem(w, http.StatusBadRequest, "the body must be a JSON object with title and description")
+		return
+	}
+	text = dispatcherapi.PRText{Title: text.Title, Description: text.Description}
+	e.prMu.Lock()
+	defer e.prMu.Unlock()
+	e.mu.Lock()
+	ending := e.ending
+	e.mu.Unlock()
+	if ending {
+		writeProblem(w, http.StatusConflict, "the Execution is ending: the wrapper pushes the Run's branch, and opens no PR now")
+		return
+	}
+	if err := e.pushForPR(r.Context(), environ); err != nil {
+		fmt.Fprintln(e.log, "wrapper: the push for a pr call:", err)
+		writeProblem(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	a, err := e.client.call(r.Context(), "pr", text)
+	if err != nil {
+		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the pr call: "+err.Error())
+		return
+	}
+	if a.status/100 != 2 {
+		writeProblem(w, a.status, a.message)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(a.body)
