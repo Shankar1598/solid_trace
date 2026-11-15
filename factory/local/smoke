@@ -22,6 +22,7 @@ pinned() { sed -n "s/^ARG $1=//p" "$here/agent-machine/Dockerfile"; }
 
 passed=0
 failed=0
+skipped=0
 check() {
   local name="$1" out status
   shift
@@ -31,6 +32,10 @@ check() {
   if [ "$status" = 0 ]; then
     echo "PASS  $name"
     passed=$((passed + 1))
+  elif [ "$status" = 77 ]; then
+    echo "SKIP  $name"
+    printf '%s\n' "$out" | grep '^skip: ' | sed 's/^/        /'
+    skipped=$((skipped + 1))
   else
     echo "FAIL  $name"
     printf '%s\n' "$out" | tail -n 15 | sed 's/^/        /'
@@ -38,6 +43,8 @@ check() {
   fi
 }
 want() { echo "want: $*" >&2; return 1; }
+# Stops a check that cannot be done here. The check is not counted as passed.
+skip() { echo "skip: $*" >&2; return 77; }
 
 # Runs a command on the agent machine as a user.
 as() { local user="$1"; shift; docker exec -i -u "$user" -w / "$machine" "$@"; }
@@ -304,13 +311,13 @@ solidtrace_on_the_host_only_through_squid() {
   headers="$(as agent curl -s -o /dev/null -D - --max-time 20 http://host.docker.internal:4000/)"
   code="$(awk 'NR == 1 { print $2 }' <<<"$headers")"
   ! grep -q -i 'X-Squid-Error: ERR_ACCESS_DENIED' <<<"$headers" || want "Squid to let host.docker.internal:4000 through, got: $headers"
-  if grep -q -i 'X-Squid-Error: ERR_CONNECT_FAIL' <<<"$headers"; then
-    echo "note: the dev EventStore is not running on the host; Squid let the request through and found no listener" >&2
-  else
-    [[ $code =~ ^[1-5][0-9][0-9]$ ]] || want "a reply from the dev EventStore, got: $headers"
-  fi
   [ "$(as agent curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://host.docker.internal:4001/)" = 403 ] || want "403 for the host's port 4001"
   [ "$(as agent curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://host.docker.internal:22/)" = 403 ] || want "403 for the host's port 22"
+  # Squid reaches the host only on an address that the bridge gateway reaches.
+  if ! ss -H -l -t -n "sport = :4000" | awk -v gw="$gateway" '$4 ~ "^(0\\.0\\.0\\.0|\\*|\\[::\\]|" gw "):4000$" { found = 1 } END { exit !found }'; then
+    skip "the dev EventStore does not listen on the host's port 4000 for the bridge ($gateway); the reply through Squid is not checked"
+  fi
+  [[ $code =~ ^[1-5][0-9][0-9]$ ]] && ! grep -q -i 'X-Squid-Error' <<<"$headers" || want "a reply from the dev EventStore through Squid, got: $headers"
 }
 
 squid_logs_each_host() {
@@ -360,5 +367,5 @@ done)"
 if [ -z "$left" ]; then echo "PASS  the stack is down, with no container, volume or network left (and none of the project in COMPOSE_PROJECT_NAME)"; passed=$((passed + 1)); else echo "FAIL  the stack left: $left"; failed=$((failed + 1)); fi
 if [ "$(dev_containers)" = "$dev_before" ]; then echo "PASS  the dev SolidTrace's containers did not change"; passed=$((passed + 1)); else echo "FAIL  the dev SolidTrace's containers changed"; failed=$((failed + 1)); fi
 
-echo "smoke: $passed passed, $failed failed"
+echo "smoke: $passed passed, $failed failed, $skipped skipped"
 [ "$failed" = 0 ]
