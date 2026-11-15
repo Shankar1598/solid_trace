@@ -36,7 +36,7 @@ func prRunWith(t *testing.T, d *Dispatcher, f *fakeforge.Forge, org, project, ru
 		t.Fatal(err)
 	}
 	if err := d.store.saveSettings(org, project, "shop", dispatcherapi.SaveFactorySettings{
-		Repository: "bitbucket.org/example/shop", BaseBranch: "main"}, connection, dana, now); err != nil {
+		Repository: "bitbucket.org/example/shop", BaseBranch: "main"}, connection, nil, dana, now); err != nil {
 		t.Fatal(err)
 	}
 	run := storedRun{Run: dispatcherapi.Run{ID: runID, Organization: "example", Project: "shop", Prompt: "Fix the cart",
