@@ -18,7 +18,7 @@ type executionHandler func(w http.ResponseWriter, r *http.Request, e storedExecu
 
 // wrapper checks that the request comes from the wrapper of the
 // Execution in the path: its Bearer token must be a workload identity JWT
-// that the Runner signed, with the subject that the Runner gave for that
+// that the Runner signed, of the workload that the Runner gave for that
 // Execution. Each other token gets 401, with the same answer, so a caller
 // learns nothing of other Executions.
 func (d *Dispatcher) wrapper(next executionHandler) http.HandlerFunc {
@@ -33,7 +33,7 @@ func (d *Dispatcher) wrapper(next executionHandler) http.HandlerFunc {
 			refuse("no token")
 			return
 		}
-		workload, err := d.identity.workload(r.Context(), strings.TrimSpace(token))
+		identity, err := d.identity.check(r.Context(), strings.TrimSpace(token))
 		if errors.Is(err, errBadIdentity) {
 			refuse(err.Error())
 			return
@@ -62,7 +62,23 @@ func (d *Dispatcher) wrapper(next executionHandler) http.HandlerFunc {
 			d.serverError(w, "read the Execution", err)
 			return
 		}
-		if e.workload == "" || e.workload != workload {
+		if e.workload == "" {
+			refuse("the Execution has no workload")
+			return
+		}
+		// The subject is not enough: on Nomad, each dispatch of a job has
+		// the same subject. The Runner finds the JWT's own workload.
+		workload, err := d.runner.Workload(r.Context(), identity)
+		if errors.Is(err, ErrUnknownWorkload) {
+			refuse(err.Error())
+			return
+		}
+		if err != nil {
+			d.log.Error("could not find the workload of a workload identity", "error", err)
+			writeProblem(w, http.StatusBadGateway, "the Dispatcher could not reach the Runner")
+			return
+		}
+		if workload != e.workload {
 			refuse("the JWT is of another workload")
 			return
 		}

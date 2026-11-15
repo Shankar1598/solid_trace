@@ -65,6 +65,8 @@ type Env struct {
 	Version string
 	// Runner is the fake Runner, with the Executions option (else nil).
 	Runner *Runner
+	// runner is a Runner that is not the fake (WithRunner).
+	runner dispatcher.Runner
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
@@ -112,7 +114,7 @@ func (e *Env) Project(slug string) recorder.Project {
 		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
 	}
 	settings := map[string]string{"repository": "bitbucket.org/example/" + slug}
-	if e.Runner != nil {
+	if e.Runner != nil || e.runner != nil {
 		e.Forge.AddRepo("example/"+slug, nil)
 		a := e.admin.API("PUT", "/api/v1/connections/"+ForgeConnection,
 			map[string]string{"kind": "bitbucket", "token": e.Forge.Token})
@@ -180,8 +182,11 @@ func (e *Env) start() {
 	e.t.Helper()
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil))}
-	if e.Runner != nil {
+	switch {
+	case e.Runner != nil:
 		options.Runner = e.Runner
+	case e.runner != nil:
+		options.Runner = e.runner
 	}
 	d, err := dispatcher.Open(e.Config, options)
 	if err != nil {
