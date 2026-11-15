@@ -2,7 +2,7 @@
 
 module Maintenance
   # Deletes outbox rows whose outcome is final: sent and skipped rows after a
-  # day, and failed rows at the attempt cap after a week. Also keeps only
+  # day, and failed rows at the attempt cap and refused rows after a week. Also keeps only
   # each Monitor's last MonitorRun::KEEP runs, and deletes the message
   # queue's rows after MESSAGE_RETENTION, whatever their status: a message
   # that old is no use even if it was never handled.

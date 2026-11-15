@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/solidtrace/factory/forge"
 )
@@ -17,8 +19,7 @@ import (
 // from a file and from the environment. The file holds NAME=value lines
 // with the same names as the environment (blank lines and lines that start
 // with # are not read), and a name in the environment wins over the file.
-// Later tickets add the default allowlist, the checkpoint interval and the
-// trigger word.
+// Later tickets add the checkpoint interval and the trigger word.
 type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
@@ -47,11 +48,24 @@ type Config struct {
 	// https://factory.example.com: the base of each connection's webhook
 	// URL that the Dispatcher shows ("" shows none).
 	WebhookURL string
+	// SenderStartsPerMinute is the most Runs that one sender of the
+	// generic webhook can start in a minute (0 is
+	// DefaultSenderStartsPerMinute). SenderActiveRuns is the most Runs of
+	// one sender with an Execution queued or live (0 is
+	// DefaultSenderActiveRuns). Above each, a delivery gets 429.
+	SenderStartsPerMinute int
+	SenderActiveRuns      int
 	// BitbucketAPIURL and BitbucketGitURL are the bases of Bitbucket
 	// Cloud's REST API and clone URLs ("" is Bitbucket Cloud's own). The
 	// tests set them to the fake Forge.
 	BitbucketAPIURL string
 	BitbucketGitURL string
+	// LinearAPIURL is the base of Linear's API and token endpoint ("" is
+	// Linear's own). The tests set it to the fake Linear.
+	LinearAPIURL string
+	// NotionAPIURL is the base of Notion's API ("" is Notion's own). The
+	// tests set it to the fake Notion.
+	NotionAPIURL string
 	// WIPRefs is the place of the work-in-progress refs: refs/agent-wip
 	// (the default), or refs/heads/agent-wip for a forge that refuses refs
 	// outside refs/heads (the fallback of cluster check 12).
@@ -78,8 +92,46 @@ type Config struct {
 	// WrapperCommand is the path of the wrapper on an agent machine.
 	WrapperCommand string
 
+	// SquidAllowlist is the allowlist file that Squid reads: the
+	// Dispatcher writes it, and runs SquidReload when it changes ("" is
+	// none: the operator keeps the allowlist). DefaultAllowlist is the
+	// operator's default list (one Squid dstdomain on each line, # starts
+	// a comment), such as the reference configuration's
+	// reference/squid/allowlist.txt. SquidReload is a shell command
+	// (DefaultSquidReload when "").
+	SquidAllowlist   string
+	DefaultAllowlist string
+	SquidReload      string
+
+	// ScheduleMinInterval is the shortest time between two fire times of a
+	// schedule, checked at save (DefaultScheduleMinInterval when 0).
+	ScheduleMinInterval time.Duration
+
+	// scheduleMinIntervalProblem is why EnvScheduleMinInterval could not
+	// be read.
+	scheduleMinIntervalProblem string
 	// machineKindsProblem is why EnvMachineKinds could not be read.
 	machineKindsProblem string
+	// limitProblems are the sender limits that could not be read.
+	limitProblems []string
+}
+
+// The default limits of each sender of the generic webhook.
+const (
+	DefaultSenderStartsPerMinute = 10
+	DefaultSenderActiveRuns      = 5
+)
+
+// parseLimit reads a whole number of 1 or more ("" is 0, the default).
+func parseLimit(name, value string) (int, string) {
+	if strings.TrimSpace(value) == "" {
+		return 0, ""
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 1 {
+		return 0, name + " must be a whole number of 1 or more, not " + fmt.Sprintf("%q", value)
+	}
+	return n, ""
 }
 
 // parseMachineKinds reads a list of name=memory (MB).
@@ -148,6 +200,8 @@ const (
 	EnvWebhookURL      = "DISPATCHER_WEBHOOK_URL"
 	EnvBitbucketAPIURL = "DISPATCHER_BITBUCKET_API_URL"
 	EnvBitbucketGitURL = "DISPATCHER_BITBUCKET_GIT_URL"
+	EnvLinearAPIURL    = "DISPATCHER_LINEAR_API_URL"
+	EnvNotionAPIURL    = "DISPATCHER_NOTION_API_URL"
 	EnvWIPRefs         = "DISPATCHER_WIP_REFS"
 	EnvNomadAddress    = "DISPATCHER_NOMAD_ADDR"
 	EnvNomadToken      = "DISPATCHER_NOMAD_TOKEN"
@@ -158,7 +212,31 @@ const (
 	EnvDefaultMachineKind = "DISPATCHER_DEFAULT_MACHINE_KIND"
 	EnvWrapperURL         = "DISPATCHER_WRAPPER_URL"
 	EnvWrapperCommand     = "DISPATCHER_WRAPPER_COMMAND"
+	EnvSquidAllowlist     = "DISPATCHER_SQUID_ALLOWLIST"
+	EnvDefaultAllowlist   = "DISPATCHER_DEFAULT_ALLOWLIST"
+	EnvSquidReload        = "DISPATCHER_SQUID_RELOAD"
+	// EnvScheduleMinInterval is a Go duration, such as 1h or 30m.
+	EnvScheduleMinInterval = "DISPATCHER_SCHEDULE_MIN_INTERVAL"
 )
+
+// EnvSenderStartsPerMinute and EnvSenderActiveRuns are the limits of each
+// sender of the generic webhook.
+const (
+	EnvSenderStartsPerMinute = "DISPATCHER_SENDER_STARTS_PER_MINUTE"
+	EnvSenderActiveRuns      = "DISPATCHER_SENDER_ACTIVE_RUNS"
+)
+
+// DefaultScheduleMinInterval is the shortest time between two fire times
+// of a schedule when the operator sets none.
+const DefaultScheduleMinInterval = time.Hour
+
+// scheduleMinInterval is the minimum that a save checks.
+func (c Config) scheduleMinInterval() time.Duration {
+	if c.ScheduleMinInterval > 0 {
+		return c.ScheduleMinInterval
+	}
+	return DefaultScheduleMinInterval
+}
 
 // DefaultListen is the private listener's address when none is set.
 const DefaultListen = "127.0.0.1:7600"
@@ -192,6 +270,8 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		WebhookURL:          strings.TrimRight(value(EnvWebhookURL), "/"),
 		BitbucketAPIURL:     strings.TrimRight(value(EnvBitbucketAPIURL), "/"),
 		BitbucketGitURL:     strings.TrimRight(value(EnvBitbucketGitURL), "/"),
+		LinearAPIURL:        strings.TrimRight(value(EnvLinearAPIURL), "/"),
+		NotionAPIURL:        strings.TrimRight(value(EnvNotionAPIURL), "/"),
 		WIPRefs:             value(EnvWIPRefs),
 
 		NomadAddress:       strings.TrimRight(value(EnvNomadAddress), "/"),
@@ -200,8 +280,28 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		DefaultMachineKind: value(EnvDefaultMachineKind),
 		WrapperURL:         strings.TrimRight(value(EnvWrapperURL), "/"),
 		WrapperCommand:     value(EnvWrapperCommand),
+		SquidAllowlist:     value(EnvSquidAllowlist),
+		DefaultAllowlist:   value(EnvDefaultAllowlist),
+		SquidReload:        value(EnvSquidReload),
 	}
 	c.MachineKinds, c.machineKindsProblem = parseMachineKinds(value(EnvMachineKinds))
+	for _, limit := range []struct {
+		name string
+		into *int
+	}{{EnvSenderStartsPerMinute, &c.SenderStartsPerMinute}, {EnvSenderActiveRuns, &c.SenderActiveRuns}} {
+		var problem string
+		if *limit.into, problem = parseLimit(limit.name, value(limit.name)); problem != "" {
+			c.limitProblems = append(c.limitProblems, problem)
+		}
+	}
+	if v := value(EnvScheduleMinInterval); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			c.scheduleMinIntervalProblem = EnvScheduleMinInterval + " (the shortest time between two fire times " +
+				"of a schedule) must be a duration such as 1h or 30m, not " + fmt.Sprintf("%q", v)
+		}
+		c.ScheduleMinInterval = d
+	}
 	if c.WrapperCommand == "" {
 		c.WrapperCommand = DefaultWrapperCommand
 	}
@@ -213,6 +313,9 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 	}
 	if c.BitbucketGitURL == "" {
 		c.BitbucketGitURL = forge.BitbucketGitURL
+	}
+	if c.NotionAPIURL == "" {
+		c.NotionAPIURL = NotionAPIURL
 	}
 	if c.WIPRefs == "" {
 		c.WIPRefs = forge.WIPOutsideBranches
@@ -240,8 +343,8 @@ func (c Config) Check() error {
 	} else if _, err := c.encryptionKey(); err != nil {
 		problems = append(problems, err.Error())
 	}
-	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL,
-		EnvIngestURL: c.SolidTraceIngestURL, EnvWebhookURL: c.WebhookURL} {
+	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL, EnvLinearAPIURL: c.LinearAPIURL,
+		EnvNotionAPIURL: c.NotionAPIURL, EnvIngestURL: c.SolidTraceIngestURL, EnvWebhookURL: c.WebhookURL} {
 		if u, err := url.Parse(v); v != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
 			problems = append(problems, name+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", v))
 		}
@@ -250,12 +353,30 @@ func (c Config) Check() error {
 		problems = append(problems, EnvWIPRefs+" (the place of the work-in-progress refs) must be "+
 			forge.WIPOutsideBranches+" or "+forge.WIPInBranches+", not "+fmt.Sprintf("%q", c.WIPRefs))
 	}
+	problems = append(problems, c.limitProblems...)
+	if c.SenderStartsPerMinute < 0 || c.SenderActiveRuns < 0 {
+		problems = append(problems, EnvSenderStartsPerMinute+" and "+EnvSenderActiveRuns+" must be 1 or more")
+	}
+	if c.scheduleMinIntervalProblem != "" {
+		problems = append(problems, c.scheduleMinIntervalProblem)
+	}
+	if c.SquidAllowlist != "" && c.DefaultAllowlist == "" {
+		problems = append(problems, EnvDefaultAllowlist+" (the default allowlist, such as the reference "+
+			"configuration's squid/allowlist.txt) is not set, and "+EnvSquidAllowlist+" is")
+	}
 	problems = append(problems, c.nomadProblems()...)
 	if len(problems) > 0 {
 		return errors.New("the operator configuration is not complete: " + strings.Join(problems, "; ") +
 			". Set each in the configuration file or the environment")
 	}
 	return nil
+}
+
+// senderLimits are the limits of each sender: starts in a minute, and Runs
+// with an Execution queued or live.
+func (c Config) senderLimits() (starts, active int) {
+	return cmp.Or(c.SenderStartsPerMinute, DefaultSenderStartsPerMinute),
+		cmp.Or(c.SenderActiveRuns, DefaultSenderActiveRuns)
 }
 
 // ingestURL is where the wrappers upload.

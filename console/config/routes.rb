@@ -160,8 +160,18 @@ Rails.application.routes.draw do
         end
       end
 
-      # The Factory section: the Project's Factory settings, at the Dispatcher.
-      resource :factory, only: [ :update ], controller: "factory_settings"
+      # The Factory section: the Project's Factory settings, tracker routes
+      # and schedules, at the Dispatcher. Console has no form to make a
+      # schedule: the CLI makes them.
+      resource :factory, only: [ :update ], controller: "factory_settings" do
+        resource :routes, only: [ :create, :destroy ], controller: "factory_routes"
+        resources :schedules, only: [], controller: "factory_schedules", constraints: { id: /[A-Za-z0-9_-]{1,64}/ } do
+          member do
+            post :pause
+            post :continue
+          end
+        end
+      end
 
       resource :log_transform, only: [ :show, :update ] do
         post :check

@@ -11,7 +11,7 @@ import (
 )
 
 // maxReportText is the longest summary or question that a report keeps.
-// The full text also goes to evidence/report.md (ticket 36).
+// The full text also goes to evidence/report.md (the wrapper writes it).
 const maxReportText = 64 << 10
 
 type executionHandler func(w http.ResponseWriter, r *http.Request, e storedExecution)
@@ -103,13 +103,6 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "read the Factory settings", err)
 		return
 	}
-	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
-	cloneURL, err := (&forge.Bitbucket{GitURL: d.config.BitbucketGitURL}).CloneURL(settings.Repository)
-	if err != nil {
-		d.endByDispatcher(e.id, err.Error(), nil)
-		writeProblem(w, http.StatusConflict, err.Error())
-		return
-	}
 	var token string
 	if settings.Connection != "" {
 		if token, err = d.store.connectionToken(e.organizationID, settings.Connection); err != nil {
@@ -117,13 +110,35 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 			return
 		}
 	}
-	run, err := d.store.startExecution(e.id, d.now())
+	file, err := d.store.factoryFile(e.id)
+	if err != nil {
+		d.serverError(w, "read the Execution's factory file", err)
+		return
+	}
+	run, err := d.store.startExecution(e.id, d.now(), file.limits())
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, errEnded.Error())
 		return
 	}
 	if err != nil {
 		d.serverError(w, "start the Execution", err)
+		return
+	}
+	// Each part of the checkout is the Run's. A Run from before the
+	// Dispatcher kept the repository uses the settings' repository.
+	repository := run.repository
+	if repository == "" {
+		repository = settings.Repository
+	}
+	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
+	gitURL := strings.TrimRight(d.config.BitbucketGitURL, "/")
+	if gitURL == "" {
+		gitURL = forge.BitbucketGitURL
+	}
+	cloneURL, err := (&forge.Bitbucket{GitURL: gitURL}).CloneURL(repository)
+	if err != nil {
+		d.endByDispatcher(e.id, err.Error(), nil)
+		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
 	uploads, err := d.sessionToken(r.Context(), e, run.startedAt)
@@ -141,17 +156,24 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		RunID:         e.runID,
 		ExecutionID:   e.id,
 		Prompt:        run.prompt,
-		Repository:    settings.Repository,
+		Repository:    repository,
 		CloneURL:      cloneURL,
-		BaseBranch:    settings.BaseBranch,
+		BaseBranch:    run.baseBranch,
+		Branch:        dispatcherapi.RunBranch(e.runID),
+		GitURL:        gitURL,
+		Project:       run.project,
+		Folder:        run.folder,
 		ForgeUsername: forge.BitbucketTokenUser,
 		ForgeToken:    token,
 		SessionID:     run.sessionID,
 		Resume:        run.resume,
-		Project:       settings.Project,
-		Folder:        settings.Folder,
 		IngestURL:     d.config.ingestURL(),
+		Limits:        run.limits,
 		Uploads:       uploads,
+		FactoryFile:   file.Path,
+		Setup:         file.Setup,
+		Checks:        file.Checks,
+		SaveExclude:   file.SaveExclude,
 	})
 }
 
@@ -164,7 +186,11 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 	}
 	report.Summary = strings.TrimSpace(report.Summary)
 	report.Question = strings.TrimSpace(report.Question)
-	if problem := checkReport(report); problem != "" {
+	problem := checkReport(report)
+	if problem == "" {
+		problem = checkEvidence(report)
+	}
+	if problem != "" {
 		writeProblem(w, http.StatusBadRequest, problem)
 		return
 	}
@@ -177,6 +203,7 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 		d.serverError(w, "keep the report", err)
 		return
 	}
+	d.afterReport(e)
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -209,7 +236,7 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
-		dispatcherapi.EndSetupFailed:
+		dispatcherapi.EndSetupFailed, dispatcherapi.EndStopped, dispatcherapi.EndTimeout:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
 		return

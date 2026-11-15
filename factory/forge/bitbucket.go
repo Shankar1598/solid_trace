@@ -186,15 +186,95 @@ func (b *Bitbucket) PR(ctx context.Context, repository string, id int) (PR, erro
 	return out.pr(), err
 }
 
+// DefaultBranchFile reads the repository's main branch (GET
+// /repositories/{workspace}/{repo_slug}), its commit (GET
+// .../refs/branches/{name}), then each path at that commit (GET
+// .../src/{commit}/{path}) until one is there.
+func (b *Bitbucket) DefaultBranchFile(ctx context.Context, repository string, paths ...string) (string, []byte, error) {
+	const action = "read the factory file"
+	var repo struct {
+		MainBranch struct {
+			Name string `json:"name"`
+		} `json:"mainbranch"`
+	}
+	if err := b.call(ctx, action, repository, http.MethodGet, "", nil, &repo); err != nil {
+		return "", nil, err
+	}
+	if repo.MainBranch.Name == "" {
+		// An empty repository has no main branch, so it has no file.
+		return "", nil, nil
+	}
+	var branch struct {
+		Target struct {
+			Hash string `json:"hash"`
+		} `json:"target"`
+	}
+	if err := b.call(ctx, action, repository, http.MethodGet, "/refs/branches/"+escapePath(repo.MainBranch.Name), nil, &branch); err != nil {
+		return "", nil, err
+	}
+	if !objectID(branch.Target.Hash) {
+		return "", nil, &Error{Forge: "Bitbucket", Action: action, Repository: repository,
+			Message: "the main branch " + repo.MainBranch.Name + " has no commit hash in Bitbucket's answer"}
+	}
+	for _, path := range paths {
+		data, err := b.send(ctx, action, repository, http.MethodGet, "/src/"+branch.Target.Hash+"/"+escapePath(path), nil)
+		var fe *Error
+		if errors.As(err, &fe) && fe.Status == http.StatusNotFound {
+			continue
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		return path, data, nil
+	}
+	return "", nil, nil
+}
+
+// escapePath escapes each part of a slash-separated path.
+func escapePath(path string) string {
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
+// objectID tells if s is a full git object id in hex.
+func objectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // maxAnswer is the most of an answer that the Forge reads.
 const maxAnswer = 4 << 20
 
 // call sends one API request about the repository and decodes the
 // answer into out. Each failure is an *Error.
 func (b *Bitbucket) call(ctx context.Context, action, repository, method, path string, body, out any) error {
-	workspace, name, err := b.split(repository)
+	data, err := b.send(ctx, action, repository, method, path, body)
 	if err != nil {
 		return err
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return &Error{Forge: "Bitbucket", Action: action, Repository: repository,
+			Message: "Bitbucket's answer is not the JSON that the factory knows: " + err.Error()}
+	}
+	return nil
+}
+
+// send sends one API request about the repository and gives the answer's
+// body. Each failure is an *Error.
+func (b *Bitbucket) send(ctx context.Context, action, repository, method, path string, body any) ([]byte, error) {
+	workspace, name, err := b.split(repository)
+	if err != nil {
+		return nil, err
 	}
 	fail := func(status int, message, hint string) error {
 		return &Error{Forge: "Bitbucket", Action: action, Repository: repository, Status: status, Message: message, Hint: hint}
@@ -203,16 +283,18 @@ func (b *Bitbucket) call(ctx context.Context, action, repository, method, path s
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return fail(0, "the request is not JSON: "+err.Error(), "")
+			return nil, fail(0, "the request is not JSON: "+err.Error(), "")
 		}
 		reader = bytes.NewReader(data)
 	}
 	target := b.apiURL() + "/repositories/" + url.PathEscape(workspace) + "/" + url.PathEscape(name) + path
 	req, err := http.NewRequestWithContext(ctx, method, target, reader)
 	if err != nil {
-		return fail(0, err.Error(), "")
+		return nil, fail(0, err.Error(), "")
 	}
-	req.Header.Set("Authorization", "Bearer "+b.Token)
+	if b.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+b.Token)
+	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -223,20 +305,17 @@ func (b *Bitbucket) call(ctx context.Context, action, repository, method, path s
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fail(0, "Bitbucket did not answer: "+b.scrub(err.Error()), "Try again later; if it stays, check the network to Bitbucket")
+		return nil, fail(0, "Bitbucket did not answer: "+b.scrub(err.Error()), "Try again later; if it stays, check the network to Bitbucket")
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
 	if err != nil {
-		return fail(0, "Bitbucket's answer stopped: "+b.scrub(err.Error()), "Try again later")
+		return nil, fail(0, "Bitbucket's answer stopped: "+b.scrub(err.Error()), "Try again later")
 	}
 	if resp.StatusCode/100 != 2 {
-		return fail(resp.StatusCode, b.scrub(errorMessage(resp.StatusCode, data)), hint(resp.StatusCode))
+		return nil, fail(resp.StatusCode, b.scrub(errorMessage(resp.StatusCode, data)), hint(resp.StatusCode))
 	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return fail(0, "Bitbucket's answer is not the JSON that the factory knows: "+err.Error(), "")
-	}
-	return nil
+	return data, nil
 }
 
 // scrub removes the token from a text, so that no reason holds it.

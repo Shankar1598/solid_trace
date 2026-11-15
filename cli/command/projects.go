@@ -115,9 +115,14 @@ func orText(value, none string) string {
 // bitbucket', which reads the token from stdin, and 'connections
 // webhook-secret NAME', which reads the webhook secret from stdin, so that
 // neither is in the shell's history or in the list of processes.
+// 'connections add linear NAME' installs the Linear app (addLinear).
 func connections(ctx context.Context, args []string, env Env) int {
 	const use = "solidtrace connections: give list, set NAME --kind bitbucket with the token on stdin, " +
-		"or webhook-secret NAME with the webhook secret on stdin"
+		"webhook-secret NAME with the webhook secret on stdin, " +
+		"or add linear NAME --client-id ID with the client secret on stdin"
+	if len(args) > 0 && args[0] == "add" {
+		return addLinear(ctx, args[1:], env)
+	}
 	if len(args) == 0 || (args[0] != "list" && args[0] != "set" && args[0] != "webhook-secret") {
 		fmt.Fprintln(env.Stderr, use)
 		return 2

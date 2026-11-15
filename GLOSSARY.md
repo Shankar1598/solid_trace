@@ -173,15 +173,15 @@ EventStore's memory of a **Chart**'s time bins of hours that have ended, so a Ch
 _Avoid_: query cache, result cache
 
 **Integration**:
-An outbound notification target owned by an organization.
+An outbound notification target owned by an organization. Its provider is Slack, PagerDuty, email, or the **Factory** provider, which starts a **Run** for each **Issue** or **Monitor** group that it is told about, through a **Webhook sender** that Console makes at the **Dispatcher**. The Factory provider has no URL field.
 _Avoid_: webhook config, notifier job
 
 **Notification**:
-A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
+A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, refused by a receiver that will never take it (the **Factory** provider's 4xx other than 429, which is not retried), or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
 _Avoid_: notification event, alert, event type
 
 **Integration notification**:
-The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches, and each group of a Monitor in order.
+The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches (one at a time to the **Factory** provider, which starts a **Run** for each), and each group of a Monitor in order.
 _Avoid_: notifier, integration notifier
 
 **Organization**:
@@ -316,6 +316,14 @@ _Avoid_: scrub rule, secret filter
 A **Project**'s settings for the **Factory**: its repository and folder, the branch its Runs start from when none is given, and which tracker tickets go to it.
 _Avoid_: factory config, factory.yaml
 
+**Factory file**:
+The file `.solidtrace/factory.toml` in a repository that says how the **Factory** works on it: the machine kind, the setup command, the named check commands, the extra hosts that agents can reach, the time limits of an **Execution** and more patterns that a work-in-progress save leaves out. The **Dispatcher** reads it from the default branch only, from the **Project**'s folder first and then from the root, when it starts each Execution, so a change applies after a person merges it. A file with an error fails the **Run** with the reason.
+_Avoid_: factory config, factory.yaml, Factory settings (those are in the Dispatcher)
+
+**Webhook sender**:
+A tool that starts **Runs** with signed requests to the **Dispatcher**'s generic webhook, with the secret that an Admin got when they made it. It belongs to one **Organization**, can be limited to some of its **Projects**, and is the actor of the Runs that it starts. A Log sender is not a Webhook sender.
+_Avoid_: webhook client, integration (alone)
+
 **Evidence**:
 What a **Run** shows to prove its work: the checks that the factory's tool ran, with their results and the end of their output, and the files that the agent attached.
 _Avoid_: proof, test results (alone)
@@ -323,6 +331,10 @@ _Avoid_: proof, test results (alone)
 **Take-over**:
 A person's move from steering a **Run** by messages to working in its **Agent session** at a terminal. It continues the same Agent session in a new **Execution**.
 _Avoid_: attach, hijack
+
+**Schedule**:
+A **Project**'s trigger in the **Dispatcher** that starts a **Run** with its prompt at each fire time of its five-field cron expression, in its time zone. A member makes it, and can pause and continue it. A fire time while its last Run is an **Active Run** starts no Run.
+_Avoid_: cron job, timer, scheduled task
 
 ## Relationships
 

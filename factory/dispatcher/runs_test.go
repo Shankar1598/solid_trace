@@ -149,6 +149,14 @@ func TestAPersonOfAnotherOrganizationGetsNoRun(t *testing.T) {
 			t.Errorf("another Organization's GET %s: %d %s, want 403 with no Run", path, a.Status, a.Body)
 		}
 	}
+	if a := other.API("POST", "/api/v1/runs/"+id+"/stop", nil); a.Status != http.StatusForbidden {
+		t.Errorf("another Organization's stop: %d %s, want 403", a.Status, a.Body)
+	}
+	var run dispatcherapi.Run
+	ana.API("GET", "/api/v1/runs/"+id, nil).JSON(t, &run)
+	if run.State != dispatcherapi.StateQueued {
+		t.Errorf("after another Organization's stop the Run is %s (%s), want queued", run.State, run.Reason)
+	}
 }
 
 func TestTheAPIRefusesNoTokenAndATokenThatIsNotActive(t *testing.T) {
@@ -179,6 +187,17 @@ func TestStartRefusesARunWithNoProjectOrPrompt(t *testing.T) {
 	}
 	if r := ana.CLI("start", "--dispatcher", env.URL(), "--project", "checkout"); r.Code != 2 {
 		t.Errorf("start with no prompt: exit %d, want 2", r.Code)
+	}
+}
+
+func TestStartRefusesABaseBranchThatIsNotABranchName(t *testing.T) {
+	env := newEnv(t)
+	ana := env.Member("Ana")
+	for _, branch := range []string{"../main", "-x", "main.lock", "a b"} {
+		a := ana.API("POST", "/api/v1/runs", dispatcherapi.StartRun{Project: "checkout", Prompt: "Fix it", Branch: branch})
+		if a.Status != http.StatusBadRequest || !strings.Contains(string(a.Body), "branch name") {
+			t.Errorf("branch %q: %d %s, want 400", branch, a.Status, a.Body)
+		}
 	}
 }
 

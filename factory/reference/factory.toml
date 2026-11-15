@@ -1,0 +1,37 @@
+# An example factory file. Put it at .solidtrace/factory.toml in the
+# repository, in the Project's folder or at the root (the folder's file
+# wins). The Dispatcher reads it from the default branch only, when it
+# starts each Execution: a change applies after a person merges it. A
+# file with an error fails the Run with the reason. Each key is optional.
+
+# The kind of agent machine (one of the operator's kinds). With none, the
+# operator's default kind.
+machine_kind = "standard"
+
+# The setup command. The wrapper runs it with sh -c in the Project's
+# folder, after the checkout and before the agent starts. A failure fails
+# the Run with its exit status and the end of its output.
+setup = "bin/setup"
+
+# More hosts that the agent machines can reach through Squid. A wildcard
+# such as *.example.com (or .example.com) also matches example.com.
+# No IP addresses, ports, schemes or paths.
+allowed_hosts = ["api.stripe.com", "*.example.com"]
+
+# More patterns (gitignore syntax) that a work-in-progress save leaves out.
+save_exclude = ["tmp/", "*.log"]
+
+# The time limits of an Execution: with no event on the agent's output
+# stream (default 30m), and in total (default 8h). Each is 1m or more.
+[limits]
+idle = "45m"
+total = "12h"
+
+# The named check commands that 'solidtrace check' runs.
+[[checks]]
+name = "test"
+command = "go test ./..."
+
+[[checks]]
+name = "lint"
+command = "golangci-lint run"

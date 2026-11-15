@@ -185,8 +185,9 @@ func TestTheWrapperAsRootRefusesARunUserThatIsRootOrCanChangeItsDirectory(t *tes
 			if code != 2 || !strings.Contains(stderr, c.want) {
 				t.Errorf("exit %d, stderr %q; want 2 and %q", code, stderr, c.want)
 			}
-			if _, err := os.Stat(filepath.Join(dir, "checkout")); !os.IsNotExist(err) {
-				t.Error("the wrapper cloned")
+			// The setup makes secrets/ first.
+			if _, err := os.Stat(filepath.Join(dir, "secrets")); !os.IsNotExist(err) {
+				t.Error("the wrapper went on to the setup")
 			}
 		})
 	}
@@ -290,10 +291,17 @@ func TestALinkThatTheRunUserPutsInPlaceOfTheProjectDirectoryMovesNoUpload(t *tes
 			t.Fatal(err)
 		}
 	}
-	project := env.Runner.ProjectDir(execution)
+	// The project directory is <home>/.claude/projects/<name>.
+	var project string
 	waitUntil(t, "the agent put the link in place", func() bool {
-		target, err := os.Readlink(project)
-		return err == nil && target == outside
+		dirs, _ := filepath.Glob(filepath.Join(env.Runner.Home(execution), ".claude", "projects", "*"))
+		for _, dir := range dirs {
+			if target, err := os.Readlink(dir); err == nil && target == outside {
+				project = dir
+				return true
+			}
+		}
+		return false
 	})
 	if err := os.WriteFile(project+".ready", nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -322,10 +330,9 @@ func TestALinkThatTheRunUserPutsInPlaceOfTheProjectDirectoryMovesNoUpload(t *tes
 }
 
 // The wrapper's git runs as the run user in the Execution's kill
-// boundary: a hook from the run user's git configuration (a home that an
-// earlier Execution changed) starts in the child cgroup, so the end kills
-// each process that it leaves (the end's own cases check the kill). The
-// project directory is there before the
+// boundary: a hook from the machine's git configuration starts in the
+// child cgroup, so the end kills each process that it leaves (the end's
+// own cases check the kill). The project directory is there before the
 // first process of the run user starts: root makes nothing after it.
 func TestTheWrappersGitRunsInTheKillBoundaryAfterTheProjectDirectoryIsMade(t *testing.T) {
 	out, err := os.MkdirTemp("", "git-hook-")
@@ -343,7 +350,7 @@ func TestTheWrappersGitRunsInTheKillBoundaryAfterTheProjectDirectoryIsMade(t *te
 	}
 	hook := "#!/bin/sh\nout='" + out + "'\n" +
 		`cat /proc/self/cgroup >"$out/cgroup"` + "\n" +
-		`ls -d "$PWD"/../claude/projects/*/evidence >"$out/project" 2>&1` + "\n"
+		`ls -d "$HOME"/.claude/projects/*/evidence >"$out/project" 2>&1` + "\n"
 	if err := os.WriteFile(filepath.Join(hooks, "post-checkout"), []byte(hook), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +358,8 @@ func TestTheWrappersGitRunsInTheKillBoundaryAfterTheProjectDirectoryIsMade(t *te
 	if err := os.WriteFile(config, []byte("[core]\n\thooksPath = "+hooks+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	// The wrapper gives git the run user's own global configuration.
+	t.Setenv("GIT_CONFIG_SYSTEM", config)
 	env, ana := newEnv(t)
 	env.Runner.Agent(takeTask, initLine(t), reply, reportStep("--outcome", "done", "--summary", "Fixed"), result, waitForEnd)
 

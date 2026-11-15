@@ -145,10 +145,10 @@ func onlyExecution(t *testing.T, run dispatcherapi.Run) dispatcherapi.Execution 
 func TestARunIsRunningWhenItsExecutionStartsAndDoneWhenTheAgentReportsDone(t *testing.T) {
 	env, ana := newEnv(t)
 	wait, open := gate(t)
-	// The agent checks that it works in a clone of the base branch whose
+	// The agent checks that it works on the Run's branch, from the base branch, in a clone whose
 	// remote URL holds no token, then reports.
 	env.Runner.Agent(takeTask, initLine(t), wait,
-		shell(`test -f README.md && test "$(git rev-parse --abbrev-ref HEAD)" = main && `+
+		shell(`test -f README.md && git rev-parse --abbrev-ref HEAD | grep -q "^agent/" && git merge-base --is-ancestor origin/main HEAD && `+
 			`! git remote get-url origin | grep -q @ && `+
 			`solidtrace report --outcome done --summary "Fixed the flaky cart test"`),
 		reply, result, waitForEnd)

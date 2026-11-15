@@ -36,6 +36,11 @@ func (s *store) settings(organizationID, projectID string) (storedSettings, erro
 	if errors.Is(err, sql.ErrNoRows) {
 		return settings, errNotFound
 	}
+	if err != nil {
+		return settings, err
+	}
+	routes, err := s.routesOf(organizationID)
+	settings.Routes = listOf(routes[projectID])
 	return settings, err
 }
 
@@ -56,15 +61,29 @@ func (s *store) allSettings(organizationID string) ([]storedSettings, error) {
 		}
 		all = append(all, settings)
 	}
-	return all, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	routes, err := s.routesOf(organizationID)
+	for i := range all {
+		all[i].Routes = listOf(routes[all[i].projectID])
+	}
+	return all, err
 }
 
-// saveSettings replaces the Factory settings of a Project. A save is of a
-// Project that SolidTrace has, so it is no longer orphaned.
+// saveSettings replaces the Factory settings of a Project, and its routes
+// unless routes is nil. A save is of a Project that SolidTrace has, so it
+// is no longer orphaned. A route that another Project has is a
+// *routeTaken.
 func (s *store) saveSettings(organizationID, projectID, slug string, save dispatcherapi.SaveFactorySettings,
-	connectionID string, by person, at time.Time) error {
+	connectionID string, routes []storedRoute, by person, at time.Time) error {
 	connection := sql.NullString{String: connectionID, Valid: connectionID != ""}
-	_, err := s.db.Exec(`INSERT INTO factory_settings (project_id, organization_id, project_slug, repository, folder,
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO factory_settings (project_id, organization_id, project_slug, repository, folder,
 		base_branch, connection_id, orphaned_at, updated_at, updated_by_id, updated_by_name)
 		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
 		ON CONFLICT (project_id) DO UPDATE SET organization_id = excluded.organization_id,
@@ -74,7 +93,13 @@ func (s *store) saveSettings(organizationID, projectID, slug string, save dispat
 			updated_by_name = excluded.updated_by_name`,
 		projectID, organizationID, slug, save.Repository, save.Folder, save.BaseBranch, connection,
 		at.UnixMicro(), by.id, by.name)
-	return err
+	if err == nil && routes != nil {
+		err = saveRoutes(tx, projectID, routes)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // followSlug keeps the slug that SolidTrace gives now for a Project.
@@ -150,13 +175,16 @@ func (s *store) saveConnection(organizationID, name, kind, token string, by pers
 type storedConnection struct {
 	dispatcherapi.Connection
 	id string
+	// tracker is the saved tracker settings ("" values for the kind's
+	// defaults).
+	tracker dispatcherapi.TrackerSettings
 }
 
 // connections reads the Organization's connections, by name, with no
 // token and no webhook secret.
 func (s *store) connections(organizationID string) ([]storedConnection, error) {
 	rows, err := s.db.Query(`SELECT id, name, kind, updated_at, updated_by_id, updated_by_name,
-		webhook_secret IS NOT NULL, last_webhook_at FROM connections WHERE organization_id = ? ORDER BY name`,
+		webhook_secret IS NOT NULL, last_webhook_at, ready_status, routing_field, notion_database FROM connections WHERE organization_id = ? ORDER BY name`,
 		organizationID)
 	if err != nil {
 		return nil, err
@@ -168,7 +196,7 @@ func (s *store) connections(organizationID string) ([]storedConnection, error) {
 		var updated int64
 		var lastWebhook sql.NullInt64
 		if err := rows.Scan(&c.id, &c.Name, &c.Kind, &updated, &c.UpdatedBy.ID, &c.UpdatedBy.Name,
-			&c.WebhookSecret, &lastWebhook); err != nil {
+			&c.WebhookSecret, &lastWebhook, &c.tracker.ReadyStatus, &c.tracker.RoutingField, &c.tracker.Database); err != nil {
 			return nil, err
 		}
 		c.UpdatedAt = time.UnixMicro(updated).UTC()
@@ -179,6 +207,18 @@ func (s *store) connections(organizationID string) ([]storedConnection, error) {
 		connections = append(connections, c)
 	}
 	return connections, rows.Err()
+}
+
+// connectionKind gives the id and the kind of the Organization's
+// connection with name.
+func (s *store) connectionKind(organizationID, name string) (string, string, error) {
+	var id, kind string
+	err := s.db.QueryRow(`SELECT id, kind FROM connections WHERE organization_id = ? AND name = ?`,
+		organizationID, name).Scan(&id, &kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", errNotFound
+	}
+	return id, kind, err
 }
 
 // connectionToken opens the token of the Organization's connection with
@@ -203,4 +243,12 @@ func (s *store) connection(organizationID, name string) (string, string, error) 
 	}
 	token, err := s.sealer.open(connectionPurpose(id), sealed)
 	return kind, string(token), err
+}
+
+// listOf is routes, or an empty list for nil: the API gives a list.
+func listOf(routes []dispatcherapi.Route) []dispatcherapi.Route {
+	if routes == nil {
+		return []dispatcherapi.Route{}
+	}
+	return routes
 }

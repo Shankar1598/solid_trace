@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -24,6 +26,7 @@ func start(ctx context.Context, args []string, env Env) int {
 	flags := flag.NewFlagSet("start", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	project := flags.String("project", "", "the Project whose Factory settings the Run uses")
+	branch := flags.String("branch", "", "the base branch of the Run (default: the Project's default base branch, else the repository's default branch)")
 	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
 	prompt, ok := parseInterspersed(flags, args)
 	if !ok {
@@ -49,12 +52,39 @@ func start(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintf(env.Stdout, "Project %s, from its Factory settings for %s.\n", found.Project,
 			strings.TrimSuffix(found.Repository+"/"+found.Folder, "/"))
 	}
-	run, err := client.Start(ctx, dispatcherapi.StartRun{Project: *project, Prompt: text})
+	run, err := client.Start(ctx, dispatcherapi.StartRun{Project: *project, Prompt: text, Branch: *branch})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace start: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(env.Stdout, "Run %s is queued.\n%s\n", run.ID, run.URL)
+	return 0
+}
+
+// stop stops a Run.
+func stop(ctx context.Context, args []string, env Env) int {
+	flags := flag.NewFlagSet("stop", flag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
+	positional, ok := parseInterspersed(flags, args)
+	if !ok {
+		return 2
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(env.Stderr, "solidtrace stop: give one RUN_ID")
+		return 2
+	}
+	client, err := env.dispatcher(*dispatcherURL)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace stop: %v\n", err)
+		return 1
+	}
+	run, err := client.Stop(ctx, positional[0])
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace stop: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(env.Stdout, "Run %s is stopped.\n%s\n", run.ID, run.URL)
 	return 0
 }
 
@@ -117,10 +147,42 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 		fmt.Fprintf(tw, "Reason:\t%s\n", r.Reason)
 	}
 	fmt.Fprintf(tw, "Project:\t%s\n", r.Project)
-	fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	if r.Title != "" {
+		fmt.Fprintf(tw, "Title:\t%s\n", r.Title)
+	}
+	switch {
+	case r.StartedBy.Kind == dispatcherapi.ActorSchedule && r.ScheduledBy != nil:
+		fmt.Fprintf(tw, "Started:\t%s by the schedule %s (%s) of %s\n", r.CreatedAt.UTC().Format(timeFormat),
+			r.StartedBy.Name, r.StartedBy.ID, r.ScheduledBy.Name)
+	case r.StartedBy.Kind == dispatcherapi.ActorSender:
+		fmt.Fprintf(tw, "Started:\t%s by the sender %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	default:
+		fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	}
 	fmt.Fprintf(tw, "Executions:\t%d\n", len(r.Executions))
+	if r.PRURL != "" {
+		fmt.Fprintf(tw, "PR:\t%s\n", r.PRURL)
+	}
+	if len(r.Flags) > 0 {
+		fmt.Fprintf(tw, "Flags:\t%s\n", strings.Join(r.Flags, ", "))
+	}
+	if r.PROutcome != "" {
+		fmt.Fprintf(tw, "PR outcome:\t%s\n", r.PROutcome)
+	}
+	if r.ClosedAt != nil {
+		fmt.Fprintf(tw, "Closed:\t%s\n", r.ClosedAt.UTC().Format(timeFormat))
+	}
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
+	if r.Link != "" {
+		fmt.Fprintf(tw, "Trigger link:\t%s\n", r.Link)
+	}
 	tw.Flush()
+	if len(r.Attributes) > 0 {
+		fmt.Fprintln(out, "\nAttributes:")
+		for _, name := range slices.Sorted(maps.Keys(r.Attributes)) {
+			fmt.Fprintf(out, "  %s: %s\n", name, r.Attributes[name])
+		}
+	}
 	fmt.Fprintf(out, "\nPrompt:\n%s\n", r.Prompt)
 	if r.Question != "" {
 		fmt.Fprintf(out, "\nQuestion:\n%s\n", r.Question)

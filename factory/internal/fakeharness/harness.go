@@ -15,6 +15,9 @@
 //	{"fake":"deliver","message":0}         deliver message 0 (the first message read)
 //	{"fake":"deliver","message":1,"mid_turn":true}  the same, in the middle of a turn
 //	{"fake":"await_interrupt"}             wait for the interrupt control request
+//	{"fake":"busy","ms":20,"event":{...}}  write the event every 20 ms until the interrupt control
+//	                                       request (eof_code as for await_interrupt): an agent that works
+//	                                       for a long time with output
 //	{"fake":"sleep","ms":100}              wait in real time
 //	{"fake":"exit","code":1}               exit at once
 //	{"fake":"run","args":["solidtrace","report","--outcome","done"]}
@@ -214,7 +217,7 @@ func ParseScript(b []byte) ([]map[string]any, error) {
 		}
 		if step, ok := o["fake"]; ok {
 			switch step {
-			case "about", "await_message", "await_interrupt", "deliver", "sleep", "exit", "run":
+			case "about", "await_message", "await_interrupt", "busy", "deliver", "sleep", "exit", "run":
 			default:
 				return nil, fmt.Errorf("line %d: no step %q", n+1, step)
 			}
@@ -366,6 +369,10 @@ func (h *harness) play(script []map[string]any, stderr io.Writer) int {
 			if _, ok := <-h.interrupts; !ok {
 				return intOf(line["eof_code"])
 			}
+		case "busy":
+			if !h.busy(line) {
+				return intOf(line["eof_code"])
+			}
 		case "sleep":
 			time.Sleep(time.Duration(intOf(line["ms"])) * time.Millisecond)
 		case "exit":
@@ -434,6 +441,24 @@ func (h *harness) deliver(msg map[string]any, midTurn bool) {
 		"prompt": message["content"], "source_uuid": id, "delivery_id": delivery, "timestamp": now}, "uuid": newUUID()})
 	h.writeTranscript(map[string]any{"type": "queue-operation", "operation": "remove", "reason": "absorbed_mid_turn",
 		"commandUuid": id, "deliveryId": delivery})
+}
+
+// busy writes the step's event every ms milliseconds until the interrupt
+// control request. It is false when stdin closed first.
+func (h *harness) busy(step map[string]any) bool {
+	ev, _ := step["event"].(map[string]any)
+	tick := time.NewTicker(time.Duration(max(intOf(step["ms"]), 1)) * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case _, ok := <-h.interrupts:
+			return ok
+		case <-tick.C:
+			if ev != nil {
+				h.event(ev)
+			}
+		}
+	}
 }
 
 func (h *harness) event(line map[string]any) {
