@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromText, timelineItems, timelinePath, type TimelineStep, type TimelineSubagent } from './agentSessionTimeline'
+import { fromText, linePath, rawLineText, timelineItems, timelinePath, type TimelineStep, type TimelineSubagent } from './agentSessionTimeline'
 
 let offset = 0
 function step(role: string, text: string, more: Partial<TimelineStep> = {}): TimelineStep {
@@ -82,5 +82,26 @@ describe('timelinePath', () => {
     expect(timelinePath('/acme/agent_sessions/x/timeline', { cursor: 'c2' })).toBe('/acme/agent_sessions/x/timeline?cursor=c2')
     expect(timelinePath('/acme/agent_sessions/x/timeline', { path: 'subagents/agent-a1.jsonl' }))
       .toBe('/acme/agent_sessions/x/timeline?path=subagents%2Fagent-a1.jsonl')
+  })
+})
+
+describe('the search inside an Agent session', () => {
+  it('asks for the steps that have the text, page by page', () => {
+    expect(timelinePath('/acme/agent_sessions/x/timeline', { search: 'cart page', cursor: 'c2' }))
+      .toBe('/acme/agent_sessions/x/timeline?cursor=c2&search=cart+page')
+    expect(timelinePath('/acme/agent_sessions/x/timeline', { search: '  ' })).toBe('/acme/agent_sessions/x/timeline')
+  })
+})
+
+describe("'Show full'", () => {
+  it('asks for the raw line of the step', () => {
+    expect(linePath('/acme/agent_sessions/x/line', { path: 'subagents/agent-a1.jsonl', version: 2, offset: 120 }))
+      .toBe('/acme/agent_sessions/x/line?path=subagents%2Fagent-a1.jsonl&version=2&offset=120')
+  })
+
+  it('shows a JSON line indented, and any other text as it is', () => {
+    expect(rawLineText('{"type":"user","message":{"content":"Hi"}}'))
+      .toBe('{\n  "type": "user",\n  "message": {\n    "content": "Hi"\n  }\n}')
+    expect(rawLineText('{"type":"user", cut')).toBe('{"type":"user", cut')
   })
 })

@@ -92,6 +92,14 @@ Click the person or the Run in the list to open the Agent session page.
 - A subagent shows inside the tool call that started it. Click it to open its steps.
 - A long Agent session loads in pages: click **Load more steps** at the end of the timeline.
 - A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. A value marked **cut** was cut at the Log limits; the raw line has all of it.
+- Click **Show full** on a cut value to read its raw line, as the record keeps it: with the secrets redacted.
+- To find a step, type in the search box above the timeline. The search shows the steps of this Agent session, and of its subagents, that have the text, with any case. Click **Clear** to see the timeline again.
+
+### Search across Agent sessions
+
+To find which Agent session did a thing, type in the search box at the top of the Agent sessions page. It opens the Logs explorer on the Agent Project, with your text as the search, over the last 7 days. Each line of a transcript is a Log there: `file` is the transcript's path, and the attributes under `agent.` hold the Agent session id, the role and the tool name. Choose a longer range in the explorer when you accept a longer wait.
+
+An agent can do the same over MCP: `query_logs` on the Agent Project runs a Query on the transcript Logs. `list_projects` names the Agent Project.
 
 ## Read the Runs
 
@@ -99,3 +107,16 @@ Each member opens **Runs** in the Organization's navigation. The page shows each
 
 - Filter by **Project** and by **State**. **Waiting on a person** shows the Runs that wait for an answer, in one click; click it again to see all states. The filters are in the page's URL, so you can share a filtered view.
 - Each Run that is not closed has an event in the last 30 days, because a Run closes after 30 days with no activity. To see older Runs, set a longer range.
+- Click a Run's title to open its page.
+
+## Read a Run
+
+The Run page shows one Run from its run events:
+
+- The state and its reason, the trigger and who started the Run, the Project, the repository, the folder, the base branch, and the PR with its outcome.
+- The **Executions**: for each, its start, its end, its duration, why it ended, the subscription account and the VM. An Execution that has not ended shows "Live".
+- The **interventions**: each message, interrupt, stop, take-over, account switch and continue, with the person who did it. Below them, all the events of the Run in order.
+- The **last report**: each check with pass or fail and the last lines of its output, the Evidence files (an image shows on the page; click another file to download it), and `evidence/report.md` in full. A done report with no check that passed shows **no Evidence**. The report of an Issue or a Monitor Run shows its cause report.
+- Links to the Run's Agent sessions, and the CLI commands to message the Run, take it over or stop it.
+
+**Stop** ends a Run that goes wrong. It shows only when Settings → Instance has the Dispatcher's URL, and only on a Run that can stop (queued, running, taken over, or waiting on a person or an account limit). Console sends the stop to the Dispatcher as you, with a factory token that lasts 5 minutes. The page shows the state that the Dispatcher gives at once; the stop event shows when it arrives from the Dispatcher.

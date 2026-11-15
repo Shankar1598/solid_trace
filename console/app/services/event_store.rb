@@ -170,22 +170,62 @@ class EventStore
     # /agent-sessions/:id answers it: {"agent_session" => its totals, as a
     # row of agent_sessions!, "subagents", "steps" => one page of the
     # timeline of the main transcript, or of the subagent transcript at
-    # path, after cursor, "next_cursor"}. Raises NotFound for an Agent
-    # session or a path that the Project does not have, else as
+    # path, after cursor, "next_cursor"}. With search, the steps hold only
+    # those whose text has it, with any case, and with no path they come
+    # from all the Agent session's transcripts. Raises NotFound for an
+    # Agent session or a path that the Project does not have, else as
     # transactions! does.
-    def agent_session!(project_id:, id:, path: nil, cursor: nil, limit: nil, read_timeout: 10)
-      body = { path: path, cursor: cursor, limit: limit }.compact
+    def agent_session!(project_id:, id:, path: nil, cursor: nil, limit: nil, search: nil, read_timeout: 10)
+      body = { path: path, cursor: cursor, limit: limit, search: search }.compact
       post!("#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(id)}", body, read_timeout: read_timeout, open_timeout: 3)
     end
 
-    # The Runs of an Agent Project from their run events, as EventStore's
-    # POST /runs answers them: {"runs" => [the last event of each Run with an
-    # event in [from, to], Active Runs first, at most limit], "more"}.
-    # project (a Project's slug) and state filter on the last event. Raises
+    # One raw line of an Agent session's file, for 'Show full' on a cut
+    # value, as EventStore's POST /agent-sessions/:id/line answers it:
+    # {"line" => the line, redacted as stored, "cut" => true when the raw
+    # layer does not hold all of it}. Raises NotFound when the Project has
+    # no line there, else as transactions! does.
+    def agent_session_line!(project_id:, id:, path:, version:, offset:, read_timeout: 10)
+      body = { path: path, version: version, offset: offset }
+      post!("#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(id)}/line", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # The Runs of an Agent Project with a run event in [from, to], as
+    # EventStore's POST /runs answers them: {"runs" => [...], "more"}, each
+    # Run as its last event shows it, Active Runs first. project (a Project
+    # slug) and state select on that last event; nil selects all. Raises
     # Unavailable as transactions! does.
     def runs!(project_id:, from:, to:, project: nil, state: nil, limit: nil, read_timeout: 10)
       body = { from: utc(from), to: utc(to), project: project, state: state, limit: limit }.compact
       post!("#{base_url}/api/#{project_id}/runs", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # One Run of an Agent Project, as EventStore's GET /runs/:run_id answers
+    # it: {"run" => the Run as its last event shows it, "events" => its run
+    # events, Logs in run.seq order}, or nil when the Run has no event.
+    def run!(project_id:, run_id:)
+      request!("#{base_url}/api/#{project_id}/runs/#{ERB::Util.url_encode(run_id)}")
+    end
+
+    # One Evidence file (a path under evidence/) of an Agent session of an
+    # Agent Project: [its bytes, its media type]. Raises NotFound when the
+    # Agent session has no such file, Rejected for a path that is not under
+    # evidence/, and Unavailable as transactions! does.
+    def agent_evidence!(project_id:, session_id:, path:, read_timeout: 10)
+      url = "#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(session_id)}/evidence"
+      response = RestClient::Request.execute(method: :get, url: url, headers: { params: { path: path } },
+        read_timeout: read_timeout, open_timeout: 3)
+      [ response.body, response.headers[:content_type].presence || "application/octet-stream" ]
+    rescue RestClient::BadRequest => e
+      raise Rejected, parse_body(e.response&.body)
+    rescue RestClient::NotFound => e
+      raise NotFound.new("EventStore error: 404 - #{e.response&.body}", body: parse_body(e.response&.body))
+    rescue RestClient::Exceptions::Timeout => e
+      raise Unavailable, timed_out_message(e, { read_timeout: read_timeout, open_timeout: 3 })
+    rescue RestClient::ExceptionWithResponse => e
+      raise Unavailable, "EventStore error: #{e.response&.code} - #{e.response&.body}"
+    rescue StandardError => e
+      raise Unavailable, "EventStore connection error: #{e.message}"
     end
 
     # One Transaction name's breakdown over [from, to), as EventStore's POST

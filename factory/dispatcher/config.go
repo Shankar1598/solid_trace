@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/solidtrace/factory/forge"
 )
 
 // Config is the operator configuration. The Dispatcher reads it at start
@@ -31,6 +33,15 @@ type Config struct {
 	EncryptionKey string
 	// Listen is the address of the private listener.
 	Listen string
+	// BitbucketAPIURL and BitbucketGitURL are the bases of Bitbucket
+	// Cloud's REST API and clone URLs ("" is Bitbucket Cloud's own). The
+	// tests set them to the fake Forge.
+	BitbucketAPIURL string
+	BitbucketGitURL string
+	// WIPRefs is the place of the work-in-progress refs: refs/agent-wip
+	// (the default), or refs/heads/agent-wip for a forge that refuses refs
+	// outside refs/heads (the fallback of cluster check 12).
+	WIPRefs string
 }
 
 // The names of the operator configuration.
@@ -41,6 +52,9 @@ const (
 	EnvDatabase        = "DISPATCHER_DATABASE"
 	EnvEncryptionKey   = "DISPATCHER_ENCRYPTION_KEY"
 	EnvListen          = "DISPATCHER_LISTEN"
+	EnvBitbucketAPIURL = "DISPATCHER_BITBUCKET_API_URL"
+	EnvBitbucketGitURL = "DISPATCHER_BITBUCKET_GIT_URL"
+	EnvWIPRefs         = "DISPATCHER_WIP_REFS"
 )
 
 // DefaultListen is the private listener's address when none is set.
@@ -70,9 +84,21 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		Database:        value(EnvDatabase),
 		EncryptionKey:   value(EnvEncryptionKey),
 		Listen:          value(EnvListen),
+		BitbucketAPIURL: strings.TrimRight(value(EnvBitbucketAPIURL), "/"),
+		BitbucketGitURL: strings.TrimRight(value(EnvBitbucketGitURL), "/"),
+		WIPRefs:         value(EnvWIPRefs),
 	}
 	if c.Listen == "" {
 		c.Listen = DefaultListen
+	}
+	if c.BitbucketAPIURL == "" {
+		c.BitbucketAPIURL = forge.BitbucketAPIURL
+	}
+	if c.BitbucketGitURL == "" {
+		c.BitbucketGitURL = forge.BitbucketGitURL
+	}
+	if c.WIPRefs == "" {
+		c.WIPRefs = forge.WIPOutsideBranches
 	}
 	return c, c.Check()
 }
@@ -96,6 +122,15 @@ func (c Config) Check() error {
 			"make one with 'openssl rand -base64 32' and keep it) is not set")
 	} else if _, err := c.encryptionKey(); err != nil {
 		problems = append(problems, err.Error())
+	}
+	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL} {
+		if u, err := url.Parse(v); v != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
+			problems = append(problems, name+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", v))
+		}
+	}
+	if c.WIPRefs != "" && c.WIPRefs != forge.WIPOutsideBranches && c.WIPRefs != forge.WIPInBranches {
+		problems = append(problems, EnvWIPRefs+" (the place of the work-in-progress refs) must be "+
+			forge.WIPOutsideBranches+" or "+forge.WIPInBranches+", not "+fmt.Sprintf("%q", c.WIPRefs))
 	}
 	if len(problems) > 0 {
 		return errors.New("the operator configuration is not complete: " + strings.Join(problems, "; ") +

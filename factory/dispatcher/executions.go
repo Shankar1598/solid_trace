@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/forge"
 )
 
 // maxReportText is the longest summary or question that a report keeps.
@@ -86,6 +87,13 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "read the Factory settings", err)
 		return
 	}
+	// The clone URL is on the Dispatcher's Bitbucket Cloud (BitbucketGitURL).
+	cloneURL, err := (&forge.Bitbucket{GitURL: d.config.BitbucketGitURL}).CloneURL(settings.Repository)
+	if err != nil {
+		d.endByDispatcher(e.id, err.Error())
+		writeProblem(w, http.StatusConflict, err.Error())
+		return
+	}
 	var token string
 	if settings.Connection != "" {
 		if token, err = d.store.connectionToken(e.organizationID, settings.Connection); err != nil {
@@ -102,7 +110,6 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		d.serverError(w, "start the Execution", err)
 		return
 	}
-	cloneURL, username := d.forge.Clone(settings.Repository)
 	writeJSON(w, http.StatusOK, dispatcherapi.Task{
 		RunID:         e.runID,
 		ExecutionID:   e.id,
@@ -110,7 +117,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		Repository:    settings.Repository,
 		CloneURL:      cloneURL,
 		BaseBranch:    settings.BaseBranch,
-		ForgeUsername: username,
+		ForgeUsername: forge.BitbucketTokenUser,
 		ForgeToken:    token,
 		SessionID:     run.sessionID,
 		Resume:        run.resume,

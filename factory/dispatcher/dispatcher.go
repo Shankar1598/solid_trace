@@ -34,9 +34,6 @@ type Options struct {
 	// Runner starts the Executions of queued Runs. With none, a Run stays
 	// queued (a Dispatcher with no Runner configured).
 	Runner Runner
-	// Forge gives the clone URL of a repository (Bitbucket Cloud when
-	// nil).
-	Forge Forge
 }
 
 // Dispatcher is one open Dispatcher.
@@ -50,7 +47,6 @@ type Dispatcher struct {
 	handler http.Handler
 
 	runner   Runner
-	forge    Forge
 	identity *identityCheck
 	// dispatching holds a channel for each Execution that the Runner is
 	// starting; it closes when the Runner gave the workload.
@@ -77,9 +73,6 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	if options.Version == "" {
 		options.Version = "dev"
 	}
-	if options.Forge == nil {
-		options.Forge = bitbucketForge{}
-	}
 	key, err := config.encryptionKey()
 	if err != nil {
 		return nil, err
@@ -97,7 +90,6 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP,
 			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
 		runner: options.Runner,
-		forge:  options.Forge,
 		wake:   make(chan struct{}, 1),
 	}
 	mux := http.NewServeMux()

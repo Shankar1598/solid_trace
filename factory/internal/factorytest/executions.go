@@ -20,7 +20,6 @@ import (
 	"github.com/solidtrace/cli/agentsocket"
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/factory/dispatcher"
-	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/fakeharness"
 	"github.com/solidtrace/factory/internal/fakerunner"
 	"github.com/solidtrace/factory/wrapper"
@@ -66,7 +65,6 @@ type Option func(*Env)
 // MainIfAsked.
 func Executions(e *Env) {
 	e.t.Helper()
-	e.Forge = fakeforge.New(e.t)
 	r, err := newRunner(e)
 	if err != nil {
 		e.t.Fatalf("start the fake Runner: %v", err)
@@ -280,15 +278,6 @@ func sign(key *rsa.PrivateKey, claims map[string]any) string {
 		panic(err)
 	}
 	return signed + "." + base64.RawURLEncoding.EncodeToString(sig)
-}
-
-// forge is the Dispatcher's Forge on the fake Forge: repository
-// host/owner/name is owner/name there.
-type forge struct{ fake *fakeforge.Forge }
-
-func (f forge) Clone(repository string) (string, string) {
-	_, repo, _ := strings.Cut(repository, "/")
-	return f.fake.CloneURL(repo), "x-token-auth"
 }
 
 // ForgeConnection is the name of the forge connection that Project names

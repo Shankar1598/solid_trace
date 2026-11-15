@@ -168,18 +168,25 @@ func (s *store) connections(organizationID string) ([]dispatcherapi.Connection, 
 }
 
 // connectionToken opens the token of the Organization's connection with
-// name. The Forge reads it for a Run.
+// name.
 func (s *store) connectionToken(organizationID, name string) (string, error) {
-	var id string
+	_, token, err := s.connection(organizationID, name)
+	return token, err
+}
+
+// connection gives the kind of the Organization's connection with name,
+// and opens its token. The Forge reads them for a Run.
+func (s *store) connection(organizationID, name string) (string, string, error) {
+	var id, kind string
 	var sealed []byte
-	err := s.db.QueryRow(`SELECT id, token FROM connections WHERE organization_id = ? AND name = ?`,
-		organizationID, name).Scan(&id, &sealed)
+	err := s.db.QueryRow(`SELECT id, kind, token FROM connections WHERE organization_id = ? AND name = ?`,
+		organizationID, name).Scan(&id, &kind, &sealed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errNotFound
+		return "", "", errNotFound
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	token, err := s.sealer.open(connectionPurpose(id), sealed)
-	return string(token), err
+	return kind, string(token), err
 }

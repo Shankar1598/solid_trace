@@ -17,7 +17,7 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      go vet ./... && go test -race -count=1 ./... && ./build
      ```
 
-   - The factory module (the Dispatcher and the wrapper), from `factory/`, takes less than a minute. Its tests are Seam 3: the real Dispatcher with SQLite in a temp dir, a SolidTrace recorder and the real solidtrace CLI, with fakes at the edges in `factory/internal/` (a Runner of local processes with its own workload identity keys, a scripted Harness that plays the recorded streams in `fakeharness/streams/`, and a Forge of bare git repositories that needs `git`). The tests in `factory/wrapper/` start the test binary as the wrapper, the Harness and the agent's solidtrace (symbolic links in a temp dir), and need `sh`. It needs no ClickHouse and no database, so it can run at any time. It uses cgo for SQLite:
+   - The factory module (the Dispatcher and the wrapper), from `factory/`, takes less than a minute. Its tests are Seam 3: the real Dispatcher with SQLite in a temp dir, a SolidTrace recorder and the real solidtrace CLI, with fakes at the edges in `factory/internal/` (a Runner of local processes with its own workload identity keys, a scripted Harness that plays the recorded streams in `fakeharness/streams/`, and a Forge of bare git repositories with a part of Bitbucket Cloud's REST API, which needs `git`). The tests in `factory/wrapper/` start the test binary as the wrapper, the Harness and the agent's solidtrace (symbolic links in a temp dir), and need `sh`. It needs no ClickHouse and no database, so it can run at any time. It uses cgo for SQLite:
 
      ```bash
      go vet ./... && go test -race -count=1 ./...

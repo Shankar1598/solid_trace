@@ -64,6 +64,8 @@ type AgentTimelinePage struct {
 	// After, if set, is the place of the last step of the page before.
 	After *AgentTimelineCursor
 	Limit int
+	// Search, if set, keeps the steps whose text holds it, with any case.
+	Search string
 }
 
 // agentSessionLogs is the condition on the derived Logs of the Agent
@@ -101,10 +103,13 @@ func (s *ClickHouseLogs) AgentSessionTimeline(ctx context.Context, projectID uin
 	order := own + ", file, " + version + ", " + offset
 
 	where := agentSessionLogs(projectID, session, page.Paths) + " AND " + str("agent.role") + " != ''"
-	keyset := ""
+	inner := ""
+	if page.Search != "" {
+		inner = " AND positionCaseInsensitiveUTF8(message, " + chsql.String(page.Search) + ") > 0"
+	}
 	if page.After != nil {
 		a := page.After
-		keyset = fmt.Sprintf(" AND (%s) > (%s, %s, %d, %d)", order, chsql.Time(a.Time), chsql.String(a.Path), a.Version, a.Offset)
+		inner += fmt.Sprintf(" AND (%s) > (%s, %s, %d, %d)", order, chsql.Time(a.Time), chsql.String(a.Path), a.Version, a.Offset)
 	}
 	// The ids of the page first, so that the messages of the other steps
 	// are not read.
@@ -116,7 +121,7 @@ func (s *ClickHouseLogs) AgentSessionTimeline(ctx context.Context, projectID uin
 		str("agent.subagent_id"), str("agent.model"),
 		num("agent.tokens.input"), num("agent.tokens.output"), num("agent.tokens.cache_read"), num("agent.tokens.cache_write"),
 		num("agent.cost_usd"), c.Attribute(BoolAttribute, "solidtrace.truncated"),
-		where, where, keyset, order, page.Limit+1, order)
+		where, where, inner, order, page.Limit+1, order)
 	began := time.Now()
 	defer func() { recordStatement(ctx, query, began, err) }()
 	rows, err := s.conn.Query(ctx, query)

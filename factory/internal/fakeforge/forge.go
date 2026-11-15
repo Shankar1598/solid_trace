@@ -1,38 +1,45 @@
 // Package fakeforge is the fake Forge of Seam 3: local bare git
 // repositories served over HTTP (clone and push, with the token as the
-// password, as from a credential helper), and a small PR and comment API
-// that keeps the PRs and comments that the factory makes. Tests read the
-// refs and act as a person on the PRs.
+// password, as from a credential helper), and a small part of Bitbucket
+// Cloud's REST API 2.0 that keeps the PRs and comments that the factory
+// makes. Tests read the refs and act as a person on the PRs.
 //
-// The PR API, with "Authorization: Bearer <token>":
+// The API, with "Authorization: Bearer <token>" (a Bitbucket access
+// token), under APIURL() (<URL>/2.0):
 //
-//	POST /api/repos/{owner}/{name}/pulls               {title, description, source, destination}
-//	GET  /api/repos/{owner}/{name}/pulls?source=&state=
-//	GET  /api/repos/{owner}/{name}/pulls/{id}
-//	PUT  /api/repos/{owner}/{name}/pulls/{id}          {title, description}; absent fields stay
-//	GET  /api/repos/{owner}/{name}/pulls/{id}/comments
-//	POST /api/repos/{owner}/{name}/pulls/{id}/comments {body, file, line}
+//	POST /repositories/{workspace}/{repo_slug}/pullrequests               {title, description, source.branch.name, destination.branch.name}
+//	GET  /repositories/{workspace}/{repo_slug}/pullrequests?q=&state=     q: source.branch.name, destination.branch.name, state with =, AND
+//	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}
+//	PUT  /repositories/{workspace}/{repo_slug}/pullrequests/{id}          {title, description}; absent fields stay
+//	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments
+//	POST /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments {content.raw, inline.path, inline.to}
 //
-// Git: <URL>/git/{owner}/{name}.git, with any user name and the token as
-// the password.
+// Errors have Bitbucket's shape: {"type": "error", "error": {"message",
+// "fields"}}. A PR from an absent branch and a second open PR between the
+// same branches get 400, as on Bitbucket. With no state parameter, the
+// list gives only open PRs.
+//
+// Git: GitURL()/{workspace}/{repo_slug}.git (<URL>/git/...), with the
+// user name x-token-auth and the token as the password, as Bitbucket asks
+// for an access token.
 package fakeforge
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// TokenUser is the git user name that goes with an access token.
+const TokenUser = "x-token-auth"
 
 // FactoryAuthor is the author of the PRs and comments that come through
 // the API.
@@ -78,6 +85,7 @@ type Forge struct {
 	prs      map[string][]*PR
 	comments map[string]map[int][]*Comment
 	nextID   int
+	failNext *apiError
 }
 
 // New starts a fake Forge with no repositories. The test's cleanup stops it.
@@ -97,12 +105,13 @@ func New(t testing.TB) *Forge {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/git/", f.git)
-	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls", f.api(f.openPR))
-	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls", f.api(f.listPRs))
-	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{id}", f.api(f.getPR))
-	mux.HandleFunc("PUT /api/repos/{owner}/{name}/pulls/{id}", f.api(f.updatePR))
-	mux.HandleFunc("GET /api/repos/{owner}/{name}/pulls/{id}/comments", f.api(f.listComments))
-	mux.HandleFunc("POST /api/repos/{owner}/{name}/pulls/{id}/comments", f.api(f.postComment))
+	const prs = "/2.0/repositories/{workspace}/{repo_slug}/pullrequests"
+	mux.HandleFunc("POST "+prs, f.api(f.openPR))
+	mux.HandleFunc("GET "+prs, f.api(f.listPRs))
+	mux.HandleFunc("GET "+prs+"/{id}", f.api(f.getPR))
+	mux.HandleFunc("PUT "+prs+"/{id}", f.api(f.updatePR))
+	mux.HandleFunc("GET "+prs+"/{id}/comments", f.api(f.listComments))
+	mux.HandleFunc("POST "+prs+"/{id}/comments", f.api(f.postComment))
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
 	return f
@@ -110,6 +119,12 @@ func New(t testing.TB) *Forge {
 
 // URL is the Forge's base URL.
 func (f *Forge) URL() string { return f.server.URL }
+
+// APIURL is the base of the API, as https://api.bitbucket.org/2.0 is.
+func (f *Forge) APIURL() string { return f.server.URL + "/2.0" }
+
+// GitURL is the base of the clone URLs, as https://bitbucket.org is.
+func (f *Forge) GitURL() string { return f.server.URL + "/git" }
 
 // CloneURL is the HTTPS-style clone URL of a repository "owner/name".
 func (f *Forge) CloneURL(repo string) string { return f.server.URL + "/git/" + repo + ".git" }
@@ -149,6 +164,30 @@ func (f *Forge) Push(repo, branch string, files map[string]string, message strin
 	f.run(work, "commit", "-q", "--allow-empty", "-m", message)
 	f.run(work, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
 	return strings.TrimSpace(f.run(work, "rev-parse", "HEAD"))
+}
+
+// RefuseRefsOutsideBranches makes the repository refuse a push to a ref
+// outside refs/heads and refs/tags, as a forge that permits only branches
+// and tags does (cluster check 12 finds if Bitbucket Cloud is one).
+func (f *Forge) RefuseRefsOutsideBranches(repo string) {
+	f.t.Helper()
+	hook := filepath.Join(f.bare(repo), "hooks", "pre-receive")
+	script := "#!/bin/sh\nwhile read old new ref; do\n  case \"$ref\" in\n    refs/heads/*|refs/tags/*) ;;\n" +
+		"    *) echo \"refusing $ref: only branches and tags can be pushed\" >&2; exit 1 ;;\n  esac\ndone\n"
+	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// RefusePushes makes the repository refuse each push, with message in
+// git's output, as a forge hook that refuses a push does.
+func (f *Forge) RefusePushes(repo, message string) {
+	f.t.Helper()
+	hook := filepath.Join(f.bare(repo), "hooks", "pre-receive")
+	script := "#!/bin/sh\ncat >/dev/null\necho '" + strings.ReplaceAll(message, "'", "") + "' >&2\nexit 1\n"
+	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 // Ref gives the commit that a ref (for example refs/heads/main or
@@ -273,7 +312,7 @@ func (f *Forge) git2(dir string, args ...string) (string, error) {
 
 // git serves clone and push with git's own smart HTTP backend.
 func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
-	if _, password, ok := r.BasicAuth(); !ok || password != f.Token {
+	if user, password, ok := r.BasicAuth(); !ok || user != TokenUser || password != f.Token {
 		w.Header().Set("WWW-Authenticate", `Basic realm="fake forge"`)
 		http.Error(w, "the token is not valid", http.StatusUnauthorized)
 		return
@@ -284,157 +323,4 @@ func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
 		Env:  []string{"GIT_PROJECT_ROOT=" + f.root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER=" + FactoryAuthor},
 	}
 	h.ServeHTTP(w, r)
-}
-
-type apiError struct {
-	status int
-	msg    string
-}
-
-func (f *Forge) api(h func(r *http.Request, repo string) (int, any, *apiError)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Header.Get("Authorization") != "Bearer "+f.Token {
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "the token is not valid"})
-			return
-		}
-		repo := r.PathValue("owner") + "/" + r.PathValue("name")
-		if _, err := os.Stat(f.bare(repo)); err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "no repository " + repo})
-			return
-		}
-		// The body holds pointers into the Forge's state, so encode it
-		// while f.mu is held: a test helper can change the same PR.
-		f.mu.Lock()
-		status, body, e := h(r, repo)
-		if e != nil {
-			status, body = e.status, map[string]string{"error": e.msg}
-		}
-		data, err := json.Marshal(body)
-		f.mu.Unlock()
-		if err != nil {
-			status, data = http.StatusInternalServerError, []byte(`{"error":"the answer is not JSON"}`)
-		}
-		w.WriteHeader(status)
-		w.Write(append(data, '\n'))
-	}
-}
-
-func (f *Forge) openPR(r *http.Request, repo string) (int, any, *apiError) {
-	var in struct{ Title, Description, Source, Destination string }
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Title == "" || in.Source == "" {
-		return 0, nil, &apiError{http.StatusBadRequest, "give a title and a source branch"}
-	}
-	if in.Destination == "" {
-		in.Destination = "main"
-	}
-	for _, b := range []string{in.Source, in.Destination} {
-		if !f.gitOK(f.bare(repo), "rev-parse", "--verify", "-q", "refs/heads/"+b) {
-			return 0, nil, &apiError{http.StatusUnprocessableEntity, "no branch " + b}
-		}
-	}
-	for _, p := range f.prs[repo] {
-		if p.Source == in.Source && p.State == "OPEN" {
-			return 0, nil, &apiError{http.StatusConflict, fmt.Sprintf("PR %d is open from %s", p.ID, in.Source)}
-		}
-	}
-	now := time.Now().UTC()
-	p := &PR{ID: len(f.prs[repo]) + 1, Title: in.Title, Description: in.Description, Source: in.Source,
-		Destination: in.Destination, State: "OPEN", Author: FactoryAuthor, Created: now, Updated: now}
-	p.Link = fmt.Sprintf("%s/%s/pull-requests/%d", f.server.URL, repo, p.ID)
-	f.prs[repo] = append(f.prs[repo], p)
-	return http.StatusCreated, p, nil
-}
-
-func (f *Forge) listPRs(r *http.Request, repo string) (int, any, *apiError) {
-	values := []*PR{}
-	for _, p := range f.prs[repo] {
-		if s := r.URL.Query().Get("source"); s != "" && s != p.Source {
-			continue
-		}
-		if s := r.URL.Query().Get("state"); s != "" && s != p.State {
-			continue
-		}
-		values = append(values, p)
-	}
-	return http.StatusOK, map[string]any{"values": values}, nil
-}
-
-func (f *Forge) prFrom(r *http.Request, repo string) (*PR, *apiError) {
-	id, _ := strconv.Atoi(r.PathValue("id"))
-	if p := f.findPR(repo, id); p != nil {
-		return p, nil
-	}
-	return nil, &apiError{http.StatusNotFound, "no PR " + r.PathValue("id")}
-}
-
-func (f *Forge) findPR(repo string, id int) *PR {
-	for _, p := range f.prs[repo] {
-		if p.ID == id {
-			return p
-		}
-	}
-	return nil
-}
-
-func (f *Forge) getPR(r *http.Request, repo string) (int, any, *apiError) {
-	p, e := f.prFrom(r, repo)
-	return http.StatusOK, p, e
-}
-
-func (f *Forge) updatePR(r *http.Request, repo string) (int, any, *apiError) {
-	p, e := f.prFrom(r, repo)
-	if e != nil {
-		return 0, nil, e
-	}
-	var in struct{ Title, Description *string }
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		return 0, nil, &apiError{http.StatusBadRequest, "the body is not JSON"}
-	}
-	if in.Title != nil {
-		p.Title = *in.Title
-	}
-	if in.Description != nil {
-		p.Description = *in.Description
-	}
-	p.Updated = time.Now().UTC()
-	return http.StatusOK, p, nil
-}
-
-func (f *Forge) listComments(r *http.Request, repo string) (int, any, *apiError) {
-	p, e := f.prFrom(r, repo)
-	if e != nil {
-		return 0, nil, e
-	}
-	values := append([]*Comment{}, f.comments[repo][p.ID]...)
-	return http.StatusOK, map[string]any{"values": values}, nil
-}
-
-func (f *Forge) postComment(r *http.Request, repo string) (int, any, *apiError) {
-	p, e := f.prFrom(r, repo)
-	if e != nil {
-		return 0, nil, e
-	}
-	var in struct {
-		Body, File string
-		Line       int
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Body == "" {
-		return 0, nil, &apiError{http.StatusBadRequest, "give a body"}
-	}
-	c := f.addComment(repo, p.ID, Comment{Author: FactoryAuthor, Body: in.Body, File: in.File, Line: in.Line})
-	return http.StatusCreated, c, nil
-}
-
-// addComment keeps a comment. The caller holds f.mu.
-func (f *Forge) addComment(repo string, pr int, c Comment) *Comment {
-	f.nextID++
-	c.ID, c.Created = f.nextID, time.Now().UTC()
-	if f.comments[repo] == nil {
-		f.comments[repo] = map[int][]*Comment{}
-	}
-	f.comments[repo][pr] = append(f.comments[repo][pr], &c)
-	return &c
 }

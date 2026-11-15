@@ -182,6 +182,25 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
     assert_not response.parsed_body.dig("result", "isError"), tool_text
   end
 
+  test "with mcp:read, list_runs and get_run answer from the Agent Project's run events" do
+    agent = create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true)
+    run = { id: "r1", seq: 1, time: "2026-11-15T10:00:00Z", kind: "created", state: "queued", project: "shop",
+            actor: { kind: "person", id: "7", name: "Ana" }, pr: { url: "", outcome: "" }, executions: 0, active: true }
+    stub_request(:post, "#{EventStore.base_url}/api/#{agent.id}/runs").to_return(status: 200, body: { runs: [ run ], more: false }.to_json)
+    stub_request(:get, "#{EventStore.base_url}/api/#{agent.id}/runs/r1").to_return(status: 200, body: { run: run, events: [] }.to_json)
+    _, secret = issue(scopes: [ "mcp:read" ])
+
+    mcp "tools/call", token: secret, name: "list_runs", arguments: {}
+    assert_response :ok
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match '"id":"r1"', tool_text
+
+    mcp "tools/call", token: secret, name: "get_run", arguments: { run: "r1" }
+    assert_response :ok
+    assert_not response.parsed_body.dig("result", "isError"), tool_text
+    assert_match '"state":"queued"', tool_text
+  end
+
   test "mcp holds mcp:read: a token with both can call a write tool" do
     _, secret = issue(scopes: [ "mcp", "mcp:read" ])
 

@@ -53,14 +53,17 @@ func (c *Clock) Advance(d time.Duration) {
 type Env struct {
 	t          testing.TB
 	SolidTrace *recorder.Recorder
-	Clock      *Clock
-	Config     dispatcher.Config
+	// Forge is the fake Bitbucket Cloud of the Dispatcher's
+	// configuration. It has no repositories: a test adds them, such as
+	// example/<slug> for the settings that Project saves (Project adds it
+	// with the Executions option).
+	Forge  *fakeforge.Forge
+	Clock  *Clock
+	Config dispatcher.Config
 	// Version is the Dispatcher's version ("" is a build from a
 	// checkout). A change applies at the next Restart.
 	Version string
-	// Forge and Runner are the fake Forge and the fake Runner, with the
-	// Executions option (else nil).
-	Forge  *fakeforge.Forge
+	// Runner is the fake Runner, with the Executions option (else nil).
 	Runner *Runner
 
 	current atomic.Pointer[dispatcher.Dispatcher]
@@ -109,7 +112,7 @@ func (e *Env) Project(slug string) recorder.Project {
 		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
 	}
 	settings := map[string]string{"repository": "bitbucket.org/example/" + slug}
-	if e.Forge != nil {
+	if e.Runner != nil {
 		e.Forge.AddRepo("example/"+slug, nil)
 		a := e.admin.API("PUT", "/api/v1/connections/"+ForgeConnection,
 			map[string]string{"kind": "bitbucket", "token": e.Forge.Token})
@@ -141,6 +144,7 @@ func New(t testing.TB, options ...Option) *Env {
 	e := &Env{
 		t:          t,
 		SolidTrace: recorder.New(DispatcherToken),
+		Forge:      fakeforge.New(t),
 		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
 	}
 	t.Cleanup(e.SolidTrace.Close)
@@ -157,6 +161,8 @@ func New(t testing.TB, options ...Option) *Env {
 		SolidTraceToken: DispatcherToken,
 		Database:        filepath.Join(t.TempDir(), "dispatcher.sqlite3"),
 		EncryptionKey:   EncryptionKey,
+		BitbucketAPIURL: e.Forge.APIURL(),
+		BitbucketGitURL: e.Forge.GitURL(),
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.current.Load().Handler().ServeHTTP(w, r)
@@ -175,7 +181,7 @@ func (e *Env) start() {
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
 		Log: slog.New(slog.NewTextHandler(&e.logs, nil))}
 	if e.Runner != nil {
-		options.Runner, options.Forge = e.Runner, forge{e.Forge}
+		options.Runner = e.Runner
 	}
 	d, err := dispatcher.Open(e.Config, options)
 	if err != nil {

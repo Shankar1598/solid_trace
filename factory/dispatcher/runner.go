@@ -3,7 +3,6 @@ package dispatcher
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -40,23 +39,6 @@ type RunnerEvent struct {
 	Lost bool
 	// ExitCode is the wrapper's exit code, when it ended.
 	ExitCode int
-}
-
-// Forge is the part of the Forge interface that a clone needs (the
-// Bitbucket Cloud Forge, ticket 37, adds the rest).
-type Forge interface {
-	// Clone gives the HTTPS URL that git clones repository
-	// (host/workspace/name) from, and the user name that goes with the
-	// connection's token in the credential helper.
-	Clone(repository string) (url, username string)
-}
-
-// bitbucketForge is the clone part of Bitbucket Cloud: an access token
-// goes with the user name x-token-auth.
-type bitbucketForge struct{}
-
-func (bitbucketForge) Clone(repository string) (string, string) {
-	return "https://" + strings.TrimSuffix(repository, ".git") + ".git", "x-token-auth"
 }
 
 // dispatchEvery is how often the dispatch loop looks for queued Runs when

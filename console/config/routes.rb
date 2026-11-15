@@ -92,7 +92,12 @@ Rails.application.routes.draw do
     get "agent_sessions/:id", to: "agent_sessions#show", as: :agent_session, constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }
     get "agent_sessions/:id/timeline", to: "agent_sessions#timeline", as: :agent_session_timeline,
       constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
+    get "agent_sessions/:id/line", to: "agent_sessions#line", as: :agent_session_line,
+      constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
     get "runs", to: "runs#index", as: :runs
+    get "runs/:id", to: "runs#show", as: :run, constraints: { id: /[A-Za-z0-9_-]{1,64}/ }
+    get "runs/:id/evidence", to: "runs#evidence", as: :run_evidence, constraints: { id: /[A-Za-z0-9_-]{1,64}/ }
+    post "runs/:id/stop", to: "runs#stop", as: :stop_run, constraints: { id: /[A-Za-z0-9_-]{1,64}/ }
     resources :dashboards, only: [ :index, :show, :create, :update, :destroy ] do
       member do
         patch :layout
