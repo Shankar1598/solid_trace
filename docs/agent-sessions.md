@@ -120,6 +120,19 @@ A ticket of a tracker connection (Notion, Linear) that a person sets to the read
 - **No route:** a ready ticket that no route matches starts no Run. It gets one comment that names the routing field and the values that the routes match, and the Dispatcher writes a warning Log. A new edit of the ticket gets the comment and the warning again; the same edit gets none.
 - A ready ticket starts at most one Run for each edit, and no Run while it has an Active Run.
 
+### Connect Linear
+
+A Linear connection is an install of a Linear OAuth app with `actor=app`, so the factory's status changes and comments show as the app, not as the Admin who installed it.
+
+1. In Linear's settings, make an OAuth app. Add the callback URL `http://localhost:47615/callback` (or another port that you give with `--port`). Turn on its webhook with the **Issue** and **Comment** events; you paste its URL in step 3.
+2. On a machine with a browser, as an Admin: `solidtrace connections add linear NAME --client-id ID < client-secret-file`. The CLI opens Linear's approval page. After you approve, it gives the code to the Dispatcher, which gets the tokens from Linear and keeps them encrypted. The tokens never come to your machine. The access token lasts 24 hours; the Dispatcher refreshes it with the rotating refresh token, which lasts 30 days. Run the command again to install the app again, for example when the Dispatcher's log says that Linear refused the refresh token.
+3. The command prints the connection's webhook URL. Paste it into the app's webhook, then give the app's signing secret: `solidtrace connections webhook-secret NAME < secret-file`.
+
+- **The routing field** of a Linear connection is a label group, by default `Project`. A ticket's routing value is the name of its label in that group, such as the label `Admin app` in the group `Project`.
+- **Webhooks:** the Dispatcher checks `Linear-Signature` and refuses (401) a webhook whose `webhookTimestamp` is more than 60 seconds from its clock. It dedupes on `Linear-Delivery`. The backstop reads the ready tickets every 5 minutes.
+- **Requests:** all the Runs of an install share the app's 5,000 requests an hour. A backstop reads at most 500 ready tickets.
+- The operator can set `DISPATCHER_LINEAR_API_URL` (the base of Linear's API and token endpoint) for a test; the default is `https://api.linear.app`.
+
 ## Connect a connection's webhooks
 
 A tracker or a forge tells the Dispatcher of a change with a webhook. The Dispatcher has two listeners: the private listener serves the API, and the webhook listener serves only `POST /webhooks/<kind>/<connection id>`. Each other path and method gets 404. Caddy on the server VM sends only `/webhooks/*` from a public name to the webhook listener (`factory/reference/caddy/Caddyfile`). The operator sets the listener's address in `DISPATCHER_WEBHOOK_LISTEN` and the public name in `DISPATCHER_WEBHOOK_URL`.
