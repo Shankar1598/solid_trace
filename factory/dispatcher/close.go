@@ -295,11 +295,12 @@ func (s *store) closingRuns(where string, args ...any) ([]closingRun, error) {
 
 // idleRuns are the Runs that are not closed, with no Execution queued or
 // live, whose last activity is at before or earlier. The last activity is
-// the end of the Run's last Execution, or the Run's start when it has
-// none. (An accepted message joins it with the message verb.)
+// the end of the Run's last Execution or the last message that it
+// accepted, or the Run's start when it has neither.
 func (s *store) idleRuns(before time.Time) ([]closingRun, error) {
 	return s.closingRuns(`closed_at IS NULL AND state NOT IN `+inList(len(liveStates))+`
-		AND MAX(created_at, COALESCE((SELECT MAX(e.ended_at) FROM executions e WHERE e.run_id = runs.id), 0)) <= ?
+		AND MAX(created_at, COALESCE((SELECT MAX(e.ended_at) FROM executions e WHERE e.run_id = runs.id), 0),
+		COALESCE((SELECT MAX(m.accepted_at) FROM messages m WHERE m.run_id = runs.id), 0)) <= ?
 		AND `+noLiveExecutionSQL,
 		append(anys(liveStates), before.UnixMicro(), dispatcherapi.ExecutionEnded)...)
 }

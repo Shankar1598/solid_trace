@@ -21,7 +21,8 @@ import (
 // wrapper and the hook share, and refuses the stop or allows it. Its
 // checks, in order:
 //
-//  1. A message arrived after the last report (ticket 57 adds it).
+//  1. A message arrived after the last report: refuse, one time for each
+//     new message (R6).
 //  2. Background tasks still run: refuse one time in a turn.
 //  3. No report: refuse. After maxNoReportRefusals such refusals the hook
 //     allows the stop, and the wrapper ends the Execution with the reason
@@ -44,6 +45,9 @@ const StopHookCommand = "stop-hook"
 // report in an Execution.
 const maxNoReportRefusals = 2
 
+// messageAfterReport is the refusal of check 1 (R6).
+const messageAfterReport = "a message arrived after your report; act on it and report again"
+
 // stopHookTimeout is the Stop hook's limit in seconds, in the settings.
 const stopHookTimeout = 30
 
@@ -56,10 +60,18 @@ type runState struct {
 	Turn            int  `json:"turn"`
 	BackgroundTasks int  `json:"background_tasks"`
 	Reported        bool `json:"reported"`
+	// Delivered is the count of the wrapper's messages (the task among
+	// them) whose replay echo came: only an echo with isReplay and a uuid
+	// that the wrapper wrote, never an isSynthetic event. ReportDelivered
+	// is the count that the last report sent.
+	Delivered       int `json:"delivered"`
+	ReportDelivered int `json:"report_delivered"`
 	// The Stop hook writes these. BackgroundRefused is Turn + 1 of the
-	// last refusal for background tasks (0: none yet).
+	// last refusal for background tasks (0: none yet). MessageRefused is
+	// Delivered at the last refusal for a message after the report.
 	BackgroundRefused int `json:"background_refused"`
 	NoReportRefusals  int `json:"no_report_refusals"`
+	MessageRefused    int `json:"message_refused"`
 }
 
 // lockWait is the longest time that changeRunState waits for the lock.
@@ -127,6 +139,12 @@ func changeRunState(path string, create bool, change func(*runState)) error {
 // stopDecision gives the reason to refuse the stop ("" allows it), and
 // records the refusal in s.
 func stopDecision(s *runState) string {
+	// One refusal for each new message: an agent that does not report
+	// again does not loop on it.
+	if s.Reported && s.Delivered > s.ReportDelivered && s.MessageRefused != s.Delivered {
+		s.MessageRefused = s.Delivered
+		return messageAfterReport
+	}
 	if s.BackgroundTasks > 0 && s.BackgroundRefused != s.Turn+1 {
 		s.BackgroundRefused = s.Turn + 1
 		if s.BackgroundTasks == 1 {

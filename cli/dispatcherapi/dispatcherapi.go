@@ -320,6 +320,10 @@ type Task struct {
 	// SaveExclude are more patterns (gitignore syntax) that a
 	// work-in-progress save leaves out.
 	SaveExclude []string `json:"save_exclude,omitempty"`
+	// Messages are the Run's messages that no Execution delivered: the
+	// wrapper writes each one after the prompt. An Execution that
+	// continues the Agent session for them has no prompt.
+	Messages []Message `json:"messages,omitempty"`
 }
 
 // Check is one named check command of the factory file.
@@ -366,6 +370,8 @@ func (l Limits) Total() time.Duration {
 const (
 	// CommandStop: end the Execution with the reason EndStopped.
 	CommandStop = "stop"
+	// CommandMessage: write Message to the harness's stdin.
+	CommandMessage = "message"
 )
 
 // Command is one command to the wrapper of an Execution.
@@ -373,6 +379,70 @@ type Command struct {
 	// Seq orders the commands of an Execution.
 	Seq  int64  `json:"seq"`
 	Kind string `json:"kind"`
+	// Message is the message of a CommandMessage.
+	Message *Message `json:"message,omitempty"`
+}
+
+// Message is a message to a Run's agent. The wrapper writes it to the
+// harness's stdin with ID as its uuid: the harness's replay echo with that
+// uuid is the proof that the agent got it.
+type Message struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// MaxMessage is the longest message text that the Dispatcher takes.
+const MaxMessage = 64 << 10
+
+// SendMessage is the body of a message to a Run.
+type SendMessage struct {
+	Text string `json:"text"`
+}
+
+// MessageAccepted is the answer to a message: the Dispatcher accepted it
+// for the Run's agent.
+type MessageAccepted struct {
+	ID         string    `json:"id"`
+	RunID      string    `json:"run_id"`
+	AcceptedAt time.Time `json:"accepted_at"`
+}
+
+// The message events that a wrapper sends (MessageEvent.Event).
+const (
+	MessageWritten   = "written"
+	MessageDelivered = "delivered"
+)
+
+// MessageEvent is the body of the wrapper's message call: the wrapper
+// wrote a message to the harness's stdin, or the harness's replay echo of
+// it came (delivered), at At on the wrapper's clock.
+type MessageEvent struct {
+	ID    string    `json:"id"`
+	Event string    `json:"event"`
+	At    time.Time `json:"at"`
+}
+
+// MessageState is what the wrapper did with one message of its
+// Execution, in the end call.
+type MessageState struct {
+	ID          string     `json:"id"`
+	WrittenAt   *time.Time `json:"written_at,omitempty"`
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+}
+
+// CompareEnd is the body of the wrapper's compare-and-end call: After is
+// the seq of the last command that the wrapper got.
+type CompareEnd struct {
+	After int64 `json:"after"`
+}
+
+// CompareEndAnswer is the answer of the compare-and-end call. When
+// Agreed, the Dispatcher gives the Execution no more messages, and the
+// wrapper closes stdin. When not, Commands are the message commands after
+// After: the wrapper writes them.
+type CompareEndAnswer struct {
+	Agreed   bool      `json:"agreed"`
+	Commands []Command `json:"commands"`
 }
 
 // CommandsRequest is the body of the wrapper's commands call, a long
@@ -441,6 +511,11 @@ type ExecutionEnd struct {
 	// BackgroundTasksKilled is the count of the agent's background tasks
 	// that still ran at the end, and that the end killed.
 	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
+	// Messages are the Execution's messages that the wrapper wrote, with
+	// the time that the harness delivered each one. Each other message of
+	// the Execution was not written: the Dispatcher sends each message
+	// that was not delivered again, in a new Execution.
+	Messages []MessageState `json:"messages,omitempty"`
 }
 
 // StartRun is the body of a start.
@@ -820,6 +895,15 @@ func (c *Client) Stop(ctx context.Context, id string) (Run, error) {
 	var run Run
 	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/stop", nil, &run)
 	return run, err
+}
+
+// Message sends a message to a queued or running Run. A running Run's
+// agent gets it in its current turn, or in a new turn of the same
+// Execution.
+func (c *Client) Message(ctx context.Context, id, text string) (MessageAccepted, error) {
+	var accepted MessageAccepted
+	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/messages", SendMessage{Text: text}, &accepted)
+	return accepted, err
 }
 
 // Projects reads the Factory settings of the Organization's Projects.

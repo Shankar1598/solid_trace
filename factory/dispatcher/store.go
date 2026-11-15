@@ -322,6 +322,33 @@ var migrations = []string{
 	);
 	ALTER TABLE executions ADD COLUMN account TEXT NOT NULL DEFAULT '';
 	CREATE INDEX executions_by_account ON executions (account, state);`,
+	// messages are the messages to Runs. id is the uuid that the wrapper
+	// writes; execution_id is the Execution that has the message now (''
+	// is none: the Run keeps it for its next Execution), with in_task 1
+	// when that Execution's task call gave it. sends counts the
+	// Executions that got it. A message command (commands.message_id)
+	// gives a message to a running Execution. end_agreed is 1 after the
+	// wrapper's compare-and-end call agreed: the Execution gets no more
+	// messages.
+	`CREATE TABLE messages (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT,
+		id TEXT NOT NULL UNIQUE,
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		text TEXT NOT NULL,
+		actor_kind TEXT NOT NULL,
+		actor_id TEXT NOT NULL,
+		actor_name TEXT NOT NULL,
+		accepted_at INTEGER NOT NULL,
+		execution_id TEXT NOT NULL DEFAULT '',
+		in_task INTEGER NOT NULL DEFAULT 0,
+		sends INTEGER NOT NULL DEFAULT 0,
+		written_at INTEGER,
+		delivered_at INTEGER
+	);
+	CREATE INDEX messages_by_run ON messages (run_id, seq);
+	CREATE INDEX messages_by_execution ON messages (execution_id, seq);
+	ALTER TABLE commands ADD COLUMN message_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN end_agreed INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.

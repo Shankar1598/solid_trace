@@ -193,6 +193,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		Setup:         file.Setup,
 		Checks:        file.Checks,
 		SaveExclude:   file.SaveExclude,
+		Messages:      run.messages,
 	})
 }
 
@@ -275,5 +276,7 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	// The end step: the wrapper uploaded the last bytes before its end
 	// call, so the Execution's tokens go now.
 	d.revokeTokens(e.id)
+	// A message that was not delivered can queue the Run again.
+	d.wakeDispatch()
 	w.WriteHeader(http.StatusNoContent)
 }

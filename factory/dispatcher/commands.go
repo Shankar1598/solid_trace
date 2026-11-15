@@ -182,7 +182,7 @@ func stopInTx(tx *sql.Tx, runID string, by actor, reason string, run bool, at ti
 			return err
 		}
 	}
-	rows, err := tx.Query(`SELECT id, state FROM executions WHERE run_id = ? AND state != ? ORDER BY dispatched_at, id`,
+	rows, err := tx.Query(`SELECT id, state FROM executions WHERE run_id = ? AND state != ? ORDER BY dispatched_at, rowid`,
 		runID, dispatcherapi.ExecutionEnded)
 	if err != nil {
 		return err
@@ -270,21 +270,8 @@ func (s *store) commandsAfter(executionID string, after int64) ([]dispatcherapi.
 	if err := s.db.QueryRow(`SELECT state FROM executions WHERE id = ?`, executionID).Scan(&state); err != nil {
 		return nil, false, err
 	}
-	rows, err := s.db.Query(`SELECT seq, kind FROM commands WHERE execution_id = ? AND seq > ? ORDER BY seq`,
-		executionID, after)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	var list []dispatcherapi.Command
-	for rows.Next() {
-		var c dispatcherapi.Command
-		if err := rows.Scan(&c.Seq, &c.Kind); err != nil {
-			return nil, false, err
-		}
-		list = append(list, c)
-	}
-	return list, state == dispatcherapi.ExecutionEnded, rows.Err()
+	list, err := commandsIn(s.db, executionID, after, "")
+	return list, state == dispatcherapi.ExecutionEnded, err
 }
 
 // executionBackstopLoop stops each Execution that passed its total limit plus

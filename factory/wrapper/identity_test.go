@@ -72,7 +72,7 @@ func TestTheTaskCallNeedsTheWorkloadIdentityOfItsExecution(t *testing.T) {
 		"a JWT with alg HS256": env.Runner.SignWithAlg("HS256", valid),
 	}
 	for name, token := range refused {
-		for _, verb := range []string{"task", "report", "end", "commands"} {
+		for _, verb := range []string{"task", "report", "end", "commands", "message", "compare-end"} {
 			got := env.API(token, "POST", "/api/v1/executions/"+a+"/"+verb, map[string]string{})
 			if got.Status != http.StatusUnauthorized {
 				t.Errorf("%s call with %s: %d %s", verb, name, got.Status, got.Body)
@@ -148,6 +148,9 @@ func TestCallsOnAnEndedExecutionAreRefused(t *testing.T) {
 		"end":    dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndHarnessExited},
 		// The long poll answers at once, so the wrapper stops asking.
 		"commands": dispatcherapi.CommandsRequest{},
+		"message": dispatcherapi.MessageEvent{ID: "a-message", Event: dispatcherapi.MessageWritten,
+			At: env.Clock.Now()},
+		"compare-end": dispatcherapi.CompareEnd{},
 	} {
 		got := env.API(identity, "POST", "/api/v1/executions/"+execution+"/"+verb, body)
 		if got.Status != http.StatusConflict {

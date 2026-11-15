@@ -201,6 +201,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs", d.person(d.listRuns))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs/{id}", d.person(d.getRun))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/stop", d.person(d.stopRun))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/messages", d.person(d.sendMessage))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects", d.person(d.listSettings))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.getSettings))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.admin(d.saveSettings)))
@@ -229,6 +230,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/token", d.wrapper(d.token))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/commands", d.wrapper(d.commands))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/message", d.wrapper(d.messageEvent))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/compare-end", d.wrapper(d.compareEnd))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
