@@ -220,6 +220,17 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   expect(status).toMatch(new RegExp(`${tools.id}\\s+uploaded\\s+${TOOLS}`))
   expect(status).toMatch(new RegExp(`${notCaptured.id}\\s+not in the list`))
 
+  // The member's CLI cannot add to, or read, the admin's Agent session: a
+  // transcript with the admin's session id is refused when the CLI asks
+  // what the server has, and nothing is sent. The totals below show that
+  // the admin's Agent session did not change.
+  const other = shortSession(appDir, 'Read the admin session.', { input: 900, output: 900, cacheRead: 900, cacheWrite: 900 })
+  const impostor: FixtureSession = { id: long.id, files: { [`${long.id}.jsonl`]: other.files[`${other.id}.jsonl`].replaceAll(other.id, long.id) } }
+  capture(member, impostor, appDir)
+  expect(captureLog(member).trim().split('\n')).toEqual([
+    expect.stringMatching(new RegExp(`^\\S+ capture ${long.id}: ask what the server has: the agent ingest API answered 403: Agent session ${long.id} was uploaded by another person\\.`)),
+  ])
+
   // The Agent sessions page, once EventStore has parsed the uploads.
   await expect(async () => {
     await page.goto(`/${ORG}/agent_sessions`)
