@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+# The smoke check of the local factory stack. In one command it starts the stack,
+# checks it, and stops it again (also when a check fails). It replaces a stack that
+# is already up. Exit 0 when each check passes.
+#
+#   factory/local/smoke
+#
+# It checks the stack's shape, the run user and the take-over rule (and the commands
+# that the rule refuses), Claude Code and hc with no first-run dialog, the network
+# rules, and a raw_exec task that uses a child cgroup as the wrapper will.
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+stack="$here/stack"
+compose() { docker compose -f "$here/compose.yml" "$@"; }
+pinned() { sed -n "s/^ARG $1=//p" "$here/agent-machine/Dockerfile"; }
+
+passed=0
+failed=0
+check() {
+  local name="$1" out status
+  shift
+  # Each check stops at its first failed step.
+  out="$(set -e; "$@" 2>&1)"
+  status=$?
+  if [ "$status" = 0 ]; then
+    echo "PASS  $name"
+    passed=$((passed + 1))
+  else
+    echo "FAIL  $name"
+    printf '%s\n' "$out" | tail -n 15 | sed 's/^/        /'
+    failed=$((failed + 1))
+  fi
+}
+want() { echo "want: $*" >&2; return 1; }
+
+# Runs a command on the agent machine as a user.
+as() { local user="$1"; shift; docker exec -i -u "$user" -w / "$machine" "$@"; }
+firewall() { docker exec -i "$(compose ps -q agent-firewall)" "$@"; }
+
+dev_containers() { docker ps -a --filter name=^solidtrace --format '{{.ID}} {{.State}}' | sort; }
+dev_before="$(dev_containers)"
+
+"$stack" down >/dev/null 2>&1
+trap '"$stack" down >/dev/null 2>&1' EXIT
+if ! "$stack" up; then
+  echo "FAIL  the stack did not start"
+  exit 1
+fi
+machine="$(compose ps -q agent-machine)"
+
+# --- The stack's shape -----------------------------------------------------------------
+
+stack_has_four_services_and_no_autoscaler() {
+  local services
+  services="$(compose config --services | sort | tr '\n' ' ')"
+  [ "$services" = "agent-firewall agent-machine nomad squid " ] || want "the four services, got: $services"
+  ! compose config | grep -i -q autoscaler || want "no autoscaler"
+}
+
+agent_machine_is_a_ready_client_with_raw_exec() {
+  local id
+  id="$("$stack" nomad operator api -X GET /v1/nodes </dev/null | python3 -c 'import json,sys; n=[x for x in json.load(sys.stdin) if x["Status"]=="ready"]; print(n[0]["ID"] if len(n)==1 else "")')"
+  [ -n "$id" ] || want "one ready Nomad client"
+  "$stack" nomad operator api -X GET "/v1/node/$id" </dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["Drivers"].get("raw_exec") or {}
+sys.exit(0 if d.get("Detected") and d.get("Healthy") else "raw_exec is not healthy: %s" % d)'
+}
+
+agent_machine_has_no_docker_socket_and_is_not_privileged() {
+  docker inspect "$machine" | python3 -c '
+import json, sys
+c = json.load(sys.stdin)[0]
+mounts = [m["Destination"] for m in c["Mounts"]]
+assert mounts == ["/opt/nomad/bin"], "mounts: %s" % mounts
+assert not c["HostConfig"]["Privileged"], "privileged"
+caps = [cap.removeprefix("CAP_") for cap in c["HostConfig"]["CapAdd"]]
+assert caps == ["SYS_ADMIN"], "cap_add: %s" % caps'
+  as root sh -c '! ls /var/run/docker.sock /run/docker.sock 2>/dev/null' || want "no Docker socket"
+}
+
+no_process_on_the_agent_machine_has_net_admin() {
+  # PID 1 is the Nomad client (the entrypoint execs it). Bit 12 is NET_ADMIN.
+  as root bash -c '
+    [ "$(cat /proc/1/comm)" = nomad ] || { echo "PID 1 is $(cat /proc/1/comm)"; exit 1; }
+    for status in /proc/1/status /proc/self/status; do
+      bnd=$(awk "/^CapBnd/ { print \$2 }" $status)
+      (( (0x$bnd >> 12) & 1 )) && { echo "NET_ADMIN in $status"; exit 1; }
+    done
+    exit 0'
+  # The run user has no capability at all.
+  [ "$(as agent awk '/^CapEff/ { print $2 }' /proc/self/status)" = 0000000000000000 ] || want "no capability for the run user"
+}
+
+nomad_image_is_only_in_this_compose_file() {
+  local files
+  # The tracked files and the new ones; the pattern is split so that this file does not match.
+  files="$(git -C "$repo" grep --untracked -l -I 'hashicorp/''nomad' -- . ':!*.md')"
+  [ "$files" = "factory/local/compose.yml" ] || want "Nomad's image only in factory/local/compose.yml, got: $files"
+}
+
+stack_has_its_own_names_and_publishes_no_port() {
+  local name
+  for name in $(docker ps -a --filter label=com.docker.compose.project=factory-local --format '{{.Names}}'); do
+    [[ $name == factory-local-* ]] || want "container $name of the factory-local project"
+    [ -z "$(docker port "$name")" ] || want "no published port on $name"
+  done
+  for name in $(docker volume ls -q --filter label=com.docker.compose.project=factory-local); do
+    [[ $name == factory-local_* ]] || want "volume $name of the factory-local project"
+  done
+}
+
+check "the stack has Nomad, Squid, the firewall and one agent machine, and no autoscaler" stack_has_four_services_and_no_autoscaler
+check "the agent machine is a ready Nomad client with a healthy raw_exec" agent_machine_is_a_ready_client_with_raw_exec
+check "the agent machine has no Docker socket and is not privileged" agent_machine_has_no_docker_socket_and_is_not_privileged
+check "no process on the agent machine (root too) has NET_ADMIN, and the run user has no capability" no_process_on_the_agent_machine_has_net_admin
+check "Nomad's image is only in the local stack's compose file" nomad_image_is_only_in_this_compose_file
+check "the stack has its own containers and volumes, and publishes no port" stack_has_its_own_names_and_publishes_no_port
+
+# --- The run user and the take-over rule -----------------------------------------------
+
+run_user_is_not_root_and_is_in_the_docker_group() {
+  [ "$(as root id -u agent)" != 0 ] || want "the run user is not root"
+  local groups
+  groups=" $(as root id -nG agent) "
+  [[ $groups == *" docker "* ]] || want "the run user in the docker group, got:$groups"
+  [[ $groups != *" factory-access "* && $groups != *" sudo "* ]] || want "the run user not in the access or sudo group, got:$groups"
+}
+
+sudoers_is_valid() { as root visudo -c; }
+
+access_group_member_has_exactly_one_rule() {
+  local rules
+  rules="$(as engineer sudo -n -l | sed -n '/may run the following commands/,$p' | sed 1d | sed 's/^ *//' | grep -v '^$')"
+  [ "$rules" = "(agent) NOPASSWD: /usr/local/bin/hc connect" ] || want "one rule, got: $rules"
+}
+
+no_other_user_has_a_sudo_rule() {
+  local user out
+  for user in agent nobody root; do
+    out="$(as root sudo -l -U "$user" 2>&1)"
+    if [ "$user" = root ]; then
+      # Debian's own rule for root only.
+      [ "$(sed -n '/may run the following commands/,$p' <<<"$out" | grep -c NOPASSWD)" = 0 ] || want "no NOPASSWD rule for root"
+    else
+      grep -q "is not allowed to run sudo" <<<"$out" || want "no sudo rule for $user, got: $out"
+    fi
+  done
+}
+
+# Runs sudo as a user and expects sudo itself to refuse (the command never starts).
+refused() {
+  local user="$1" out
+  shift
+  if out="$(as "$user" sudo -n "$@" </dev/null 2>&1)"; then
+    want "sudo $* as $user to be refused, but it ran: $out"
+  fi
+  grep -q -E '^sudo: |is not in the sudoers file' <<<"$out" || want "sudo to refuse sudo $* as $user, got: $out"
+  ! grep -q RAN <<<"$out" || want "the command did not run"
+}
+
+take_over_rule_refuses_everything_else() {
+  refused engineer -u agent hc ls
+  refused engineer -u agent hc connect --help
+  refused engineer -u agent /usr/local/bin/hc connect extra
+  refused engineer -u agent /bin/bash -c 'echo RAN'
+  refused engineer -u agent claude --version
+  refused engineer -u root /usr/local/bin/hc connect
+  refused engineer -E -u agent hc connect
+  refused engineer -i
+  refused agent -u agent hc connect
+  refused agent /bin/bash -c 'echo RAN'
+  refused nobody -u agent hc connect
+}
+
+check "the run user is not root and is in the docker group" run_user_is_not_root_and_is_in_the_docker_group
+check "visudo accepts the sudoers files" sudoers_is_valid
+check "'sudo -l' for a member of the access group shows one rule: hc connect as the run user, no password" access_group_member_has_exactly_one_rule
+check "the run user and other users have no sudo rule" no_other_user_has_a_sudo_rule
+check "sudo refuses each other command, user and option" take_over_rule_refuses_everything_else
+
+# --- Claude Code and hc ----------------------------------------------------------------
+
+pinned_versions_are_installed() {
+  local claude hc
+  claude="$(as agent claude --version)"
+  hc="$(as agent hc --version)"
+  [ "$claude" = "$(pinned CLAUDE_CODE_VERSION) (Claude Code)" ] || want "Claude Code $(pinned CLAUDE_CODE_VERSION), got: $claude"
+  [ "$hc" = "hc $(pinned HC_VERSION)" ] || want "hc $(pinned HC_VERSION), got: $hc"
+}
+
+# As the wrapper will: root starts the hc core as the run user, with an environment of its own.
+start_hc_core_as_the_wrapper_does() {
+  as root setpriv --reuid agent --regid agent --init-groups -- \
+    env -i HOME=/home/agent USER=agent LOGNAME=agent SHELL=/bin/bash PATH=/usr/local/bin:/usr/bin:/bin \
+    HTTPS_PROXY=http://squid:3128 HTTP_PROXY=http://squid:3128 NO_PROXY=localhost,127.0.0.1 \
+    hc server start >/dev/null 2>&1 || true
+  local core_pid
+  core_pid="$(as agent hc server status | python3 -c 'import json,sys; print(json.load(sys.stdin)["pid"])')"
+  [ -n "$core_pid" ] || want "an hc core"
+  [ "$(as root stat -c %U "/proc/$core_pid")" = agent ] || want "the hc core runs as the run user"
+}
+
+take_over_connects_to_the_core_of_the_run_user() {
+  local reply pid core_pid
+  core_pid="$(as agent hc server status | python3 -c 'import json,sys; print(json.load(sys.stdin)["pid"])')"
+  reply="$(echo '{"jsonrpc":"2.0","id":1,"method":"server.status"}' | as engineer sudo -n -u agent hc connect)"
+  pid="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.readline())["result"]["pid"])' <<<"$reply")" || want "a server.status reply, got: $reply"
+  [ "$pid" = "$core_pid" ] || want "the core that the wrapper started ($core_pid), got $pid"
+  as root sh -c "! tr '\0' '\n' </proc/$core_pid/environ | grep '^SUDO_'" || want "no SUDO_ variable in the core"
+}
+
+claude_starts_in_an_hc_terminal_with_no_first_run_dialog() {
+  # The checkout, and its trust entry, as the wrapper will make them.
+  as agent bash -c 'mkdir -p /work/smoke && cd /work/smoke && git init -q'
+  as agent sed -i 's#"projects": {}#"projects": {"/work/smoke": {"hasTrustDialogAccepted": true}}#' /home/agent/.claude.json
+  local terminal screen=""
+  terminal="$(docker exec -i -u agent -w /work/smoke "$machine" hc run --bg --json "claude --dangerously-skip-permissions" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
+  for _ in $(seq 1 30); do
+    screen="$(as agent hc read "$terminal" 2>&1)"
+    grep -q "bypass permissions on" <<<"$screen" && break
+    sleep 1
+  done
+  local dialog
+  for dialog in "one you trust" "text style" "login method" "Yes, I accept" "Bypass Permissions mode"; do
+    ! grep -q -i "$dialog" <<<"$screen" || want "no first-run dialog ($dialog), screen: $screen"
+  done
+  grep -q "Claude Code v$(pinned CLAUDE_CODE_VERSION)" <<<"$screen" || want "Claude Code's prompt, screen: $screen"
+  grep -q "bypass permissions on" <<<"$screen" || want "the prompt in bypass mode, screen: $screen"
+  as root sh -c "for p in \$(pgrep -u agent -x claude); do ! tr '\0' '\n' </proc/\$p/environ | grep '^SUDO_' || exit 1; done" ||
+    want "no SUDO_ variable in Claude Code"
+  as agent hc kill "$terminal" >/dev/null 2>&1
+}
+
+check "Claude Code and hc are at the pinned versions" pinned_versions_are_installed
+check "the hc core starts as the run user from root, as the wrapper will start it" start_hc_core_as_the_wrapper_does
+check "a member of the access group reaches that core with 'sudo -u agent hc connect', and it has no SUDO_ variable" take_over_connects_to_the_core_of_the_run_user
+check "Claude Code starts in an hc terminal in bypass mode with no first-run dialog" claude_starts_in_an_hc_terminal_with_no_first_run_dialog
+as agent hc server stop >/dev/null 2>&1
+
+# --- The network -----------------------------------------------------------------------
+
+tcp_open() { as agent timeout 5 bash -c "</dev/tcp/$1/$2" 2>/dev/null; }
+
+proxy_lets_an_allowed_host_through() {
+  local code
+  code="$(as agent curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://api.anthropic.com/)" || want "a reply from api.anthropic.com through Squid"
+  [[ $code =~ ^[1-5][0-9][0-9]$ ]] || want "an HTTP status from api.anthropic.com, got: $code"
+}
+
+proxy_refuses_other_hosts_and_ports() {
+  local out
+  out="$(as agent curl -sS -o /dev/null --max-time 20 https://example.com/ 2>&1)" && want "example.com refused"
+  grep -q 403 <<<"$out" || want "Squid's 403 for example.com, got: $out"
+  [ "$(as agent curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://example.com/)" = 403 ] || want "403 for plain HTTP to example.com"
+  out="$(as agent curl -sS -o /dev/null --max-time 20 https://github.com:8443/ 2>&1)" && want "an allowed host on port 8443 refused"
+  grep -q 403 <<<"$out" || want "Squid's 403 for CONNECT to port 8443, got: $out"
+}
+
+direct_connections_fail_except_to_the_three_ports() {
+  as agent curl -sS -o /dev/null --noproxy '*' --max-time 5 https://api.anthropic.com/ 2>/dev/null && want "no direct HTTPS"
+  tcp_open 1.1.1.1 443 && want "no direct connection to 1.1.1.1:443"
+  tcp_open 8.8.8.8 53 && want "no direct connection to 8.8.8.8:53"
+  tcp_open squid 3128 || want "Squid on 3128"
+  tcp_open nomad 4647 || want "Nomad RPC on 4647"
+  tcp_open nomad 4646 && want "no connection to Nomad's HTTP API (4646)"
+  tcp_open nomad 4648 && want "no connection to Nomad's Serf port (4648)"
+  return 0
+}
+
+firewall_allows_only_the_three_ports() {
+  local rules ports
+  rules="$(firewall iptables -S OUTPUT)"
+  grep -q -- '^-P OUTPUT DROP' <<<"$rules" || want "OUTPUT policy DROP, got: $rules"
+  ports="$(grep -- '-j ACCEPT' <<<"$rules" | grep -o -- '--dport [0-9]*' | awk '{ print $2 }' | sort -n | tr '\n' ' ')"
+  [ "$ports" = "3128 4647 ${DISPATCHER_PORT:-4700} " ] || want "ACCEPT for 3128, 4647 and ${DISPATCHER_PORT:-4700} only, got: $ports"
+  [ "$(firewall iptables -S INPUT | head -1)" = "-P INPUT DROP" ] || want "INPUT policy DROP"
+}
+
+nomad_api_refuses_a_request_with_no_token() {
+  local code job
+  job='{"Job":{"ID":"no-token","Name":"no-token","Type":"batch","Datacenters":["*"],"TaskGroups":[{"Name":"g","Tasks":[{"Name":"t","Driver":"raw_exec","Config":{"command":"/bin/true"}}]}]}}'
+  code="$(as agent curl -s -o /dev/null -w '%{http_code}' --noproxy '*' http://127.0.0.1:4646/v1/jobs)"
+  [ "$code" = 403 ] || want "403 for the run user's job list, got: $code"
+  code="$(as agent curl -s -o /dev/null -w '%{http_code}' --noproxy '*' -X POST -d "$job" http://127.0.0.1:4646/v1/jobs)"
+  [ "$code" = 403 ] || want "403 for the run user's job registration, got: $code"
+}
+
+solidtrace_on_the_host_only_through_squid() {
+  local gateway headers code
+  ! as agent getent hosts host.docker.internal >/dev/null || want "host.docker.internal does not resolve on the agent machine"
+  gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+  tcp_open "$gateway" 4000 && want "no direct connection to the host ($gateway:4000)"
+  headers="$(as agent curl -s -o /dev/null -D - --max-time 20 http://host.docker.internal:4000/)"
+  code="$(awk 'NR == 1 { print $2 }' <<<"$headers")"
+  ! grep -q -i 'X-Squid-Error: ERR_ACCESS_DENIED' <<<"$headers" || want "Squid to let host.docker.internal:4000 through, got: $headers"
+  if grep -q -i 'X-Squid-Error: ERR_CONNECT_FAIL' <<<"$headers"; then
+    echo "note: the dev EventStore is not running on the host; Squid let the request through and found no listener" >&2
+  else
+    [[ $code =~ ^[1-5][0-9][0-9]$ ]] || want "a reply from the dev EventStore, got: $headers"
+  fi
+  [ "$(as agent curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://host.docker.internal:4001/)" = 403 ] || want "403 for the host's port 4001"
+  [ "$(as agent curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://host.docker.internal:22/)" = 403 ] || want "403 for the host's port 22"
+}
+
+squid_logs_each_host() {
+  local log
+  log="$(compose logs --no-log-prefix squid)"
+  grep -q 'api.anthropic.com' <<<"$log" || want "api.anthropic.com in Squid's log"
+  grep -q 'TCP_DENIED.*example.com' <<<"$log" || want "the refused example.com in Squid's log"
+}
+
+check "through Squid, a request to an allowed host works" proxy_lets_an_allowed_host_through
+check "through Squid, a request to another host or port fails" proxy_refuses_other_hosts_and_ports
+check "direct connections fail, except to Squid (3128) and Nomad RPC (4647)" direct_connections_fail_except_to_the_three_ports
+check "the firewall allows out only Squid, Nomad RPC and the Dispatcher's port" firewall_allows_only_the_three_ports
+check "Nomad's API refuses the run user with no token" nomad_api_refuses_a_request_with_no_token
+check "the agent machine reaches the dev SolidTrace on the host only through Squid" solidtrace_on_the_host_only_through_squid
+check "Squid logs each host" squid_logs_each_host
+
+# --- A raw_exec task at the kill boundary ----------------------------------------------
+
+raw_exec_task_uses_a_child_cgroup_as_root_for_the_run_user() {
+  "$stack" nomad job run -detach - <"$here/checks/cgroup-check.nomad.hcl" >/dev/null || want "the check job registered"
+  local alloc status=""
+  for _ in $(seq 1 60); do
+    read -r alloc status < <("$stack" nomad job allocs -json cgroup-check </dev/null 2>/dev/null |
+      python3 -c 'import json,sys; a=json.load(sys.stdin); print(a[0]["ID"], a[0]["ClientStatus"]) if a else print("-", "pending")')
+    [[ $status == complete || $status == failed ]] && break
+    sleep 1
+  done
+  local out
+  out="$("$stack" nomad alloc logs "$alloc" </dev/null 2>&1; "$stack" nomad alloc logs -stderr "$alloc" </dev/null 2>&1)" || true
+  grep '^PASS' <<<"$out" | sed 's/^/note: /' >&2 || true
+  [ "$status" = complete ] || want "the check task complete, got: $status; output: $out"
+  grep -q '^PASS' <<<"$out" || want "PASS from the check task, got: $out"
+}
+
+check "a raw_exec task as root starts the run user in a child cgroup, and cgroup.kill stops it" raw_exec_task_uses_a_child_cgroup_as_root_for_the_run_user
+
+# --- The end ---------------------------------------------------------------------------
+
+"$stack" down >/dev/null 2>&1
+trap - EXIT
+left="$(docker ps -a -q --filter label=com.docker.compose.project=factory-local; docker volume ls -q --filter label=com.docker.compose.project=factory-local)"
+if [ -z "$left" ]; then echo "PASS  the stack is down, with no container or volume left"; passed=$((passed + 1)); else echo "FAIL  the stack left: $left"; failed=$((failed + 1)); fi
+if [ "$(dev_containers)" = "$dev_before" ]; then echo "PASS  the dev SolidTrace's containers did not change"; passed=$((passed + 1)); else echo "FAIL  the dev SolidTrace's containers changed"; failed=$((failed + 1)); fi
+
+echo "smoke: $passed passed, $failed failed"
+[ "$failed" = 0 ]
