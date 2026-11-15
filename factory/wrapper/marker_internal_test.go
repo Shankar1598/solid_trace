@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
@@ -47,5 +48,46 @@ func TestAfterTheMarkerNoMessageIsWrittenToStdinButTheInterruptRequestIs(t *test
 	}
 	if e.marked.Err() == nil {
 		t.Error("the marker did not stop the calls that run")
+	}
+}
+
+// A harness that does not read its stdin blocks a message write. The
+// marker and the close of stdin still return at once, and the close
+// stops the write.
+func TestAStdinWriteThatIsBlockedDoesNotHoldTheMarkerOrTheClose(t *testing.T) {
+	_, w := io.Pipe()
+	e := newExecution(context.Background(), config{}, nil, dispatcherapi.Task{}, io.Discard, nil)
+	e.stdin = w
+	written := make(chan error, 1)
+	go func() { written <- e.writeMessage([]byte(`{"type":"user","n":1}`)) }()
+	// The write blocks, because no one reads the pipe.
+	select {
+	case err := <-written:
+		t.Fatalf("the write returned with no reader: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	returned := func(name string, step func()) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { step(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s did not return while a stdin write was blocked", name)
+		}
+	}
+	returned("the marker", func() { e.setMarker(dispatcherapi.EndPreempted) })
+	if err := e.writeMessage([]byte(`{"type":"user","n":2}`)); !errors.Is(err, errMarked) {
+		t.Errorf("a message after the marker: %v, want refused", err)
+	}
+	returned("the close of stdin", e.closeStdin)
+	select {
+	case err := <-written:
+		if err == nil {
+			t.Error("the blocked write did not fail when stdin closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the close of stdin did not stop the blocked write")
 	}
 }

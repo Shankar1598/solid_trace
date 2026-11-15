@@ -314,3 +314,55 @@ func TestTheHardLimitCountsFromTheNoticeNotFromTheStartOfTheHandler(t *testing.T
 		t.Errorf("the handler ended %s after the notice (the end step at %s), want %s", got, end, hardLimit)
 	}
 }
+
+// A marker or a read of the last checkpoint that does not return (a
+// stdin write that blocks, a saver that hangs) holds the handler for at
+// most markLimit each, and the next steps still run.
+func TestAMarkerOrACheckpointReadThatHangsDoesNotStopTheNextSteps(t *testing.T) {
+	clock := newFakeClock()
+	notice := clock.Now()
+	never := make(chan struct{})
+	t.Cleanup(func() { close(never) })
+	var ran []string
+	var mu sync.Mutex
+	step := func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		ran = append(ran, name)
+	}
+	var reported *dispatcherapi.Preemption
+	steps := preemptSteps{
+		mark:           func(string) { <-never },
+		tell:           func(context.Context, dispatcherapi.Preempting) {},
+		lastCheckpoint: func() time.Time { <-never; return time.Time{} },
+		halt:           func(context.Context) { step("halt") },
+		save: func(context.Context, string) (savedWork, error) {
+			step("save")
+			return savedWork{Commit: "0123abcd"}, nil
+		},
+		lastUpload: func(context.Context) (*uint64, error) { step("upload"); return nil, nil },
+		end:        func(_ context.Context, p dispatcherapi.Preemption) { step("end"); reported = &p },
+	}
+
+	drive(t, clock, func() dispatcherapi.Preemption {
+		return handlePreemption(clock, dispatcherapi.EndPreempted, notice, steps)
+	})
+
+	if got := clock.Now().Sub(notice); got != 2*markLimit {
+		t.Errorf("the handler ended %s after the notice, want after the two limits of %s", got, markLimit)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, name := range []string{"halt", "save", "upload", "end"} {
+		if !slices.Contains(ran, name) {
+			t.Errorf("the %s step did not run; ran %v", name, ran)
+		}
+	}
+	if reported == nil || reported.WIPCommit != "0123abcd" {
+		t.Fatalf("the report: %+v", reported)
+	}
+	problems := strings.Join(reported.Problems, "\n")
+	if !strings.Contains(problems, "marker") || !strings.Contains(problems, "checkpoint") {
+		t.Errorf("the problems do not name the marker and the checkpoint: %v", reported.Problems)
+	}
+}

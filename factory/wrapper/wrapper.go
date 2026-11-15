@@ -178,7 +178,12 @@ type execution struct {
 	harnessMu sync.Mutex
 	stdin     io.WriteCloser
 	harness   *exec.Cmd
-	// stdinMu holds each write to stdin and its close.
+	// writeMu holds each write to stdin, so that lines do not mix.
+	// stdinMu holds stdinClosed, the check before a write, the marker and
+	// the close; it is never held across a write, so that a write that
+	// blocks (a harness that does not read stdin) does not stop the
+	// marker, and the close stops the write.
+	writeMu     sync.Mutex
 	stdinMu     sync.Mutex
 	stdinClosed bool
 	kill        *time.Timer
@@ -661,20 +666,36 @@ func (e *execution) startEndWithin(reason, why string, wait time.Duration) {
 func (e *execution) writeMessage(line []byte) error { return e.writeStdin(line, e.isMarked) }
 
 // writeStdin writes one line to stdin, unless stdin is closed or refuse
-// says no (refuse is asked under stdinMu).
+// says no (refuse is asked under stdinMu, before and after the wait for
+// the write before it). A write that started before the marker can end
+// after it; no write starts after it.
 func (e *execution) writeStdin(line []byte, refuse func() bool) error {
-	e.stdinMu.Lock()
-	defer e.stdinMu.Unlock()
-	if e.stdinClosed {
-		return errors.New("stdin is closed")
+	if err := e.mayWrite(refuse); err != nil {
+		return err
 	}
-	if refuse != nil && refuse() {
-		return errMarked
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	if err := e.mayWrite(refuse); err != nil {
+		return err
 	}
 	_, err := e.stdin.Write(append(line, '\n'))
 	return err
 }
 
+func (e *execution) mayWrite(refuse func() bool) error {
+	e.stdinMu.Lock()
+	defer e.stdinMu.Unlock()
+	switch {
+	case e.stdinClosed:
+		return errors.New("stdin is closed")
+	case refuse != nil && refuse():
+		return errMarked
+	}
+	return nil
+}
+
+// closeStdin closes stdin with no wait for a write: the close stops a
+// write that blocks.
 func (e *execution) closeStdin() {
 	e.stdinMu.Lock()
 	defer e.stdinMu.Unlock()

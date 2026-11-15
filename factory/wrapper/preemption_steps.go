@@ -165,9 +165,13 @@ func (e *execution) halt(ctx context.Context, reason string) {
 	started := e.stdin != nil
 	e.harnessMu.Unlock()
 	if started {
-		if err := e.writeStdin(interruptRequest(), nil); err != nil {
-			fmt.Fprintln(e.log, "wrapper: the halt's interrupt request:", err)
-		}
+		// The write can wait behind a message write that blocks; the close
+		// of stdin at the end procedure stops both.
+		go func() {
+			if err := e.writeStdin(interruptRequest(), nil); err != nil {
+				fmt.Fprintln(e.log, "wrapper: the halt's interrupt request:", err)
+			}
+		}()
 		timer, stop := e.clock.Timer(interruptWait)
 		select {
 		case <-e.results:

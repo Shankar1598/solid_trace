@@ -13,9 +13,10 @@ import (
 // machine will be taken back, or a SIGTERM or a SIGINT comes with no stop
 // command, the wrapper does these steps in order, each with a time limit:
 //
-//  1. The "preempting" marker: no more messages on stdin, the agent's
-//     socket refuses new calls and stops the calls that run, and one call
-//     tells the Dispatcher (preemptingWait, not awaited).
+//  0. The read of the last checkpoint's time (markLimit).
+//  1. The "preempting" marker (markLimit): no more messages on stdin, the
+//     agent's socket refuses new calls and stops the calls that run, and
+//     one call tells the Dispatcher (preemptingWait, not awaited).
 //  2. The halt (haltLimit): the interrupt request, interruptWait for the
 //     result, then the end procedure with haltEndWait.
 //  3. The save of the work (saveLimit) and the last upload of the
@@ -25,6 +26,7 @@ import (
 // The handler ends at hardLimit after the notice at the latest, also when
 // a step does not return: it goes on at each limit.
 const (
+	markLimit       = 1 * time.Second
 	preemptingWait  = 2 * time.Second
 	haltLimit       = 10 * time.Second
 	interruptWait   = 3 * time.Second
@@ -94,10 +96,6 @@ func within[T any](c clock, limit time.Duration, step func(ctx context.Context) 
 // reported.
 func handlePreemption(c clock, reason string, noticeAt time.Time, s preemptSteps) dispatcherapi.Preemption {
 	p := dispatcherapi.Preemption{Reason: reason, NoticeAt: noticeAt.UTC()}
-	if last := s.lastCheckpoint(); !last.IsZero() {
-		age := noticeAt.Sub(last).Seconds()
-		p.CheckpointAgeSeconds = &age
-	}
 	hard := noticeAt.Add(hardLimit)
 	// limit is a step's limit, never past the hard limit.
 	limit := func(d time.Duration) time.Duration { return min(d, hard.Sub(c.Now())) }
@@ -108,7 +106,18 @@ func handlePreemption(c clock, reason string, noticeAt time.Time, s preemptSteps
 		p.Problems = append(p.Problems, fmt.Sprintf(format, args...))
 	}
 
-	s.mark(reason)
+	if last, ok := within(c, limit(markLimit), func(context.Context) time.Time { return s.lastCheckpoint() }); !ok {
+		problem("the read of the last checkpoint did not end in %s", markLimit)
+	} else if !last.IsZero() {
+		age := noticeAt.Sub(last).Seconds()
+		p.CheckpointAgeSeconds = &age
+	}
+	if _, ok := within(c, limit(markLimit), func(context.Context) struct{} {
+		s.mark(reason)
+		return struct{}{}
+	}); !ok {
+		problem("the preempting marker did not end in %s", markLimit)
+	}
 	tell := dispatcherapi.Preempting{Reason: reason, NoticeAt: p.NoticeAt}
 	go within(c, limit(preemptingWait), func(ctx context.Context) struct{} {
 		s.tell(ctx, tell)
