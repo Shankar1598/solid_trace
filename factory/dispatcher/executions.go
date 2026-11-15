@@ -137,7 +137,7 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 		writeProblem(w, http.StatusBadRequest, problem)
 		return
 	}
-	err := d.store.saveReport(e.id, report)
+	err := d.store.saveReport(e.id, report, d.now())
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, "the Execution is not running: "+errEnded.Error()+" or has not started")
 		return
