@@ -1,0 +1,229 @@
+// Package factorytest is Seam 3, the factory test environment: the real
+// Dispatcher with real SQLite in a temp dir, the SolidTrace recorder, a
+// controllable clock, and people who use the real solidtrace CLI. Tests
+// drive it from the API and the CLI, and check what a person can see.
+package factorytest
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/solidtrace/cli/command"
+	"github.com/solidtrace/cli/credentials"
+	"github.com/solidtrace/factory/dispatcher"
+	"github.com/solidtrace/factory/internal/recorder"
+)
+
+// DispatcherToken is the Dispatcher's own API token at the recorder.
+const DispatcherToken = "stk_dispatcher"
+
+// Clock is a clock that moves only when a test moves it.
+type Clock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+// Now is the clock's time.
+func (c *Clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+// Advance moves the clock by d.
+func (c *Clock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// Env is one Dispatcher and one SolidTrace.
+type Env struct {
+	t          testing.TB
+	SolidTrace *recorder.Recorder
+	Clock      *Clock
+	Config     dispatcher.Config
+
+	current atomic.Pointer[dispatcher.Dispatcher]
+	server  *httptest.Server
+	people  int
+}
+
+// New starts the environment. The test's cleanup stops it.
+func New(t testing.TB) *Env {
+	t.Helper()
+	e := &Env{
+		t:          t,
+		SolidTrace: recorder.New(DispatcherToken),
+		Clock:      &Clock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
+	}
+	t.Cleanup(e.SolidTrace.Close)
+	e.Config = dispatcher.Config{
+		SolidTraceURL:   e.SolidTrace.URL(),
+		SolidTraceToken: DispatcherToken,
+		Database:        filepath.Join(t.TempDir(), "dispatcher.sqlite3"),
+	}
+	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.current.Load().Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(e.server.Close)
+	e.start()
+	t.Cleanup(func() { e.current.Load().Close() })
+	return e
+}
+
+func (e *Env) start() {
+	e.t.Helper()
+	d, err := dispatcher.Open(e.Config, dispatcher.Options{Now: e.Clock.Now})
+	if err != nil {
+		e.t.Fatalf("start the Dispatcher: %v", err)
+	}
+	e.current.Store(d)
+}
+
+// URL is the Dispatcher's private listener.
+func (e *Env) URL() string { return e.server.URL }
+
+// Restart stops the Dispatcher and starts it again on the same database.
+func (e *Env) Restart() {
+	e.t.Helper()
+	if err := e.current.Load().Close(); err != nil {
+		e.t.Fatalf("stop the Dispatcher: %v", err)
+	}
+	e.start()
+}
+
+// Person is a SolidTrace user with a token, on a machine of their own.
+type Person struct {
+	env       *Env
+	Token     string
+	Answer    recorder.Answer
+	configDir string
+}
+
+// Organization is the Organization of the people that Member makes.
+var Organization = recorder.Organization{ID: 7, Slug: "example", Name: "Example"}
+
+// Member makes a member of Organization with an active factory token,
+// signed in with the solidtrace CLI.
+func (e *Env) Member(name string) *Person {
+	return e.PersonIn(name, Organization, "member")
+}
+
+// PersonIn makes a person with role in org.
+func (e *Env) PersonIn(name string, org recorder.Organization, role string) *Person {
+	e.t.Helper()
+	e.people++
+	org.Role = role
+	p := &Person{
+		env:   e,
+		Token: "stk_person_" + strings.ToLower(name),
+		Answer: recorder.Answer{
+			Sub:           "10" + string(rune('0'+e.people)),
+			Username:      strings.ToLower(name) + "@example.com",
+			Scope:         "sessions:write factory",
+			Organizations: []recorder.Organization{org},
+		},
+		configDir: e.t.TempDir(),
+	}
+	e.SolidTrace.Token(p.Token, p.Answer)
+	err := credentials.Store{Dir: p.configDir}.Save(credentials.Credentials{
+		InstanceURL:          e.SolidTrace.URL(),
+		IngestURL:            e.SolidTrace.URL(),
+		TokenEndpoint:        e.SolidTrace.URL() + "/oauth/token",
+		ClientID:             "solidtrace-cli",
+		Resource:             e.SolidTrace.URL() + "/factory",
+		Scope:                p.Answer.Scope,
+		AccessToken:          p.Token,
+		AccessTokenExpiresAt: e.Clock.Now().Add(24 * time.Hour),
+		RefreshToken:         "str_" + p.Token,
+		Organization:         &credentials.Organization{Name: org.Name, Slug: org.Slug},
+	})
+	if err != nil {
+		e.t.Fatalf("sign %s in: %v", name, err)
+	}
+	return p
+}
+
+// Result is what one CLI command printed, and its exit code.
+type Result struct {
+	Stdout, Stderr string
+	Code           int
+}
+
+// CLI runs the solidtrace CLI on the person's machine.
+func (p *Person) CLI(args ...string) Result {
+	var stdout, stderr bytes.Buffer
+	code := command.Run(context.Background(), args, command.Env{
+		Stdin:     strings.NewReader(""),
+		Stdout:    &stdout,
+		Stderr:    &stderr,
+		ConfigDir: p.configDir,
+		HTTP:      &http.Client{Timeout: 10 * time.Second},
+		Now:       p.env.Clock.Now,
+		Sleep:     func(context.Context, time.Duration) error { return nil },
+		Version:   "0.0.0-test",
+	})
+	return Result{stdout.String(), stderr.String(), code}
+}
+
+// Answer is one answer of the Dispatcher's API.
+type Answer struct {
+	Status int
+	Body   []byte
+}
+
+// JSON decodes the body into v.
+func (a Answer) JSON(t testing.TB, v any) {
+	t.Helper()
+	if err := json.Unmarshal(a.Body, v); err != nil {
+		t.Fatalf("decode %s: %v", a.Body, err)
+	}
+}
+
+// API sends one request to the private listener with the person's token.
+// body nil sends no body.
+func (p *Person) API(method, path string, body any) Answer {
+	return p.env.API(p.Token, method, path, body)
+}
+
+// API sends one request to the private listener with token ("" sends no
+// Authorization). A []byte body is sent as it is; another body is sent as
+// JSON.
+func (e *Env) API(token, method, path string, body any) Answer {
+	e.t.Helper()
+	var reader io.Reader
+	if raw, ok := body.([]byte); ok {
+		reader = bytes.NewReader(raw)
+	} else if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		reader = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequest(method, e.URL()+path, reader)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	answer, _ := io.ReadAll(resp.Body)
+	return Answer{resp.StatusCode, answer}
+}

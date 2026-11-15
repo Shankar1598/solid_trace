@@ -17,6 +17,12 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      go vet ./... && go test -race -count=1 ./... && ./build
      ```
 
+   - The factory module (the Dispatcher), from `factory/`, takes less than a minute. Its tests are Seam 3: the real Dispatcher with SQLite in a temp dir, a SolidTrace recorder and the real solidtrace CLI. It needs no ClickHouse and no database, so it can run at any time. It uses cgo for SQLite:
+
+     ```bash
+     go vet ./... && go test -race -count=1 ./...
+     ```
+
    - Playwright, from `console/`, takes about 10 min:
      - Run `bin/rails db:migrate` first, so the dev database has any new migration.
      - Then run `bun run e2e --reporter=line`.
