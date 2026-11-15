@@ -27,6 +27,8 @@ const (
 	// ReadTransaction one Transaction's breakdown.
 	ReadTransactions = "transactions"
 	ReadTransaction  = "transaction"
+	// ReadAgentSessions reads the Agent sessions list and its totals.
+	ReadAgentSessions = "Agent sessions"
 )
 
 // readTag is a Log read's log_comment: its Project, its kind, the run its

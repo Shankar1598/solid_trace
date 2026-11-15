@@ -364,6 +364,21 @@ func TestAgentSessionUploadOfARun(t *testing.T) {
 		expectStatus(t, answer, 400)
 	})
 
+	// So a Project is never stored without its Run (the Project filter
+	// of the Agent sessions list selects the Agent sessions of Runs).
+	t.Run("only a Run's token sends a Run or a Project", func(t *testing.T) {
+		for _, u := range []unitUpload{
+			{path: "session.jsonl", project: "shop", body: body},
+			{path: "session.jsonl", runID: "run-0193", body: body},
+		} {
+			answer := uploadUnit(t, env, o.secret, otherSession, u)
+			expectStatus(t, answer, 400)
+			if msg, _ := answer.body["error"].(string); !strings.Contains(msg, "Only a token of a Run") {
+				t.Errorf("Expected a clear body, got %s", answer.raw)
+			}
+		}
+	})
+
 	t.Run("an Agent session id not in the limit is refused", func(t *testing.T) {
 		answer := uploadUnit(t, env, runSecret, otherSession, run)
 		expectStatus(t, answer, 403)

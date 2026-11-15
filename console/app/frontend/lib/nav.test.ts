@@ -28,6 +28,13 @@ describe('the sidebar entry of a page', () => {
     expect(navSection('/acme/projects/shop/logs?q=/monitors')).toBe('logs')
   })
 
+  it('is Agent sessions for the list, and not for the settings page of Agent sessions', () => {
+    expect(navSection('/acme/agent_sessions')).toBe('agent_sessions')
+    expect(navSection('/acme/agent_sessions?range=30d&run=none')).toBe('agent_sessions')
+    expect(navSection('/acme/settings/agent_sessions')).toBe('settings')
+    expect(orgSwitchUrl('/acme/agent_sessions?person=3', 'meta')).toBe('/meta/agent_sessions')
+  })
+
   it('is Projects for the list, a new Project and a Project\'s page', () => {
     expect(navSection('/acme/projects')).toBe('projects')
     expect(navSection('/acme/projects/new')).toBe('projects')
