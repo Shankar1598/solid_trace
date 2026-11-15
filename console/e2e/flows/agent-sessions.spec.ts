@@ -263,8 +263,13 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect(page).toHaveURL(new RegExp(`/${ORG}/agent_sessions/${long.id}`))
   await expect(page.getByText(long.id, { exact: true })).toBeVisible()
 
+  // The header and each person step name the person whose CLI uploaded it.
+  const header = page.locator('[data-section="agent-session-header"]')
+  await expect(header.locator('div > div').filter({ hasText: /^Person$/ }).locator('xpath=following-sibling::div')).toHaveText(ADMIN_NAME)
+
   // The secret shows as '*', byte for byte.
   const person = page.locator('[data-step="person"]').first()
+  await expect(person).toContainText(ADMIN_NAME)
   await expect(person).toContainText(`My key is ${'*'.repeat(secret.length)} for the test server.`)
   expect(await page.content()).not.toContain(secret)
 
@@ -276,6 +281,12 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await subagent.getByRole('button', { name: `Subagent ${subagentId}` }).click()
   await expect(subagent.getByText('It is in cart.go.', { exact: true })).toBeVisible()
   await expect(subagent.getByText(`subagent ${subagentId}`, { exact: true }).first()).toBeVisible()
+  // The subagent's prompt is not from a person, so it has no person's name.
+  const prompt = subagent.locator('[data-step="not from a person"]')
+  await expect(prompt).toContainText('Find the cart code.')
+  await expect(prompt).toContainText('Not from a person')
+  await expect(prompt).not.toContainText(ADMIN_NAME)
+  await expect(subagent.locator('[data-step="person"]')).toHaveCount(0)
 
   // The Bash output is past the Log limit: cut, and 'Show full' reads the
   // whole raw line, which has the end marker and the second secret redacted.
