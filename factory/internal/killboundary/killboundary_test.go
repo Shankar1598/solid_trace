@@ -64,9 +64,18 @@ wait`
 		uid, _ := strconv.Atoi(u.Uid)
 		gid, _ := strconv.Atoi(u.Gid)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
-		if err := os.Chmod(filepath.Dir(pids), 0o777); err != nil {
+		// A directory that the run user can reach (t.TempDir's parent is
+		// for root only).
+		dir, err := os.MkdirTemp("", "killboundary-")
+		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		if err := os.Chmod(dir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		pids = filepath.Join(dir, "pids")
+		cmd.Args[len(cmd.Args)-1] = pids
 	}
 	if err := b.Start(cmd); err != nil {
 		t.Fatal(err)
