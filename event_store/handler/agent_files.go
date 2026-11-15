@@ -105,14 +105,15 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 		list[i] = fiber.Map{"path": f.Path, "version": f.Version, "end_offset": f.EndOffset, "content_hash": f.ContentHash}
 	}
 	answer["agent_session"] = fiber.Map{
-		"id":         sessionID.String(),
-		"person":     fiber.Map{"user_id": session.UserID},
-		"harness":    session.Harness,
-		"repository": session.Repository,
-		"folder":     session.Folder,
-		"run_id":     session.RunID,
-		"project":    session.Project,
-		"flags":      storage.AgentFlagNames(session.Flags),
+		"id":                sessionID.String(),
+		"person":            fiber.Map{"user_id": session.UserID},
+		"harness":           session.Harness,
+		"repository":        session.Repository,
+		"folder":            session.Folder,
+		"run_id":            session.RunID,
+		"project":           session.Project,
+		"parent_session_id": session.ParentSessionID,
+		"flags":             storage.AgentFlagNames(session.Flags),
 	}
 	answer["files"] = list
 	return c.JSON(answer)
@@ -127,7 +128,9 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 // names the harness, the repository (host/workspace/name) and the folder
 // inside it; a token limited to a Run's Agent sessions also names the Run
 // (run_id) and its Project (project). Any other token's repository must
-// match the captured repositories, else 403.
+// match the captured repositories, else 403. A fork or a /clear sends
+// parent_session_id, the Agent session it came from, when the uploader
+// knows it.
 //
 // A 200 means the bytes are stored, as for Log ingest; Agent file
 // processing inserts them into ClickHouse about one time a second. A
@@ -145,6 +148,9 @@ func (h *AgentHandler) UploadAgentFile(c *fiber.Ctx) error {
 		return err
 	}
 	unit, problem := agentUnitOf(c, token)
+	if problem == "" && unit.Session.ParentSessionID == sessionID.String() {
+		problem = "Send parent_session_id, the Agent session that this one came from: not its own id."
+	}
 	if problem != "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": problem})
 	}
@@ -260,6 +266,13 @@ func agentUnitOf(c *fiber.Ctx, token auth.Token) (storage.AgentFileUnit, string)
 	}
 	if !strings.HasSuffix(unit.Path, ".jsonl") && (unit.Offset != 0 || unit.ContentHash == "") {
 		return unit, "A file that is not .jsonl is uploaded whole: send it at offset 0 with its content_hash."
+	}
+	if parent := strings.TrimSpace(c.Query("parent_session_id")); parent != "" {
+		id, err := uuid.Parse(parent)
+		if err != nil {
+			return unit, "Send parent_session_id, the Agent session that this one came from: a UUID."
+		}
+		unit.Session.ParentSessionID = id.String()
 	}
 	if size := c.Query("size"); size != "" {
 		if unit.Size, err = strconv.ParseUint(size, 10, 64); err != nil {

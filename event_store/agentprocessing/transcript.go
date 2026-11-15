@@ -35,6 +35,8 @@ type transcriptLine struct {
 	Operation   string `json:"operation"`
 	Reason      string `json:"reason"`
 	CommandUUID string `json:"commandUuid"`
+	// A cost-state line: Claude Code's own total of the Agent session.
+	TotalCostUSD *float64 `json:"totalCostUSD"`
 }
 
 type transcriptMessage struct {
@@ -127,6 +129,8 @@ type lineFacts struct {
 	// message's uuid and the time of its delivery.
 	delivered   string
 	deliveredAt json.RawMessage
+	// A cost-state line: its totalCostUSD.
+	costState *float64
 }
 
 type parsedLine struct {
@@ -165,8 +169,9 @@ var agentLogIDs = uuid.MustParse("5b0f3c1e-8f53-4d0e-9a52-6c1d2b7e4a90")
 // A remove line follows its attachment at once, so the mid-turn rule needs
 // an upload cut between them at the end of a range, and then the message
 // has the time of its attachment.
-func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseState) ([][]models.Log, parseState) {
+func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseState) ([][]models.Log, []storage.AgentSessionDay, parseState) {
 	state = state.clone()
+	totals := newSessionTotals(units)
 	var lines []parsedLine
 	lastLineOfReply := map[string]int{}
 	deliveredAt := map[string]json.RawMessage{}
@@ -234,6 +239,7 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 		} else {
 			object["time"] = previous
 		}
+		totals.addLine(unit, line.offset+uint64(line.length), object, f, receipt)
 		keepOnStoredDay(object, receipt.At)
 		addSource(object, unit, line.offset, line.length)
 		log, outcome := normalise.JSON(object, receipt)
@@ -246,14 +252,11 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 		logs[line.unit] = append(logs[line.unit], log)
 	}
 	state.dropOld()
-	return logs, state
+	return logs, totals.days(), state
 }
 
-// isSubagentFile is true for the transcript of a subagent, which Claude
-// Code writes under subagents/ in the Agent session's folder.
-func isSubagentFile(path string) bool {
-	return strings.HasPrefix(path, "subagents/") || strings.Contains(path, "/subagents/")
-}
+// isSubagentFile is true for the transcript of a subagent.
+var isSubagentFile = storage.IsSubagentFile
 
 // addTokens adds the tokens of a request by kind, and its estimated cost
 // when its model has a price.
@@ -418,6 +421,8 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 		if line.Operation == "remove" && line.Reason == "absorbed_mid_turn" && line.CommandUUID != "" && line.Timestamp != "" {
 			facts.delivered, facts.deliveredAt = line.CommandUUID, quote(line.Timestamp)
 		}
+	case "cost-state":
+		facts.costState = line.TotalCostUSD
 	case "system":
 		role = "system"
 		s, _ := contentOf(line.Content)

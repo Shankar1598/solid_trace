@@ -36,7 +36,9 @@ func agentFilesPath(sessionID string) string {
 // unless set, in the repository github.com/acme/shop.
 type unitUpload struct {
 	path, folder, runID, project, harness, repository, contentHash string
-	version, offset                                                int
+	// parent is the parent_session_id, sent only when set.
+	parent          string
+	version, offset int
 	// size is the unit's size on disk, sent only when set: more than the
 	// body for a unit over 32 MiB.
 	size    int
@@ -59,7 +61,7 @@ func uploadUnit(t *testing.T, env *TestEnv, secret, sessionID string, u unitUplo
 	if u.size != 0 {
 		query.Set("size", fmt.Sprint(u.size))
 	}
-	for name, value := range map[string]string{"folder": u.folder, "run_id": u.runID, "project": u.project, "content_hash": u.contentHash} {
+	for name, value := range map[string]string{"folder": u.folder, "run_id": u.runID, "project": u.project, "content_hash": u.contentHash, "parent_session_id": u.parent} {
 		if value != "" {
 			query.Set(name, value)
 		}
@@ -105,6 +107,8 @@ type sessionFiles struct {
 		RunID      string   `json:"run_id"`
 		Project    string   `json:"project"`
 		Flags      []string `json:"flags"`
+		// ParentSessionID is the Agent session it came from, "" for none.
+		ParentSessionID string `json:"parent_session_id"`
 	} `json:"agent_session"`
 	Files []struct {
 		Path        string `json:"path"`
