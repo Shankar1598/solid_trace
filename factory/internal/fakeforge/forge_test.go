@@ -170,3 +170,37 @@ func TestPRAndCommentsThatTheFactoryMakes(t *testing.T) {
 		t.Fatalf("state after the merge = %v", a.body["state"])
 	}
 }
+
+// A Dispatcher polls the API while the test acts as a person. Under
+// `go test -race`, this finds an answer that is encoded with no lock.
+func TestAPIAnswersAndPersonHelpersAtTheSameTime(t *testing.T) {
+	f := fakeforge.New(t)
+	f.AddRepo(repo, nil)
+	f.Push(repo, "agent/r1", map[string]string{"fix.txt": "x\n"}, "Fix")
+	pulls := "/api/repos/" + repo + "/pulls"
+	call(t, f, f.Token, "POST", pulls, map[string]string{"title": "T", "source": "agent/r1"})
+	c := f.PersonComments(repo, 1, fakeforge.Comment{Author: "Asha", Body: "/agent again"})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			for _, p := range []string{pulls, pulls + "/1", pulls + "/1/comments"} {
+				req, _ := http.NewRequest("GET", f.URL()+p, nil)
+				req.Header.Set("Authorization", "Bearer "+f.Token)
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					resp.Body.Close()
+				}
+			}
+		}
+	}()
+	for i := 0; ; i++ {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		f.SetState(repo, 1, []string{"OPEN", "MERGED"}[i%2])
+		f.Resolve(repo, 1, c.ID)
+	}
+}

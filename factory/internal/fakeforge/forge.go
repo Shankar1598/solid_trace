@@ -305,14 +305,20 @@ func (f *Forge) api(h func(r *http.Request, repo string) (int, any, *apiError)) 
 			json.NewEncoder(w).Encode(map[string]string{"error": "no repository " + repo})
 			return
 		}
+		// The body holds pointers into the Forge's state, so encode it
+		// while f.mu is held: a test helper can change the same PR.
 		f.mu.Lock()
 		status, body, e := h(r, repo)
-		f.mu.Unlock()
 		if e != nil {
 			status, body = e.status, map[string]string{"error": e.msg}
 		}
+		data, err := json.Marshal(body)
+		f.mu.Unlock()
+		if err != nil {
+			status, data = http.StatusInternalServerError, []byte(`{"error":"the answer is not JSON"}`)
+		}
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(body)
+		w.Write(append(data, '\n'))
 	}
 }
 
