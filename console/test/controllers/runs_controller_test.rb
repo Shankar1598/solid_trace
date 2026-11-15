@@ -35,10 +35,10 @@ class RunsControllerTest < ActionDispatch::IntegrationTest
   end
 
   def stub_runs(project, body, runs: [ run_row("run_waiting", state: "waiting_on_person", active: true, reason: "needs a person"),
-                                       run_row("run_done", state: "done", active: false, time: "2026-10-02T10:00:00Z") ])
+                                       run_row("run_done", state: "done", active: false, time: "2026-10-02T10:00:00Z") ], more: false)
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/runs")
       .with(body: hash_including(body))
-      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { runs: runs, more: false }.to_json)
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { runs: runs, more: more }.to_json)
   end
 
   def page(params = {})
@@ -68,8 +68,48 @@ class RunsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "project" => nil, "state" => nil }, view["filters"])
     # The Projects whose Runs can be listed: not the Agent Project itself.
     assert_equal [ { "name" => "Shop", "slug" => "shop" } ], view["projects"]
-    assert_includes view["states"], "waiting_on_person"
+    assert_equal false, view["more"]
     assert view.dig("event_store", "available")
+  end
+
+  test "when EventStore cut the list at its limit, the page says that there are more Runs" do
+    project = turn_on
+    stub_runs(project, {}, more: true)
+    sign_in_as(@member)
+
+    assert_equal true, page["more"]
+  end
+
+  test "each state of a Run (GLOSSARY, Run) is a choice of the state filter and goes to EventStore" do
+    project = turn_on
+    states = %w[queued running waiting_on_person waiting_on_account_limit taken_over done failed stopped]
+    sign_in_as(@member)
+
+    states.each do |state|
+      asked = stub_runs(project, { "state" => state })
+
+      view = page(state: state)
+
+      assert_requested asked
+      assert_equal state, view.dig("filters", "state")
+      assert_equal states, view["states"]
+    end
+  end
+
+  test "the Project filter is trimmed, and a blank one is not sent" do
+    project = turn_on
+    blank = stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/runs")
+      .with { |request| !JSON.parse(request.body).key?("project") }
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { runs: [], more: false }.to_json)
+    sign_in_as(@member)
+
+    assert_nil page(project: "  ").dig("filters", "project")
+    assert_requested blank
+
+    trimmed = stub_runs(project, { "project" => "shop" })
+
+    assert_equal "shop", page(project: "shop ").dig("filters", "project")
+    assert_requested trimmed
   end
 
   test "the Project and state filters in the URL go to EventStore and come back on the page" do
