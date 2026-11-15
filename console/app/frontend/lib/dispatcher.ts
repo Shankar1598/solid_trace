@@ -22,3 +22,25 @@ export function dispatcherStatusLine(status: DispatcherStatus): { ok: boolean; t
       : `${answers}, but SolidTrace refuses its token. An Admin makes a new Dispatcher's token in Settings → API tokens & MCP.`,
   }
 }
+
+/** A Project's Factory settings, as the Dispatcher keeps them. */
+export interface FactorySettingsValues {
+  repository: string
+  folder: string
+  base_branch: string
+}
+
+/**
+ * The Factory section's settings as a Project's page loads them after it
+ * shows (FactorySettings#section): the settings (null when the Project has
+ * none), or Console's error when the Dispatcher did not answer as it should.
+ */
+export type FactorySectionData =
+  | { settings: FactorySettingsValues | null; error?: undefined }
+  | { error: string }
+
+/** Where the Factory section saves, and its link to the Project's Runs. */
+export interface FactorySectionPaths {
+  path: string
+  runs_path: string
+}

@@ -105,6 +105,12 @@ An agent can do the same over MCP: `query_logs` on the Agent Project runs a Quer
 
 An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both.
 
+## Set a Project's Factory settings
+
+A Project's page has a **Factory** section when Settings → Instance has the Dispatcher's URL. It shows the Project's **Factory settings**, which the Dispatcher keeps: the repository (host/workspace/name, or a clone URL), the folder in the repository (empty is the root), and the default base branch (empty is the repository's default branch). Each member reads them; only an Admin of the Organization saves them. A save keeps the forge connection that `solidtrace projects set` gave. Console reads and saves them at the Dispatcher as you, with a factory token that lasts 5 minutes.
+
+When the Dispatcher does not answer, or SolidTrace no longer accepts the Dispatcher's own token (for example, the Admin who made it left the Organization), the section shows that error. **Open this Project's Runs** opens the Runs page with the Project filter set.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.
