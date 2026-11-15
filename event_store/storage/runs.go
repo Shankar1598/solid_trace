@@ -33,7 +33,7 @@ import (
 //     execution_ended also execution.reason, execution.exit_code and
 //     execution.background_killed (the count of background tasks killed).
 //   - message_accepted: message.text.
-//   - report: report.outcome (done, needs_person or failed),
+//   - report: report.outcome (done, needs_a_person or failed),
 //     report.summary, report.question, report.cause_report (an Issue or a
 //     Monitor Run's cause report), report.checks (a list of {name,
 //     command, exit_status, time, output_tail}), report.evidence (a list
