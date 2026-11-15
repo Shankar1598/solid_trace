@@ -122,9 +122,7 @@ func (d *Dispatcher) fire(id string, now time.Time) (bool, error) {
 		d.log.Warn(message, "schedule", sc.ID, "name", sc.Name, "factory.project", sc.Project, "fire_time", fired)
 		return false, nil
 	}
-	var active string
-	err = tx.QueryRow(`SELECT id FROM runs WHERE schedule_id = ? AND state IN (?, ?, ?) LIMIT 1`, sc.ID,
-		activeStates[0], activeStates[1], activeStates[2]).Scan(&active)
+	active, err := activeRunOf(tx, sc.ID)
 	switch {
 	case err == nil:
 		attrs["schedule.active_run"] = active
@@ -178,6 +176,19 @@ func (d *Dispatcher) fire(id string, now time.Time) (bool, error) {
 		d.log.Info("a schedule queued a Run", "schedule", sc.ID, "name", sc.Name, "run", run.ID, "fire_time", fired)
 	}
 	return queued, nil
+}
+
+// activeRunOf is the id of an Active Run that the schedule id started,
+// or sql.ErrNoRows when it has none. Each state of activeStates counts.
+func activeRunOf(tx *sql.Tx, scheduleID string) (string, error) {
+	args := []any{scheduleID}
+	for _, state := range activeStates {
+		args = append(args, state)
+	}
+	var id string
+	err := tx.QueryRow(`SELECT id FROM runs WHERE schedule_id = ? AND state IN (?`+
+		strings.Repeat(", ?", len(activeStates)-1)+`) LIMIT 1`, args...).Scan(&id)
+	return id, err
 }
 
 // fireTimes gives the latest fire time at now or earlier, from nextAt on,
