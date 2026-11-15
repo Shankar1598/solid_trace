@@ -64,6 +64,15 @@ const DefaultListen = "127.0.0.1:7600"
 // no file) and from getenv. It refuses a configuration with a necessary
 // value absent or wrong, and names each such value.
 func LoadConfig(path string, getenv func(string) string) (Config, error) {
+	c, err := readConfig(path, getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	return c, c.Check()
+}
+
+// readConfig reads the configuration and checks no value.
+func readConfig(path string, getenv func(string) string) (Config, error) {
 	values := map[string]string{}
 	if path != "" {
 		file, err := readConfigFile(path)
@@ -100,12 +109,13 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 	if c.WIPRefs == "" {
 		c.WIPRefs = forge.WIPOutsideBranches
 	}
-	return c, c.Check()
+	return c, nil
 }
 
 // Check names each necessary value that is absent or wrong.
 func (c Config) Check() error {
 	var problems []string
+	problems = append(problems, c.storeProblems()...)
 	if c.SolidTraceURL == "" {
 		problems = append(problems, EnvSolidTraceURL+" (SolidTrace's URL) is not set")
 	} else if u, err := url.Parse(c.SolidTraceURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
@@ -113,15 +123,6 @@ func (c Config) Check() error {
 	}
 	if c.SolidTraceToken == "" {
 		problems = append(problems, EnvSolidTraceToken+" (the Dispatcher's API token) is not set")
-	}
-	if c.Database == "" {
-		problems = append(problems, EnvDatabase+" (the path of the SQLite database) is not set")
-	}
-	if c.EncryptionKey == "" {
-		problems = append(problems, EnvEncryptionKey+" (the key that encrypts the secrets in the database; "+
-			"make one with 'openssl rand -base64 32' and keep it) is not set")
-	} else if _, err := c.encryptionKey(); err != nil {
-		problems = append(problems, err.Error())
 	}
 	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL} {
 		if u, err := url.Parse(v); v != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
@@ -137,6 +138,22 @@ func (c Config) Check() error {
 			". Set each in the configuration file or the environment")
 	}
 	return nil
+}
+
+// storeProblems names each absent or wrong value of the two that open
+// the database: its path and the encryption key.
+func (c Config) storeProblems() []string {
+	var problems []string
+	if c.Database == "" {
+		problems = append(problems, EnvDatabase+" (the path of the SQLite database) is not set")
+	}
+	if c.EncryptionKey == "" {
+		problems = append(problems, EnvEncryptionKey+" (the key that encrypts the secrets in the database; "+
+			"make one with 'openssl rand -base64 32' and keep it) is not set")
+	} else if _, err := c.encryptionKey(); err != nil {
+		problems = append(problems, err.Error())
+	}
+	return problems
 }
 
 func readConfigFile(path string) (map[string]string, error) {

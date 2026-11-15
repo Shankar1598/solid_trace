@@ -84,6 +84,18 @@ var migrations = []string{
 		report_question TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX executions_by_run ON executions (run_id, dispatched_at);`,
+	// accounts is the pool of subscription accounts (the Credential
+	// source). A token is sealed with the purpose "account <name>".
+	// limited_until is the reset time of an account at its usage limit.
+	// An Execution's account is the name of the account that it got.
+	`CREATE TABLE accounts (
+		name TEXT PRIMARY KEY,
+		token BLOB NOT NULL,
+		added_at INTEGER NOT NULL,
+		limited_until INTEGER
+	);
+	ALTER TABLE executions ADD COLUMN account TEXT NOT NULL DEFAULT '';
+	CREATE INDEX executions_by_account ON executions (account, state);`,
 }
 
 // store is the Dispatcher's SQLite database.
