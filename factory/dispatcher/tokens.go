@@ -19,6 +19,10 @@ import (
 // Dispatcher's API.
 const FactoryScope = "factory"
 
+// mcpScope is the scope of a token that acts only over the MCP server.
+// SolidTrace gives it for an API token made with no scope.
+const mcpScope = "mcp"
+
 // keepFor is the longest time that the Dispatcher keeps the answer of a
 // token check: a revoked token, or a change of role, applies within it.
 const keepFor = 60 * time.Second
@@ -156,9 +160,11 @@ func accept(answer introspection, now time.Time) (person, time.Time, error) {
 		}
 	}
 	scopes := strings.Fields(answer.Scope)
-	if len(scopes) == 0 {
+	// SolidTrace gives the scope mcp for an API token made with no scope.
+	if len(scopes) == 0 || slices.Equal(scopes, []string{mcpScope}) {
 		return person{}, time.Time{}, &refusal{status: http.StatusForbidden, scope: true,
-			message: "the token has no scope, so it acts only over the MCP server: run 'solidtrace login' for a token with the factory scope"}
+			message: "the token acts only over the MCP server (a token made with no scope has only the mcp scope): " +
+				"run 'solidtrace login' for a token with the factory scope"}
 	}
 	if !slices.Contains(scopes, FactoryScope) {
 		return person{}, time.Time{}, &refusal{status: http.StatusForbidden, scope: true,

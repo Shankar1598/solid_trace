@@ -46,8 +46,12 @@ func TestATokenWithOnlyTheFactoryScopeCanStartGetAndListRuns(t *testing.T) {
 
 func TestTheAPIRefusesATokenWithNoScopeOrWithoutTheFactoryScope(t *testing.T) {
 	cases := map[string]struct{ scope, want string }{
-		"no scope":                 {"", "no scope"},
-		"only spaces":              {"   ", "no scope"},
+		// SolidTrace gives the scope mcp for an API token made with no
+		// scope (ApiToken#effective_scopes).
+		"no scope":                 {"mcp", "acts only over the MCP server"},
+		"an empty scope":           {"", "acts only over the MCP server"},
+		"only spaces":              {"   ", "acts only over the MCP server"},
+		"mcp and other scopes":     {"mcp sessions:write", "no factory scope"},
 		"other scopes":             {"sessions:write mcp:read", "no factory scope"},
 		"a scope that starts so":   {"factory:admin", "no factory scope"},
 		"a scope that ends so":     {"notfactory", "no factory scope"},
