@@ -42,6 +42,9 @@ type Options struct {
 	// WebhookKinds are the kinds of connection that send webhooks, more
 	// than the Dispatcher's own (Seam 3 adds its fake source).
 	WebhookKinds []WebhookKind
+	// Trackers are the kinds of tracker connection, more than the
+	// Dispatcher's own (Seam 3 adds its fake tracker).
+	Trackers []Tracker
 	// ReconcileTick is how often the timer looks for a due backstop (1 s
 	// when 0).
 	ReconcileTick time.Duration
@@ -82,7 +85,10 @@ type Dispatcher struct {
 	wake        chan struct{}
 
 	// kinds are the kinds of connection that send webhooks, by name.
-	kinds         map[string]WebhookKind
+	kinds map[string]WebhookKind
+	// trackers are the kinds of tracker connection, by name. Each is in
+	// kinds too.
+	trackers      map[string]Tracker
 	webhookLimits *webhookLimits
 	reconciles    *reconcileQueue
 	// commandsAdded wakes the waiting commands calls.
@@ -138,6 +144,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		wake:       make(chan struct{}, 1),
 
 		kinds:           map[string]WebhookKind{},
+		trackers:        map[string]Tracker{},
 		webhookLimits:   &webhookLimits{windows: map[string]webhookWindow{}},
 		reconciles:      newReconcileQueue(),
 		scheduleEvery:   cmp.Or(options.ScheduleEvery, scheduleEvery),
@@ -147,6 +154,10 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	}
 	for _, kind := range options.WebhookKinds {
 		d.kinds[kind.Kind()] = kind
+	}
+	for _, t := range options.Trackers {
+		d.trackers[t.Kind()] = t
+		d.kinds[t.Kind()] = trackerKind{t, d}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
@@ -162,6 +173,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/senders", d.person(d.listSenders))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/senders", d.person(d.admin(d.createSender)))
 	mux.HandleFunc("DELETE "+dispatcherapi.Path+"/senders/{id}", d.person(d.admin(d.deleteSender)))
+	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}/tracker", d.person(d.admin(d.saveTrackerSettings)))
 	mux.HandleFunc("POST /webhooks/", d.webhook)
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules", d.person(d.listSchedules))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules", d.person(d.createSchedule))

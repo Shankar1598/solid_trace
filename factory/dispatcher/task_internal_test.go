@@ -23,7 +23,7 @@ func TestTheTaskNamesTheRunsRepositoryAndFolderAfterTheSettingsChange(t *testing
 		t.Fatal(err)
 	}
 	if err := d.store.saveSettings("7", "42", "shop", dispatcherapi.SaveFactorySettings{
-		Repository: "bitbucket.org/example/shop2", BaseBranch: "main"}, "", person{id: "1", name: "Ana"}, now); err != nil {
+		Repository: "bitbucket.org/example/shop2", BaseBranch: "main"}, "", nil, person{id: "1", name: "Ana"}, now); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := d.store.addExecution(run.ID, "e-1", now); !ok || err != nil {

@@ -37,15 +37,19 @@ const (
 	triggerSchedule = "schedule"
 	// triggerWebhook is the generic signed webhook.
 	triggerWebhook = "webhook"
+	triggerTracker = "tracker"
 )
 
 // Actor kinds (actor.kind). A schedule is the actor of the Runs that it
 // starts, with schedule.created_by.* the member who made it. A sender of
-// the generic webhook is the actor of the Runs that it starts.
+// the generic webhook is the actor of the Runs that it starts. The tracker
+// user who set a ticket's ready status is the actor of the Run that it
+// started.
 const (
 	actorPerson   = "person"
 	actorSchedule = dispatcherapi.ActorSchedule
 	actorSender   = dispatcherapi.ActorSender
+	actorTracker  = dispatcherapi.ActorTracker
 )
 
 // runEventsPath is SolidTrace's (EventStore's) route for run events. A
