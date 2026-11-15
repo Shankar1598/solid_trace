@@ -22,7 +22,7 @@ class ProjectsController < ApplicationController
       can_delete_project: policy(@project).destroy?,
       can_manage_keys: policy(ProjectKey.new(project: @project)).create?,
       no_keys_text: @project.agent? ? ProjectKeyPolicy::AGENT_PROJECT : nil,
-    }
+    }.merge(factory_props)
   end
 
   def new
@@ -59,6 +59,21 @@ class ProjectsController < ApplicationController
   end
 
   private
+
+  # The Factory section, only with a Dispatcher URL. The page loads the
+  # settings after it shows, so a Dispatcher that does not answer never
+  # slows the page.
+  def factory_props
+    return {} unless Dispatcher.on?
+
+    {
+      factory_section: {
+        path: project_factory_path(@project, org_slug: @current_org.slug),
+        runs_path: runs_path(org_slug: @current_org.slug, project: @project.slug),
+      },
+      factory: InertiaRails.defer { FactorySettings.new(user: current_user, project: @project).section },
+    }
+  end
 
   def set_project
     @project = @current_org.projects.find_by!(slug: params[:slug])
