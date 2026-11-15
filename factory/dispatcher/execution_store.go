@@ -92,6 +92,8 @@ func (s *store) execution(id string) (storedExecution, error) {
 type startedRun struct {
 	prompt, sessionID string
 	resume            bool
+	// startedAt is when the Execution started: its limits count from it.
+	startedAt time.Time
 }
 
 // startExecution marks a dispatched Execution running and its Run
@@ -125,13 +127,20 @@ func (s *store) startExecution(id string, at time.Time) (startedRun, error) {
 			newSessionID(), runID); err != nil {
 			return run, err
 		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO run_sessions (session_id, run_id, added_at)
+			SELECT session_id, id, ? FROM runs WHERE id = ?`, at.UnixMicro(), runID); err != nil {
+			return run, err
+		}
 	}
+	var started int64
 	err = tx.QueryRow(`SELECT prompt, session_id, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
-		AND e.id != ? AND e.started_at IS NOT NULL) FROM runs r WHERE id = ?`, id, runID).
-		Scan(&run.prompt, &run.sessionID, &run.resume)
+		AND e.id != ? AND e.started_at IS NOT NULL), (SELECT started_at FROM executions WHERE id = ?)
+		FROM runs r WHERE id = ?`, id, id, runID).
+		Scan(&run.prompt, &run.sessionID, &run.resume, &started)
 	if err != nil {
 		return run, err
 	}
+	run.startedAt = time.UnixMicro(started).UTC()
 	return run, tx.Commit()
 }
 

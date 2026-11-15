@@ -45,6 +45,8 @@ type Dispatcher struct {
 	store   *store
 	tokens  *tokenCheck
 	handler http.Handler
+	// children makes and revokes the Executions' child tokens.
+	children *childTokens
 
 	runner   Runner
 	identity *identityCheck
@@ -89,8 +91,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		store:   s,
 		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP,
 			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
-		runner: options.Runner,
-		wake:   make(chan struct{}, 1),
+		children: &childTokens{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP},
+		runner:   options.Runner,
+		wake:     make(chan struct{}, 1),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
@@ -106,6 +109,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		d.identity = &identityCheck{jwksURL: d.runner.JWKSURL(), http: options.HTTP, now: options.Now}
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/task", d.wrapper(d.task))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/report", d.wrapper(d.report))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/token", d.wrapper(d.token))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

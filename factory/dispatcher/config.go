@@ -22,6 +22,10 @@ type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
 	SolidTraceURL string
+	// SolidTraceIngestURL is SolidTrace's ingest URL: the agent ingest
+	// API, where each Execution's wrapper uploads its Run's Agent
+	// sessions ("" is SolidTraceURL).
+	SolidTraceIngestURL string
 	// SolidTraceToken is the Dispatcher's own API token. A token belongs to
 	// one Organization, and the Dispatcher serves only that Organization.
 	SolidTraceToken string
@@ -49,6 +53,7 @@ const (
 	EnvConfigFile      = "DISPATCHER_CONFIG"
 	EnvSolidTraceURL   = "DISPATCHER_SOLIDTRACE_URL"
 	EnvSolidTraceToken = "DISPATCHER_SOLIDTRACE_TOKEN"
+	EnvIngestURL       = "DISPATCHER_SOLIDTRACE_INGEST_URL"
 	EnvDatabase        = "DISPATCHER_DATABASE"
 	EnvEncryptionKey   = "DISPATCHER_ENCRYPTION_KEY"
 	EnvListen          = "DISPATCHER_LISTEN"
@@ -79,14 +84,15 @@ func LoadConfig(path string, getenv func(string) string) (Config, error) {
 		return values[name]
 	}
 	c := Config{
-		SolidTraceURL:   strings.TrimRight(value(EnvSolidTraceURL), "/"),
-		SolidTraceToken: value(EnvSolidTraceToken),
-		Database:        value(EnvDatabase),
-		EncryptionKey:   value(EnvEncryptionKey),
-		Listen:          value(EnvListen),
-		BitbucketAPIURL: strings.TrimRight(value(EnvBitbucketAPIURL), "/"),
-		BitbucketGitURL: strings.TrimRight(value(EnvBitbucketGitURL), "/"),
-		WIPRefs:         value(EnvWIPRefs),
+		SolidTraceURL:       strings.TrimRight(value(EnvSolidTraceURL), "/"),
+		SolidTraceToken:     value(EnvSolidTraceToken),
+		SolidTraceIngestURL: strings.TrimRight(value(EnvIngestURL), "/"),
+		Database:            value(EnvDatabase),
+		EncryptionKey:       value(EnvEncryptionKey),
+		Listen:              value(EnvListen),
+		BitbucketAPIURL:     strings.TrimRight(value(EnvBitbucketAPIURL), "/"),
+		BitbucketGitURL:     strings.TrimRight(value(EnvBitbucketGitURL), "/"),
+		WIPRefs:             value(EnvWIPRefs),
 	}
 	if c.Listen == "" {
 		c.Listen = DefaultListen
@@ -123,7 +129,8 @@ func (c Config) Check() error {
 	} else if _, err := c.encryptionKey(); err != nil {
 		problems = append(problems, err.Error())
 	}
-	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL} {
+	for name, v := range map[string]string{EnvBitbucketAPIURL: c.BitbucketAPIURL, EnvBitbucketGitURL: c.BitbucketGitURL,
+		EnvIngestURL: c.SolidTraceIngestURL} {
 		if u, err := url.Parse(v); v != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
 			problems = append(problems, name+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", v))
 		}
@@ -137,6 +144,14 @@ func (c Config) Check() error {
 			". Set each in the configuration file or the environment")
 	}
 	return nil
+}
+
+// ingestURL is where the wrappers upload.
+func (c Config) ingestURL() string {
+	if c.SolidTraceIngestURL != "" {
+		return c.SolidTraceIngestURL
+	}
+	return c.SolidTraceURL
 }
 
 func readConfigFile(path string) (map[string]string, error) {

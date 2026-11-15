@@ -20,6 +20,7 @@ func TestTheConfigurationNamesTheOneWrongForgeSetting(t *testing.T) {
 		{dispatcher.EnvWIPRefs, "refs/tags/wip"},
 		{dispatcher.EnvBitbucketAPIURL, "api.bitbucket.example"},
 		{dispatcher.EnvBitbucketGitURL, "ftp://bitbucket.example"},
+		{dispatcher.EnvIngestURL, "ingest.example.com:4443"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

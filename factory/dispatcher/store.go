@@ -84,6 +84,25 @@ var migrations = []string{
 		report_question TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX executions_by_run ON executions (run_id, dispatched_at);`,
+	// run_sessions are the Agent session ids of each Run: the first one,
+	// and each one that a wrapper saw later (a /clear). An id belongs to
+	// one Run. execution_tokens are the child tokens that the Dispatcher
+	// made for each Execution; it revokes them at the Execution's end.
+	`CREATE TABLE run_sessions (
+		session_id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		added_at INTEGER NOT NULL
+	);
+	CREATE INDEX run_sessions_by_run ON run_sessions (run_id, added_at);
+	INSERT INTO run_sessions (session_id, run_id, added_at)
+		SELECT session_id, id, created_at FROM runs WHERE session_id != '';
+	CREATE TABLE execution_tokens (
+		id TEXT PRIMARY KEY,
+		execution_id TEXT NOT NULL REFERENCES executions (id),
+		expires_at INTEGER NOT NULL,
+		revoked_at INTEGER
+	);
+	CREATE INDEX execution_tokens_by_execution ON execution_tokens (execution_id);`,
 }
 
 // store is the Dispatcher's SQLite database.
