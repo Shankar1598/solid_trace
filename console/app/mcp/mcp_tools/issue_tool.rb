@@ -33,9 +33,15 @@ module McpTools
         .merge(assignee: issue.assignee && person_json(issue.assignee.user))
     end
 
-    # A comment as plain text, with who wrote it.
+    # A comment as plain text, with who wrote it: a member as user, or
+    # Factory with its Run's link as author.
     def comment_json(comment)
-      { id: comment.id, user: person_json(comment.user), body: comment.content.to_plain_text, created_at: comment.created_at.iso8601 }
+      who = if comment.factory?
+        { author: { name: Comment::FACTORY, run: links.run(comment.issue.project.organization, comment.run_id) } }
+      else
+        { user: person_json(comment.user) }
+      end
+      { id: comment.id, **who, body: comment.content.to_plain_text, created_at: comment.created_at.iso8601 }
     end
 
     def person_json(user)

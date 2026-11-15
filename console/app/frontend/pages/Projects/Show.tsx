@@ -9,6 +9,8 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { FactorySection } from '@/components/FactorySection'
+import type { FactorySectionPaths } from '@/lib/dispatcher'
 import { Project, SharedProps } from '@/types'
 import { AlertTriangle, Check, Copy, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
@@ -23,10 +25,12 @@ interface ProjectsShowProps {
   // Why the Project has no keys and offers none (the Agent Project).
   no_keys_text: string | null
   can_delete_project: boolean
+  // Only with a Dispatcher URL: the Factory section's paths.
+  factory_section?: FactorySectionPaths
 }
 
 export default function ProjectsShow({
-  project, default_log_retention_days, default_trace_retention_days, can_manage_project, can_manage_keys, no_keys_text, can_delete_project,
+  project, default_log_retention_days, default_trace_retention_days, can_manage_project, can_manage_keys, no_keys_text, can_delete_project, factory_section,
 }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -238,6 +242,8 @@ export default function ProjectsShow({
             </Link>
           </CardContent>
         </Card>
+
+        {factory_section && <FactorySection paths={factory_section} canEdit={can_manage_project} />}
 
         {can_delete_project && (
           <Card className="border-destructive/50">

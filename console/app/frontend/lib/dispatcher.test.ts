@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dispatcherStatusLine } from './dispatcher'
+import { dispatcherStatusLine, factorySectionShown } from './dispatcher'
 
 describe('dispatcherStatusLine', () => {
   it('says the Dispatcher answers, with its version, when SolidTrace accepts its token', () => {
@@ -33,5 +33,23 @@ describe('dispatcherStatusLine', () => {
       ok: false,
       text: 'The Dispatcher at http://10.100.0.3:8080 did not answer in time.',
     })
+  })
+})
+
+describe('factorySectionShown', () => {
+  const stored = { settings: { repository: 'bitbucket.org/example/shop', folder: '', base_branch: '' } }
+
+  it('shows nothing until the page loads the settings the first time', () => {
+    expect(factorySectionShown(undefined, undefined)).toBeUndefined()
+  })
+
+  it('keeps the last settings while the page loads them again after a save, so the form stays with its errors and typed values', () => {
+    expect(factorySectionShown(undefined, stored)).toBe(stored)
+  })
+
+  it('shows the settings that the page loaded last', () => {
+    const saved = { settings: { repository: 'bitbucket.org/example/new', folder: 'apps/shop', base_branch: 'develop' } }
+    expect(factorySectionShown(saved, stored)).toBe(saved)
+    expect(factorySectionShown({ error: 'The Dispatcher does not answer' }, stored)).toEqual({ error: 'The Dispatcher does not answer' })
   })
 })

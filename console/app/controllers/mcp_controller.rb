@@ -11,7 +11,7 @@ class McpController < ActionController::API
 
   def create
     server = McpServer.build(user: @bearer.user, request_url: request.base_url, organization: @bearer.organization,
-                             read_only: @bearer.read_only?)
+                             read_only: @bearer.read_only?, project: @bearer.project)
     transport = MCP::Server::Transports::StreamableHTTPTransport.new(
       server,
       stateless: true,
@@ -65,10 +65,6 @@ class McpController < ActionController::API
   def require_mcp_scope!
     problem = if (@bearer.scopes & Oauth::Scopes::FOR_MCP).empty?
       "This token has the scopes #{@bearer.scopes.join(' ')}. The MCP server needs the mcp or mcp:read scope."
-    elsif @bearer.read_only? && @bearer.limits[:project]
-      # Ticket 81 makes the tools read only the limit's Project. Until
-      # then the token reads nothing, so it is never wider than its limit.
-      "The MCP server does not yet read with a Project limit. Make an mcp:read token without one."
     elsif @bearer.read_only? && (tool = write_tool_called)
       "#{tool} changes things, and this token has mcp:read, which reads only. It needs the mcp scope."
     end

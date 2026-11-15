@@ -85,7 +85,10 @@ export interface Comment {
   id: number
   body: string
   created_at: string
-  user: User
+  // The member who wrote it; null for a comment by Factory, whose run is
+  // its Run, with the Run page's path.
+  user: User | null
+  run: { id: string; url: string } | null
 }
 
 export interface Integration {

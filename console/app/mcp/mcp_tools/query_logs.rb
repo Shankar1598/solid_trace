@@ -33,6 +33,7 @@ module McpTools
       Pass force only when the user asks for the Query to run as written.
     TEXT
     read_only!
+    reads_one_project!
     takes_project
     argument :query, { type: "string", description: "The Query. Empty or left out, it reads every Log." }
     takes_range
