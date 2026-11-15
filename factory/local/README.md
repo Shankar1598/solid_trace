@@ -48,7 +48,7 @@ factory/local/test-runner                  # all of them
 factory/local/test-runner -run Lost ./nomadrunner/
 ```
 
-For these tests only, `FACTORY_STACK_NOMAD_API=1` adds [compose.nomad-api.yml](compose.nomad-api.yml): a forwarder that publishes Nomad's HTTP API on a free port of 127.0.0.1, because the host has no address on the internal factory network. Then `stack nomad-env` gives `NOMAD_ADDR`, `NOMAD_TOKEN` and `AGENT_MACHINE`. The test process is the Dispatcher. Each task prints what it got (such as its workload identity JWT) in place of the wrapper, and the test reads it through Nomad's API. The lost machine test pauses the agent machine's container (`docker pause`) until Nomad marks its node down.
+For these tests only, `FACTORY_STACK_NOMAD_API=1` adds [compose.nomad-api.yml](compose.nomad-api.yml): a forwarder that publishes Nomad's HTTP API on a free port of 127.0.0.1, because the host has no address on the internal factory network. Then `stack nomad-env` gives `NOMAD_ADDR`, `NOMAD_TOKEN` and `AGENT_MACHINE`. The test process is the Dispatcher. Each task prints what it got (such as its workload identity JWT) in place of the wrapper, and the test reads it through Nomad's API. The lost machine test pauses the agent machine's container (`docker pause`) until Nomad marks its node down, then continues it, and checks that the lost Execution's task stops and that Nomad does not place it again. These tests are also a step of the release suites ([docs/agents/testing.md](../../docs/agents/testing.md)).
 
 The agent machine's Nomad client has `max_kill_timeout = "120s"`, as the Runner's job needs ([agent-machine/client.hcl](agent-machine/client.hcl)).
 

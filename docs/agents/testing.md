@@ -23,6 +23,12 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      go vet ./... && go test -race -count=1 ./...
      ```
 
+     The usual `go test ./...` does not build the Nomad Runner's tests (`factory/nomadrunner`, build tag `factorystack`). They are the only tests of the Runner against a real Nomad, with its workload identity check. Run them from the repo root with `factory/local/test-runner`: it starts a local factory stack of its own (compose project `factory-runner-test`), runs the tests, and stops the stack. It needs Docker, and takes about 2 minutes, with the first build of the stack's images more. On a small box, run it when no other stack or suite runs:
+
+     ```bash
+     factory/local/test-runner
+     ```
+
      The Harness contract checks (Seam 4, `factory/internal/harnesscontract`) are skipped there. They run the real Claude Code with Haiku, under your own Claude login, and save the streams that they record in `fakeharness/streams/`. Run them only when the pinned Claude Code version (`fakeharness.Version`) changes: change that constant first, then run the checks from `factory/` and commit the new streams. They take about 2 minutes and cost about 2 US cents:
 
      ```bash
