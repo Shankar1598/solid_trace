@@ -161,4 +161,13 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_equal [], view["steps"]
   end
 
+  test "EventStore down gives 503 with the error on the JSON timeline, not an empty last page" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}").to_return(status: 500, body: "boom")
+    sign_in_as(@member)
+    get agent_session_timeline_path(org_slug: "acme", id: CART, cursor: "c1"), as: :json
+
+    assert_response :service_unavailable
+    assert response.parsed_body["error"].present?
+    assert_nil response.parsed_body["next_cursor"]
+  end
 end
