@@ -266,7 +266,7 @@ func (e *execution) addEvidence(report *dispatcherapi.Report) (commit func(accep
 // Dispatcher refuses (not UTF-8), or that takes more than MaxEvidencePath
 // bytes in JSON, is not Evidence either, and the log tells it.
 func evidencePaths(dir string, log io.Writer) []string {
-	paths := []string{evidenceDir + "/" + reportFile}
+	var paths []string
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
 			return nil
@@ -285,9 +285,12 @@ func evidencePaths(dir string, log io.Writer) []string {
 		return nil
 	})
 	slices.Sort(paths)
-	if len(paths) > dispatcherapi.MaxEvidence {
-		paths = paths[:dispatcherapi.MaxEvidence]
+	// evidence/report.md is always in the list.
+	if len(paths) > dispatcherapi.MaxEvidence-1 {
+		paths = paths[:dispatcherapi.MaxEvidence-1]
 	}
+	paths = append(paths, evidenceDir+"/"+reportFile)
+	slices.Sort(paths)
 	return paths
 }
 

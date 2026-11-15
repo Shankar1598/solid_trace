@@ -384,6 +384,23 @@ func TestTheWrapperRecordsNoChecksThatMakeTheReportTooLarge(t *testing.T) {
 	}
 }
 
+func TestTheEvidencePathsAlwaysHaveEvidenceReportMd(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t),
+		shell(`for i in $(seq 100 349); do printf x > "$SOLIDTRACE_EVIDENCE_DIR/a$i.png"; done`),
+		reportStep("--outcome", "done", "--summary", "Fixed"),
+		reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	evidence := strs(reportEvents(env, id)[0]["report.evidence"])
+	if len(evidence) != dispatcherapi.MaxEvidence || !slices.Contains(evidence, "evidence/report.md") ||
+		!slices.Contains(evidence, "evidence/a100.png") || slices.Contains(evidence, "evidence/a349.png") {
+		t.Errorf("want the first %d paths with evidence/report.md, got %d: %q", dispatcherapi.MaxEvidence-1,
+			len(evidence), evidence)
+	}
+}
+
 func TestARefusedReportLeavesEvidenceReportMdAsItWas(t *testing.T) {
 	env, ana := newEnv(t)
 	out := t.TempDir()
