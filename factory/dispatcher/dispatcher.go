@@ -4,6 +4,7 @@
 package dispatcher
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
@@ -12,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -29,6 +31,9 @@ type Options struct {
 	// a build from a checkout). A release refuses a solidtrace CLI that
 	// is older than SupportedMinorVersions minors.
 	Version string
+	// Runner starts the Executions of queued Runs. With none, a Run stays
+	// queued (a Dispatcher with no Runner configured).
+	Runner Runner
 }
 
 // Dispatcher is one open Dispatcher.
@@ -40,6 +45,15 @@ type Dispatcher struct {
 	store   *store
 	tokens  *tokenCheck
 	handler http.Handler
+
+	runner   Runner
+	identity *identityCheck
+	// dispatching holds a channel for each Execution that the Runner is
+	// starting; it closes when the Runner gave the workload.
+	dispatching sync.Map
+	wake        chan struct{}
+	stop        context.CancelFunc
+	loops       sync.WaitGroup
 }
 
 // Open checks config and opens the database (it makes it at first use).
@@ -75,6 +89,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		store:   s,
 		tokens: &tokenCheck{url: config.SolidTraceURL, token: config.SolidTraceToken, http: options.HTTP,
 			now: options.Now, kept: map[[sha256.Size]byte]keptAnswer{}},
+		runner: options.Runner,
+		wake:   make(chan struct{}, 1),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
@@ -86,18 +102,35 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/connections", d.person(d.listConnections))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}", d.person(d.admin(d.saveConnection)))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/status", d.status)
+	if d.runner != nil {
+		d.identity = &identityCheck{jwksURL: d.runner.JWKSURL(), http: options.HTTP, now: options.Now}
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/task", d.wrapper(d.task))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/report", d.wrapper(d.report))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
 	})
 	d.handler = d.refuseOldCLIs(mux)
+	ctx, stop := context.WithCancel(context.Background())
+	d.stop = stop
+	if d.runner != nil {
+		d.loops.Add(2)
+		go func() { defer d.loops.Done(); d.dispatchLoop(ctx) }()
+		go func() { defer d.loops.Done(); d.watchLoop(ctx) }()
+	}
 	return d, nil
 }
 
 // Handler serves the private listener.
 func (d *Dispatcher) Handler() http.Handler { return d.handler }
 
-// Close closes the database.
-func (d *Dispatcher) Close() error { return d.store.close() }
+// Close stops the loops and closes the database.
+func (d *Dispatcher) Close() error {
+	d.stop()
+	d.loops.Wait()
+	return d.store.close()
+}
 
 // listLimit is the most Runs that a list gives.
 const listLimit = 100
@@ -226,6 +259,7 @@ func (d *Dispatcher) startRun(w http.ResponseWriter, r *http.Request, p person) 
 		d.serverError(w, "start a Run", err)
 		return
 	}
+	d.wakeDispatch()
 	writeJSON(w, http.StatusCreated, d.withURL(run.Run, p))
 }
 
@@ -234,6 +268,9 @@ func (d *Dispatcher) getRun(w http.ResponseWriter, r *http.Request, p person) {
 	if errors.Is(err, errNotFound) {
 		writeProblem(w, http.StatusNotFound, "no Run "+r.PathValue("id")+" in this Organization")
 		return
+	}
+	if err == nil {
+		run.Executions, err = d.store.executionsOf(run.ID)
 	}
 	if err != nil {
 		d.serverError(w, "read a Run", err)

@@ -41,6 +41,9 @@ type Env struct {
 	// its stdin, and does not wait for it. The hook of the plugin
 	// (`capture --detach`) uses it.
 	Detach func(input []byte) error
+	// AgentSocket is the path of the agent's socket inside a Run (""
+	// outside one), for `report`.
+	AgentSocket string
 }
 
 const usage = `solidtrace: the SolidTrace agent CLI.
@@ -91,6 +94,12 @@ Usage:
   solidtrace connections set NAME [--kind bitbucket] [--dispatcher URL] < TOKEN
       Save a forge connection with the token on stdin, or replace its
       token (an Admin only). The Dispatcher keeps the token encrypted.
+  solidtrace report --outcome done|needs-a-person|failed --summary TEXT
+          [--question TEXT]
+      Inside a Run only: report the outcome of your work to the wrapper.
+      The last report sets the Run's outcome. needs-a-person needs
+      --question, and ends the Execution at once; a person's answer
+      continues the Run.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -120,6 +129,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return projects(ctx, args[1:], env)
 	case "connections":
 		return connections(ctx, args[1:], env)
+	case "report":
+		return report(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0

@@ -23,9 +23,9 @@ const (
 	// BitbucketHost is the host of the repositories in the Factory
 	// settings.
 	BitbucketHost = "bitbucket.org"
-	// bitbucketTokenUser is the git user name that goes with an access
+	// BitbucketTokenUser is the git user name that goes with an access
 	// token (a workspace, project or repository access token).
-	bitbucketTokenUser = "x-token-auth"
+	BitbucketTokenUser = "x-token-auth"
 )
 
 // Bitbucket is the Forge on Bitbucket Cloud, with one access token for
@@ -101,7 +101,7 @@ func (b *Bitbucket) CredentialConfig(tokenFile string) ([]GitSetting, error) {
 		return nil, fmt.Errorf("the token file must be an absolute path with no ' and no line break, not %q", tokenFile)
 	}
 	key := "credential." + b.gitURL() + ".helper"
-	helper := `!f() { test "$1" = get || exit 0; echo username=` + bitbucketTokenUser +
+	helper := `!f() { test "$1" = get || exit 0; echo username=` + BitbucketTokenUser +
 		`; printf 'password=%s\n' "$(cat '` + tokenFile + `')"; }; f`
 	return []GitSetting{{Key: key, Value: ""}, {Key: key, Value: helper}}, nil
 }

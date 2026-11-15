@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/solidtrace/cli/agentsocket"
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/cli/version"
 )
@@ -37,6 +38,7 @@ func main() {
 		Sleep:       sleep,
 		Version:     version.Version,
 		Detach:      detach,
+		AgentSocket: os.Getenv(agentsocket.Env),
 	}
 	if home, err := os.UserHomeDir(); err == nil || os.Getenv("CLAUDE_CONFIG_DIR") != "" {
 		env.ClaudeProjectsDir = command.ClaudeProjectsDir(os.Getenv, home)

@@ -23,7 +23,11 @@ const Path = "/api/v1"
 
 // Run states.
 const (
-	StateQueued = "queued"
+	StateQueued          = "queued"
+	StateRunning         = "running"
+	StateWaitingOnPerson = "waiting_on_person"
+	StateDone            = "done"
+	StateFailed          = "failed"
 )
 
 // Person is who started a Run: the SolidTrace user of the token.
@@ -43,8 +47,109 @@ type Run struct {
 	Organization string    `json:"organization"`
 	StartedBy    Person    `json:"started_by"`
 	CreatedAt    time.Time `json:"created_at"`
+	// Reason says why the Run is in its state: for failed, the summary of
+	// the agent's report or the wrapper's reason, such as "the harness
+	// exited".
+	Reason string `json:"reason,omitempty"`
+	// Question is the question of a report of needs a person.
+	Question string `json:"question,omitempty"`
+	// Summary is the summary of the report that set the state.
+	Summary string `json:"summary,omitempty"`
+	// Executions are the Run's Executions, oldest first.
+	Executions []Execution `json:"executions,omitempty"`
 	// URL is the Run's page in Console.
 	URL string `json:"url"`
+}
+
+// Execution states.
+const (
+	// ExecutionDispatched is an Execution that the Runner has, whose
+	// wrapper did not take its task yet.
+	ExecutionDispatched = "dispatched"
+	// ExecutionRunning is an Execution whose wrapper took its task.
+	ExecutionRunning = "running"
+	ExecutionEnded   = "ended"
+)
+
+// Execution is one time that a Run works on a machine.
+type Execution struct {
+	ID           string     `json:"id"`
+	State        string     `json:"state"`
+	DispatchedAt time.Time  `json:"dispatched_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
+	// TaskDeliveredAt is when the harness's replay echo of the task came,
+	// with the wrapper's uuid: the proof that the agent got the task.
+	TaskDeliveredAt *time.Time `json:"task_delivered_at,omitempty"`
+	// EndReason is why the Execution ended: an End reason of the wrapper,
+	// or what the Runner saw.
+	EndReason string `json:"end_reason,omitempty"`
+	// ExitCode is the harness's exit code, when the harness ran. It never
+	// sets the outcome.
+	ExitCode *int `json:"exit_code,omitempty"`
+}
+
+// Report outcomes.
+const (
+	OutcomeDone         = "done"
+	OutcomeNeedsAPerson = "needs_a_person"
+	OutcomeFailed       = "failed"
+)
+
+// Report is what the agent reports with 'solidtrace report'. The agent
+// sends it to the wrapper on the agent's socket, and the wrapper sends it
+// to the Dispatcher for its own Execution.
+type Report struct {
+	Outcome string `json:"outcome"`
+	Summary string `json:"summary"`
+	// Question is what the agent asks a person (needs a person only).
+	Question string `json:"question,omitempty"`
+}
+
+// Task is the Dispatcher's answer to the wrapper's task and secrets call.
+type Task struct {
+	RunID       string `json:"run_id"`
+	ExecutionID string `json:"execution_id"`
+	Prompt      string `json:"prompt"`
+	// Repository is host/workspace/name.
+	Repository string `json:"repository"`
+	// CloneURL is the HTTPS URL that git clones from. It holds no token.
+	CloneURL string `json:"clone_url"`
+	// BaseBranch is the branch to clone ("" is the repository's default
+	// branch).
+	BaseBranch string `json:"base_branch"`
+	// ForgeUsername and ForgeToken are what the git credential helper
+	// gives git ("" token: the Project names no connection).
+	ForgeUsername string `json:"forge_username"`
+	ForgeToken    string `json:"forge_token"`
+	// SessionID is the Agent session id: --session-id for the first
+	// Execution, --resume when Resume is true.
+	SessionID string `json:"session_id"`
+	Resume    bool   `json:"resume"`
+}
+
+// End reasons that the wrapper gives.
+const (
+	// EndReported: the wrapper ended the Execution after a report.
+	EndReported = "reported"
+	// EndNoReport: the agent's turn ended with no report.
+	EndNoReport = "no report"
+	// EndHarnessExited: the harness exited before the wrapper started the
+	// end.
+	EndHarnessExited = "the harness exited"
+	// EndSetupFailed: the wrapper could not start the harness; Error says
+	// why.
+	EndSetupFailed = "the setup failed"
+)
+
+// ExecutionEnd is the body of the wrapper's end call.
+type ExecutionEnd struct {
+	Reason string `json:"reason"`
+	// Error says what failed, for EndSetupFailed.
+	Error string `json:"error,omitempty"`
+	// ExitCode is the harness's exit code (nil: the harness did not run).
+	ExitCode        *int       `json:"exit_code,omitempty"`
+	TaskDeliveredAt *time.Time `json:"task_delivered_at,omitempty"`
 }
 
 // StartRun is the body of a start.

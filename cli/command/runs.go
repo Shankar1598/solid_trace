@@ -113,11 +113,21 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 	tw := tabwriter.NewWriter(out, 0, 0, 1, ' ', 0)
 	fmt.Fprintf(tw, "Run:\t%s\n", r.ID)
 	fmt.Fprintf(tw, "State:\t%s\n", r.State)
+	if r.Reason != "" {
+		fmt.Fprintf(tw, "Reason:\t%s\n", r.Reason)
+	}
 	fmt.Fprintf(tw, "Project:\t%s\n", r.Project)
 	fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	fmt.Fprintf(tw, "Executions:\t%d\n", len(r.Executions))
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
 	tw.Flush()
 	fmt.Fprintf(out, "\nPrompt:\n%s\n", r.Prompt)
+	if r.Question != "" {
+		fmt.Fprintf(out, "\nQuestion:\n%s\n", r.Question)
+	}
+	if r.Summary != "" {
+		fmt.Fprintf(out, "\nSummary:\n%s\n", r.Summary)
+	}
 }
 
 // firstLine is the first line of s, cut to at most n characters.
