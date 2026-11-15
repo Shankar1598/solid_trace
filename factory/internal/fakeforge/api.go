@@ -80,6 +80,7 @@ func (f *Forge) api(h func(r *http.Request, repo string) (int, any, *apiError)) 
 		// held: a test helper can change the same PR.
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.apiCalls++
 		if e := f.failNext; e != nil {
 			f.failNext = nil
 			writeAnswer(w, e.status, e.body())
