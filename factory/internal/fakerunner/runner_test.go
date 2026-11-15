@@ -35,11 +35,29 @@ func TestMain(m *testing.M) {
 	case mode == "deaf":
 		signal.Ignore(syscall.SIGTERM)
 		time.Sleep(time.Hour)
-	case mode == "child":
+	case mode == "child", mode == "setsid-child":
+		// A wrapper often starts the Harness in a session of its own.
 		child := exec.Command("sleep", "300")
+		child.SysProcAttr = &syscall.SysProcAttr{Setsid: mode == "setsid-child"}
 		child.Start()
 		os.WriteFile("child.pid", []byte(strconv.Itoa(child.Process.Pid)), 0o600)
 		time.Sleep(time.Hour)
+	case mode == "term-child":
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGTERM)
+		child := exec.Command("sleep", "300")
+		child.Start()
+		os.WriteFile("child.pid", []byte(strconv.Itoa(child.Process.Pid)), 0o600)
+		<-c
+		time.Sleep(200 * time.Millisecond)
+		// A killed child that is not yet reaped is a zombie (state Z).
+		stat, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", child.Process.Pid))
+		if f := strings.Fields(string(stat)); len(f) > 2 && f[2] != "Z" {
+			fmt.Println("child-alive")
+		} else {
+			fmt.Println("child-gone")
+		}
+		os.Exit(0)
 	}
 }
 
@@ -147,35 +165,67 @@ func TestStopKillsAWrapperThatDoesNotStop(t *testing.T) {
 	}
 }
 
-func TestLostMachineTakesEachProcess(t *testing.T) {
-	dir := t.TempDir()
-	r, _ := fakerunner.New(fakerunner.Options{Command: []string{os.Args[0]}, Env: append(os.Environ(), "FAKE_WRAPPER=child"), Dir: dir})
-	t.Cleanup(r.Close)
-	r.Dispatch(ctx(t), fakerunner.Execution{ID: "ex1"})
-	pidFile := filepath.Join(dir, "ex1", "child.pid")
+func childPID(t *testing.T, dir string) int {
+	t.Helper()
 	var pid int
 	for deadline := time.Now().Add(10 * time.Second); pid == 0 && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		b, _ := os.ReadFile(pidFile)
+		b, _ := os.ReadFile(filepath.Join(dir, "ex1", "child.pid"))
 		pid, _ = strconv.Atoi(string(b))
 	}
 	if pid == 0 {
 		t.Fatal("the wrapper started no child")
 	}
-	if err := r.LoseMachine("ex1"); err != nil {
+	return pid
+}
+
+func waitGone(t *testing.T, pid int, when string) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); syscall.Kill(pid, 0) == nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the wrapper's child %d still runs %s", pid, when)
+		}
+	}
+}
+
+func TestLostMachineTakesEachProcess(t *testing.T) {
+	for _, mode := range []string{"child", "setsid-child"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			r, _ := fakerunner.New(fakerunner.Options{Command: []string{os.Args[0]}, Env: append(os.Environ(), "FAKE_WRAPPER="+mode), Dir: dir})
+			t.Cleanup(r.Close)
+			r.Dispatch(ctx(t), fakerunner.Execution{ID: "ex1"})
+			pid := childPID(t, dir)
+			if err := r.LoseMachine("ex1"); err != nil {
+				t.Fatal(err)
+			}
+			end, _ := r.Wait(ctx(t), "ex1")
+			if end.State != fakerunner.Lost {
+				t.Fatalf("end %+v; want lost", end)
+			}
+			waitGone(t, pid, "after the machine was lost")
+			if err := r.LoseMachine("ex1"); err == nil {
+				t.Fatal("a second LoseMachine of an ended Execution gave no error")
+			}
+		})
+	}
+}
+
+// Nomad sends the kill signal to the task process only, so the wrapper can
+// interrupt the Harness and wait for its result.
+func TestStopSignalsTheWrapperOnlyAndThenEndsItsChildren(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := fakerunner.New(fakerunner.Options{Command: []string{os.Args[0]}, Env: append(os.Environ(), "FAKE_WRAPPER=term-child"), Dir: dir, KillTimeout: 5 * time.Second})
+	t.Cleanup(r.Close)
+	r.Dispatch(ctx(t), fakerunner.Execution{ID: "ex1"})
+	pid := childPID(t, dir)
+	if err := r.Stop(ctx(t), "ex1"); err != nil {
 		t.Fatal(err)
 	}
 	end, _ := r.Wait(ctx(t), "ex1")
-	if end.State != fakerunner.Lost {
-		t.Fatalf("end %+v; want lost", end)
+	if end.State != fakerunner.Complete || !end.Stopped || !strings.Contains(r.Output("ex1"), "child-alive") {
+		t.Fatalf("end %+v, output %q; want the child alive while the wrapper stops", end, r.Output("ex1"))
 	}
-	for deadline := time.Now().Add(5 * time.Second); syscall.Kill(pid, 0) == nil; time.Sleep(10 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatalf("the wrapper's child %d still runs after the machine was lost", pid)
-		}
-	}
-	if err := r.LoseMachine("ex1"); err == nil {
-		t.Fatal("a second LoseMachine of an ended Execution gave no error")
-	}
+	waitGone(t, pid, "after the Execution ended")
 }
 
 func TestDispatchRefusesARepeatedID(t *testing.T) {

@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -59,6 +61,11 @@ type Options struct {
 	KillTimeout time.Duration
 }
 
+// MarkEnv is the environment variable that marks each process of an
+// Execution, as a cgroup marks the processes of a Nomad task. A process
+// keeps it when it goes to a process group or a session of its own.
+const MarkEnv = "FAKERUNNER_EXECUTION"
+
 // Runner runs Executions as local processes.
 type Runner struct {
 	opts    Options
@@ -71,6 +78,7 @@ type Runner struct {
 }
 
 type proc struct {
+	mark    string // the value of MarkEnv for this Execution
 	cmd     *exec.Cmd
 	state   State
 	stopped bool
@@ -109,12 +117,12 @@ func (r *Runner) Dispatch(ctx context.Context, e Execution) error {
 		r.mu.Unlock()
 		return fmt.Errorf("fakerunner: Execution %q is already dispatched or has no id", e.ID)
 	}
-	p := &proc{done: make(chan struct{})}
+	dir := filepath.Join(r.opts.Dir, e.ID)
+	p := &proc{mark: dir, done: make(chan struct{})}
 	r.procs[e.ID] = p
 	r.record(e.ID, Event{State: Pending})
 	r.mu.Unlock()
 
-	dir := filepath.Join(r.opts.Dir, e.ID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return r.failStart(e.ID, p, err)
 	}
@@ -124,9 +132,10 @@ func (r *Runner) Dispatch(ctx context.Context, e Execution) error {
 	}
 	cmd := exec.Command(r.opts.Command[0], r.opts.Command[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(append([]string{}, r.opts.Env...), e.Env...)
+	cmd.Env = append(append(append([]string{}, r.opts.Env...), e.Env...), MarkEnv+"="+p.mark)
 	cmd.Stdout, cmd.Stderr = out, out
-	// A process group of its own, so that a lost machine takes each process.
+	// A process group of its own, and the mark, so that a kill takes each
+	// process of the Execution.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		out.Close()
@@ -151,6 +160,8 @@ func (r *Runner) failStart(id string, p *proc, err error) error {
 func (r *Runner) wait(id string, p *proc, out *os.File) {
 	err := p.cmd.Wait()
 	out.Close()
+	// As Nomad does when a task ends, kill the processes that are left.
+	killAll(p)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	defer close(p.done)
@@ -178,14 +189,16 @@ func (r *Runner) record(id string, ev Event) {
 	r.changed.Broadcast()
 }
 
-// Stop asks the wrapper to stop (SIGTERM), and kills it after the kill
-// timeout, as Nomad stops a task. It returns when the Execution ended.
+// Stop asks the wrapper to stop (SIGTERM to the wrapper only, so that its
+// child processes still run while it stops them), and kills each process
+// of the Execution after the kill timeout, as Nomad stops a task. It
+// returns when the Execution ended.
 func (r *Runner) Stop(ctx context.Context, id string) error {
 	r.mu.Lock()
 	p, ok := r.procs[id]
 	if ok && p.cmd != nil && !p.state.Ended() {
 		p.stopped = true
-		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGTERM)
+		p.cmd.Process.Signal(syscall.SIGTERM)
 	}
 	r.mu.Unlock()
 	if !ok {
@@ -194,7 +207,7 @@ func (r *Runner) Stop(ctx context.Context, id string) error {
 	select {
 	case <-p.done:
 	case <-time.After(r.opts.KillTimeout):
-		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+		killAll(p)
 		<-p.done
 	case <-ctx.Done():
 		return ctx.Err()
@@ -212,8 +225,8 @@ func (r *Runner) LoseMachine(id string) error {
 		return fmt.Errorf("fakerunner: no running Execution %q", id)
 	}
 	p.lost = true
-	syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 	r.mu.Unlock()
+	killAll(p)
 	<-p.done
 	return nil
 }
@@ -279,15 +292,54 @@ func (r *Runner) Close() {
 	var running []*proc
 	for _, p := range r.procs {
 		if p.cmd != nil && !p.state.Ended() {
-			syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 			running = append(running, p)
 		}
 	}
 	r.mu.Unlock()
 	for _, p := range running {
+		killAll(p)
 		<-p.done
 	}
 	if r.tempDir != "" {
 		os.RemoveAll(r.tempDir)
 	}
+}
+
+// killAll sends SIGKILL to the wrapper's process group and to each process
+// that has the Execution's mark, until no marked process is left.
+func killAll(p *proc) {
+	syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+	mark := []byte(MarkEnv + "=" + p.mark + "\x00")
+	for pass := 0; pass < 100; pass++ {
+		found := false
+		for _, pid := range markedPIDs(mark) {
+			syscall.Kill(pid, syscall.SIGKILL)
+			found = true
+		}
+		if !found {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// markedPIDs gives each process whose environment holds the mark. An
+// ended process that is not yet reaped has no environment.
+func markedPIDs(mark []byte) []int {
+	entries, _ := os.ReadDir("/proc")
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		env, err := os.ReadFile("/proc/" + e.Name() + "/environ")
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(string(env), string(mark)) || strings.Contains(string(env), "\x00"+string(mark)) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
