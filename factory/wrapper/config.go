@@ -22,7 +22,10 @@ const (
 	// on each call.
 	EnvIdentityFile = "WRAPPER_IDENTITY_FILE"
 	// EnvDir is the Execution's directory: it holds checkout/, secrets/
-	// and the agent's socket (default: the working directory).
+	// and the agent's socket (default: the working directory). The run
+	// user must be able to search it and each parent, and must not be able
+	// to change them (root owns them), or the wrapper stops. A Nomad task's
+	// directory is not such a directory: Nomad's data_dir is 0700.
 	EnvDir = "WRAPPER_DIR"
 	// EnvHarness is the harness program (default claude).
 	EnvHarness = "WRAPPER_HARNESS"
