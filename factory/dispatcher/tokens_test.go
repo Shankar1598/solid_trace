@@ -70,6 +70,9 @@ func TestTheAPIRefusesATokenWithNoScopeOrWithoutTheFactoryScope(t *testing.T) {
 					!strings.Contains(problem.Error, "solidtrace login") {
 					t.Errorf("%s: %d %s, want 403 that says %q and names solidtrace login", verb, a.Status, a.Body, c.want)
 				}
+				if got, want := a.Header.Get("WWW-Authenticate"), `Bearer error="insufficient_scope", scope="factory"`; got != want {
+					t.Errorf("%s: WWW-Authenticate %q, want %q", verb, got, want)
+				}
 			}
 		})
 	}
@@ -95,6 +98,9 @@ func TestATokenThatIsNotActiveIsRefusedWith401(t *testing.T) {
 	for verb, a := range eachPersonCall(env, ana.Token, "aaaaaaaaaaaaaaaa") {
 		if a.Status != http.StatusUnauthorized || !strings.Contains(string(a.Body), "not active") {
 			t.Errorf("%s: %d %s, want 401 that says not active", verb, a.Status, a.Body)
+		}
+		if got, want := a.Header.Get("WWW-Authenticate"), `Bearer error="invalid_token"`; got != want {
+			t.Errorf("%s: WWW-Authenticate %q, want %q", verb, got, want)
 		}
 	}
 }

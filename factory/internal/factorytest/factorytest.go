@@ -194,6 +194,7 @@ func (p *Person) CLI(args ...string) Result {
 // Answer is one answer of the Dispatcher's API.
 type Answer struct {
 	Status int
+	Header http.Header
 	Body   []byte
 }
 
@@ -248,5 +249,5 @@ func (e *Env) APIAs(userAgent, token, method, path string, body any) Answer {
 	}
 	defer resp.Body.Close()
 	answer, _ := io.ReadAll(resp.Body)
-	return Answer{resp.StatusCode, answer}
+	return Answer{resp.StatusCode, resp.Header, answer}
 }
