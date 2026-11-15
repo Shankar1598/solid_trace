@@ -109,26 +109,33 @@ func TestProcessCostIsTheLastTotal(t *testing.T) {
 	}
 }
 
-func TestRemoveMadeGlobalKeepsOldBackups(t *testing.T) {
+func TestRemoveMadeGlobalKeepsOtherBackups(t *testing.T) {
 	config := t.TempDir()
 	must(t, os.MkdirAll(filepath.Join(config, "backups"), 0o700))
+	ours := `{"firstStartTime":"2026-11-15T01:40:08.137Z"}`
+	theirs := `{"firstStartTime":"2026-09-03T19:06:57.243Z","oauthAccount":{}}`
 	old := filepath.Join(config, "backups", ".claude.json.backup.1")
-	must(t, os.WriteFile(old, []byte("{}"), 0o600))
+	other := filepath.Join(config, "backups", ".claude.json.backup.3")
+	must(t, os.WriteFile(old, []byte(ours), 0o600))
 	defer func(m string, b map[string]bool) { madeGlobal, oldBackups = m, b }(madeGlobal, oldBackups)
 	madeGlobal = filepath.Join(config, ".claude.json")
 	oldBackups = map[string]bool{old: true}
 
 	made := []string{madeGlobal, filepath.Join(config, "backups", ".claude.json.backup.2"), madeGlobal + ".backup"}
 	for _, f := range made {
-		must(t, os.WriteFile(f, []byte("{}"), 0o600))
+		must(t, os.WriteFile(f, []byte(ours), 0o600))
 	}
+	// A backup of the person's own settings, written during the run.
+	must(t, os.WriteFile(other, []byte(theirs), 0o600))
 	removeMadeGlobal()
 	for _, f := range made {
 		if _, err := os.Stat(f); err == nil {
 			t.Errorf("%s is still there", f)
 		}
 	}
-	if _, err := os.Stat(old); err != nil {
-		t.Errorf("the backup from before the run is gone: %v", err)
+	for _, f := range []string{old, other} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("a backup that the run did not make is gone: %v", err)
+		}
 	}
 }

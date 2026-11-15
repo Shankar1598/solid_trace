@@ -74,15 +74,30 @@ var (
 )
 
 // removeMadeGlobal removes the global settings file that this run made,
-// and the backups of it that Claude Code wrote (in <config>/backups). The
-// backups that were there before the run stay.
+// and the backups of it that Claude Code wrote (in <config>/backups). A
+// backup is of that file when it is new and has the same firstStartTime.
+// The other backups stay: a Claude Code session beside the run can write a
+// backup of the person's own settings in the same directory.
 func removeMadeGlobal() {
+	first := firstStartTime(madeGlobal)
 	os.Remove(madeGlobal)
+	if first == "" {
+		return
+	}
 	for _, b := range globalBackups(filepath.Dir(madeGlobal)) {
-		if !oldBackups[b] {
+		if !oldBackups[b] && firstStartTime(b) == first {
 			os.Remove(b)
 		}
 	}
+}
+
+func firstStartTime(file string) string {
+	b, _ := os.ReadFile(file)
+	var v struct {
+		FirstStartTime string `json:"firstStartTime"`
+	}
+	json.Unmarshal(b, &v)
+	return v.FirstStartTime
 }
 
 func globalBackups(config string) []string {
