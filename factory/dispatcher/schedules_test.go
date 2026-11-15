@@ -446,3 +446,31 @@ func TestAMemberManagesSchedulesWithTheCLI(t *testing.T) {
 		t.Errorf("schedules create with no --name: exit %d, want 2", r.Code)
 	}
 }
+
+func TestAMissedFireTimeExactly24HoursOldGivesNoRunAndOneAMicrosecondYoungerGivesOneRun(t *testing.T) {
+	// Each Saturday at 10:00: the fire time is Saturday 14 November 10:00.
+	// Sunday 15 November 10:00 is exactly 24 hours after it.
+	for _, c := range []struct {
+		name string
+		down time.Duration
+		runs int
+	}{
+		{"exactly 24 hours old", 25 * time.Hour, 0},
+		{"a microsecond younger", 25*time.Hour - time.Microsecond, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			env := newEnv(t)
+			ana := env.Member("Ana")
+			s := makeSchedule(t, ana, dispatcherapi.SaveSchedule{Cron: "0 10 * * 6"})
+			env.RestartAfter(c.down)
+			env.CheckSchedules()
+			if runs := scheduleRuns(t, ana, s.ID); len(runs) != c.runs {
+				t.Errorf("a missed fire time %s gave %d Runs, want %d", c.name, len(runs), c.runs)
+			}
+			if got := getSchedule(t, ana, s.ID); got.NextAt == nil ||
+				!got.NextAt.Equal(time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)) {
+				t.Errorf("after the start the next time is %v, want 2026-11-21 10:00", got.NextAt)
+			}
+		})
+	}
+}
