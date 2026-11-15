@@ -157,6 +157,17 @@ nomad_image_is_only_in_this_compose_file() {
   [ "$files" = "factory/local/compose.yml" ] || want "Nomad's image only in factory/local/compose.yml, got: $files"
 }
 
+each_pulled_image_is_pinned_by_digest() {
+  local unpinned
+  # The services with no build, and the base image of each Dockerfile (not a stage of its own).
+  unpinned="$(compose config --format json | python3 -c '
+import json, sys
+services = json.load(sys.stdin)["services"]
+print(" ".join(s["image"] for s in services.values() if "build" not in s and "@sha256:" not in s["image"]))')"
+  unpinned+="$(awk 'toupper($1) == "FROM" { if (!($2 in stages) && index($2, "@sha256:") == 0) printf " %s", $2; if (toupper($3) == "AS") stages[$4] = 1 }' "$here"/*/Dockerfile)"
+  [ -z "${unpinned// }" ] || want "a digest on each image, got:$unpinned"
+}
+
 stack_has_its_own_names_and_publishes_no_port() {
   local name
   for name in $(docker ps -a --filter label=com.docker.compose.project=factory-local --format '{{.Names}}'); do
@@ -174,6 +185,7 @@ check "the agent machine has no Docker socket and is not privileged" agent_machi
 check "no process on the agent machine (root too) has NET_ADMIN, and the run user has no capability" no_process_on_the_agent_machine_has_net_admin
 check "the run user cannot register a Nomad client of its own" run_user_cannot_register_a_nomad_client
 check "Nomad's image is only in the local stack's compose file" nomad_image_is_only_in_this_compose_file
+check "each image that the stack pulls is pinned by digest" each_pulled_image_is_pinned_by_digest
 check "the stack has its own containers and volumes, and publishes no port" stack_has_its_own_names_and_publishes_no_port
 
 # --- The run user and the take-over rule -----------------------------------------------

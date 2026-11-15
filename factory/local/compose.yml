@@ -3,9 +3,11 @@
 #
 # This is the only file that names Nomad's image. Nomad is not shipped (ADR 0019).
 # The whole stack is under 3 GB of memory (mem_limit on each container).
+# Each image that the stack pulls has a tag and a digest: the tag names the version, and
+# the digest makes a pull repeatable (a tag such as Squid's "_beta" channel moves).
 name: factory-local
 
-x-nomad-image: &nomad-image hashicorp/nomad:2.1.1
+x-nomad-image: &nomad-image hashicorp/nomad:2.1.1@sha256:1a9a0a9ab149a6dd05fd5219e11273a20507a108ab191db26360f0843359ddf7
 
 services:
   nomad:
@@ -29,7 +31,7 @@ services:
       retries: 30
 
   squid:
-    image: ubuntu/squid:6.6-24.04_beta
+    image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
     volumes:
       - ./squid/squid.conf:/etc/squid/squid.conf:ro
       - ../reference/squid/allowlist.txt:/etc/squid/allowlist.txt:ro

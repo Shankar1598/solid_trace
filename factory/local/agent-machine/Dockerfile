@@ -9,7 +9,7 @@
 #
 # Two targets: agent-vm (the image recipe) and local (agent-vm with the local stack's
 # take-over user). The local stack's compose file builds local.
-FROM debian:bookworm-slim AS agent-vm
+FROM debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS agent-vm
 
 # The pinned versions, with the SHA-256 of each download (linux x86_64).
 ARG CLAUDE_CODE_VERSION=2.1.325
