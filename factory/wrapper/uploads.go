@@ -2,16 +2,21 @@ package wrapper
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentapi"
@@ -174,6 +179,8 @@ func (u *uploads) finish(ctx context.Context) {
 // last is the preemption handler's last upload: it stops the uploads
 // during the Execution, sends the last bytes of each file, and gives how
 // many bytes of the current Agent session's transcript SolidTrace has.
+// It fails when SolidTrace has less of the transcript than the disk, or
+// does not have an evidence/ file as it is on disk.
 func (u *uploads) last(ctx context.Context) (*uint64, error) {
 	u.stopLoop()
 	u.pass(ctx, true)
@@ -191,16 +198,87 @@ func (u *uploads) last(ctx context.Context) (*uint64, error) {
 		return nil, fmt.Errorf("ask SolidTrace what it has of the transcript: %w", err)
 	}
 	var offset uint64
+	hashes := map[string]string{}
 	for _, f := range files {
 		if f.Path == session+".jsonl" {
 			offset = f.EndOffset
 		}
+		hashes[f.Path] = f.ContentHash
 	}
 	info, err := os.Stat(filepath.Join(u.projectDir, session+".jsonl"))
 	if err == nil && uint64(info.Size()) > offset {
 		return nil, fmt.Errorf("SolidTrace has %d of the transcript's %d bytes", offset, info.Size())
 	}
+	missing, err := u.missingEvidence(ctx, hashes)
+	if err != nil {
+		return nil, fmt.Errorf("read the evidence/ files: %w", err)
+	}
+	if len(missing) > 0 {
+		return &offset, fmt.Errorf("SolidTrace does not have these evidence/ files as they are on disk: %s",
+			strings.Join(missing, ", "))
+	}
 	return &offset, nil
+}
+
+// missingEvidence are the evidence/ files on disk whose content SolidTrace
+// does not have (hashes: each path's content hash at SolidTrace). As the
+// upload does, it skips each file that is empty or is not regular.
+func (u *uploads) missingEvidence(ctx context.Context, hashes map[string]string) ([]string, error) {
+	var missing []string
+	err := filepath.WalkDir(filepath.Join(u.projectDir, evidenceDir), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(u.projectDir, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		hash, err := fileHash(ctx, p)
+		if err != nil {
+			return err
+		}
+		if hash != "" && hashes[rel] != hash {
+			missing = append(missing, rel)
+		}
+		return nil
+	})
+	return missing, err
+}
+
+// fileHash is the content hash of the file at p, as capture gives it
+// ("" for an empty file).
+func fileHash(ctx context.Context, p string) (string, error) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, ctxReader{ctx, f})
+	if err != nil || n == 0 {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ctxReader stops a read when its context ends.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r ctxReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 // pass is one upload of each of the Run's Agent sessions on disk. An

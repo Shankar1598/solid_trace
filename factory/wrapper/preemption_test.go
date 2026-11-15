@@ -249,6 +249,35 @@ func TestALastUploadThatHangsStopsAtItsLimitAndTheExecutionStillEnds(t *testing.
 	}
 }
 
+// An Evidence file that SolidTrace does not take is a problem of the
+// last upload in the preemption event.
+func TestAnEvidenceFileThatTheLastUploadDidNotSendIsAProblem(t *testing.T) {
+	env, ana := newEnv(t)
+	env.SolidTrace.RefusePath("evidence/notes.txt")
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	execution := getRun(t, ana, id).Executions[0].ID
+
+	env.Runner.Preempt(execution)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if onlyExecution(t, run).EndReason != dispatcherapi.EndPreempted {
+		t.Errorf("end reason %q", onlyExecution(t, run).EndReason)
+	}
+	preemption := eventOf(t, env.WaitForRunEvents(id, 5), "preemption")
+	problems, _ := preemption["preemption.problems"].([]any)
+	if !slices.ContainsFunc(problems, func(p any) bool {
+		return strings.Contains(p.(string), "the last upload") && strings.Contains(p.(string), "evidence/notes.txt")
+	}) {
+		t.Errorf("the problems do not name the Evidence file that is not at SolidTrace: %v", problems)
+	}
+	if _, ok := preemption["preemption.transcript_offset"].(float64); !ok {
+		t.Errorf("the transcript is at SolidTrace, but the event has no offset: %v", preemption)
+	}
+}
+
 func TestTheDispatcherRefusesAPreemptionCallThatIsNotValid(t *testing.T) {
 	env, ana := newEnv(t)
 	wait, open := gate(t)

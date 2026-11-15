@@ -63,9 +63,11 @@ type Recorder struct {
 	// hangIngest, while it is not nil, holds each agent ingest call until
 	// it is closed.
 	hangIngest chan struct{}
-	children   []*ChildToken
-	uploads    []Upload
-	files      map[string]map[string]*storedFile
+	// refusePaths are the Agent session paths whose uploads get 400.
+	refusePaths map[string]bool
+	children    []*ChildToken
+	uploads     []Upload
+	files       map[string]map[string]*storedFile
 }
 
 // RunEventsPath is EventStore's route for the Dispatcher's run events.

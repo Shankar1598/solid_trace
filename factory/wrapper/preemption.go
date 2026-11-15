@@ -164,16 +164,18 @@ func handlePreemption(c clock, reason string, noticeAt time.Time, s preemptSteps
 			offset, err := s.lastUpload(ctx)
 			return result{offset, err}
 		})
+		// An error with an offset is a problem of the other files: the
+		// offset of the transcript still counts.
 		switch {
 		case !ok:
 			problem("the last upload did not end in %s", lastUploadLimit)
+			return
 		case r.err != nil:
 			problem("the last upload: %v", r.err)
-		default:
-			mu.Lock()
-			p.TranscriptOffset = r.offset
-			mu.Unlock()
 		}
+		mu.Lock()
+		p.TranscriptOffset = r.offset
+		mu.Unlock()
 	}()
 	wg.Wait()
 	p.SecondsToSaved = c.Now().Sub(noticeAt).Seconds()
