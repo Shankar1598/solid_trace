@@ -16,7 +16,7 @@ We chose this because a Passkey is the stronger factor: it is bound to the real 
 ## Consequences
 
 - Changing the Console URL's host strands every Passkey made for the old one. Settings → Instance and `update_instance_settings` ask for confirmation, naming how many Passkeys would stop working. A stranded Passkey still counts as Two-factor, so its owner signs in with their password and a code or Recovery code (or, failing that, the operator resets their Two-factor) and makes a new one. Counting it stops a host change from quietly dropping them to password-only sign-in.
-- Two-factor protects sign-in, not API tokens: a token made from a signed-in Session works without it. OAuth for the MCP server is the next effort.
+- Two-factor protects sign-in, not API tokens: a token made from a signed-in Session works without it. OAuth for the MCP server is the next effort. (Built: [ADR 0021](0021-mcp-clients-sign-in-with-oauth-in-console.md). MCP clients now sign in through the browser, and the approval page applies Require two-factor.)
 - An email password reset never removes Two-factor; only Recovery codes and the operator's `bin/rails users:reset_two_factor` get a user past a lost factor.
 
 Source: [.scratch/two-factor/spec.md](../../.scratch/two-factor/spec.md)
