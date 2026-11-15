@@ -260,7 +260,8 @@ func (s *ticketStep) noRoute(ctx context.Context, ticket Ticket, value string) (
 		}
 		comment += "Set its " + quote(c.Settings.RoutingField) + " field to one of: " + strings.Join(quoted, ", ") + "."
 	} else {
-		comment += "An Admin adds a route of the tracker connection " + c.Name + " to a Project's Factory settings."
+		comment += "No route of the tracker connection " + c.Name + " matches its " + quote(c.Settings.RoutingField) +
+			" field: an Admin adds a route to a Project's Factory settings."
 	}
 	if err := s.t.Comment(ctx, c, ticket.ID, comment); err != nil {
 		return false, err
