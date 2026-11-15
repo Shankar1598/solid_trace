@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -63,9 +64,8 @@ func (e *execution) check(w http.ResponseWriter, r *http.Request, environ []stri
 	answer := dispatcherapi.CheckAnswer{Checks: []dispatcherapi.CheckResult{}}
 	for _, c := range todo {
 		key := checkKey{name: c.Name, command: c.Command}
-		if !e.hold(key) {
-			writeProblem(w, http.StatusConflict, fmt.Sprintf("an Execution records at most %d different checks",
-				dispatcherapi.MaxChecks))
+		if problem := e.hold(key); problem != "" {
+			writeProblem(w, http.StatusConflict, problem)
 			return
 		}
 		result := e.runCheck(r.Context(), environ, c)
@@ -89,9 +89,11 @@ func (k checkKey) is(r dispatcherapi.CheckResult) bool {
 	return r.Name == k.name && r.Command == k.command
 }
 
-// hold holds a place for a run of the check key, and is false when the
-// Execution has MaxChecks other checks, recorded or running.
-func (e *execution) hold(key checkKey) bool {
+// hold holds a place for a run of the check key. It gives the problem
+// when the Execution has MaxChecks other checks, recorded or running, or
+// when the record of the run can make the checks larger than
+// MaxChecksJSON: the Dispatcher then refuses each report.
+func (e *execution) hold(key checkKey) string {
 	e.checksMu.Lock()
 	defer e.checksMu.Unlock()
 	if e.running[key] == 0 && !slices.ContainsFunc(e.checks, key.is) {
@@ -102,14 +104,46 @@ func (e *execution) hold(key checkKey) bool {
 			}
 		}
 		if others >= dispatcherapi.MaxChecks {
-			return false
+			return fmt.Sprintf("an Execution records at most %d different checks", dispatcherapi.MaxChecks)
 		}
+	}
+	// A running check counts as its largest record; a run replaces the
+	// record of its check.
+	size := 0
+	for _, c := range e.checks {
+		if e.running[checkKey{name: c.Name, command: c.Command}] == 0 {
+			size += jsonLen(c) + 1
+		}
+	}
+	for k := range e.running {
+		size += k.largest() + 1
+	}
+	if e.running[key] == 0 {
+		size += key.largest() + 1
+	}
+	if size > dispatcherapi.MaxChecksJSON {
+		return fmt.Sprintf("the checks of an Execution take at most %d KiB in the report: give a shorter command",
+			dispatcherapi.MaxChecksJSON>>10)
 	}
 	if e.running == nil {
 		e.running = map[checkKey]int{}
 	}
 	e.running[key]++
-	return true
+	return ""
+}
+
+// largest is the most bytes that a record of the check key takes in
+// JSON: JSON writes a byte of output as at most 6 bytes (\u001b).
+func (k checkKey) largest() int {
+	return jsonLen(dispatcherapi.CheckResult{Name: k.name, Command: k.command, ExitStatus: math.MinInt32,
+		StartedAt: time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC), DurationMS: math.MaxInt64}) +
+		6*dispatcherapi.MaxCheckOutput
+}
+
+// jsonLen is the length of v in JSON, as the report sends it.
+func jsonLen(v any) int {
+	b, _ := json.Marshal(v)
+	return len(b)
 }
 
 // record lets go of a place that hold gave, and keeps result (when it
@@ -229,8 +263,8 @@ func (e *execution) addEvidence(report *dispatcherapi.Report) (commit func(accep
 // evidencePaths gives the paths of the regular files under dir, as
 // evidence/<path>, sorted, at most MaxEvidence, with evidence/report.md.
 // A link is not Evidence: the upload leaves it out. A path that the
-// Dispatcher refuses (more than MaxEvidencePath bytes, or not UTF-8) is
-// not Evidence either, and the log tells it.
+// Dispatcher refuses (not UTF-8), or that takes more than MaxEvidencePath
+// bytes in JSON, is not Evidence either, and the log tells it.
 func evidencePaths(dir string, log io.Writer) []string {
 	paths := []string{evidenceDir + "/" + reportFile}
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -242,8 +276,8 @@ func evidencePaths(dir string, log io.Writer) []string {
 			return nil
 		}
 		p := evidenceDir + "/" + filepath.ToSlash(rel)
-		if len(p) > dispatcherapi.MaxEvidencePath || !utf8.ValidString(p) {
-			fmt.Fprintf(log, "wrapper: %q is not Evidence: a path is UTF-8 text of at most %d bytes\n",
+		if !utf8.ValidString(p) || jsonLen(p)-2 > dispatcherapi.MaxEvidencePath {
+			fmt.Fprintf(log, "wrapper: %q is not Evidence: a path is UTF-8 text of at most %d bytes in JSON\n",
 				p, dispatcherapi.MaxEvidencePath)
 			return nil
 		}

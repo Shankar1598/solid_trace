@@ -356,6 +356,34 @@ printf x > "$SOLIDTRACE_EVIDENCE_DIR/$(printf 'bad\377')" && printf x > "$SOLIDT
 	}
 }
 
+// The checks of commands near MaxCheckText, which JSON writes as 6 bytes
+// for each byte (\u003c), can make a report larger than the Dispatcher's
+// body limit. The wrapper refuses the check that can do so.
+func TestTheWrapperRecordsNoChecksThatMakeTheReportTooLarge(t *testing.T) {
+	env, ana := newEnv(t)
+	out := t.TempDir()
+	steps := []string{takeTask, initLine(t)}
+	for i := range 3 {
+		steps = append(steps, checkStep(out, fmt.Sprint("big", i), fmt.Sprintf(": '%s'; true %d", strings.Repeat("<", 60000), i)))
+	}
+	steps = append(steps, reportStep("--outcome", "done", "--summary", "Fixed"), reply, result, waitForEnd)
+	env.Runner.Agent(steps...)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	if got := readRecorded(t, out, "big0"); !strings.Contains(got, "pass") {
+		t.Errorf("the first big check:\n%s", got)
+	}
+	for _, name := range []string{"big1", "big2"} {
+		if got := readRecorded(t, out, name); !strings.Contains(got, "at most") || !strings.Contains(got, "exit 1") {
+			t.Errorf("the check %s must be refused:\n%s", name, got)
+		}
+	}
+	if checks := eventChecks(t, reportEvents(env, id)[0]); len(checks) != 1 {
+		t.Errorf("want one recorded check, got %d", len(checks))
+	}
+}
+
 func TestARefusedReportLeavesEvidenceReportMdAsItWas(t *testing.T) {
 	env, ana := newEnv(t)
 	out := t.TempDir()

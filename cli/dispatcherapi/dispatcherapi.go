@@ -222,6 +222,11 @@ const MaxCheckText = 64 << 10
 // MaxEvidencePath is the longest Evidence path that a report keeps.
 const MaxEvidencePath = 1024
 
+// MaxChecksJSON is the most bytes that the checks of a report take in
+// JSON. With MaxEvidence paths and the summary, a report then stays below
+// the 1 MiB body that the Dispatcher reads.
+const MaxChecksJSON = 512 << 10
+
 // CheckResult is the record of one check that the wrapper ran: the
 // command, its exit status, its time and the last lines of its output.
 type CheckResult struct {
