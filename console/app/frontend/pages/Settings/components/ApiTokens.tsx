@@ -24,11 +24,13 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   createApiToken,
   DEFAULT_EXPIRY,
+  dispatcherFields,
   EXPIRY_CHOICES,
-  limitsText,
   mcpSnippets,
   tokenFields,
+  tokenLimitsText,
   type ApiToken,
+  type DispatcherChoice,
   type NamedRecord,
   type OfferedScope,
   type TokenForm,
@@ -48,6 +50,7 @@ type ApiTokensProps = {
   organizations: NamedRecord[]
   /** Each Organization's Projects, for the mcp:read Project limit. */
   projects: (NamedRecord & { organization_id: number })[]
+  dispatcher: DispatcherChoice
 }
 
 const EMPTY_FORM: TokenForm = {
@@ -65,11 +68,12 @@ const NONE = 'none'
 export function ApiTokens() {
   const {
     api_tokens: tokens, mcp_url: mcpUrl, browser_sign_in_note: browserSignInNote, scopes: offered, organizations, projects,
+    dispatcher,
   } = usePage<ApiTokensProps>().props
   const [form, setForm] = useState<TokenForm>(EMPTY_FORM)
   const [making, setMaking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [made, setMade] = useState<{ name: string; secret: string } | null>(null)
+  const [made, setMade] = useState<{ name: string; secret: string; dispatcher: boolean } | null>(null)
   const [revoking, setRevoking] = useState<ApiToken | null>(null)
 
   const set = (changes: Partial<TokenForm>) => setForm(current => ({ ...current, ...changes }))
@@ -90,7 +94,7 @@ export function ApiTokens() {
     setError(null)
     try {
       const { apiToken, secret } = await createApiToken(tokenFields(form))
-      setMade({ name: apiToken.name, secret })
+      setMade({ name: apiToken.name, secret, dispatcher: false })
       setForm(EMPTY_FORM)
       router.reload({ only: ['api_tokens'] })
     } catch (failure) {
@@ -215,7 +219,13 @@ export function ApiTokens() {
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </form>
 
-        {made && <MadeToken name={made.name} secret={made.secret} mcpUrl={mcpUrl} onDone={() => setMade(null)} />}
+        {dispatcher.organizations.length > 0 && (
+          <DispatcherToken choice={dispatcher} onMade={(apiToken, secret) => setMade({ name: apiToken.name, secret, dispatcher: true })} />
+        )}
+
+        {made && (
+          <MadeToken name={made.name} secret={made.secret} mcpUrl={mcpUrl} dispatcher={made.dispatcher} onDone={() => setMade(null)} />
+        )}
 
         {tokens.length === 0 ? (
           <p className="text-sm text-muted-foreground">No API tokens yet.</p>
@@ -241,7 +251,7 @@ export function ApiTokens() {
                     {token.scopes.length > 0 ? token.scopes.join(' ') : <span className="font-sans text-muted-foreground">None (MCP as you)</span>}
                   </TableCell>
                   <TableCell>{token.organization?.name ?? <span className="text-muted-foreground">Each</span>}</TableCell>
-                  <TableCell className="text-muted-foreground">{limitsText(token.limits)}</TableCell>
+                  <TableCell className="text-muted-foreground">{tokenLimitsText(token)}</TableCell>
                   <TableCell className="text-muted-foreground">{expiry(token.expires_at)}</TableCell>
                   <TableCell className="text-muted-foreground">{ago(token.created_at)}</TableCell>
                   <TableCell className="text-muted-foreground">{token.last_used_at ? ago(token.last_used_at) : 'Never'}</TableCell>
@@ -262,7 +272,9 @@ export function ApiTokens() {
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke "{revoking?.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              Clients that use this token can no longer reach SolidTrace. This can't be undone.
+              {revoking?.dispatcher
+                ? "The Dispatcher and each of its child tokens can no longer reach SolidTrace, so the factory stops until you give it a new Dispatcher's token. This can't be undone."
+                : "Clients that use this token can no longer reach SolidTrace. This can't be undone."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -275,8 +287,82 @@ export function ApiTokens() {
   )
 }
 
-/** A token just made: its secret, shown this once, and the snippets that use it. */
-function MadeToken({ name, secret, mcpUrl, onDone }: { name: string; secret: string; mcpUrl: string; onDone: () => void }) {
+/**
+ * The Dispatcher's token, for an Admin: it has fixed scopes, acts as you in
+ * one Organization, and makes the child tokens of each Run.
+ */
+function DispatcherToken({ choice, onMade }: { choice: DispatcherChoice; onMade: (apiToken: ApiToken, secret: string) => void }) {
+  const [organizationId, setOrganizationId] = useState(String(choice.organizations[0].id))
+  const [expiry, setExpiry] = useState(DEFAULT_EXPIRY)
+  const [making, setMaking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const organization = choice.organizations.find(o => String(o.id) === organizationId)
+
+  const make: React.FormEventHandler = async (e) => {
+    e.preventDefault()
+    setMaking(true)
+    setError(null)
+    try {
+      const { apiToken, secret } = await createApiToken(dispatcherFields(choice, organizationId, expiry))
+      onMade(apiToken, secret)
+      router.reload({ only: ['api_tokens'] })
+    } catch (failure) {
+      setError((failure as Error).message)
+    } finally {
+      setMaking(false)
+    }
+  }
+
+  return (
+    <form onSubmit={make} aria-label="The Dispatcher's token" className="flex flex-col gap-3 border p-4">
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-medium">The Dispatcher's token</h3>
+        <p className="text-xs text-muted-foreground">
+          For Admins. The Dispatcher acts as you in {organization?.name ?? 'the Organization'}, with only{' '}
+          <span className="font-mono">{choice.scopes.join(' ')}</span>. For each Run it makes a child token with
+          sessions:write and sessions:read for the Run's Agent sessions, or mcp:read for one Project, that expires no
+          later than this token. If you leave the Organization, this token and its child tokens stop working.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-2">
+          <Label>Organization</Label>
+          <Select
+            value={organizationId}
+            onValueChange={(value) => { if (value) setOrganizationId(String(value)) }}
+            items={Object.fromEntries(choice.organizations.map(o => [String(o.id), o.name]))}
+          >
+            <SelectTrigger className="w-48" aria-label="Organization of the Dispatcher's token"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {choice.organizations.map(o => <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Expiry</Label>
+          <Select value={expiry} onValueChange={(value) => setExpiry(String(value ?? DEFAULT_EXPIRY))} items={EXPIRY_CHOICES}>
+            <SelectTrigger className="w-36" aria-label="Expiry of the Dispatcher's token"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Object.entries(EXPIRY_CHOICES).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <Button type="submit" variant="outline" disabled={making}>
+          {making ? 'Making…' : "Make the Dispatcher's token"}
+        </Button>
+      </div>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    </form>
+  )
+}
+
+/**
+ * A token just made: its secret, shown this once, and the snippets that use
+ * it; for the Dispatcher's token, where the Dispatcher reads it.
+ */
+function MadeToken({ name, secret, mcpUrl, dispatcher, onDone }: {
+  name: string; secret: string; mcpUrl: string; dispatcher: boolean; onDone: () => void
+}) {
   const shown = mcpSnippets(mcpUrl, secret)
   return (
     <section aria-label="New API token" className="flex flex-col gap-3 border p-4 text-sm">
@@ -291,22 +377,28 @@ function MadeToken({ name, secret, mcpUrl, onDone }: { name: string; secret: str
         </Button>
       </div>
 
-      <Tabs defaultValue={shown[0].id} className="gap-0">
-        <TabsList variant="line">
-          {shown.map(s => <TabsTrigger key={s.id} value={s.id}>{s.label}</TabsTrigger>)}
-        </TabsList>
-        {shown.map(s => (
-          <TabsContent key={s.id} value={s.id} className="flex flex-col gap-2 border-t pt-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">{s.note}</span>
-              <Button variant="outline" size="sm" onClick={() => copyText(s.code, 'Snippet')} aria-label={`Copy the ${s.label} snippet`}>
-                <Copy className="h-3.5 w-3.5" /> Copy
-              </Button>
-            </div>
-            <pre className="overflow-x-auto border bg-muted/40 p-3 font-mono text-xs leading-5">{s.code}</pre>
-          </TabsContent>
-        ))}
-      </Tabs>
+      {dispatcher ? (
+        <p className="text-muted-foreground">
+          Give it to the Dispatcher as <span className="font-mono">DISPATCHER_SOLIDTRACE_TOKEN</span>, then restart the Dispatcher.
+        </p>
+      ) : (
+        <Tabs defaultValue={shown[0].id} className="gap-0">
+          <TabsList variant="line">
+            {shown.map(s => <TabsTrigger key={s.id} value={s.id}>{s.label}</TabsTrigger>)}
+          </TabsList>
+          {shown.map(s => (
+            <TabsContent key={s.id} value={s.id} className="flex flex-col gap-2 border-t pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">{s.note}</span>
+                <Button variant="outline" size="sm" onClick={() => copyText(s.code, 'Snippet')} aria-label={`Copy the ${s.label} snippet`}>
+                  <Copy className="h-3.5 w-3.5" /> Copy
+                </Button>
+              </div>
+              <pre className="overflow-x-auto border bg-muted/40 p-3 font-mono text-xs leading-5">{s.code}</pre>
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
 
       <div>
         <Button variant="outline" size="sm" onClick={onDone}>Done</Button>
