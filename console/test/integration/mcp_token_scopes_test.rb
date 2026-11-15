@@ -362,6 +362,7 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
   # The Dispatcher finds the id of each Factory setting's Project with
   # list_projects and its own token (factory/dispatcher/projects.go).
   test "the Dispatcher's token lists the Organization's Projects, and calls no write tool" do
+    stub_request(:post, "#{EventStore.base_url}/volumes").to_return(status: 200, body: { projects: [] }.to_json)
     target = create(:issue, project: @shop)
     _, secret = issue(scopes: Oauth::Scopes::DISPATCHER, expires_at: 30.days.from_now)
 
