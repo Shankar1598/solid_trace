@@ -3,6 +3,7 @@ package dispatcher_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -69,6 +70,14 @@ func TestASignedDeliveryStartsARunWithItsPromptTitleLinkAndAttributes(t *testing
 	}
 	if want := (dispatcherapi.Person{Kind: dispatcherapi.ActorSender, ID: sender.ID, Name: "Checkout alerts"}); run.StartedBy != want {
 		t.Errorf("the Run's starter is %+v, want the sender %+v", run.StartedBy, want)
+	}
+
+	got := mustCLI(t, ana, "runs", "get", answer.RunID)
+	for _, want := range []string{"Flaky cart test", "by the sender Checkout alerts", "https://tracker.example.com/T-12",
+		"\n  ticket: T-12\n"} {
+		if !strings.Contains(got.Stdout, want) {
+			t.Errorf("runs get has no %q:\n%s", want, got.Stdout)
+		}
 	}
 
 	events := env.WaitForRunEvents(answer.RunID, 2)

@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -117,10 +119,26 @@ func printRun(out io.Writer, r dispatcherapi.Run) {
 		fmt.Fprintf(tw, "Reason:\t%s\n", r.Reason)
 	}
 	fmt.Fprintf(tw, "Project:\t%s\n", r.Project)
-	fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), r.StartedBy.Name)
+	if r.Title != "" {
+		fmt.Fprintf(tw, "Title:\t%s\n", r.Title)
+	}
+	by := r.StartedBy.Name
+	if r.StartedBy.Kind == dispatcherapi.ActorSender {
+		by = "the sender " + by
+	}
+	fmt.Fprintf(tw, "Started:\t%s by %s\n", r.CreatedAt.UTC().Format(timeFormat), by)
 	fmt.Fprintf(tw, "Executions:\t%d\n", len(r.Executions))
 	fmt.Fprintf(tw, "Link:\t%s\n", r.URL)
+	if r.Link != "" {
+		fmt.Fprintf(tw, "Trigger link:\t%s\n", r.Link)
+	}
 	tw.Flush()
+	if len(r.Attributes) > 0 {
+		fmt.Fprintln(out, "\nAttributes:")
+		for _, name := range slices.Sorted(maps.Keys(r.Attributes)) {
+			fmt.Fprintf(out, "  %s: %s\n", name, r.Attributes[name])
+		}
+	}
 	fmt.Fprintf(out, "\nPrompt:\n%s\n", r.Prompt)
 	if r.Question != "" {
 		fmt.Fprintf(out, "\nQuestion:\n%s\n", r.Question)

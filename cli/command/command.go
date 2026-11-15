@@ -100,6 +100,16 @@ Usage:
       Save the secret that signs the connection's webhooks, with the
       secret on stdin (an Admin only). Paste its webhook URL into the
       connection's service. The Dispatcher keeps the secret encrypted.
+  solidtrace senders list [--dispatcher URL]
+      List your Organization's senders of the generic webhook (never
+      their secrets), with each webhook URL and the time of the last
+      delivery.
+  solidtrace senders create NAME [--project PROJECT]... [--dispatcher URL]
+      Make a sender (an Admin only): a tool that starts Runs with signed
+      requests to its webhook URL, in the Projects that you give (none is
+      each Project). It prints the sender's secret one time only.
+  solidtrace senders delete SENDER_ID [--dispatcher URL]
+      Delete a sender (an Admin only). Its webhook URL then gets 404.
   solidtrace report --outcome done|needs-a-person|failed --summary TEXT
           [--question TEXT]
       Inside a Run only: report the outcome of your work to the wrapper.
@@ -135,6 +145,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return projects(ctx, args[1:], env)
 	case "connections":
 		return connections(ctx, args[1:], env)
+	case "senders":
+		return senders(ctx, args[1:], env)
 	case "report":
 		return report(ctx, args[1:], env)
 	case "version", "--version":
