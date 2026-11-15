@@ -81,7 +81,7 @@ module Notifiers
       body = monitor? ? monitor_payload : issue_payload
       body[:prompt] = body[:prompt].truncate_bytes(MAX_PROMPT, omission: "…")
       body[:title] = body[:title].to_s.squish.truncate_bytes(MAX_TITLE, omission: "…")
-      body.delete(:link) if body[:link].to_s.bytesize > MAX_LINK
+      body.delete(:link) if body[:link].blank? || body[:link].bytesize > MAX_LINK
       body[:attributes] = body[:attributes].compact.transform_values { |v| v.to_s.truncate_bytes(MAX_ATTRIBUTE) }
       body
     end
@@ -131,7 +131,7 @@ module Notifiers
         about["query"].to_s,
         *(message.lines.any? ? [ "", "Logs:", *message.lines ] : []),
         "",
-        "Logs explorer: #{message.link}",
+        "Logs explorer: #{message.link}"
       ].join("\n")
       {
         project: about["project_slug"],

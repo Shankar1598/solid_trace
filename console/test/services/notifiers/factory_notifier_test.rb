@@ -118,7 +118,7 @@ class FactoryNotifierTest < ActiveSupport::TestCase
     [
       [ { status: 429, headers: { "Retry-After" => "30" }, body: { error: "too many" }.to_json }, /HTTP 429/ ],
       [ { status: 502, body: "bad gateway" }, /HTTP 502/ ],
-      [ Errno::ECONNREFUSED, /ECONNREFUSED|Connection refused/ ],
+      [ Errno::ECONNREFUSED, /ECONNREFUSED|Connection refused/ ]
     ].each do |answer, reason|
       Notification.delete_all
       answer.is_a?(Hash) ? stub_request(:post, WEBHOOK_URL).to_return(answer) : stub_request(:post, WEBHOOK_URL).to_raise(answer)
@@ -220,6 +220,20 @@ class FactoryNotifierTest < ActiveSupport::TestCase
     assert_operator body["prompt"].bytesize, :<=, 65_536
     assert body["prompt"].valid_encoding?
     assert_operator body["title"].bytesize, :<=, 1024
+    assert Notification.sole.status_sent?
+  end
+
+  test "a Logs explorer link longer than the webhook takes is left out, and the delivery still goes" do
+    stub_monitor_query_check(@project)
+    long = "['shop']\n| where message == '#{'a' * 2100}'\n| summarize count()"
+    monitor = create(:monitor, project: @project, query: long, integrations: [ @factory ])
+    change(monitor, IntegrationNotification::MONITOR_FIRING, group_key: "")
+
+    IntegrationNotification.deliver_pending(@factory.id)
+
+    body = received.sole[:body]
+    assert_not body.key?("link")
+    assert_includes body["prompt"], "a" * 2100
     assert Notification.sole.status_sent?
   end
 
