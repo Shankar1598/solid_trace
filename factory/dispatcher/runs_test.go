@@ -138,19 +138,16 @@ func TestTheDispatcherKeepsItsRunsAfterARestart(t *testing.T) {
 	}
 }
 
-func TestAPersonSeesOnlyTheRunsOfTheTokensOrganization(t *testing.T) {
+func TestAPersonOfAnotherOrganizationGetsNoRun(t *testing.T) {
 	env := newEnv(t)
 	ana := env.Member("Ana")
 	id, _ := start(t, ana, "--dispatcher", env.URL(), "--project", "checkout", "Fix the flaky cart test")
 	other := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
 
-	if a := other.API("GET", "/api/v1/runs/"+id, nil); a.Status != http.StatusNotFound {
-		t.Errorf("another Organization's get: %d %s, want 404", a.Status, a.Body)
-	}
-	var runs dispatcherapi.Runs
-	other.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
-	if len(runs.Runs) != 0 {
-		t.Errorf("another Organization lists %d Runs, want 0", len(runs.Runs))
+	for _, path := range []string{"/api/v1/runs/" + id, "/api/v1/runs"} {
+		if a := other.API("GET", path, nil); a.Status != http.StatusForbidden || strings.Contains(string(a.Body), id) {
+			t.Errorf("another Organization's GET %s: %d %s, want 403 with no Run", path, a.Status, a.Body)
+		}
 	}
 }
 

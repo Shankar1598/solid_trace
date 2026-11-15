@@ -108,8 +108,9 @@ const maxBody = 1 << 20
 type personHandler func(w http.ResponseWriter, r *http.Request, p person)
 
 // person checks the request's token and gives the handler its person.
-// The token needs the factory scope; each member of its one Organization
-// can use the handler.
+// The token needs the factory scope, and its one Organization must be
+// the Organization that the Dispatcher serves; each member of that
+// Organization can use the handler.
 func (d *Dispatcher) person(next personHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -134,6 +135,24 @@ func (d *Dispatcher) person(next personHandler) http.HandlerFunc {
 			d.log.Error("SolidTrace refuses the Dispatcher's own token")
 			writeProblem(w, http.StatusServiceUnavailable, callerRefused)
 			return
+		}
+		if err == nil {
+			var served organization
+			served, err = d.tokens.organization(r.Context())
+			switch {
+			case errors.Is(err, errOwnOrganization):
+				d.log.Error(err.Error())
+				writeProblem(w, http.StatusServiceUnavailable, err.Error())
+				return
+			case errors.Is(err, errCallerRefused):
+				d.log.Error("SolidTrace refuses the Dispatcher's own token")
+				writeProblem(w, http.StatusServiceUnavailable, callerRefused)
+				return
+			case err == nil && served.id != p.organization.id:
+				writeProblem(w, http.StatusForbidden, "this Dispatcher serves the Organization "+served.slug+
+					", not "+p.organization.slug+": the Dispatcher's SolidTrace token belongs to "+served.slug)
+				return
+			}
 		}
 		if err != nil {
 			d.log.Warn("token check failed", "error", err)

@@ -185,14 +185,10 @@ func TestAnAdminAddsABitbucketConnectionAndAMemberListsItWithNoToken(t *testing.
 	}
 }
 
-func TestAProjectCanNameOnlyItsOwnOrganizationsConnections(t *testing.T) {
+func TestAProjectCanNameOnlyAConnectionThatTheOrganizationHas(t *testing.T) {
 	env := factorytest.New(t)
 	env.SolidTraceProject("checkout")
 	dana := admin(t, env)
-	other := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
-	if a := other.API("PUT", "/api/v1/connections/theirs", dispatcherapi.SaveConnection{Kind: "bitbucket", Token: "t"}); a.Status != http.StatusOK {
-		t.Fatalf("another Organization's connection: %d %s", a.Status, a.Body)
-	}
 	if a := dana.API("PUT", "/api/v1/connections/ours", dispatcherapi.SaveConnection{Kind: "bitbucket", Token: "t"}); a.Status != http.StatusOK {
 		t.Fatalf("our connection: %d %s", a.Status, a.Body)
 	}
@@ -200,16 +196,39 @@ func TestAProjectCanNameOnlyItsOwnOrganizationsConnections(t *testing.T) {
 	theirs := dana.API("PUT", "/api/v1/projects/checkout/settings",
 		dispatcherapi.SaveFactorySettings{Repository: "bitbucket.org/example/shop", Connection: "theirs"})
 	if theirs.Status != http.StatusUnprocessableEntity || !strings.Contains(string(theirs.Body), "theirs") {
-		t.Errorf("a save that names another Organization's connection: %d %s, want 422", theirs.Status, theirs.Body)
+		t.Errorf("a save that names a connection that the Organization does not have: %d %s, want 422", theirs.Status, theirs.Body)
 	}
 	ours := mustCLI(t, dana, "projects", "set", "checkout", "--repository", "bitbucket.org/example/shop", "--connection", "ours")
 	if !strings.Contains(ours.Stdout, "ours") {
 		t.Errorf("projects set:\n%s", ours.Stdout)
 	}
+}
+
+func TestTheDispatcherRefusesTheSettingsAndConnectionsOfAnotherOrganization(t *testing.T) {
+	env := factorytest.New(t)
+	env.SolidTraceProject("checkout")
+	bo := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
+
+	calls := map[string]factorytest.Answer{
+		"save a connection": bo.API("PUT", "/api/v1/connections/theirs", dispatcherapi.SaveConnection{Kind: "bitbucket", Token: "t"}),
+		"list connections":  bo.API("GET", "/api/v1/connections", nil),
+		"save settings": bo.API("PUT", "/api/v1/projects/web/settings",
+			dispatcherapi.SaveFactorySettings{Repository: "bitbucket.org/other/web"}),
+		"list settings": bo.API("GET", "/api/v1/projects", nil),
+	}
+	for name, a := range calls {
+		if a.Status != http.StatusForbidden || !strings.Contains(string(a.Body), "serves the Organization example, not other") {
+			t.Errorf("%s: %d %s, want 403 that names the Organization that the Dispatcher serves", name, a.Status, a.Body)
+		}
+	}
+	if logs := env.Logs(); strings.Contains(logs, "could not list the Projects") {
+		t.Errorf("the Dispatcher blames SolidTrace:\n%s", logs)
+	}
+	dana := admin(t, env)
 	var connections dispatcherapi.Connections
-	other.API("GET", "/api/v1/connections", nil).JSON(t, &connections)
-	if len(connections.Connections) != 1 || connections.Connections[0].Name != "theirs" {
-		t.Errorf("the other Organization lists %+v, want only theirs", connections.Connections)
+	dana.API("GET", "/api/v1/connections", nil).JSON(t, &connections)
+	if len(connections.Connections) != 0 {
+		t.Errorf("the Organization lists %+v, want no connection", connections.Connections)
 	}
 }
 

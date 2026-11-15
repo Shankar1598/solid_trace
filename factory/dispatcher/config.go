@@ -20,7 +20,8 @@ type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
 	SolidTraceURL string
-	// SolidTraceToken is the Dispatcher's own API token.
+	// SolidTraceToken is the Dispatcher's own API token. A token belongs to
+	// one Organization, and the Dispatcher serves only that Organization.
 	SolidTraceToken string
 	// Database is the path of the SQLite database.
 	Database string

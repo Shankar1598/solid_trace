@@ -33,7 +33,8 @@ func newAdminWorld(t *testing.T) *adminWorld {
 	t.Helper()
 	w := &adminWorld{t: t, solidTrace: recorder.New(adminCallerToken), now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
 	t.Cleanup(w.solidTrace.Close)
-	w.solidTrace.Token(adminCallerToken, recorder.Answer{Sub: "1", Scope: "run_events:write"})
+	w.solidTrace.Token(adminCallerToken, recorder.Answer{Sub: "1", Scope: "run_events:write",
+		Organizations: []recorder.Organization{{ID: 7, Slug: "example", Name: "Example", Role: "admin"}}})
 	d, err := Open(Config{
 		SolidTraceURL:   w.solidTrace.URL(),
 		SolidTraceToken: adminCallerToken,

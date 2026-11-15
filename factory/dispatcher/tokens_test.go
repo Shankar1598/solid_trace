@@ -22,6 +22,31 @@ func eachPersonCall(env *factorytest.Env, token, runID string) map[string]factor
 	}
 }
 
+// checksOf is the number of token checks that SolidTrace got for token.
+func checksOf(env *factorytest.Env, token string) int {
+	n := 0
+	for _, c := range env.SolidTrace.CallsTo("/oauth/introspect") {
+		if c.Form.Get("token") == token {
+			n++
+		}
+	}
+	return n
+}
+
+func TestTheDispatcherChecksTheOrganizationOfItsOwnTokenOnce(t *testing.T) {
+	env := factorytest.New(t)
+	ana := env.Member("Ana")
+	for range 3 {
+		if a := ana.API("GET", "/api/v1/runs", nil); a.Status != http.StatusOK {
+			t.Fatalf("list: %d %s", a.Status, a.Body)
+		}
+		env.Clock.Advance(time.Minute)
+	}
+	if n := checksOf(env, factorytest.DispatcherToken); n != 1 {
+		t.Errorf("%d checks of the Dispatcher's own token, want 1", n)
+	}
+}
+
 func TestATokenWithOnlyTheFactoryScopeCanStartGetAndListRuns(t *testing.T) {
 	env := newEnv(t)
 	ana := env.Member("Ana")
@@ -121,7 +146,7 @@ func TestARevokedTokenIsRefusedWithin60Seconds(t *testing.T) {
 	if a := ana.API("GET", "/api/v1/runs", nil); a.Status != http.StatusUnauthorized {
 		t.Errorf("60 s after the check: %d %s, want 401", a.Status, a.Body)
 	}
-	if n := len(env.SolidTrace.CallsTo("/oauth/introspect")); n != 2 {
+	if n := checksOf(env, ana.Token); n != 2 {
 		t.Errorf("%d token checks, want 2 (one at the start, one after 60 s)", n)
 	}
 }
@@ -138,7 +163,7 @@ func TestAKeptAnswerIsCheckedAgainEach60Seconds(t *testing.T) {
 		}
 		env.Clock.Advance(30 * time.Second)
 	}
-	if n := len(env.SolidTrace.CallsTo("/oauth/introspect")); n != 3 {
+	if n := checksOf(env, ana.Token); n != 3 {
 		t.Errorf("%d token checks in 3 minutes, want 3", n)
 	}
 }
@@ -192,32 +217,14 @@ func TestAKeptAnswerIsOnlyForItsOwnToken(t *testing.T) {
 	ana.API("POST", "/api/v1/runs", dispatcherapi.StartRun{Project: "checkout", Prompt: "Fix it"}).JSON(t, &run)
 	bo := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
 
+	// The Dispatcher serves only the Organization of its own token, so
+	// it refuses each call of Bo; it must never act as Ana for him.
 	for verb, a := range eachPersonCall(env, bo.Token, run.ID) {
-		switch verb {
-		case "get":
-			if a.Status != http.StatusNotFound {
-				t.Errorf("another Organization's get: %d %s, want 404", a.Status, a.Body)
-			}
-		case "start":
-			// The Dispatcher's token lists the Projects of its own
-			// Organization only, so Bo's start is refused; it must never
-			// make a Run as Ana.
-			var started dispatcherapi.Run
-			if a.Status == http.StatusCreated {
-				a.JSON(t, &started)
-			}
-			if a.Status == http.StatusCreated && started.Organization != "other" {
-				t.Errorf("another Organization's start made a Run in %q, want other", started.Organization)
-			}
+		if a.Status != http.StatusForbidden || !strings.Contains(string(a.Body), "serves the Organization example") {
+			t.Errorf("another Organization's %s: %d %s, want 403 that names the Organization example", verb, a.Status, a.Body)
 		}
 	}
 	var runs dispatcherapi.Runs
-	bo.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
-	for _, r := range runs.Runs {
-		if r.ID == run.ID {
-			t.Errorf("another Organization lists Ana's Run %s", run.ID)
-		}
-	}
 	ana.API("GET", "/api/v1/runs", nil).JSON(t, &runs)
 	if len(runs.Runs) != 1 || runs.Runs[0].ID != run.ID {
 		t.Errorf("Ana lists %+v, want only her Run %s", runs.Runs, run.ID)
