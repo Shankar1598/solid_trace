@@ -69,7 +69,8 @@ type RunnerEvent struct {
 }
 
 // dispatchEvery is how often the dispatch loop looks for queued Runs when
-// nothing wakes it.
+// nothing wakes it: a Run that waits for a free account gets one at most
+// this long after an operator adds an account or a limit's reset time.
 const dispatchEvery = 10 * time.Second
 
 // dispatchLoop starts an Execution for each queued Run. A start wakes it.
@@ -80,7 +81,7 @@ func (d *Dispatcher) dispatchLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-d.wake:
-		case <-time.After(dispatchEvery):
+		case <-time.After(d.dispatchEvery):
 		}
 	}
 }
