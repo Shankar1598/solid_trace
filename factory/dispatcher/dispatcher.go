@@ -38,6 +38,11 @@ type Options struct {
 	// EventRetry is the longest wait of the event sender between two
 	// tries to send the outbox to SolidTrace (maxEventRetry when 0).
 	EventRetry time.Duration
+	// ScheduleEvery is the wait between two passes of the schedule loop
+	// (scheduleEvery when 0). ScheduleChecked, when set, gets the clock
+	// time of each pass after the pass.
+	ScheduleEvery   time.Duration
+	ScheduleChecked func(at time.Time)
 }
 
 // Dispatcher is one open Dispatcher.
@@ -55,6 +60,9 @@ type Dispatcher struct {
 	// http and eventRetry are for the event sender.
 	http       *http.Client
 	eventRetry time.Duration
+
+	scheduleEvery   time.Duration
+	scheduleChecked func(time.Time)
 
 	runner   Runner
 	identity *identityCheck
@@ -104,6 +112,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		eventRetry: cmp.Or(options.EventRetry, maxEventRetry),
 		runner:     options.Runner,
 		wake:       make(chan struct{}, 1),
+
+		scheduleEvery:   cmp.Or(options.ScheduleEvery, scheduleEvery),
+		scheduleChecked: options.ScheduleChecked,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs", d.person(d.startRun))
@@ -114,6 +125,13 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.admin(d.saveSettings)))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/connections", d.person(d.listConnections))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/connections/{name}", d.person(d.admin(d.saveConnection)))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules", d.person(d.listSchedules))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules", d.person(d.createSchedule))
+	mux.HandleFunc("GET "+dispatcherapi.Path+"/schedules/{id}", d.person(d.getSchedule))
+	mux.HandleFunc("PATCH "+dispatcherapi.Path+"/schedules/{id}", d.person(d.updateSchedule))
+	mux.HandleFunc("DELETE "+dispatcherapi.Path+"/schedules/{id}", d.person(d.deleteSchedule))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules/{id}/pause", d.person(d.pauseSchedule))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/schedules/{id}/continue", d.person(d.continueSchedule))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/status", d.status)
 	if d.runner != nil {
 		d.identity = &identityCheck{jwksURL: d.runner.JWKSURL(), http: options.HTTP, now: options.Now}
@@ -128,8 +146,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	d.handler = d.refuseOldCLIs(mux)
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
-	d.loops.Add(1)
+	d.loops.Add(2)
 	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
+	go func() { defer d.loops.Done(); d.scheduleLoop(ctx) }()
 	if d.runner != nil {
 		d.loops.Add(2)
 		go func() { defer d.loops.Done(); d.dispatchLoop(ctx) }()

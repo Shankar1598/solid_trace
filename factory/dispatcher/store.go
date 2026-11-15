@@ -117,6 +117,40 @@ var migrations = []string{
 		revoked_at INTEGER
 	);
 	CREATE INDEX execution_tokens_by_execution ON execution_tokens (execution_id);`,
+	// schedules start Runs of a Project at the fire times of their cron
+	// expressions. next_at is the next fire time (NULL while paused).
+	// organization_slug is the slug when the schedule was made (data
+	// only). A Run that a schedule started has started_by_kind schedule,
+	// the schedule as started_by_*, its fire time as fired_at (each fire
+	// time gives at most one Run), and the member who made the schedule
+	// as scheduled_by_*. started_by_kind '' is a person.
+	`CREATE TABLE schedules (
+		id TEXT PRIMARY KEY,
+		organization_id TEXT NOT NULL,
+		organization_slug TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		cron TEXT NOT NULL,
+		time_zone TEXT NOT NULL,
+		prompt TEXT NOT NULL,
+		base_branch TEXT NOT NULL,
+		paused INTEGER NOT NULL DEFAULT 0,
+		next_at INTEGER,
+		created_at INTEGER NOT NULL,
+		created_by_id TEXT NOT NULL,
+		created_by_name TEXT NOT NULL,
+		updated_at INTEGER NOT NULL,
+		updated_by_id TEXT NOT NULL,
+		updated_by_name TEXT NOT NULL
+	);
+	CREATE INDEX schedules_by_organization ON schedules (organization_id, project_id, name);
+	CREATE INDEX schedules_by_next ON schedules (next_at) WHERE next_at IS NOT NULL;
+	ALTER TABLE runs ADD COLUMN started_by_kind TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN schedule_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN fired_at INTEGER;
+	ALTER TABLE runs ADD COLUMN scheduled_by_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN scheduled_by_name TEXT NOT NULL DEFAULT '';
+	CREATE UNIQUE INDEX runs_by_fire ON runs (schedule_id, fired_at) WHERE schedule_id != '';`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -188,6 +222,10 @@ type storedRun struct {
 	// repository, folder and baseBranch are of the Factory settings when
 	// the Run started; trigger is the trigger kind.
 	repository, folder, baseBranch, trigger string
+	// scheduleID and firedAt are the schedule that started the Run and
+	// its fire time ("" and zero for another trigger).
+	scheduleID string
+	firedAt    time.Time
 }
 
 // insertRun adds a queued Run, with its created and queued events at its
@@ -198,31 +236,60 @@ func (s *store) insertRun(r storedRun) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, project_id, prompt, state,
-		started_by_id, started_by_name, created_at, repository, folder, base_branch, trigger_kind)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.organizationID, r.Organization, r.Project, r.projectID, r.Prompt, r.State, r.StartedBy.ID, r.StartedBy.Name,
-		r.CreatedAt.UnixMicro(), r.repository, r.folder, r.baseBranch, r.trigger)
-	if err != nil {
+	if _, err := insertRun(tx, r); err != nil {
 		return err
-	}
-	for _, kind := range []string{eventCreated, eventQueued} {
-		if err := recordEvent(tx, r.CreatedAt, r.ID, kind, nil); err != nil {
-			return err
-		}
 	}
 	return s.commit(tx)
 }
 
-const runColumns = `id, organization_slug, project, prompt, state, started_by_id, started_by_name, created_at,
-	reason, question, summary`
+// insertRun adds a queued Run in tx, with its created and queued events.
+// It adds nothing and returns false when the Run's schedule has a Run for
+// the same fire time.
+func insertRun(tx *sql.Tx, r storedRun) (bool, error) {
+	var firedAt *int64
+	if r.scheduleID != "" {
+		at := r.firedAt.UnixMicro()
+		firedAt = &at
+	}
+	var scheduledBy dispatcherapi.Person
+	if r.ScheduledBy != nil {
+		scheduledBy = *r.ScheduledBy
+	}
+	result, err := tx.Exec(`INSERT INTO runs (id, organization_id, organization_slug, project, project_id, prompt, state,
+		started_by_kind, started_by_id, started_by_name, created_at, repository, folder, base_branch, trigger_kind,
+		schedule_id, fired_at, scheduled_by_id, scheduled_by_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (schedule_id, fired_at) WHERE schedule_id != '' DO NOTHING`,
+		r.ID, r.organizationID, r.Organization, r.Project, r.projectID, r.Prompt, r.State, r.StartedBy.Kind,
+		r.StartedBy.ID, r.StartedBy.Name, r.CreatedAt.UnixMicro(), r.repository, r.folder, r.baseBranch, r.trigger,
+		r.scheduleID, firedAt, scheduledBy.ID, scheduledBy.Name)
+	if err != nil {
+		return false, err
+	}
+	if n, err := result.RowsAffected(); err != nil || n == 0 {
+		return false, err
+	}
+	for _, kind := range []string{eventCreated, eventQueued} {
+		if err := recordEvent(tx, r.CreatedAt, r.ID, kind, nil); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+const runColumns = `id, organization_slug, project, prompt, state, started_by_kind, started_by_id, started_by_name,
+	created_at, reason, question, summary, scheduled_by_id, scheduled_by_name`
 
 func scanRun(row interface{ Scan(...any) error }) (dispatcherapi.Run, error) {
 	var r dispatcherapi.Run
 	var created int64
-	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.ID, &r.StartedBy.Name, &created,
-		&r.Reason, &r.Question, &r.Summary)
+	var scheduledBy dispatcherapi.Person
+	err := row.Scan(&r.ID, &r.Organization, &r.Project, &r.Prompt, &r.State, &r.StartedBy.Kind, &r.StartedBy.ID,
+		&r.StartedBy.Name, &created, &r.Reason, &r.Question, &r.Summary, &scheduledBy.ID, &scheduledBy.Name)
 	r.CreatedAt = time.UnixMicro(created).UTC()
+	if scheduledBy.ID != "" {
+		r.ScheduledBy = &scheduledBy
+	}
 	return r, err
 }
 

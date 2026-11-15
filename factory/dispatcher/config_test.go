@@ -3,10 +3,35 @@ package dispatcher_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/forge"
 )
+
+func TestTheOperatorSetsTheShortestIntervalOfASchedule(t *testing.T) {
+	valid := map[string]string{
+		dispatcher.EnvSolidTraceURL:   "https://console.example.com",
+		dispatcher.EnvSolidTraceToken: "stk_x",
+		dispatcher.EnvDatabase:        "/var/lib/dispatcher/d.sqlite3",
+		dispatcher.EnvEncryptionKey:   "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+	}
+	load := func(value string) (dispatcher.Config, error) {
+		env := map[string]string{dispatcher.EnvScheduleMinInterval: value}
+		for k, v := range valid {
+			env[k] = v
+		}
+		return dispatcher.LoadConfig("", func(k string) string { return env[k] })
+	}
+	if c, err := load("15m"); err != nil || c.ScheduleMinInterval != 15*time.Minute {
+		t.Errorf("15m: %v, %v", c.ScheduleMinInterval, err)
+	}
+	for _, wrong := range []string{"an hour", "-1h", "0"} {
+		if _, err := load(wrong); err == nil || !strings.Contains(err.Error(), dispatcher.EnvScheduleMinInterval) {
+			t.Errorf("%q: the error %v does not name %s", wrong, err, dispatcher.EnvScheduleMinInterval)
+		}
+	}
+}
 
 // Each case has one wrong value; the error names it, and only it.
 func TestTheConfigurationNamesTheOneWrongForgeSetting(t *testing.T) {
