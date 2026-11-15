@@ -3,8 +3,11 @@ package wrapper_test
 import (
 	"bytes"
 	"context"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +173,71 @@ func TestTheWrapperUsesTheRenewedWorkloadIdentity(t *testing.T) {
 
 	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
 	if run.Summary != "Fixed" {
+		t.Errorf("summary %q", run.Summary)
+	}
+}
+
+func TestTheAgentGetsItsOwnSocketAndNoneOfTheWrappersSettings(t *testing.T) {
+	// The Runner's machine gives the wrapper an agent's socket of its own:
+	// the agent must get the socket of its Execution.
+	t.Setenv(agentsocket.Env, "/inherited/agent.sock")
+	env, ana := newEnv(t)
+	seen := filepath.Join(t.TempDir(), "env")
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), shell("env >"+seen+".new && mv "+seen+".new "+seen), wait,
+		reportStep("--outcome", "done", "--summary", "Fixed"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	execution := waitFor(t, env, ana, id, dispatcherapi.StateRunning).Executions[0].ID
+	var environ []byte
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if b, err := os.ReadFile(seen); err == nil {
+			environ = b
+			break
+		}
+	}
+	if environ == nil {
+		t.Fatal("the agent did not write its environment")
+	}
+
+	var sockets []string
+	for _, kv := range strings.Split(string(environ), "\n") {
+		if strings.HasPrefix(kv, "WRAPPER_") {
+			t.Errorf("the agent has the wrapper's setting %s", strings.SplitN(kv, "=", 2)[0])
+		}
+		if strings.HasPrefix(kv, agentsocket.Env+"=") {
+			sockets = append(sockets, strings.TrimPrefix(kv, agentsocket.Env+"="))
+		}
+	}
+	socket := env.Runner.Socket(execution)
+	if len(sockets) != 1 || sockets[0] != socket {
+		t.Errorf("the agent's socket is %q, want %q", sockets, socket)
+	}
+	// Only the wrapper's user can send a report, or read the forge token.
+	dir := filepath.Dir(socket)
+	for path, want := range map[string]os.FileMode{
+		socket: 0o600,
+		filepath.Join(dir, "secrets", "forge-token"):    0o600,
+		filepath.Join(dir, "secrets", "git-credential"): 0o700,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("stat %s: %v", path, err)
+		} else if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s has mode %o, want %o", filepath.Base(path), got, want)
+		}
+	}
+	// The token is in no file of the checkout, which the agent can commit.
+	filepath.WalkDir(filepath.Join(dir, "checkout"), func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() {
+			if b, err := os.ReadFile(path); err == nil && bytes.Contains(b, []byte(env.Forge.Token)) {
+				t.Errorf("the checkout's file %s has the forge token", path)
+			}
+		}
+		return nil
+	})
+	open()
+
+	if run := waitFor(t, env, ana, id, dispatcherapi.StateDone); run.Summary != "Fixed" {
 		t.Errorf("summary %q", run.Summary)
 	}
 }
