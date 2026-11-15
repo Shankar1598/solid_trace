@@ -474,3 +474,30 @@ func TestAMissedFireTimeExactly24HoursOldGivesNoRunAndOneAMicrosecondYoungerGive
 		})
 	}
 }
+
+func TestAFireTimeOfAScheduleWhoseSettingsAreOrphanedIsSkippedWithAWarning(t *testing.T) {
+	env := factorytest.New(t)
+	project := env.Project("checkout")
+	ana := env.Member("Ana")
+	s := makeSchedule(t, ana, dispatcherapi.SaveSchedule{Cron: "0 10 * * *"})
+
+	// The list of Factory settings marks the settings of a Project that
+	// SolidTrace no longer has as orphaned.
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, project.ID)
+	var list dispatcherapi.ProjectList
+	ana.API("GET", "/api/v1/projects", nil).JSON(t, &list)
+	if len(list.Projects) != 1 || !list.Projects[0].Orphaned {
+		t.Fatalf("the settings are %+v, want orphaned", list.Projects)
+	}
+
+	env.Clock.Advance(time.Hour)
+	env.CheckSchedules()
+	if runs := scheduleRuns(t, ana, s.ID); len(runs) != 0 {
+		t.Fatalf("a schedule of orphaned settings made %d Runs", len(runs))
+	}
+	warning := env.WaitForWarning("skipped: SolidTrace no longer has the Project")
+	if warning["level"] != "warn" || warning["schedule.id"] != s.ID ||
+		!strings.Contains(warning["message"].(string), "orphaned") {
+		t.Errorf("the warning is %v", warning)
+	}
+}
