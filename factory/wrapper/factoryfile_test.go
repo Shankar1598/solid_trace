@@ -311,3 +311,96 @@ func TestTheAllowlistHoldsTheDefaultListAndTheExtraHostsOfEachRepositoryThatAPro
 		t.Errorf("Squid got %d reloads, want %d", got, reloads+3)
 	}
 }
+
+func TestTwoProjectsInOneRepositoryWithDifferentFoldersKeepTheHostsOfBoth(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Project("admin")
+	env.Forge.Push("example/shop", "main", map[string]string{
+		factoryFile("apps/shop"):  `allowed_hosts = ["shop.example.com"]`,
+		factoryFile("apps/admin"): `allowed_hosts = ["admin.example.com"]`,
+	}, "A factory file in each folder")
+	saveSettings(t, env, "apps/shop", "")
+	if a := env.Admin().API("PUT", "/api/v1/projects/admin/settings", map[string]string{
+		"repository": "bitbucket.org/example/shop", "folder": "apps/admin",
+		"connection": factorytest.ForgeConnection}); a.Status != http.StatusOK {
+		t.Fatalf("save the settings of admin: %d %s", a.Status, a.Body)
+	}
+
+	runDone(t, env, ana)
+	env.Runner.Agent(reportsDone()...)
+	got := ana.CLI("start", "--dispatcher", env.URL(), "--project", "admin", "Fix the admin")
+	m := queuedLine.FindStringSubmatch(got.Stdout)
+	if m == nil {
+		t.Fatalf("start a Run of admin: %s%s", got.Stdout, got.Stderr)
+	}
+	waitFor(t, env, ana, m[1], dispatcherapi.StateDone)
+	list := strings.Split(env.Allowlist(), "\n")
+	for _, host := range []string{"shop.example.com", "admin.example.com"} {
+		if !slices.Contains(list, host) {
+			t.Errorf("after a Run of each Project, the allowlist has no %s:\n%s", host, env.Allowlist())
+		}
+	}
+}
+
+func TestARunningExecutionKeepsItsHostsWhenTheSettingsNameAnotherRepository(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Forge.Push("example/shop", "main", map[string]string{factoryFile(""): `allowed_hosts = ["api.stripe.com"]`},
+		"Extra hosts")
+	here, reached := marker(t)
+	proceed := filepath.Join(t.TempDir(), "proceed")
+	env.Runner.Agent(takeTask, here, shell(`while [ ! -e `+proceed+` ]; do sleep 0.05; done; `+
+		`grep -qx api.stripe.com `+env.Config.SquidAllowlist+` && solidtrace report --outcome done --summary "Reached it"`),
+		reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	reached()
+
+	env.Forge.AddRepo("example/other", nil)
+	if a := env.Admin().API("PUT", "/api/v1/projects/shop/settings", map[string]string{
+		"repository": "bitbucket.org/example/other", "connection": factorytest.ForgeConnection}); a.Status != http.StatusOK {
+		t.Fatalf("save the settings of shop: %d %s", a.Status, a.Body)
+	}
+	if !slices.Contains(strings.Split(env.Allowlist(), "\n"), "api.stripe.com") {
+		t.Errorf("while the Execution runs, the allowlist has no api.stripe.com:\n%s", env.Allowlist())
+	}
+	if err := os.WriteFile(proceed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+}
+
+func TestAFailedSquidReloadFailsARunThatNeedsAnExtraHostAndTheNextChangeReloadsAgain(t *testing.T) {
+	broken := filepath.Join(t.TempDir(), "squid-is-down")
+	env := factorytest.New(t, factorytest.Executions, func(e *factorytest.Env) {
+		e.Config.SquidReload = "test ! -e " + broken + " && " + e.Config.SquidReload
+	})
+	env.Project("shop")
+	ana := env.Member("Ana")
+	reloads := env.SquidReloads()
+	if err := os.WriteFile(broken, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A Run with no extra host does not need the reload.
+	runDone(t, env, ana)
+
+	env.Forge.Push("example/shop", "main", map[string]string{factoryFile(""): `allowed_hosts = ["api.stripe.com"]`},
+		"Extra hosts")
+	run := waitFor(t, env, ana, start(t, env, ana, "Fix the cart"), dispatcherapi.StateFailed)
+	if !strings.Contains(run.Reason, "Squid allowlist") || !strings.Contains(run.Reason, "reload Squid") {
+		t.Errorf("the reason %q does not name the Squid allowlist and the reload", run.Reason)
+	}
+	if got := env.SquidReloads(); got != reloads {
+		t.Errorf("Squid got %d reloads while it was down, want %d", got, reloads)
+	}
+
+	if err := os.Remove(broken); err != nil {
+		t.Fatal(err)
+	}
+	runDone(t, env, ana)
+	if got := env.SquidReloads(); got != reloads+1 {
+		t.Errorf("Squid got %d reloads after it came back, want %d", got, reloads+1)
+	}
+	if !slices.Contains(strings.Split(env.Allowlist(), "\n"), "api.stripe.com") {
+		t.Errorf("after the reload, the allowlist has no api.stripe.com:\n%s", env.Allowlist())
+	}
+}

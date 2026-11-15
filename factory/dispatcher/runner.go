@@ -175,12 +175,19 @@ func (d *Dispatcher) dispatchFactoryFile(ctx context.Context, runID, executionID
 		err = d.store.setFactoryFile(executionID, encoded)
 	}
 	if err == nil {
-		err = d.store.setRepositoryHosts(run.repository, file.AllowedHosts, d.now())
+		err = d.store.setRepositoryHosts(run.repository, run.folder, file.AllowedHosts, d.now())
 	}
 	if err != nil {
 		return factoryFile{}, fmt.Errorf("the Dispatcher could not keep the factory file: %w", err)
 	}
-	d.refreshAllowlist()
+	// With no Squid reload, an Execution that needs an extra host fails
+	// at its first call to it with a reason that does not name the
+	// allowlist. Fail it here with the cause. The next refresh tries the
+	// reload again.
+	if err := d.refreshAllowlist(); err != nil && !d.allowlist.has(file.AllowedHosts) {
+		return factoryFile{}, fmt.Errorf("the Dispatcher could not add the allowed hosts of the factory file "+
+			"to the Squid allowlist: %w", err)
+	}
 	return file, nil
 }
 
