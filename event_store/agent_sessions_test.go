@@ -113,7 +113,8 @@ func TestAnAgentSessionOverTwoDaysSumsItsTokensCostAndCounts(t *testing.T) {
 	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first), body: second}), 200)
 	subagent := jsonl(
 		personAt("s1", "2026-10-03T09:00:10Z", "Find the checkout code"),
-		replyAt("s2", "2026-10-03T09:00:20Z", "msg_3", "claude-sonnet-5-5", `{"type":"tool_use","id":"toolu_2","name":"Grep","input":{}}`),
+		// A server-side tool call, such as a web search, is a tool call too.
+		replyAt("s2", "2026-10-03T09:00:20Z", "msg_3", "claude-sonnet-5-5", `{"type":"server_tool_use","id":"srvtoolu_2","name":"web_search","input":{}}`),
 	)
 	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "subagents/agent-a1.jsonl", body: subagent}), 200)
 
@@ -147,6 +148,11 @@ func TestTheTotalsOfARunsAgentSessionCarryTheRun(t *testing.T) {
 	s := sessionTotalsOf(t, env, o.project, runSession)
 	if s.RunID != "run_42" || s.Project != "shop" || s.Folder != "apps/web" {
 		t.Errorf("Expected the Run, its Project and the folder, got %+v", s)
+	}
+	// A main transcript with no reply and no cost-state line has no cost,
+	// never 0.
+	if s.CostUSD != nil {
+		t.Errorf("Expected no cost without a reply or a cost-state line, got %v", *s.CostUSD)
 	}
 }
 
