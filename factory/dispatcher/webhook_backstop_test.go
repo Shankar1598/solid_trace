@@ -150,6 +150,62 @@ func TestABackstopAfterAFailedWebhookStepDoesNotWarnOfTheAnnouncedChange(t *test
 	}
 }
 
+// A webhook's step for one entity is not a step of the whole connection:
+// it does not move the time from which the next backstop counts the
+// announcements. Here T-1's webhook came after the previous whole step
+// and its own step failed; a later webhook step for T-2 must not make
+// the backstop count from after T-1's announcement.
+func TestAWebhookStepForOneEntityDoesNotMoveTheTimeOfTheBackstop(t *testing.T) {
+	env := factorytest.New(t)
+	path := env.WebhookConnection("tickets", secret)
+	reconciledOf(t, env, "tickets", "")
+	env.Clock.Advance(time.Minute)
+	env.Source.Change("tickets", "T-1")
+	env.Source.FailNext(1)
+	deliver(t, env, path, "d-1", "T-1")
+	if _, ok := env.Source.WaitFor(func(r fakesource.Reconcile) bool { return r.Entity == "T-1" && r.Failed }); !ok {
+		t.Fatalf("the webhook's step of T-1 did not fail: %+v", env.Source.Reconciles())
+	}
+	env.Clock.Advance(time.Minute)
+	env.Source.Change("tickets", "T-2")
+	deliver(t, env, path, "d-2", "T-2")
+	if r := reconciledOf(t, env, "tickets", "T-2"); len(r.Acted) != 1 {
+		t.Fatalf("the webhook's step of T-2 acted on %v, want [T-2]", r.Acted)
+	}
+	env.Clock.Advance(fakesource.Backstop - 2*time.Minute)
+	if _, ok := env.Source.WaitFor(func(r fakesource.Reconcile) bool { return r.Entity == "" && len(r.Acted) > 0 }); !ok {
+		t.Fatalf("the backstop did not act on T-1: %+v", env.Source.Reconciles())
+	}
+	settle()
+	if warned(env) {
+		t.Errorf("the backstop warned of T-1, which a webhook announced after the previous step of the whole connection")
+	}
+}
+
+// An announcement counts only from the previous step of the whole
+// connection on: a webhook of T-1 before that step does not hide a later
+// change of T-1 that no webhook announced.
+func TestAnAnnouncementBeforeThePreviousBackstopDoesNotHideALaterChange(t *testing.T) {
+	env := factorytest.New(t)
+	path := env.WebhookConnection("tickets", secret)
+	reconciledOf(t, env, "tickets", "")
+	env.Source.Change("tickets", "T-1")
+	deliver(t, env, path, "d-1", "T-1")
+	reconciledOf(t, env, "tickets", "T-1")
+	env.Clock.Advance(fakesource.Backstop)
+	waitForSteps(t, env, "tickets", "", 2)
+	settle()
+	if warned(env) {
+		t.Fatalf("a backstop that found nothing new warned")
+	}
+
+	env.Source.Change("tickets", "T-1") // the webhooks stopped
+	env.Clock.Advance(fakesource.Backstop)
+	if w := env.WaitForWarning("found a change that no webhook announced"); w["factory.entities"] != "T-1" {
+		t.Errorf("the warning is %v, want one for T-1", w)
+	}
+}
+
 func waitForSteps(t *testing.T, env *factorytest.Env, connection, entity string, n int) {
 	t.Helper()
 	if _, ok := env.Source.WaitFor(func(fakesource.Reconcile) bool { return stepsOf(env, connection, entity) >= n }); !ok {
