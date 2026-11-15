@@ -334,11 +334,17 @@ func TestADeliveryWithABodyThatIsNotValidGets400(t *testing.T) {
 		attributes["a"+strconv.Itoa(i)] = "v"
 	}
 	for name, b := range map[string]dispatcherapi.GenericWebhook{
-		"no project":             {Prompt: "Fix it"},
-		"no prompt":              {Project: "shop", Prompt: "  "},
-		"a prompt over 64 KiB":   {Project: "shop", Prompt: strings.Repeat("a", 64<<10+1)},
-		"a branch with ..":       {Project: "shop", Prompt: "Fix it", Branch: "main/../x"},
-		"a javascript: link":     {Project: "shop", Prompt: "Fix it", Link: "javascript:alert(1)"},
+		"no project":           {Prompt: "Fix it"},
+		"no prompt":            {Project: "shop", Prompt: "  "},
+		"a prompt over 64 KiB": {Project: "shop", Prompt: strings.Repeat("a", 64<<10+1)},
+		"a branch with ..":     {Project: "shop", Prompt: "Fix it", Branch: "main/../x"},
+		"a javascript: link":   {Project: "shop", Prompt: "Fix it", Link: "javascript:alert(1)"},
+		// These links have a host, so only the scheme check refuses them.
+		"a javascript:// link":   {Project: "shop", Prompt: "Fix it", Link: "javascript://example.com/%0Aalert(1)"},
+		"an ftp:// link":         {Project: "shop", Prompt: "Fix it", Link: "ftp://example.com/x"},
+		"a file:// link":         {Project: "shop", Prompt: "Fix it", Link: "file://host/x"},
+		"a data:// link":         {Project: "shop", Prompt: "Fix it", Link: "data://x/y"},
+		"a link over 2048 bytes": {Project: "shop", Prompt: "Fix it", Link: linkOf(2049)},
 		"21 attributes":          {Project: "shop", Prompt: "Fix it", Attributes: attributes},
 		"an attribute name of /": {Project: "shop", Prompt: "Fix it", Attributes: map[string]string{"a/b": "v"}},
 		"a long dedupe_key":      {Project: "shop", Prompt: "Fix it", DedupeKey: strings.Repeat("k", 257)},
@@ -370,6 +376,17 @@ func TestADeliveryWithABodyThatIsNotValidGets400(t *testing.T) {
 	if !at.Started {
 		t.Errorf("a prompt of exactly 64 KiB: %+v, want a Run", at)
 	}
+	at = accepted(t, sendGeneric(t, env, path, sender.Secret, "d-2048", dispatcherapi.GenericWebhook{Project: "shop",
+		Prompt: "Fix the link", Link: linkOf(2048)}))
+	if !at.Started {
+		t.Errorf("a link of exactly 2048 bytes: %+v, want a Run", at)
+	}
+}
+
+// linkOf gives an https:// link of n bytes.
+func linkOf(n int) string {
+	const prefix = "https://example.com/"
+	return prefix + strings.Repeat("a", n-len(prefix))
 }
 
 func TestAGenericWebhookPathOfNoSenderOrAnotherMethodGets404AndABigBodyGets413(t *testing.T) {
