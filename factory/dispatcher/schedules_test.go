@@ -501,3 +501,26 @@ func TestAFireTimeOfAScheduleWhoseSettingsAreOrphanedIsSkippedWithAWarning(t *te
 		t.Errorf("the warning is %v", warning)
 	}
 }
+
+func TestASaveOfAScheduleForOrphanedSettingsIsRefused(t *testing.T) {
+	env := factorytest.New(t)
+	project := env.Project("checkout")
+	ana := env.Member("Ana")
+	// SolidTrace deletes the Project, the list marks its settings orphaned,
+	// and SolidTrace has the Project again: the settings stay orphaned
+	// until an Admin saves them.
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, project.ID)
+	var list dispatcherapi.ProjectList
+	ana.API("GET", "/api/v1/projects", nil).JSON(t, &list)
+	if len(list.Projects) != 1 || !list.Projects[0].Orphaned {
+		t.Fatalf("the settings are %+v, want orphaned", list.Projects)
+	}
+	env.SolidTrace.SetProject(factorytest.Organization.Slug, project)
+
+	a := ana.API("POST", "/api/v1/schedules", dispatcherapi.SaveSchedule{Project: "checkout", Name: "n",
+		Cron: "0 9 * * 1", Prompt: "p"})
+	if a.Status != http.StatusUnprocessableEntity || !strings.Contains(string(a.Body), "checkout") ||
+		!strings.Contains(string(a.Body), "orphaned") {
+		t.Errorf("save: %d %s, want 422 that names the Project and says orphaned", a.Status, a.Body)
+	}
+}
