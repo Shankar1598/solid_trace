@@ -165,9 +165,13 @@ type execution struct {
 	// proof of delivery). A report sends the count.
 	delivered atomic.Int64
 	// checksMu holds checks: the record of each check that the wrapper
-	// ran in this Execution, the last result of each command.
+	// ran in this Execution, the last result of each command, and
+	// running: the count of runs of each check that has no record yet.
+	// A running check holds its place, so that the records never go
+	// above MaxChecks.
 	checksMu sync.Mutex
 	checks   []dispatcherapi.CheckResult
+	running  map[checkKey]int
 
 	needsPerson chan struct{}
 	uploads     *uploads
@@ -391,12 +395,14 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusConflict, "the Execution is ending: a report now does not count")
 		return
 	}
-	e.addEvidence(&report)
+	commit := e.addEvidence(&report)
 	a, err := e.client.call(r.Context(), "report", report)
 	if err != nil {
+		commit(false)
 		writeProblem(w, http.StatusBadGateway, "the wrapper could not send the report: "+err.Error())
 		return
 	}
+	commit(a.status/100 == 2)
 	if a.status/100 != 2 {
 		writeProblem(w, a.status, a.message)
 		return

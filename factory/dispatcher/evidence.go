@@ -13,9 +13,6 @@ import (
 	"github.com/solidtrace/factory/forge"
 )
 
-// maxEvidencePath is the longest Evidence path that a report keeps.
-const maxEvidencePath = 1024
-
 // checkEvidence checks the wrapper's part of a report: the checks and the
 // Evidence paths.
 func checkEvidence(r dispatcherapi.Report) string {
@@ -23,18 +20,18 @@ func checkEvidence(r dispatcherapi.Report) string {
 		return fmt.Sprintf("a report has at most %d checks", dispatcherapi.MaxChecks)
 	}
 	for _, c := range r.Checks {
-		if len(c.Output) > dispatcherapi.MaxCheckOutput || len(c.Command) > maxReportText || len(c.Name) > maxReportText ||
+		if len(c.Output) > dispatcherapi.MaxCheckOutput || len(c.Command) > dispatcherapi.MaxCheckText || len(c.Name) > dispatcherapi.MaxCheckText ||
 			!utf8.ValidString(c.Output+c.Command+c.Name) {
-			return fmt.Sprintf("a check has a command and a name of UTF-8 text, and at most %d bytes of output",
-				dispatcherapi.MaxCheckOutput)
+			return fmt.Sprintf("a check has a command and a name of UTF-8 text, at most %d bytes each, and at most "+
+				"%d bytes of output", dispatcherapi.MaxCheckText, dispatcherapi.MaxCheckOutput)
 		}
 	}
 	if len(r.Evidence) > dispatcherapi.MaxEvidence {
 		return fmt.Sprintf("a report names at most %d Evidence files", dispatcherapi.MaxEvidence)
 	}
 	for _, p := range r.Evidence {
-		if !strings.HasPrefix(p, "evidence/") || len(p) > maxEvidencePath || !utf8.ValidString(p) {
-			return "an Evidence path is evidence/<path>, at most 1024 bytes"
+		if !strings.HasPrefix(p, "evidence/") || len(p) > dispatcherapi.MaxEvidencePath || !utf8.ValidString(p) {
+			return fmt.Sprintf("an Evidence path is evidence/<path>, at most %d bytes", dispatcherapi.MaxEvidencePath)
 		}
 	}
 	if r.DeliveredMessages < 0 {

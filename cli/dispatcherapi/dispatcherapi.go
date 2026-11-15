@@ -215,6 +215,13 @@ const MaxChecks = 20
 // MaxEvidence is the most Evidence paths that a report names.
 const MaxEvidence = 200
 
+// MaxCheckText is the longest command, and the longest name, of a check
+// that a report keeps.
+const MaxCheckText = 64 << 10
+
+// MaxEvidencePath is the longest Evidence path that a report keeps.
+const MaxEvidencePath = 1024
+
 // CheckResult is the record of one check that the wrapper ran: the
 // command, its exit status, its time and the last lines of its output.
 type CheckResult struct {

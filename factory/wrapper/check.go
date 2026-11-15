@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
@@ -22,6 +23,11 @@ import (
 // reportFile is the file under evidence/ that each report writes: the
 // full summary, the question and the checks.
 const reportFile = "report.md"
+
+// nextReportFile, in the project directory and not under evidence/,
+// holds the text of a report until the Dispatcher accepts the report. So
+// no upload sends it.
+const nextReportFile = ".report.md.next"
 
 // check is the agent's check call: the wrapper runs the factory file's
 // checks, or the agent's command, and records each. The next report
@@ -42,6 +48,11 @@ func (e *execution) check(w http.ResponseWriter, r *http.Request, environ []stri
 	}
 	todo := e.task.Checks
 	if command := strings.TrimSpace(run.Command); command != "" {
+		if len(command) > dispatcherapi.MaxCheckText || !utf8.ValidString(command) {
+			writeProblem(w, http.StatusBadRequest, fmt.Sprintf("a check's command is UTF-8 text of at most %d bytes",
+				dispatcherapi.MaxCheckText))
+			return
+		}
 		todo = []dispatcherapi.Check{{Command: command}}
 	}
 	if len(todo) == 0 {
@@ -51,7 +62,8 @@ func (e *execution) check(w http.ResponseWriter, r *http.Request, environ []stri
 	}
 	answer := dispatcherapi.CheckAnswer{Checks: []dispatcherapi.CheckResult{}}
 	for _, c := range todo {
-		if !e.canRecord(c) {
+		key := checkKey{name: c.Name, command: c.Command}
+		if !e.hold(key) {
 			writeProblem(w, http.StatusConflict, fmt.Sprintf("an Execution records at most %d different checks",
 				dispatcherapi.MaxChecks))
 			return
@@ -59,36 +71,62 @@ func (e *execution) check(w http.ResponseWriter, r *http.Request, environ []stri
 		result := e.runCheck(r.Context(), environ, c)
 		if r.Context().Err() != nil {
 			// The agent went: the check did not end, so it is no record.
+			e.record(key, nil)
 			return
 		}
-		e.record(result)
+		e.record(key, &result)
 		answer.Checks = append(answer.Checks, result)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(answer)
 }
 
-func (e *execution) canRecord(c dispatcherapi.Check) bool {
+// checkKey is the identity of a check: a later run of the same name and
+// command replaces its record.
+type checkKey struct{ name, command string }
+
+func (k checkKey) is(r dispatcherapi.CheckResult) bool { return r.Name == k.name && r.Command == k.command }
+
+// hold holds a place for a run of the check key, and is false when the
+// Execution has MaxChecks other checks, recorded or running.
+func (e *execution) hold(key checkKey) bool {
 	e.checksMu.Lock()
 	defer e.checksMu.Unlock()
-	return len(e.checks) < dispatcherapi.MaxChecks || slices.ContainsFunc(e.checks, func(r dispatcherapi.CheckResult) bool {
-		return r.Name == c.Name && r.Command == c.Command
-	})
+	if e.running[key] == 0 && !slices.ContainsFunc(e.checks, key.is) {
+		others := len(e.checks)
+		for k := range e.running {
+			if !slices.ContainsFunc(e.checks, k.is) {
+				others++
+			}
+		}
+		if others >= dispatcherapi.MaxChecks {
+			return false
+		}
+	}
+	if e.running == nil {
+		e.running = map[checkKey]int{}
+	}
+	e.running[key]++
+	return true
 }
 
-// record keeps result as the last result of its check: a later run of
-// the same name and command replaces it in its place.
-func (e *execution) record(result dispatcherapi.CheckResult) {
+// record lets go of a place that hold gave, and keeps result (when it
+// is not nil) as the last result of its check: a later run of the same
+// name and command replaces it in its place.
+func (e *execution) record(key checkKey, result *dispatcherapi.CheckResult) {
 	e.checksMu.Lock()
 	defer e.checksMu.Unlock()
-	i := slices.IndexFunc(e.checks, func(r dispatcherapi.CheckResult) bool {
-		return r.Name == result.Name && r.Command == result.Command
-	})
-	if i >= 0 {
-		e.checks[i] = result
+	if e.running[key]--; e.running[key] <= 0 {
+		delete(e.running, key)
+	}
+	if result == nil {
 		return
 	}
-	e.checks = append(e.checks, result)
+	if i := slices.IndexFunc(e.checks, key.is); i >= 0 {
+		e.checks[i] = *result
+		return
+	}
+	e.checks = append(e.checks, *result)
 }
 
 // runCheck runs one check with sh -c in the agent's working directory,
@@ -157,33 +195,57 @@ func (t *tail) String() string {
 }
 
 // addEvidence adds the wrapper's part to the agent's report: the checks,
-// the delivered-message counter, and the Evidence paths, after it writes
-// evidence/report.md.
-func (e *execution) addEvidence(report *dispatcherapi.Report) {
+// the delivered-message counter, and the Evidence paths, with
+// evidence/report.md. It writes the report's text to a new file, and
+// gives commit: commit(true) puts the file in the place of
+// evidence/report.md (the Dispatcher accepted the report), and
+// commit(false) removes it. So evidence/report.md is always the text of
+// the last report that counts.
+func (e *execution) addEvidence(report *dispatcherapi.Report) (commit func(accepted bool)) {
 	e.checksMu.Lock()
 	report.Checks = slices.Clone(e.checks)
 	e.checksMu.Unlock()
 	report.DeliveredMessages = int(e.delivered.Load())
 	dir := filepath.Join(e.uploads.projectDir, evidenceDir)
-	if err := os.WriteFile(filepath.Join(dir, reportFile), []byte(reportText(*report)), 0o600); err != nil {
+	final := filepath.Join(dir, reportFile)
+	next := filepath.Join(e.uploads.projectDir, nextReportFile)
+	if err := os.WriteFile(next, []byte(reportText(*report)), 0o600); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write evidence/report.md:", err)
 	}
-	report.Evidence = evidencePaths(dir)
+	report.Evidence = evidencePaths(dir, e.log)
+	return func(accepted bool) {
+		if !accepted {
+			os.Remove(next)
+			return
+		}
+		if err := os.Rename(next, final); err != nil {
+			fmt.Fprintln(e.log, "wrapper: write evidence/report.md:", err)
+		}
+	}
 }
 
 // evidencePaths gives the paths of the regular files under dir, as
-// evidence/<path>, sorted, at most MaxEvidence. A link is not Evidence:
-// the upload leaves it out.
-func evidencePaths(dir string) []string {
-	var paths []string
+// evidence/<path>, sorted, at most MaxEvidence, with evidence/report.md.
+// A link is not Evidence: the upload leaves it out. A path that the
+// Dispatcher refuses (more than MaxEvidencePath bytes, or not UTF-8) is
+// not Evidence either, and the log tells it.
+func evidencePaths(dir string, log io.Writer) []string {
+	paths := []string{evidenceDir + "/" + reportFile}
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
-		if err == nil {
-			paths = append(paths, evidenceDir+"/"+filepath.ToSlash(rel))
+		if err != nil || rel == reportFile {
+			return nil
 		}
+		p := evidenceDir + "/" + filepath.ToSlash(rel)
+		if len(p) > dispatcherapi.MaxEvidencePath || !utf8.ValidString(p) {
+			fmt.Fprintf(log, "wrapper: %q is not Evidence: a path is UTF-8 text of at most %d bytes\n",
+				p, dispatcherapi.MaxEvidencePath)
+			return nil
+		}
+		paths = append(paths, p)
 		return nil
 	})
 	slices.Sort(paths)

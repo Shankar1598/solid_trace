@@ -215,8 +215,10 @@ func TestACheckResultThatTheAgentWritesItselfIsNotACheck(t *testing.T) {
 	if evidence := strs(reports[0]["report.evidence"]); slices.Contains(evidence, "evidence/fake.png") {
 		t.Errorf("a path that is not there went on: %q", evidence)
 	}
-	if reports[0]["report.delivered_messages"] != float64(1) {
-		t.Errorf("the delivered-message counter is the agent's: %v", reports[0]["report.delivered_messages"])
+	// The wrapper can send the report before it reads the replay echo of
+	// the task: the counter is then 0.
+	if n := reports[0]["report.delivered_messages"]; n != float64(0) && n != float64(1) {
+		t.Errorf("the delivered-message counter is the agent's: %v", n)
 	}
 	if !slices.Contains(run.Flags, dispatcherapi.FlagNoEvidence) {
 		t.Errorf("the Run's flags: %q", run.Flags)
@@ -279,8 +281,9 @@ command = "true"
 	var last string
 	waitUntil(t, "the PR has the Evidence block of the second report", func() bool {
 		last = env.Forge.PRs("example/shop")[0].Description
+		// Only the block of the second report has a passed check.
 		block, _ := evidenceBlock(last)
-		return strings.Contains(block, "pass")
+		return strings.Contains(block, "- pass: test") && !strings.Contains(block, "no Evidence")
 	})
 	block, n = evidenceBlock(last)
 	if n != 1 || !strings.HasPrefix(last, "It waits on the event now.") || strings.Contains(last, "waited on a timer") {
@@ -291,5 +294,84 @@ command = "true"
 	}
 	if len(run.Flags) != 0 {
 		t.Errorf("a done with a PR and a passed check has the flags %q", run.Flags)
+	}
+}
+
+func TestCheckKeepsTheShellWordsOfItsArguments(t *testing.T) {
+	env, ana := newEnv(t)
+	out := t.TempDir()
+	env.Runner.Agent(takeTask, initLine(t),
+		checkStep(out, "words", "printf", "<%s>", "a|b c'd"),
+		checkStep(out, "one", "echo one && echo two"),
+		reportStep("--outcome", "done", "--summary", "Fixed"),
+		reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	if got := readRecorded(t, out, "words"); !strings.Contains(got, "pass") {
+		t.Errorf("check with quoted words:\n%s", got)
+	}
+	checks := eventChecks(t, reportEvents(env, id)[0])
+	if len(checks) != 2 {
+		t.Fatalf("want two recorded checks, got %+v", checks)
+	}
+	if checks[0]["command"] != `printf '<%s>' 'a|b c'\''d'` || checks[0]["output"] != "<a|b c'd>" {
+		t.Errorf("the check of more words: %+v", checks[0])
+	}
+	if checks[1]["command"] != "echo one && echo two" || checks[1]["output"] != "one\ntwo" {
+		t.Errorf("the check of one argument: %+v", checks[1])
+	}
+}
+
+func TestTheWrapperSendsNoCheckOrEvidencePathThatTheDispatcherRefuses(t *testing.T) {
+	env, ana := newEnv(t)
+	out := t.TempDir()
+	long := strings.Repeat("d", 250)
+	env.Runner.Agent(takeTask, initLine(t),
+		checkStep(out, "long", ": "+strings.Repeat("x", dispatcherapi.MaxCheckText)+"; true"),
+		// 19 checks, then two new checks at the same time: one of them
+		// is the 20th, and the other gets no record.
+		shell(`for i in $(seq 1 19); do solidtrace check "true $i" >/dev/null || exit 1; done
+solidtrace check "sleep 0.3; true a" >/dev/null & solidtrace check "sleep 0.3; true b" >/dev/null & wait`),
+		shell(`d="$SOLIDTRACE_EVIDENCE_DIR/`+long+"/"+long+"/"+long+"/"+long+`" && mkdir -p "$d" && echo x > "$d/`+long+`.txt"
+printf x > "$SOLIDTRACE_EVIDENCE_DIR/$(printf 'bad\377')" && printf x > "$SOLIDTRACE_EVIDENCE_DIR/good.txt"`),
+		reportStep("--outcome", "done", "--summary", "Fixed"),
+		reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	if got := readRecorded(t, out, "long"); !strings.Contains(got, "at most") {
+		t.Errorf("a check of a command that is too long:\n%s", got)
+	}
+	reports := reportEvents(env, id)
+	if len(reports) != 1 {
+		t.Fatalf("want one report event, got %d", len(reports))
+	}
+	if checks := eventChecks(t, reports[0]); len(checks) != dispatcherapi.MaxChecks {
+		t.Errorf("want %d recorded checks, got %d", dispatcherapi.MaxChecks, len(checks))
+	}
+	evidence := strs(reports[0]["report.evidence"])
+	if !slices.Equal(evidence, []string{"evidence/good.txt", "evidence/report.md"}) {
+		t.Errorf("the report's Evidence paths: %q", evidence)
+	}
+}
+
+func TestARefusedReportLeavesEvidenceReportMdAsItWas(t *testing.T) {
+	env, ana := newEnv(t)
+	out := t.TempDir()
+	env.Runner.Agent(takeTask, initLine(t),
+		reportStep("--outcome", "done", "--summary", "GOODSUMMARY"),
+		recorded(out, "refused", "solidtrace report --outcome needs-a-person --summary BADSUMMARY"),
+		reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	if got := readRecorded(t, out, "refused"); !strings.Contains(got, "question") {
+		t.Errorf("a needs a person with no question must be refused:\n%s", got)
+	}
+	session := firstToken(t, env).AgentSessionIDs[0]
+	report := string(env.SolidTrace.Stored(session, "evidence/report.md"))
+	if !strings.Contains(report, "GOODSUMMARY") || strings.Contains(report, "BADSUMMARY") {
+		t.Errorf("evidence/report.md:\n%s", report)
 	}
 }
