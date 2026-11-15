@@ -29,6 +29,8 @@ const (
 	ReadTransaction  = "transaction"
 	// ReadAgentSessions reads the Agent sessions list and its totals.
 	ReadAgentSessions = "Agent sessions"
+	// ReadAgentSession reads one Agent session's header and timeline.
+	ReadAgentSession = "Agent session"
 )
 
 // readTag is a Log read's log_comment: its Project, its kind, the run its
