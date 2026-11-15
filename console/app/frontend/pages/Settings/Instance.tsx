@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useForm, usePage } from '@inertiajs/react'
+import { Deferred, useForm, usePage } from '@inertiajs/react'
 import { Lock, TriangleAlert } from 'lucide-react'
 import SettingsLayout from '@/components/layouts/SettingsLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -22,6 +22,7 @@ import { SharedProps } from '@/types'
 import { parsePatterns } from '@/lib/redactionPatterns'
 import { fallbackHint, requiredScheme, type UrlFallback } from '@/lib/publicUrls'
 import type { PasskeyOffer } from '@/lib/passkeys'
+import { dispatcherStatusLine, type DispatcherStatus } from '@/lib/dispatcher'
 import { toast } from 'sonner'
 
 /** One setting read at start: where it comes from and the value in effect. A secret's value is only whether it's set. */
@@ -60,6 +61,8 @@ interface InstanceSettings {
     console_url_fallback: UrlFallback | null
     ingest_url: string | null
     ingest_url_fallback: UrlFallback | null
+    /** The Dispatcher's private API, null when blank: then no part of the Factory that needs it shows. */
+    dispatcher_url: string | null
     /** The extra Redaction patterns, after the defaults that redaction_defaults names. */
     redaction_patterns: string[]
     redaction_defaults: string
@@ -91,6 +94,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
     local_cache_hours: String(editable.local_cache_hours),
     console_url: editable.console_url ?? '',
     ingest_url: editable.ingest_url ?? '',
+    dispatcher_url: editable.dispatcher_url ?? '',
     redaction_patterns: editable.redaction_patterns.join('\n'),
   })
   // Each pattern EventStore refused, on its own line.
@@ -186,6 +190,25 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                 <p className="text-xs text-muted-foreground" data-testid="ingest-url-fallback">
                   {fallbackHint(editable.ingest_url_fallback)}
                 </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="dispatcher_url">Dispatcher URL</Label>
+                <Input
+                  id="dispatcher_url"
+                  inputMode="url"
+                  placeholder="http://10.0.0.5:8080"
+                  value={data.dispatcher_url}
+                  onChange={(e) => setData('dispatcher_url', e.target.value)}
+                />
+                {errors.dispatcher_url && <p className="text-sm font-medium text-destructive">{errors.dispatcher_url}</p>}
+                <p className="text-xs text-muted-foreground" data-testid="dispatcher-url-description">
+                  The Factory&apos;s Dispatcher, as http(s)://host[:port][/path] on its private network, where
+                  Console&apos;s server reaches it. Console calls it as the person who uses the page, with a token
+                  that has only the factory scope and works for 5 minutes. With no URL, Console shows no part of the
+                  Factory that needs the Dispatcher.
+                </p>
+                {editable.dispatcher_url && <DispatcherStatusLine />}
               </div>
 
               <div className="space-y-2">
@@ -494,6 +517,30 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
         </Card>
       </div>
     </SettingsLayout>
+  )
+}
+
+/** The saved Dispatcher's status, which the page loads after it shows. */
+function DispatcherStatusLine() {
+  const { dispatcher } = usePage<{ dispatcher?: DispatcherStatus | null }>().props
+  return (
+    <Deferred data="dispatcher" fallback={<p className="text-xs text-muted-foreground">Checking the Dispatcher…</p>}>
+      {dispatcher ? <DispatcherStatusText status={dispatcher} /> : <></>}
+    </Deferred>
+  )
+}
+
+function DispatcherStatusText({ status }: { status: DispatcherStatus }) {
+  const line = dispatcherStatusLine(status)
+  return (
+    <p
+      className={`flex items-start gap-1.5 text-sm ${line.ok ? 'text-muted-foreground' : 'font-medium text-destructive'}`}
+      data-testid="dispatcher-status"
+      role={line.ok ? undefined : 'alert'}
+    >
+      {!line.ok && <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />}
+      {line.text}
+    </p>
   )
 }
 

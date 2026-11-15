@@ -17,7 +17,9 @@
 # - issued_at: when the token was made;
 # - resource: the resource it is for: an OAuth token's one; for an API
 #   token, the resource of its Scopes, or a list when they have several;
-# - kind: :api_token or :access_token;
+# - kind: :api_token, :access_token, or :console_token for Console's
+#   factory token (Oauth::ConsoleToken), which has only the factory Scope
+#   in one Organization;
 # - parent: for a child token, the Dispatcher's token that made it; else nil.
 class BearerToken
   Membership = Data.define(:organization, :role)
@@ -36,6 +38,12 @@ class BearerToken
       return new(user: grant.user, scopes: scopes_for(grant.scopes, access.resource, issuer), limits: {},
                  expires_at: access.expires_at, issued_at: access.created_at, resource: access.resource,
                  kind: :access_token, record: grant)
+    end
+
+    if (console = Oauth::ConsoleToken.find_live(secret))
+      return new(user: console.user, scopes: Oauth::ConsoleToken::SCOPES, limits: {}, expires_at: console.expires_at,
+                 issued_at: console.issued_at, resource: resource_of(Oauth::ConsoleToken::SCOPES, issuer),
+                 kind: :console_token, record: console)
     end
 
     api_token = ApiToken.find_by_secret(secret)
@@ -82,6 +90,10 @@ class BearerToken
 
   def oauth?
     kind == :access_token
+  end
+
+  def api_token?
+    kind == :api_token
   end
 
   # The one Organization the token acts in; nil for an API token with none,

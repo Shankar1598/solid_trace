@@ -5,8 +5,8 @@
 # and the settings that apply at once (EDITABLE: SQL queries, the default
 # Retention of Logs and of traces, log-all-reads, log-MCP-reads, the
 # text-match budget, the Log read threads, the hours on local disk, Console's
-# and ingest's URLs, the extra Redaction patterns) on Settings → Instance or
-# over the MCP server.
+# and ingest's URLs, the Dispatcher's URL, the extra Redaction patterns) on
+# Settings → Instance or over the MCP server.
 # Sign-up has no UI on purpose: opening it lets anyone who can reach Console
 # make an account, so it changes only from a shell on the server, with
 # `bin/rails instance_settings:set` (lib/tasks/instance_settings.rake), and a
@@ -22,7 +22,7 @@ class InstanceSetting < ApplicationRecord
   # Settings → Instance and over the MCP server.
   EDITABLE = %i[sql_queries_enabled default_log_retention_days default_trace_retention_days log_all_reads
                 log_mcp_reads send_console_issues trace_console logs_text_match_budget_mb logs_read_threads
-                local_cache_hours console_url ingest_url redaction_patterns].freeze
+                local_cache_hours console_url ingest_url dispatcher_url redaction_patterns].freeze
 
   # The credentials that EventStore's default Redaction patterns remove,
   # always on (event_store/redaction, Defaults).
@@ -81,6 +81,12 @@ class InstanceSetting < ApplicationRecord
   normalizes :console_url, :ingest_url, with: ->(value) { PublicUrls.clean(value) }
   validate -> { url_problem(:console_url, path: false) }, if: -> { console_url.present? }
   validate -> { url_problem(:ingest_url, path: true) }, if: -> { ingest_url.present? }
+  # The Dispatcher's private API, as Console's server reaches it, or nil:
+  # the Factory's parts that need the Dispatcher show only when it is set
+  # (Dispatcher.on?). Console sends its factory token for the signed-in user
+  # to this URL, so only an Instance admin sets it. It may have a path.
+  normalizes :dispatcher_url, with: ->(value) { PublicUrls.clean(value) }
+  validate -> { url_problem(:dispatcher_url, path: true) }, if: -> { dispatcher_url.present? }
   # Saved from the page or MCP (update_editable), Console's URL must keep the
   # scheme of the HTTPS mode Console started in, so the dashboard can't lock
   # its admin out. The mode changes only with CONSOLE_URL in deploy/.env and a
@@ -210,6 +216,7 @@ class InstanceSetting < ApplicationRecord
   URL_FORMATS = {
     console_url: "must be http:// or https:// and a host, with a port if needed and no path, like https://console.example.com",
     ingest_url: "must be http:// or https:// and a host, with a port and a path if needed, like https://ingest.example.com:4443",
+    dispatcher_url: "must be http:// or https:// and a host, with a port and a path if needed, like http://10.0.0.5:8080",
   }.freeze
 
   # attribute's URL is http(s)://host[:port], and [/path] when path is true:

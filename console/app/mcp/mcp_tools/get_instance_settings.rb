@@ -14,7 +14,7 @@ module McpTools
                 "ClickHouse may use for each Log read, 0 for its default of one per CPU core, local_cache_hours for the " \
                 "hours Logs and Spans stay on local disk before they move to the bucket, with one, console_url and " \
                 "ingest_url for the URLs links and DSNs use, null when blank, with the *_fallback { url, source } " \
-                "a blank one uses). sign_up: whether Sign-up is open; it changes only " \
+                "a blank one uses, dispatcher_url for the Dispatcher's private API, null when blank, and the Factory's parts that need it hidden). sign_up: whether Sign-up is open; it changes only " \
                 "from a shell on the server, with the command given. passkeys: whether Passkeys are offered, " \
                 "{ offered: true, host, url } or { offered: false, reason }, from the Console URL (or CONSOLE_URL): " \
                 "an https:// URL on a domain, or http://localhost; it changes only with the Console URL. restart_to_change: groups of settings Console " \

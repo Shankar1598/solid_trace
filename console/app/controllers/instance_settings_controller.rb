@@ -4,8 +4,8 @@
 # queries, the default Retention of Logs and traces, log-all-reads,
 # log-MCP-reads, whether Console sends its own Issues and traces, the
 # text-match budget, the Log read threads, the hours on local disk,
-# Console's and ingest's URLs, and the extra Redaction patterns apply at
-# once, so they change here. Sign-up and
+# Console's and ingest's URLs, the Dispatcher's URL, and the extra Redaction
+# patterns apply at once, so they change here. Sign-up and
 # everything that needs a restart, HTTPS among them, are shown read-only
 # (InstanceSettingsAnswer builds what's shown).
 class InstanceSettingsController < ApplicationController
@@ -15,9 +15,13 @@ class InstanceSettingsController < ApplicationController
   # A save by anyone else is 403, with nothing changed.
   before_action -> { head :forbidden unless current_user.instance_admin? }, only: :update
 
+  # With a Dispatcher URL, the page loads the Dispatcher's status after it
+  # shows, so a Dispatcher that does not answer never slows the page.
   def show
+    settings = InstanceSetting.current
     render inertia: "Settings/Instance", props: {
-      settings: InstanceSettingsAnswer.new(request_url: request.base_url).as_json,
+      settings: InstanceSettingsAnswer.new(settings, request_url: request.base_url).as_json,
+      dispatcher: Dispatcher.on?(settings: settings) ? InertiaRails.defer { dispatcher_status(settings) } : nil,
     }
   end
 
@@ -37,5 +41,19 @@ class InstanceSettingsController < ApplicationController
       errors[:passkeys_stop_working] = errors.delete(:base) if settings.errors.of_kind?(:base, :passkeys_stop_working)
       redirect_to instance_settings_path(org_slug: @current_org.slug), inertia: { errors: errors }
     end
+  end
+
+  private
+
+  # The Dispatcher's status, called as the signed-in user in this page's
+  # Organization: { version:, token_active:, token_error: }, or { error: }
+  # when the Dispatcher does not answer as it should.
+  def dispatcher_status(settings)
+    status = Dispatcher.new(user: current_user, organization: @current_org, settings: settings).status
+    solidtrace = status["solidtrace"].is_a?(Hash) ? status["solidtrace"] : {}
+    { version: status["version"].presence, token_active: solidtrace["token_active"] == true,
+      token_error: solidtrace["error"].presence }.compact
+  rescue Dispatcher::Unavailable, Dispatcher::Refused => e
+    { error: e.message }
   end
 end
