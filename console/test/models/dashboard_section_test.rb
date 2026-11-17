@@ -105,4 +105,17 @@ class DashboardSectionTest < ActiveSupport::TestCase
 
     assert_equal [ 5, 4, 0 ], [ @dashboard.bottom, @dashboard.bottom(section.id), @dashboard.bottom(section.id + 1) ]
   end
+
+  test "place puts a new chart beside the last row when there is space, else under every chart of its group" do
+    section = create(:dashboard_section, dashboard: @dashboard)
+    assert_equal [ 0, 0 ], @dashboard.place(section.id, 6)
+
+    create(:dashboard_chart, dashboard: @dashboard, project: @project, section: section, x: 0, y: 0, w: 6, h: 4)
+    assert_equal [ 6, 0 ], @dashboard.place(section.id, 6)
+    assert_equal [ 0, 4 ], @dashboard.place(section.id, 7)
+
+    create(:dashboard_chart, dashboard: @dashboard, project: @project, section: section, x: 6, y: 0, w: 6, h: 4)
+    assert_equal [ 0, 4 ], @dashboard.place(section.id, 6)
+    assert_equal [ 0, 0 ], @dashboard.place(nil, 6)
+  end
 end

@@ -55,6 +55,19 @@ class Dashboard < ApplicationRecord
     charts.where(section_id: section_id).maximum(Arel.sql("y + h")) || 0
   end
 
+  # Where a new chart w columns wide goes in the Section of section_id, or in
+  # no Section when it is nil, as [x, y]: beside the last row's charts when
+  # there is space for it, else under every chart. The last row starts at the
+  # largest y, so no chart is below it on the right.
+  def place(section_id, w)
+    group = charts.where(section_id: section_id).to_a
+    return [ 0, 0 ] if group.empty?
+
+    top = group.map(&:y).max
+    right = group.select { |chart| chart.y + chart.h > top }.map { |chart| chart.x + chart.w }.max
+    right + w.to_i <= DashboardChart::COLUMNS ? [ right, top ] : [ 0, bottom(section_id) ]
+  end
+
   def filter_names
     filters.map { |filter| filter["name"] }
   end

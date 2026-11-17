@@ -24,7 +24,7 @@ class DashboardChart < ApplicationRecord
   validates :h, numericality: { only_integer: true, in: 1..MAX_HEIGHT }
   validate :fits_the_grid
   validate :project_of_the_dashboards_organization
-  validate :section_of_the_dashboard
+  validate :section_of_the_dashboard, if: :section_id_changed?
   validate :options_known
 
   private

@@ -255,10 +255,10 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal [ 6, 0, "line" ], beside.json.values_at("x", "y", "viz")
   end
 
-  test "add_chart puts the Chart in the Section given, under its Charts" do
+  test "add_chart puts the Chart in the Section given, beside its last row when there is space, else under it" do
     stub_query_check(@shop)
     section = create(:dashboard_section, dashboard: @dashboard)
-    create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: section, y: 0, h: 2)
+    create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: section, y: 0, w: 12, h: 2)
 
     answer = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "In", query: "summarize count()",
       section_id: section.id)

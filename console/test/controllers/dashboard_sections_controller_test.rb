@@ -79,7 +79,7 @@ class DashboardSectionsControllerTest < ActionDispatch::IntegrationTest
 
   test "a member adds a chart in a Section, under its charts, and moves it to no Section" do
     post dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { chart: {
-      project_id: @project.id, title: "More errors", query: "summarize count()", viz: "line", section_id: @section.id,
+      project_id: @project.id, title: "More errors", query: "summarize count()", viz: "line", section_id: @section.id, w: 12,
     } }, as: :json
 
     assert_response :created

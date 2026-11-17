@@ -13,11 +13,16 @@ class DashboardChartsController < ApplicationController
   before_action :set_chart, only: %i[update destroy duplicate data]
   before_action :set_time_range, only: %i[data preview]
 
-  # A new chart goes under every chart of its Section, or of no Section,
-  # unless a row is given.
+  # A new chart goes beside the last row of its Section (or of no Section)
+  # when there is space, else under every chart there, unless a place is
+  # given.
   def create
     chart = @dashboard.charts.new(chart_params)
-    chart.y = @dashboard.bottom(chart.section_id) unless chart_params.key?(:y)
+    if !chart_params.key?(:x) && !chart_params.key?(:y)
+      chart.x, chart.y = @dashboard.place(chart.section_id, chart.w)
+    elsif !chart_params.key?(:y)
+      chart.y = @dashboard.bottom(chart.section_id)
+    end
     save(chart, notice: "Chart added.", status: :created)
   end
 
@@ -37,11 +42,12 @@ class DashboardChartsController < ApplicationController
     end
   end
 
-  # A copy of the chart under every chart of its Section, its title marked
-  # as a copy.
+  # A copy of the chart in its Section, placed as a new chart is, its title
+  # marked as a copy.
   def duplicate
     copy = @chart.dup
-    copy.assign_attributes(title: "#{@chart.title} (copy)".truncate(200), x: 0, y: @dashboard.bottom(@chart.section_id))
+    x, y = @dashboard.place(@chart.section_id, @chart.w)
+    copy.assign_attributes(title: "#{@chart.title} (copy)".truncate(200), x: x, y: y)
     save(copy, notice: "Chart duplicated.", status: :created)
   end
 

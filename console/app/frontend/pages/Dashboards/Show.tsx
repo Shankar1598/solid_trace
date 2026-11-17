@@ -213,15 +213,22 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                     first={i === 0}
                     last={i === sectioned.length - 1}
                     onToggle={() => toggleFold(section.id)}
-                    onAddChart={() => setEditor({ chart: null, sectionId: section.id })}
+                    onAddChart={() => {
+                      // The new chart must show, so a folded Section unfolds.
+                      if (folded.has(section.id)) toggleFold(section.id)
+                      setEditor({ chart: null, sectionId: section.id })
+                    }}
                     onRename={() => setSectionEditor({ section })}
                     onMove={by => moveSection(section, i + by)}
                     onDelete={() => setDeletingSection(section)}
                   />
                   {folded.has(section.id) ? null : inSection.length > 0 ? grid(inSection) : (
-                    <p className="border border-dashed p-4 text-center text-xs text-muted-foreground">
-                      No charts in this section. Pick Add chart here in its menu, or pick the section in a chart's editor.
-                    </p>
+                    <div className="flex items-center justify-center gap-3 border border-dashed p-4 text-xs text-muted-foreground">
+                      No charts in this section.
+                      <Button variant="outline" size="sm" onClick={() => setEditor({ chart: null, sectionId: section.id })}>
+                        <Plus className="h-3.5 w-3.5" /> Add chart
+                      </Button>
+                    </div>
                   )}
                 </section>
               ))}

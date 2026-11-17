@@ -159,7 +159,7 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_not DashboardChart.exists?(@chart.id)
   end
 
-  test "a member adds a chart, which goes under the others" do
+  test "a member adds a chart, which goes beside the last row when there is space" do
     post dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { chart: {
       project_id: @project.id, title: "Errors", query: "['#{@project.slug}'] | summarize count()", viz: "stat",
       w: 3, h: 2, options: { unit: "Logs", decimals: "0" },
@@ -167,7 +167,7 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :created
     chart = @dashboard.charts.find(response.parsed_body["id"])
-    assert_equal [ "Errors", "stat", 0, 4, 3, 2 ], [ chart.title, chart.viz, chart.x, chart.y, chart.w, chart.h ]
+    assert_equal [ "Errors", "stat", 6, 0, 3, 2 ], [ chart.title, chart.viz, chart.x, chart.y, chart.w, chart.h ]
     assert_equal({ "unit" => "Logs", "decimals" => 0 }, chart.options)
   end
 
@@ -180,7 +180,7 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     post duplicate_dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug), as: :json
     assert_response :created
     copy = @dashboard.charts.find(response.parsed_body["id"])
-    assert_equal [ "All requests (copy)", @chart.query, "bar", 4 ], [ copy.title, copy.query, copy.viz, copy.y ]
+    assert_equal [ "All requests (copy)", @chart.query, "bar", 6, 0 ], [ copy.title, copy.query, copy.viz, copy.x, copy.y ]
 
     delete dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug)
     assert_redirected_to dashboard_url(@dashboard, org_slug: @organization.slug)
