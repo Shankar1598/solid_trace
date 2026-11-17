@@ -85,7 +85,7 @@ jobs:
           echo '${{ steps.build.outputs.digest }}' > 'digests/${{ matrix.platform.arch }}'
 
       - name: Upload the digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digest-${{ matrix.app }}-${{ matrix.platform.arch }}
           path: digests/*
