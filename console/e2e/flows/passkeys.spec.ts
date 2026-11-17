@@ -55,7 +55,7 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
 
   await page.goto('/login')
   await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(password)
+  await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Log in' }).click()
   await page.waitForURL(url => url.pathname === `/${ORG}/overview`)
 
@@ -111,7 +111,7 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
   await page.context().clearCookies()
   await page.goto('/login')
   await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(password)
+  await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Log in' }).click()
   await page.waitForURL(url => url.pathname === '/login/second_step')
   await page.getByRole('button', { name: 'Use a Passkey' }).click()

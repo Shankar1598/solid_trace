@@ -2,8 +2,8 @@ import { useForm } from '@inertiajs/react'
 import { FormEventHandler } from 'react'
 import AuthLayout from '@/components/layouts/AuthLayout'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordInput } from '@/components/PasswordInput'
 
 interface EditPasswordProps {
   // The reset link's token, which the new password is saved under.
@@ -27,9 +27,8 @@ export default function EditPassword({ token }: EditPasswordProps) {
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="password">New password</Label>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             autoComplete="new-password"
             value={data.password}
             onChange={(e) => setData('password', e.target.value)}
@@ -42,9 +41,8 @@ export default function EditPassword({ token }: EditPasswordProps) {
 
         <div className="space-y-2">
           <Label htmlFor="password_confirmation">Confirm new password</Label>
-          <Input
+          <PasswordInput
             id="password_confirmation"
-            type="password"
             autoComplete="new-password"
             value={data.password_confirmation}
             onChange={(e) => setData('password_confirmation', e.target.value)}

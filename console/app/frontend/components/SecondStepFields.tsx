@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { getPasskey, passkeyCancelled, passkeyOptions } from '@/lib/passkeys'
+import { PasswordInput } from '@/components/PasswordInput'
 
 // What the second step accepts (User#pass_second_step): a code from the
 // Authenticator app, one of the user's Recovery codes, or an answer from one
@@ -69,9 +70,8 @@ export function FactorProofFields({ twoFactor, proof, answer, onChange, id, onPa
   return (
     <div className="space-y-2">
       <Label htmlFor={`${id}-password`}>Your password</Label>
-      <Input
+      <PasswordInput
         id={`${id}-password`}
-        type="password"
         autoComplete="current-password"
         value={answer.password}
         onChange={(e) => onChange({ ...answer, password: e.target.value })}
