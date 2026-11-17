@@ -10,7 +10,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   DASHBOARD_VIZES, newChartQuery, titleOfQuery, unknownFilterProblems, withSource,
-  type ChartOptions, type DashboardChart, type DashboardFilter, type DashboardViz, type FilterValues,
+  type ChartOptions, type DashboardChart, type DashboardFilter, type DashboardSection, type DashboardViz, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 import { fetchChartPreview } from '@/lib/dashboards/api'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
@@ -24,6 +24,8 @@ const NO_FIELDS = fieldInfos([])
 const noValues = () => []
 /** How long typing pauses before the preview runs again. */
 const PREVIEW_DELAY_MS = 500
+/** The section select's value for no Section. */
+const NO_SECTION = 'none'
 
 type Mode = 'builder' | 'query'
 
@@ -31,13 +33,19 @@ type Mode = 'builder' | 'query'
  * Adds a chart, or edits one: its Project, its Query in the Builder or the
  * Query editor (checked through validate), its title, viz and options, with
  * a preview of its chart over the Dashboard's range and filter values as it
- * changes. A Query naming a filter the Dashboard lacks can't be saved.
- * Saving posts through Inertia, which reloads the Dashboard.
+ * changes, and its Section when the Dashboard has any. A Query naming a
+ * filter the Dashboard lacks can't be saved. Saving posts through Inertia,
+ * which reloads the Dashboard. A chart put in another Section goes under
+ * that Section's charts.
  */
-export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ran, values, search, onClose }: {
+export function ChartEditor({ chart, sectionId = null, projects, sections, orgSlug, dashboardId, filters, ran, values, search, onClose }: {
   /** The chart edited, or null for a new one. */
   chart: DashboardChart | null
+  /** The Section a new chart goes in, or null for none. */
+  sectionId?: number | null
   projects: ProjectOption[]
+  /** The Dashboard's Sections, in order, which the chart can be put in. */
+  sections: DashboardSection[]
   orgSlug: string
   dashboardId: number
   /** The Dashboard's filters, which the Builder offers and the Query may name. */
@@ -56,6 +64,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
   const [mode, setMode] = useState<Mode>('builder')
   const [builder, setBuilder] = useState<Builder | null>(null)
   const [title, setTitle] = useState(chart?.title ?? '')
+  const [section, setSection] = useState<number | null>(chart ? chart.section_id : sectionId)
   const [viz, setViz] = useState<DashboardViz>(chart?.viz ?? 'line')
   const [options, setOptions] = useState<ChartOptions>(chart?.options ?? {})
   const [problems, setProblems] = useState<QueryProblem[]>([])
@@ -172,7 +181,8 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
     const saved: Record<string, string | number | boolean> = { stacked: options.stacked !== false }
     if (options.unit) saved.unit = options.unit
     if (options.decimals !== undefined && !Number.isNaN(options.decimals)) saved.decimals = options.decimals
-    const data = { chart: { project_id: project.id, title: title.trim() || titleOfQuery(query), query, viz, options: saved } }
+    // An empty section_id is no Section.
+    const data = { chart: { project_id: project.id, section_id: section ?? '', title: title.trim() || titleOfQuery(query), query, viz, options: saved } }
     // The page keeps its range and runs, so only the chart saved runs again.
     const visit = {
       preserveScroll: true,
@@ -186,6 +196,10 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
   }
 
   const projectItems = useMemo(() => projects.map(p => ({ value: String(p.id), label: p.name })), [projects])
+  const sectionItems = useMemo(
+    () => [{ value: NO_SECTION, label: 'No section' }, ...sections.map(s => ({ value: String(s.id), label: s.title }))],
+    [sections],
+  )
   if (!project) {
     return (
       <Dialog open onOpenChange={open => !open && onClose()}>
@@ -204,7 +218,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
           <DialogTitle>{chart ? 'Edit chart' : 'Add a chart'}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <div className={sections.length > 0 ? 'grid gap-3 sm:grid-cols-[1fr_auto_auto]' : 'grid gap-3 sm:grid-cols-[1fr_auto]'}>
           <div className="space-y-1">
             <Label htmlFor="chart-title">Title</Label>
             <Input id="chart-title" value={title} placeholder={titleOfQuery(query)} onChange={e => setTitle(e.target.value)} />
@@ -222,6 +236,24 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
             </Select>
             {errors.project && <p className="text-xs text-destructive">Project {errors.project}</p>}
           </div>
+          {sections.length > 0 && (
+            <div className="space-y-1">
+              <Label>Section</Label>
+              <Select
+                value={section === null ? NO_SECTION : String(section)}
+                onValueChange={value => value && setSection(value === NO_SECTION ? null : Number(value))}
+                items={sectionItems}
+              >
+                <SelectTrigger aria-label="Section" className="min-w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {sectionItems.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {errors.section && <p className="text-xs text-destructive">Section {errors.section}</p>}
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">

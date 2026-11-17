@@ -1,7 +1,7 @@
 // A Dashboard and its charts as the pages know them, and the plain logic
 // around them: the range and filter values a page shows, how a chart's viz
-// maps to the explorer's chart forms, a chart's link to the explorer, and the
-// places a grid change moves charts to.
+// maps to the explorer's chart forms, a chart's link to the explorer, the
+// places a grid change moves charts to, and the groups of charts by Section.
 import type { AutoRefresh } from '../autoRefresh'
 import type { ChartForm } from '../charts/series'
 import { searchOf, stateFromSearch, type Viz } from '../logs/explorerState'
@@ -26,6 +26,8 @@ export interface DashboardChart {
   id: number
   dashboard_id: number
   project_id: number
+  /** The Section the chart is in, or null for no Section. x and y are its place in that Section's grid. */
+  section_id: number | null
   title: string
   query: string
   viz: DashboardViz
@@ -50,7 +52,30 @@ export interface Dashboard {
   created_by: string | null
   created_at: string
   updated_at: string
+  /** The Sections, in the page's order, which come with the charts. */
+  sections?: DashboardSection[]
   charts?: DashboardChart[]
+}
+
+/** A titled group of a Dashboard's charts, under the charts in no Section. */
+export interface DashboardSection {
+  id: number
+  dashboard_id: number
+  title: string
+  /** Its place among the Dashboard's Sections, from 0 at the top. */
+  position: number
+}
+
+/**
+ * The charts in no Section, then each Section with its charts, in the
+ * Sections' order: the groups the page shows, each on a grid of its own.
+ */
+export function chartGroups(sections: DashboardSection[], charts: DashboardChart[]): { section: DashboardSection | null; charts: DashboardChart[] }[] {
+  const known = new Set(sections.map(s => s.id))
+  return [
+    { section: null, charts: charts.filter(c => c.section_id === null || !known.has(c.section_id)) },
+    ...sections.map(section => ({ section, charts: charts.filter(c => c.section_id === section.id) })),
+  ]
 }
 
 // Types rather than interfaces, so a list of filters is Inertia form data.

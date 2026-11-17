@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
+  chartGroups, chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
   parametersOfChart, rangeOfSearch, searchOfRangeAndValues, stackedPlaces, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
   withSource,
-  type DashboardFilter,
+  type DashboardChart, type DashboardFilter, type DashboardSection,
 } from './dashboard'
 
 const LEVEL: DashboardFilter = {
@@ -168,5 +168,24 @@ describe('stackedPlaces', () => {
       { i: 'b', x: 0, y: 4, w: 12, h: 3 },
       { i: 'c', x: 0, y: 7, w: 12, h: 2 },
     ])
+  })
+})
+
+describe('chartGroups', () => {
+  const section = (id: number, title: string): DashboardSection => ({ id, dashboard_id: 1, title, position: 0 })
+  const chart = (id: number, section_id: number | null) => ({ id, section_id }) as DashboardChart
+
+  it('puts the charts in no Section first, then each Section in its order, with its charts', () => {
+    const errors = section(5, 'Errors')
+    const latency = section(3, 'Latency')
+    const groups = chartGroups([errors, latency], [chart(1, null), chart(2, 3), chart(3, 5), chart(4, 3), chart(5, 99)])
+
+    expect(groups.map(g => [g.section?.title ?? null, g.charts.map(c => c.id)])).toEqual([
+      [null, [1, 5]], ['Errors', [3]], ['Latency', [2, 4]],
+    ])
+  })
+
+  it('has an empty group for a Section with no charts', () => {
+    expect(chartGroups([section(1, 'Empty')], []).map(g => g.charts)).toEqual([[], []])
   })
 })
