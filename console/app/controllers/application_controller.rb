@@ -26,7 +26,7 @@ class ApplicationController < ActionController::Base
       if to
         redirect_to instance_exec(&to), alert: TOO_MANY_TRIES
       else
-        redirect_back_or_to user_settings_path, alert: TOO_MANY_TRIES
+        redirect_back_or_to user_settings_page, alert: TOO_MANY_TRIES
       end
     }
   end

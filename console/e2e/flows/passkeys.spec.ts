@@ -73,7 +73,7 @@ test('a Passkey is added on Settings → User and signs in alone, with Remember 
   await expect(page.getByText('Passkey added.')).toBeVisible()
   await expect(page.getByRole('list', { name: 'Recovery codes' }).getByRole('listitem')).toHaveCount(10)
   await page.getByRole('link', { name: 'Continue' }).click()
-  await page.waitForURL(url => url.pathname === '/user_settings')
+  await page.waitForURL(url => url.pathname === `/${ORG}/settings/user`)
   await expect(page.getByText(/^On with your Passkeys/)).toBeVisible()
   const item = card.getByRole('listitem', { name: 'Flow laptop' })
   await expect(item.getByText('Never used')).toBeVisible()

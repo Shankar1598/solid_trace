@@ -31,19 +31,19 @@ class PasskeysController < ApplicationController
     if passkey && current_user.new_recovery_codes
       redirect_showing_recovery_codes current_user.new_recovery_codes, continue_to: return_url, notice: "Passkey added."
     elsif passkey
-      redirect_back_or_to user_settings_path, notice: "Passkey added."
+      redirect_back_or_to user_settings_page, notice: "Passkey added."
     else
-      redirect_back_or_to user_settings_path, alert: passkeys_here? ? "That Passkey couldn't be added. Try again." : passkeys_elsewhere
+      redirect_back_or_to user_settings_page, alert: passkeys_here? ? "That Passkey couldn't be added. Try again." : passkeys_elsewhere
     end
   rescue User::TwoFactor::WrongProof
-    redirect_back_or_to user_settings_path, alert: factor_proof_refused
+    redirect_back_or_to user_settings_page, alert: factor_proof_refused
   end
 
   def update
     if @passkey.update(name: params[:name].to_s)
-      redirect_back_or_to user_settings_path, notice: "Passkey renamed."
+      redirect_back_or_to user_settings_page, notice: "Passkey renamed."
     else
-      redirect_back_or_to user_settings_path, alert: "Name #{@passkey.errors[:name].to_sentence}."
+      redirect_back_or_to user_settings_page, alert: "Name #{@passkey.errors[:name].to_sentence}."
     end
   end
 

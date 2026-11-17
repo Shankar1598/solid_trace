@@ -50,6 +50,17 @@ class PasskeysTwoFactorTest < ActionDispatch::IntegrationTest
     assert_equal 7.days.from_now.to_i, session_cookie_expires.to_i
   end
 
+  test "a member's first Passkey continues to Settings → User under their Organization, with its sidebar" do
+    organization = create(:organization)
+    organization.users << @user
+    sign_in_as @user
+
+    add_passkey(name: "MacBook")
+
+    assert_redirected_to recovery_codes_url
+    assert_equal user_path(org_slug: organization.slug), recovery_codes_page["continue_to"]
+  end
+
   test "a first Passkey ends the user's other Sessions and shows Recovery codes once; a second ends nothing" do
     other_browser = browser_at_console
     other_browser.post login_url, params: { email: @user.email, password: "password" }

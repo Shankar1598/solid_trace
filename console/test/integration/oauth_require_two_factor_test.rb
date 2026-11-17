@@ -112,7 +112,7 @@ class OauthRequireTwoFactorTest < ActionDispatch::IntegrationTest
 
       set_up_two_factor(org: org)
 
-      assert_equal user_settings_path, recovery_codes_page["continue_to"], org.inspect
+      assert_equal user_path(org_slug: @acme.slug), recovery_codes_page["continue_to"], org.inspect
       assert_nil session[:return_after_set_up], org.inspect
     end
   end

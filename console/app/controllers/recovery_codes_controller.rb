@@ -13,17 +13,17 @@ class RecoveryCodesController < ApplicationController
 
   def show
     shown = flash[:recovery_codes]
-    return redirect_to(user_settings_path) unless shown.is_a?(Hash)
+    return redirect_to(user_settings_page) unless shown.is_a?(Hash)
 
     render inertia: "Settings/RecoveryCodes", props: { codes: shown["codes"], continue_to: shown["continue_to"] }
   end
 
   def create
     if current_user.pass_second_step(second_step_answer(:proof))
-      redirect_showing_recovery_codes current_user.make_recovery_codes, continue_to: user_settings_path,
+      redirect_showing_recovery_codes current_user.make_recovery_codes, continue_to: user_settings_page,
         notice: "New Recovery codes made. The old ones no longer work."
     else
-      redirect_back_or_to user_settings_path, alert: second_step_refused
+      redirect_back_or_to user_settings_page, alert: second_step_refused
     end
   end
 end

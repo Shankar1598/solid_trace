@@ -30,7 +30,7 @@ module ReturnsToOrganization
   def return_url
     path = kept_return_path
     session.delete(KEPT_RETURN)
-    path || (return_organization ? overview_path(org_slug: return_organization.slug) : user_settings_path)
+    path || (return_organization ? overview_path(org_slug: return_organization.slug) : user_settings_page)
   end
 
   # Keeps path, which Console made, as the place to return to once
