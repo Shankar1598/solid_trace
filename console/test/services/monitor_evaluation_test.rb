@@ -108,7 +108,7 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     travel IntegrationNotification::INITIAL_DELAY
     IntegrationNotification.deliver_pending(@slack.id)
 
-    assert_requested(:post, SLACK_URL) { |request| JSON.parse(request.body)["text"] == "🔥 Firing: Checkout errors" }
+    assert_requested(:post, SLACK_URL) { |request| JSON.parse(request.body)["text"] == "🚨 Firing: Checkout errors" }
     assert Notification.sole.status_sent?
   end
 

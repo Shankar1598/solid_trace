@@ -41,7 +41,7 @@ module Notifiers
         url = actions["elements"].first["url"]
         params = Rack::Utils.parse_query(URI(url).query)
 
-        assert_equal "🔥 Firing: Checkout errors (service=api, level=error)", body["text"]
+        assert_equal "🚨 Firing: Checkout errors (service=api, level=error)", body["text"]
         assert_equal body["text"], header.dig("text", "text")
         assert_equal "count_ was 120 over the last 15 minutes, at or above the threshold of 100.", text.dig("text", "text")
         assert_equal [ "*Project:*\nShop", "*Group:*\nservice=api, level=error", "*Value:*\n120",
@@ -61,9 +61,9 @@ module Notifiers
 
       assert_requested(:post, SLACK_URL) do |request|
         body = JSON.parse(request.body)
-        assert_equal "🔥 Firing: Checkout errors (service=&lt;!channel&gt;, level=&lt;https://evil.example|login&gt; &amp; more)",
+        assert_equal "🚨 Firing: Checkout errors (service=&lt;!channel&gt;, level=&lt;https://evil.example|login&gt; &amp; more)",
           body["text"]
-        assert_equal "🔥 Firing: Checkout errors (service=<!channel>, level=<https://evil.example|login> & more)",
+        assert_equal "🚨 Firing: Checkout errors (service=<!channel>, level=<https://evil.example|login> & more)",
           body["blocks"].first.dig("text", "text"), "the header is plain_text, which Slack shows as written"
         true
       end
