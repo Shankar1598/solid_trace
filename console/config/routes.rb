@@ -71,6 +71,7 @@ Rails.application.routes.draw do
           get :data
         end
       end
+      resources :sections, only: [ :create, :update, :destroy ], controller: "dashboard_sections"
       resources :filters, only: [], controller: "dashboard_filters", param: :name do
         member do
           get :values

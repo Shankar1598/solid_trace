@@ -44,6 +44,7 @@ module McpTools
       "Project" => [ "Project", "list_projects" ],
       "Dashboard" => [ "Dashboard", "list_dashboards" ],
       "DashboardChart" => [ "Chart", "get_dashboard" ],
+      "DashboardSection" => [ "Section", "get_dashboard" ],
       "LogMonitor" => [ "Monitor", "list_monitors" ],
       "Integration" => [ "Integration", "list_integrations" ],
       "Issue" => [ "Issue", "list_issues" ],

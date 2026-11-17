@@ -2,7 +2,8 @@
 
 # One chart of a Dashboard: a saved Query on a Project of the Dashboard's
 # Organization, drawn as a line, area, bar, stat or table, at a place on the
-# Dashboard's grid of COLUMNS columns.
+# Dashboard's grid of COLUMNS columns. A chart in a Section has its place on
+# that Section's grid; a chart in no Section, on the grid above the Sections.
 class DashboardChart < ApplicationRecord
   VIZES = %w[line area bar stat table].freeze
   COLUMNS = 12
@@ -11,6 +12,7 @@ class DashboardChart < ApplicationRecord
 
   belongs_to :dashboard, touch: true
   belongs_to :project
+  belongs_to :section, class_name: "DashboardSection", optional: true, inverse_of: :charts
 
   before_validation :normalize_options
 
@@ -22,6 +24,7 @@ class DashboardChart < ApplicationRecord
   validates :h, numericality: { only_integer: true, in: 1..MAX_HEIGHT }
   validate :fits_the_grid
   validate :project_of_the_dashboards_organization
+  validate :section_of_the_dashboard
   validate :options_known
 
   private
@@ -55,5 +58,13 @@ class DashboardChart < ApplicationRecord
     return unless project && dashboard
 
     errors.add(:project, "must belong to the Dashboard's Organization") unless project.organization_id == dashboard.organization_id
+  end
+
+  # A section_id that names no Section, or another Dashboard's, is refused.
+  def section_of_the_dashboard
+    return if section_id.nil?
+    return if section && section.dashboard_id == dashboard_id
+
+    errors.add(:section, "must be a Section of the Chart's Dashboard")
   end
 end

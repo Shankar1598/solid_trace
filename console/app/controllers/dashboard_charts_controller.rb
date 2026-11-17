@@ -13,14 +13,19 @@ class DashboardChartsController < ApplicationController
   before_action :set_chart, only: %i[update destroy duplicate data]
   before_action :set_time_range, only: %i[data preview]
 
+  # A new chart goes under every chart of its Section, or of no Section,
+  # unless a row is given.
   def create
     chart = @dashboard.charts.new(chart_params)
-    chart.y = @dashboard.bottom unless chart_params.key?(:y)
+    chart.y = @dashboard.bottom(chart.section_id) unless chart_params.key?(:y)
     save(chart, notice: "Chart added.", status: :created)
   end
 
+  # A chart moved to another Section goes under every chart of that
+  # Section, unless a row is given.
   def update
     @chart.assign_attributes(chart_params)
+    @chart.y = @dashboard.bottom(@chart.section_id) if @chart.section_id_changed? && !chart_params.key?(:y)
     save(@chart, notice: "Chart saved.")
   end
 
@@ -32,10 +37,11 @@ class DashboardChartsController < ApplicationController
     end
   end
 
-  # A copy of the chart under every chart, its title marked as a copy.
+  # A copy of the chart under every chart of its Section, its title marked
+  # as a copy.
   def duplicate
     copy = @chart.dup
-    copy.assign_attributes(title: "#{@chart.title} (copy)".truncate(200), x: 0, y: @dashboard.bottom)
+    copy.assign_attributes(title: "#{@chart.title} (copy)".truncate(200), x: 0, y: @dashboard.bottom(@chart.section_id))
     save(copy, notice: "Chart duplicated.", status: :created)
   end
 
@@ -65,10 +71,12 @@ class DashboardChartsController < ApplicationController
   end
 
   # The Project is looked up in the Organization: another Organization's
-  # Project is no Project, so the chart is refused as having none.
+  # Project is no Project, so the chart is refused as having none. An empty
+  # section_id is no Section.
   def chart_params
     @chart_params ||= begin
-      permitted = params.require(:chart).permit(:project_id, :title, :query, :viz, :x, :y, :w, :h, options: %i[stacked unit decimals])
+      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :viz, :x, :y, :w, :h, options: %i[stacked unit decimals])
+      permitted[:section_id] = permitted[:section_id].presence if permitted.key?(:section_id)
       permitted[:project] = @current_org.projects.find_by(id: permitted.delete(:project_id)) if permitted.key?(:project_id)
       permitted
     end

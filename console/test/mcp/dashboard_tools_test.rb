@@ -3,8 +3,9 @@
 require "test_helper"
 require "webmock/minitest"
 
-# The Dashboard and Chart tools: an Organization's Dashboards, their Charts,
-# and a Chart's data, each answer linking to the Dashboard.
+# The Dashboard, Section and Chart tools: an Organization's Dashboards, their
+# Sections and Charts, and a Chart's data, each answer linking to the
+# Dashboard.
 class McpDashboardToolsTest < ActiveSupport::TestCase
   include McpTestHelper
 
@@ -20,6 +21,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     @their_project = create(:project, organization: theirs, slug: "secret")
     @their_dashboard = create(:dashboard, organization: theirs, name: "Theirs")
     @their_chart = create(:dashboard_chart, dashboard: @their_dashboard, project: @their_project)
+    @their_section = create(:dashboard_section, dashboard: @their_dashboard, title: "Theirs")
   end
 
   # Dashboards
@@ -43,6 +45,17 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     chart = answer.json["charts"].sole
     assert_equal [ @chart.id, "Requests", "shop", @chart.query, "line" ], chart.values_at("id", "title", "project", "query", "viz")
     assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", answer.link
+  end
+
+  test "get_dashboard lists the Sections in the page's order, and each Chart's section_id" do
+    late = create(:dashboard_section, dashboard: @dashboard, title: "Latency", position: 1)
+    errors = create(:dashboard_section, dashboard: @dashboard, title: "Errors", position: 0)
+    inside = create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: late, title: "p95")
+
+    answer = call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id)
+
+    assert_equal [ [ errors.id, "Errors", 0 ], [ late.id, "Latency", 1 ] ], answer.json["sections"].map { |s| s.values_at("id", "title", "position") }
+    assert_equal({ @chart.id => nil, inside.id => late.id }, answer.json["charts"].to_h { |c| [ c["id"], c["section_id"] ] })
   end
 
   test "get_dashboard lists the Dashboard's filters in the bar's order: name, label, kind, multiple and options" do
@@ -70,7 +83,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     made = @acme.dashboards.find_by!(name: "Errors")
     assert_equal [ "What failed", "7d", "5m", @user ], [ made.description, made.default_range, made.auto_refresh, made.created_by ]
     assert_equal made.id, answer.json["id"]
-    assert_equal [], answer.json["charts"]
+    assert_equal [ [], [] ], answer.json.values_at("sections", "charts")
     assert_equal "http://console.test/acme/dashboards/#{made.id}", answer.link
   end
 
@@ -152,6 +165,78 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/dashboards", answer.link
   end
 
+  # Sections
+
+  test "add_section adds a Section last, or at the position given, linking to the Dashboard" do
+    answer = call_tool(:add_section, user: @user, dashboard: @dashboard.id, title: "Errors")
+
+    assert_not answer.error?
+    errors = @dashboard.sections.find_by!(title: "Errors")
+    assert_equal({ "id" => errors.id, "dashboard_id" => @dashboard.id, "title" => "Errors", "position" => 0 }, answer.json)
+    assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", answer.link
+
+    assert_equal 1, call_tool(:add_section, user: @user, dashboard: @dashboard.id, title: "Latency").json["position"]
+    assert_equal 0, call_tool(:add_section, user: @user, dashboard: @dashboard.id, title: "Top", position: 0).json["position"]
+    assert_equal %w[Top Errors Latency], @dashboard.sections.reload.map(&:title)
+  end
+
+  test "add_section answers the Section's validation errors, naming the field, and adds none" do
+    assert_equal "Not saved: Title can't be blank.", call_tool(:add_section, user: @user, dashboard: @dashboard.id, title: " ").text
+    assert_equal "Not saved: Title is too long (maximum is 200 characters).",
+      call_tool(:add_section, user: @user, dashboard: @dashboard.id, title: "a" * 201).text
+    assert_equal "Not saved: Position must be 0 or more.",
+      call_tool(:add_section, user: @user, dashboard: @dashboard.id, title: "Errors", position: -1).text
+    assert_equal 0, @dashboard.sections.count
+
+    Dashboard::MAX_SECTIONS.times { |i| create(:dashboard_section, dashboard: @dashboard, position: i) }
+    assert_equal "Not saved: Dashboard has at most #{Dashboard::MAX_SECTIONS} Sections.",
+      call_tool(:add_section, user: @user, dashboard: @dashboard.id, title: "One more").text
+  end
+
+  test "update_section renames a Section or moves it, changing only the fields given" do
+    a, b, c = %w[A B C].map.with_index { |title, i| create(:dashboard_section, dashboard: @dashboard, title: title, position: i) }
+
+    moved = call_tool(:update_section, user: @user, dashboard: @dashboard.id, section: c.id, position: 0)
+    assert_not moved.error?
+    assert_equal [ c.id, "C", 0 ], moved.json.values_at("id", "title", "position")
+    assert_equal [ c, a, b ], @dashboard.sections.reload
+    assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", moved.link
+
+    renamed = call_tool(:update_section, user: @user, dashboard: @dashboard.id, section: a.id, title: "Errors")
+    assert_equal [ "Errors", 1 ], renamed.json.values_at("title", "position")
+    assert_equal %w[C Errors B], @dashboard.sections.reload.map(&:title)
+
+    assert_equal "Give at least one of title, position to change.",
+      call_tool(:update_section, user: @user, dashboard: @dashboard.id, section: b.id).text
+    assert_equal "Not saved: Title can't be blank.", call_tool(:update_section, user: @user, dashboard: @dashboard.id, section: b.id, title: "").text
+    assert_equal "B", b.reload.title
+  end
+
+  test "delete_section deletes the Section and keeps its Charts in no Section, under the others" do
+    section = create(:dashboard_section, dashboard: @dashboard, title: "Errors")
+    inside = create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: section, title: "Errors", y: 0)
+
+    answer = call_tool(:delete_section, user: @user, dashboard: @dashboard.id, section: section.id)
+
+    assert_not answer.error?
+    assert_equal "Deleted Section #{section.id}, Errors, from Dashboard Checkout. Its 1 Chart is now in no Section.", answer.body
+    assert_not DashboardSection.exists?(section.id)
+    assert_equal [ nil, 4 ], inside.reload.values_at(:section_id, :y)
+    assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}", answer.link
+    assert McpTools::DeleteSection.annotations_value.destructive_hint
+  end
+
+  test "another Dashboard's Section is not found, and nothing of it changes" do
+    ours = { dashboard: @dashboard.id, section: @their_section.id }
+
+    assert_equal "No such Section. get_dashboard lists them.", call_tool(:update_section, user: @user, **ours, title: "Mine").text
+    assert_equal "No such Section. get_dashboard lists them.", call_tool(:delete_section, user: @user, **ours).text
+    assert_equal "No such Dashboard. list_dashboards lists them.",
+      call_tool(:add_section, user: @user, dashboard: @their_dashboard.id, title: "Mine").text
+    assert_equal "Theirs", @their_section.reload.title
+    assert_equal 1, @their_dashboard.sections.count
+  end
+
   # Charts
 
   test "add_chart places the Chart under every Chart, linking to the Dashboard" do
@@ -168,6 +253,22 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
     beside = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Beside", query: "summarize count()", x: 6, y: 0)
     assert_equal [ 6, 0, "line" ], beside.json.values_at("x", "y", "viz")
+  end
+
+  test "add_chart puts the Chart in the Section given, under its Charts" do
+    stub_query_check(@shop)
+    section = create(:dashboard_section, dashboard: @dashboard)
+    create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: section, y: 0, h: 2)
+
+    answer = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "In", query: "summarize count()",
+      section_id: section.id)
+
+    assert_not answer.error?
+    assert_equal [ section.id, 2 ], answer.json.values_at("section_id", "y")
+
+    refused = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Theirs", query: "summarize count()",
+      section_id: @their_section.id)
+    assert_equal "Not saved: Section must be a Section of the Chart's Dashboard.", refused.text
   end
 
   test "add_chart answers the Chart's validation errors and adds none" do
@@ -199,6 +300,26 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
 
     assert_match(/Give at least one of project, title/, call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id).text)
     assert_equal "Not saved: H must be in 1..24.", call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, h: 30).text
+  end
+
+  test "update_chart moves the Chart to a Section, under its Charts, keeps it there without section_id, and null takes it out" do
+    section = create(:dashboard_section, dashboard: @dashboard)
+    create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: section, y: 0, h: 3)
+    change = ->(**fields) { call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, **fields) }
+
+    moved = change.(section_id: section.id)
+    assert_not moved.error?
+    assert_equal [ section.id, 3 ], moved.json.values_at("section_id", "y")
+
+    assert_equal section.id, change.(title: "Still in").json["section_id"]
+    assert_equal section.id, @chart.reload.section_id
+
+    out = change.(section_id: nil, y: 1)
+    assert_equal [ nil, 1 ], out.json.values_at("section_id", "y")
+    assert_nil @chart.reload.section_id
+
+    assert_equal "Not saved: Section must be a Section of the Chart's Dashboard.", change.(section_id: @their_section.id).text
+    assert_nil @chart.reload.section_id
   end
 
   test "update_chart points the Query's source at a new Project, as the chart editor does, unless a Query is given" do

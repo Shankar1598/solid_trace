@@ -6,6 +6,12 @@ FactoryBot.define do
     name { "Checkout health" }
   end
 
+  factory :dashboard_section do
+    dashboard
+    title { "Errors" }
+    sequence(:position) { |n| n }
+  end
+
   factory :dashboard_chart do
     dashboard
     project { association :project, organization: dashboard.organization }

@@ -4,7 +4,8 @@
 # Query on one of the Organization's Projects, over the range the page picks:
 # default_range until a member picks another. Its filters are the controls of
 # the bar under its header, whose values the Charts that name them in their
-# Queries ($name) run with (ADR 0014).
+# Queries ($name) run with (ADR 0014). Its Sections group its charts under
+# titles; a chart can also be in no Section.
 class Dashboard < ApplicationRecord
   AUTO_REFRESH = %w[off 15s 30s 1m 5m].freeze
   # A span back from now, as the explorer's links hold a range: 15m, 1h, 7d.
@@ -20,10 +21,12 @@ class Dashboard < ApplicationRecord
   # filter's name, the key repeated for several values:
   # ?range=1h&v_service=api&v_service=web. A filter missing from it is All.
   FILTER_KEY_PREFIX = "v_"
+  MAX_SECTIONS = 50
 
   belongs_to :organization
   belongs_to :created_by, class_name: "User", optional: true
   has_many :charts, -> { order(:y, :x, :id) }, class_name: "DashboardChart", inverse_of: :dashboard, dependent: :destroy
+  has_many :sections, -> { order(:position, :id) }, class_name: "DashboardSection", inverse_of: :dashboard, dependent: :destroy
 
   validates :name, presence: true, length: { maximum: 200 }
   validates :description, length: { maximum: 2000 }
@@ -46,9 +49,10 @@ class Dashboard < ApplicationRecord
     values.transform_keys { |name| "#{FILTER_KEY_PREFIX}#{name}" }
   end
 
-  # The row under every chart, where a new chart goes.
-  def bottom
-    charts.maximum(Arel.sql("y + h")) || 0
+  # The row under every chart of the Section of section_id, or of no Section
+  # when it is nil: where a new chart in it goes.
+  def bottom(section_id = nil)
+    charts.where(section_id: section_id).maximum(Arel.sql("y + h")) || 0
   end
 
   def filter_names

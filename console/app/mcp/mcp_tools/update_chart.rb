@@ -1,14 +1,15 @@
 # frozen_string_literal: true
 
 module McpTools
-  # Changes a Chart: its Project, title, Query, viz, options or place. A new
-  # Project without a new Query points the Query's source at it, as the
-  # chart editor does.
+  # Changes a Chart: its Project, title, Query, viz, options, place or
+  # Section. A new Project without a new Query points the Query's source at
+  # it, as the chart editor does. A Chart moved to another Section goes under
+  # its Charts unless a row is given.
   class UpdateChart < Base
     include DashboardTool
 
-    description "Changes a Chart on a Dashboard: its project, title, query, viz, options or place on the grid (x, y, w, h). " \
-                "Only the fields given change."
+    description "Changes a Chart on a Dashboard: its project, title, query, viz, options, place on the grid (x, y, w, h) " \
+                "or Section (section_id, null for no Section). Only the fields given change."
     writes!
     takes_chart
     takes_chart_fields
@@ -23,6 +24,7 @@ module McpTools
       raise ToolError, "Give at least one of project, #{CHART_FIELDS.keys.join(', ')} to change." if changes.empty?
 
       chart.assign_attributes(changes)
+      chart.y = dashboard.bottom(chart.section_id) if chart.section_id_changed? && !changes.key?(:y)
       save_chart!(chart)
       json(chart_json(chart), link: links.dashboard(dashboard))
     end

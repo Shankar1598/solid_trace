@@ -1,15 +1,21 @@
 # frozen_string_literal: true
 
 module McpTools
-  # What the Dashboard and Chart tools share: the dashboard and chart
-  # arguments, the records they name in the Organization, and a Dashboard and
-  # a Chart as the tools answer them. Any member of the Organization can see,
+  # What the Dashboard, Section and Chart tools share: the dashboard, section
+  # and chart arguments, the records they name in the Organization, and a
+  # Dashboard and a Chart as the tools answer them. Any member of the Organization can see,
   # make, change and delete its Dashboards, as in the UI.
   module DashboardTool
     extend ActiveSupport::Concern
 
     DASHBOARD = { type: "integer", description: "The Dashboard's id. list_dashboards lists them." }.freeze
     CHART = { type: "integer", description: "The Chart's id, on the Dashboard. get_dashboard lists them." }.freeze
+    SECTION = { type: "integer", description: "The Section's id, on the Dashboard. get_dashboard lists them." }.freeze
+    SECTION_POSITION = {
+      type: "integer",
+      description: "Where the Section goes among the Dashboard's Sections, from 0 at the top. The others move to make room, " \
+                   "and a position past the last puts it last.",
+    }.freeze
 
     # A Dashboard filter as the Dashboard keeps it, which get_dashboard
     # answers and the Dashboard validates.
@@ -93,6 +99,13 @@ module McpTools
       y: { type: "integer", description: "The row the Chart starts at, from 0. Under every Chart when added." },
       w: { type: "integer", description: "How many columns the Chart spans, 1 to #{DashboardChart::COLUMNS}; x + w at most #{DashboardChart::COLUMNS}. 6 when added." },
       h: { type: "integer", description: "How many rows the Chart spans, 1 to #{DashboardChart::MAX_HEIGHT}. 4 when added." },
+      section_id: {
+        type: %w[integer null],
+        description: "The id of the Dashboard's Section the Chart is in, which get_dashboard lists; null for no Section. " \
+                     "The page shows the Charts in no Section first, then each Section with its Charts on a grid of its own, " \
+                     "so x and y are the place in the Section. A Chart put in a Section goes under its Charts unless y is given. " \
+                     "No Section when added.",
+      },
     }.freeze
 
     class_methods do
@@ -106,6 +119,12 @@ module McpTools
       def takes_chart
         takes_dashboard
         argument :chart, CHART, required: true
+      end
+
+      # And the section argument, which #section reads.
+      def takes_section
+        takes_dashboard
+        argument :section, SECTION, required: true
       end
 
       def takes_dashboard_fields(required: [])
@@ -131,6 +150,11 @@ module McpTools
     # The Chart the chart argument names, on #dashboard.
     def chart
       @chart ||= dashboard.charts.find(arguments[:chart])
+    end
+
+    # The Section the section argument names, on #dashboard.
+    def section
+      @section ||= dashboard.sections.find(arguments[:section])
     end
 
     # The fields of names given in the arguments, as the record takes them.
@@ -166,10 +190,18 @@ module McpTools
       "#{names.one? ? "isn't one" : "aren't any"} of this Dashboard's filters (#{dashboard.filter_names.join(', ').presence || 'it has none'})"
     end
 
-    # A Dashboard with its Charts, in the order the page reads them.
+    # A Dashboard with its Sections and Charts, in the order the page reads
+    # them.
     def dashboard_json(dashboard)
       charts = dashboard.charts.includes(:project).to_a
-      DashboardSerializer.new(dashboard, chart_count: charts.size).as_json.merge(charts: charts.map { |chart| chart_json(chart) })
+      DashboardSerializer.new(dashboard, chart_count: charts.size).as_json.merge(
+        sections: dashboard.sections.map { |section| section_json(section) },
+        charts: charts.map { |chart| chart_json(chart) },
+      )
+    end
+
+    def section_json(section)
+      DashboardSectionSerializer.new(section).as_json
     end
 
     # A Chart, with the slug of its Project, which the tools take.

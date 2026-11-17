@@ -10,6 +10,7 @@ class DashboardChartSerializer
       id: @chart.id,
       dashboard_id: @chart.dashboard_id,
       project_id: @chart.project_id,
+      section_id: @chart.section_id,
       title: @chart.title,
       query: @chart.query,
       viz: @chart.viz,

@@ -2,7 +2,8 @@
 
 class DashboardSerializer
   # chart_count saves counting each Dashboard's charts when a list has
-  # counted them together.
+  # counted them together. With its charts, it also has its Sections, in
+  # their order.
   def initialize(dashboard, include_charts: false, chart_count: nil)
     @dashboard = dashboard
     @include_charts = include_charts
@@ -22,7 +23,10 @@ class DashboardSerializer
       created_at: @dashboard.created_at.iso8601,
       updated_at: @dashboard.updated_at.iso8601,
     }
-    result[:charts] = @dashboard.charts.map { |chart| DashboardChartSerializer.new(chart).as_json } if @include_charts
+    if @include_charts
+      result[:sections] = @dashboard.sections.map { |section| DashboardSectionSerializer.new(section).as_json }
+      result[:charts] = @dashboard.charts.map { |chart| DashboardChartSerializer.new(chart).as_json }
+    end
     result
   end
 

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_17_100000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -76,6 +76,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
     t.json "options", default: {}, null: false
     t.integer "project_id", null: false
     t.text "query", null: false
+    t.integer "section_id"
     t.string "title", null: false
     t.datetime "updated_at", null: false
     t.string "viz", default: "line", null: false
@@ -84,6 +85,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
     t.integer "y", default: 0, null: false
     t.index ["dashboard_id"], name: "index_dashboard_charts_on_dashboard_id"
     t.index ["project_id"], name: "index_dashboard_charts_on_project_id"
+    t.index ["section_id"], name: "index_dashboard_charts_on_section_id"
+  end
+
+  create_table "dashboard_sections", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "dashboard_id", null: false
+    t.integer "position", default: 0, null: false
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.index ["dashboard_id"], name: "index_dashboard_sections_on_dashboard_id"
   end
 
   create_table "dashboards", force: :cascade do |t|
@@ -370,8 +381,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_150000) do
   add_foreign_key "api_tokens", "users"
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "organizations_users", column: "organization_user_id"
+  add_foreign_key "dashboard_charts", "dashboard_sections", column: "section_id", on_delete: :nullify
   add_foreign_key "dashboard_charts", "dashboards"
   add_foreign_key "dashboard_charts", "projects"
+  add_foreign_key "dashboard_sections", "dashboards"
   add_foreign_key "dashboards", "organizations"
   add_foreign_key "dashboards", "users", column: "created_by_id", on_delete: :nullify
   add_foreign_key "instance_settings", "organizations", column: "meta_organization_id", on_delete: :nullify
