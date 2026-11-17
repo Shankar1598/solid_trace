@@ -1,11 +1,11 @@
 module github.com/solidtrace/event_store
 
-go 1.27.3
+go 1.27.4
 
 require (
 	cloud.google.com/go/storage v1.62.1
 	github.com/ClickHouse/clickhouse-go/v2 v2.49.0
-	github.com/andybalholm/brotli v1.2.6
+	github.com/andybalholm/brotli v1.2.7
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
@@ -14,7 +14,7 @@ require (
 	github.com/cockroachdb/pebble/v2 v2.1.7
 	github.com/gofiber/fiber/v2 v2.52.14
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.20.2
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/shopspring/decimal v1.4.0
 	github.com/valyala/fasthttp v1.51.0

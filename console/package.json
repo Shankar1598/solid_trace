@@ -55,5 +55,8 @@
     "vite": "^6.4.5",
     "vite-plugin-ruby": "^5.2.6",
     "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "follow-redirects": "^1.16.3"
   }
 }
