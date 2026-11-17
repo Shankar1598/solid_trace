@@ -38,9 +38,35 @@ Rails.application.routes.draw do
     post :proof_options, on: :collection
   end
   resources :api_tokens, only: [ :create, :destroy ]
+  # Revoking one of the user's Signed-in clients on Settings → User (SignedInClientsController).
+  resources :signed_in_clients, only: [ :destroy ]
   # The MCP server (McpController).
   post "mcp", to: "mcp#create", as: :mcp, format: false
   match "mcp", to: "mcp#method_not_allowed", via: [ :get, :delete ], as: nil, format: false
+  # How an MCP client finds where to sign in (Oauth::MetadataController).
+  get ".well-known/oauth-protected-resource(/mcp)", to: "oauth/metadata#protected_resource", format: false
+  get ".well-known/oauth-authorization-server", to: "oauth/metadata#authorization_server", format: false
+  # The approval page (Oauth::AuthorizationsController), and the token and
+  # registration endpoints, which any origin may call.
+  get "oauth/authorize", to: "oauth/authorizations#show", as: :oauth_authorize, format: false
+  post "oauth/authorize", to: "oauth/authorizations#create", format: false
+  post "oauth/token", to: "oauth/tokens#create", as: :oauth_token, format: false
+  post "oauth/register", to: "oauth/registrations#create", as: :oauth_register, format: false
+  # Token introspection (Oauth::IntrospectionsController), for a service
+  # with an API token.
+  post "oauth/introspect", to: "oauth/introspections#create", as: :oauth_introspect, format: false
+  # The device flow: device authorization for a program with no browser
+  # (Oauth::DeviceAuthorizationsController), and the device page where the
+  # user types its code (Oauth::DevicesController).
+  post "oauth/device_authorization", to: "oauth/device_authorizations#create", as: :oauth_device_authorization,
+                                     format: false
+  get "device", to: "oauth/devices#show", as: :device, format: false
+  post "device", to: "oauth/devices#create", format: false
+  match "oauth/device_authorization", to: "oauth/device_authorizations#preflight", via: :options, as: nil, format: false
+  match "oauth/token", to: "oauth/tokens#preflight", via: :options, as: nil, format: false
+  match "oauth/register", to: "oauth/registrations#preflight", via: :options, as: nil, format: false
+  post "oauth/revoke", to: "oauth/revocations#create", as: :oauth_revoke, format: false
+  match "oauth/revoke", to: "oauth/revocations#preflight", via: :options, as: nil, format: false
   resources :passwords, param: :token
   # An Invite link, where an Invited member sets a password (InvitesController).
   get "invites/:token", to: "invites#edit", as: :invite

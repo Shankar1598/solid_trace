@@ -17,8 +17,10 @@ interface TwoFactorSetUpProps {
   // The QR code, an SVG drawn by Console.
   qr_code: string
   // The Organization to return to once it's set up, from ?org=;
-  // requires_two_factor when its Require two-factor sent the user here.
-  return_organization: { name: string; slug: string; requires_two_factor: boolean } | null
+  // requires_two_factor when its Require two-factor sent the user here;
+  // to_approval_page when the approval page for it sent them, and the
+  // set-up returns there.
+  return_organization: { name: string; slug: string; requires_two_factor: boolean; to_approval_page: boolean } | null
   // Whether Passkeys can be added on a page opened here (the Console URL).
   passkeys_here: boolean
   // How confirming proves it's the user: their password, or once they have
@@ -123,7 +125,9 @@ export default function TwoFactorSetUp({ secret, uri, qr_code, return_organizati
       </Card>
       {return_organization && (
         <p className="mt-4 text-sm text-muted-foreground">
-          Once it's on, you'll go back to {return_organization.name}.
+          {return_organization.to_approval_page
+            ? `Once it's on, you'll go back to the approval page for ${return_organization.name}.`
+            : `Once it's on, you'll go back to ${return_organization.name}.`}
         </p>
       )}
       {/* A Passkey is Two-factor too, and meets Require two-factor; the

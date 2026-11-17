@@ -34,6 +34,53 @@ class ApiTokensControllerTest < ActionDispatch::IntegrationTest
     assert_equal "https://solid-trace.example.ts.net/mcp", inertia_props(tokens_page_url)["mcp_url"]
   end
 
+  test "the page notes that sign-in through the browser needs an HTTPS Console URL while OAuth is off, and not when on" do
+    note = inertia_props(tokens_page_url)["browser_sign_in_note"]
+    assert_match "Sign-in through the browser needs an HTTPS Console URL", note
+    # Settings → Instance cannot save an https:// Console URL while Console
+    # runs without HTTPS, so the note gives CONSOLE_URL and a restart.
+    assert_match "sets CONSOLE_URL to an https:// address in deploy/.env and restarts Console", note
+    settings = InstanceSetting.current.tap { |s| s.console_url = "https://console.example.com" }
+    assert_not settings.valid?(:editable)
+    assert_match "must start with http://", settings.errors[:console_url].first
+
+    InstanceSetting.current.tap { |settings| settings.console_url = "http://console.example.com" }.save!(validate: false)
+    assert_equal note, inertia_props(tokens_page_url)["browser_sign_in_note"]
+
+    [ "https://console.example.com", "http://localhost:4001" ].each do |url|
+      InstanceSetting.current.update!(console_url: url)
+      props = inertia_props(tokens_page_url)
+      assert props.key?("browser_sign_in_note")
+      assert_nil props["browser_sign_in_note"], url
+    end
+  end
+
+  # The page shows the sign-in snippet with mcp_url when there is no note. A
+  # client signs in only at the Console URL's host, so mcp_url must be the
+  # resource that the 401 and the metadata name, also when the page is
+  # opened on another host and the Console URL comes from CONSOLE_URL.
+  test "with OAuth on, the MCP URL is the resource at the Console URL's host, not the request's" do
+    ENV["CONSOLE_URL"] = "https://console.example.com"
+    props = inertia_props(tokens_page_url)
+    assert_nil props["browser_sign_in_note"]
+    assert_equal "https://console.example.com/mcp", props["mcp_url"]
+
+    InstanceSetting.current.update!(console_url: "https://solid-trace.example.ts.net/")
+    props = inertia_props(tokens_page_url)
+    assert_nil props["browser_sign_in_note"]
+    assert_equal "https://solid-trace.example.ts.net/mcp", props["mcp_url"]
+
+    post "/mcp", params: { jsonrpc: "2.0", id: 1, method: "tools/list" }.to_json,
+      headers: { "Content-Type" => "application/json", "Accept" => "application/json, text/event-stream" }
+    assert_response :unauthorized
+    assert_includes response.headers["WWW-Authenticate"],
+      %(resource_metadata="https://solid-trace.example.ts.net/.well-known/oauth-protected-resource/mcp")
+    get "/.well-known/oauth-protected-resource/mcp"
+    assert_equal props["mcp_url"], response.parsed_body["resource"]
+  ensure
+    ENV.delete("CONSOLE_URL")
+  end
+
   test "Account no longer lists the tokens" do
     ApiToken.issue!(user: @user, name: "Laptop")
 

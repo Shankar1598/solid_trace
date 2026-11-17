@@ -22,6 +22,7 @@ module McpTools
                 "the default; a secret's value is only whether it's set. They're the install's, so they take no " \
                 "Organization. Only an instance admin can; whoami says whether you are one."
     read_only!
+    instance_admin_only!
 
     def run
       require_instance_admin!("read the instance settings")

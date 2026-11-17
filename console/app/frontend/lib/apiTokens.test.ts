@@ -1,11 +1,42 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createApiToken, mcpSnippets } from './apiTokens'
+import { createApiToken, MCP_DOCS, mcpSnippets, signInSnippets } from './apiTokens'
 
 const url = 'https://console.example.com/mcp'
 const secret = 'st_abc123'
 const code = (id: string) => mcpSnippets(url, secret).find(s => s.id === id)!.code
 
-describe('MCP snippets', () => {
+describe('MCP_DOCS', () => {
+  it("is docs/mcp.md on main in the repository that the README clones", () => {
+    const readme = readFileSync(resolve(import.meta.dirname, '../../../../README.md'), 'utf8')
+    const repository = readme.match(/git clone [^\n]*?(https:\/\/github\.com\/[^\s]+?)\.git/)![1]
+    expect(MCP_DOCS).toBe(`${repository}/blob/main/docs/mcp.md`)
+  })
+})
+
+describe('sign-in snippets', () => {
+  const signIn = (id: string) => signInSnippets(url).find(s => s.id === id)!
+
+  it('offers Claude Code and Cursor, in that order', () => {
+    expect(signInSnippets(url).map(s => s.label)).toEqual(['Claude Code', 'Cursor'])
+  })
+
+  it('adds the MCP server to Claude Code with only its URL, and says how to sign in', () => {
+    expect(signIn('claude-code').code).toBe('claude mcp add --transport http solidtrace https://console.example.com/mcp')
+    expect(signIn('claude-code').note).toBe('Run in a terminal. Then sign in through the browser: /mcp in Claude Code, or claude mcp login solidtrace.')
+  })
+
+  it("gives Cursor's mcp.json only the URL", () => {
+    expect(JSON.parse(signIn('cursor').code)).toEqual({ mcpServers: { solidtrace: { url } } })
+  })
+
+  it('holds no token', () => {
+    for (const s of signInSnippets(url)) expect(s.code).not.toMatch(/Bearer|st_/)
+  })
+})
+
+describe('API token snippets', () => {
   it('offers Claude Code and Cursor, in that order', () => {
     expect(mcpSnippets(url, secret).map(s => s.label)).toEqual(['Claude Code', 'Cursor'])
   })

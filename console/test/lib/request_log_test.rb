@@ -53,4 +53,13 @@ class RequestLogTest < ActiveSupport::TestCase
     assert_equal [ "error", "POST /mcp 500, 2.0 ms", "RuntimeError: boom" ], line.values_at(:level, :message, :error)
     assert_not line.key?(:user_id)
   end
+
+  test "an OAuth answer's line has no location, as a redirect back to a client carries its code" do
+    oauth = { method: "POST", path: "/oauth/authorize", controller: "Oauth::AuthorizationsController", status: 302,
+              location: "http://localhost:4567/callback?code=[FILTERED]", duration: 2.0 }
+    other = oauth.merge(path: "/login", controller: "SessionsController", location: "https://console.example.com/")
+
+    assert_not RequestLog.line(oauth, {}).key?(:location)
+    assert_equal "https://console.example.com/", RequestLog.line(other, {})[:location]
+  end
 end

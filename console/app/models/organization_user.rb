@@ -16,6 +16,10 @@ class OrganizationUser < ApplicationRecord
   validates :role, presence: true
   validate :organization_must_have_at_least_one_admin
 
+  # A removed member's Grants for the Organization stop now, and stay
+  # revoked if the member is added again (undiscard).
+  after_discard { Oauth::Grant.where(user_id: user_id, organization_id: organization_id).revoke_all! }
+
   def admin?
     role == "admin"
   end

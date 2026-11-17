@@ -25,7 +25,7 @@ class UsersTaskTest < ActiveSupport::TestCase
     assert_equal 0, ada.recovery_codes.count
     assert_empty ada.sessions
     assert_equal 1, grace.sessions.count
-    assert_equal "Two-factor is off for ada@example.com, and their Sessions have ended: they sign in with their password alone.\n", out
+    assert_equal "Two-factor is off for ada@example.com, their Sessions have ended and their Signed-in clients are signed out: they sign in with their password alone.\n", out
   end
 
   test "the reset removes the user's Passkeys, for every host" do

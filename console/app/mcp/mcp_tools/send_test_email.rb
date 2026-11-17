@@ -9,6 +9,7 @@ module McpTools
     description "Sends a test email at once with the saved email settings, to check the SMTP server and the sender. " \
                 "Answers the SMTP server's error when it fails. Only an instance admin can."
     writes!(open_world: true)
+    instance_admin_only!
     argument :to, { type: "string", description: "Who to send it to. Your own email when left out." }
 
     def run

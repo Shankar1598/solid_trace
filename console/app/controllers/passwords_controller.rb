@@ -35,6 +35,7 @@ class PasswordsController < ApplicationController
     if @user.errors.none? && @user.update(params.permit(:password, :password_confirmation))
       @user.sessions.destroy_all
       @user.api_tokens.delete_all
+      @user.oauth_grants.revoke_all!
       redirect_to login_path, notice: "Password reset. Sign in with the new one."
     else
       redirect_to edit_password_path(params[:token]), inertia: { errors: @user.errors.to_hash }

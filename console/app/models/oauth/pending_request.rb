@@ -1,0 +1,72 @@
+# frozen_string_literal: true
+
+module Oauth
+  # A request to the approval page whose client and redirect URI Console
+  # checked, kept under a random key for 10 minutes; each new request
+  # deletes the expired ones (.keep!). The browser's Rails session holds
+  # only the keys of its own requests, at most 3 (#remember), so the cookie
+  # stays small and another browser cannot use a key.
+  #
+  # A request from a client with a published description keeps only its
+  # client_id (the URL) until the user signs in: Console fetches nothing
+  # before sign-in. The approval page then finds the client and sets it.
+  #
+  # A request on the device page keeps its device code (the code), and has
+  # no redirect URI: the program polls for its answer. Each page finds only
+  # its own kind of request.
+  class PendingRequest < ApplicationRecord
+    LASTS = 10.minutes
+    # How many pending requests one browser keeps.
+    KEEP = 3
+    SESSION_KEY = :oauth_requests
+
+    belongs_to :client, class_name: "Oauth::Client", foreign_key: :oauth_client_id, inverse_of: :pending_requests,
+                        optional: true
+    belongs_to :code, class_name: "Oauth::Code", foreign_key: :oauth_code_id, optional: true
+
+    validates :client, presence: true, unless: :client_id?
+
+    before_validation -> { self.key ||= Secret.generate }, on: :create
+
+    scope :fresh, -> { where(created_at: LASTS.ago..) }
+    scope :expired, -> { where(created_at: ...LASTS.ago) }
+
+    # Keeps a new request, and deletes the expired ones, so the table holds
+    # only the requests of the last 10 minutes.
+    def self.keep!(**attributes)
+      expired.delete_all
+      create!(**attributes)
+    end
+
+    # The fresh request with key, if session holds key; else nil. A request
+    # of the device page only with device: true, one of the approval page
+    # only without.
+    def self.find_in_session(session, key, device: false)
+      return unless key.is_a?(String) && Array(session[SESSION_KEY]).include?(key)
+
+      requests = device ? fresh.where.not(oauth_code_id: nil) : fresh.where(oauth_code_id: nil)
+      requests.find_by(key: key)
+    end
+
+    # Whether the client is not known yet: its published description is
+    # fetched only after sign-in.
+    def published?
+      client_id.present?
+    end
+
+    # Adds the request's key to session, dropping the oldest key, and its
+    # row, past KEEP.
+    def remember(session)
+      keys = Array(session[SESSION_KEY]) + [ key ]
+      dropped = keys.shift([ keys.size - KEEP, 0 ].max)
+      self.class.where(key: dropped).delete_all if dropped.any?
+      session[SESSION_KEY] = keys
+    end
+
+    # Deletes the request and its key from session.
+    def finish(session)
+      session[SESSION_KEY] = Array(session[SESSION_KEY]) - [ key ]
+      destroy
+    end
+  end
+end
