@@ -144,6 +144,10 @@ _Avoid_: board, panel page
 A control in a **Dashboard**'s filter bar, a select or a search box, whose value a **Chart** uses by naming it in its **Query**, as in `where service == $service`. It narrows only the Charts that name it. With no value, it is All, and its comparisons match every **Log**.
 _Avoid_: variable, dashboard parameter, template variable
 
+**Section**:
+A titled group of a **Dashboard**'s **Charts**, in an order the members set. The Dashboard shows its Charts in no Section first, then each Section, a header over its Charts on a grid of their own. A viewer can fold a Section to its header; the fold is kept in that viewer's browser only. When a Section is deleted, its Charts stay on the Dashboard in no Section.
+_Avoid_: group, row, panel, folder
+
 **Monitor**:
 A saved **Query** on one of an organization's **Projects** that runs every few minutes and tells its **Integrations** what it finds. A Threshold monitor's Query ends in a summarize of one number per group; a group fires when its number passes the threshold and resolves when it no longer does. A Match monitor sends the **Logs** ingested since its last run that match its Query. Any member of the organization can see, make, change and delete it.
 _Avoid_: alert, alert rule, check
@@ -272,6 +276,7 @@ _Avoid_: mandatory 2FA, enforced 2FA
 - A **Chart** draws one **Query**'s or **SQL query**'s table; the **Logs explorer** shows it above the table
 - A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
 - A **Dashboard** has an ordered list of **Dashboard filters**; each narrows the **Charts** whose **Query** names it
+- A **Dashboard** has an ordered list of **Sections**; a **Chart** is in one Section of its Dashboard or in none
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
