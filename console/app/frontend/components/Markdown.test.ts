@@ -15,6 +15,16 @@ describe('Markdown', () => {
     expect(out).toMatch(/<table[^>]*>.*<td[^>]*>on-call<\/td>/s)
   })
 
+  it("aligns a table's columns as its marks say", () => {
+    const out = html('| name | count | state |\n| --- | ---: | :---: |\n| ingest | 12 | up |')
+
+    expect(out).toMatch(/<th[^>]*>name<\/th>/)
+    expect(out).not.toMatch(/<th[^>]*style[^>]*>name<\/th>/)
+    expect(out).toMatch(/<th[^>]*style="text-align:right"[^>]*>count<\/th>/)
+    expect(out).toMatch(/<td[^>]*style="text-align:right"[^>]*>12<\/td>/)
+    expect(out).toMatch(/<td[^>]*style="text-align:center"[^>]*>up<\/td>/)
+  })
+
   it('opens a link in a new tab, with no opener and no referrer', () => {
     expect(html('See [the wiki](https://wiki.example/run).')).toContain(
       '<a href="https://wiki.example/run" target="_blank" rel="noopener noreferrer"',

@@ -28,8 +28,9 @@ const COMPONENTS: Components = {
   pre: ({ children }) => <pre className="my-2 overflow-x-auto bg-muted p-2 font-mono text-xs [&>code]:bg-transparent [&>code]:p-0">{children}</pre>,
   code: ({ children }) => <code className="bg-muted px-1 py-0.5 font-mono text-xs">{children}</code>,
   table: ({ children }) => <div className="my-2 overflow-x-auto"><table className="w-full border-collapse text-xs">{children}</table></div>,
-  th: ({ children }) => <th className="border px-2 py-1 text-left font-medium">{children}</th>,
-  td: ({ children }) => <td className="border px-2 py-1">{children}</td>,
+  // A column's alignment marks (`---:`, `:---:`) come as the cell's style.
+  th: ({ children, style }) => <th style={style} className="border px-2 py-1 text-left font-medium">{children}</th>,
+  td: ({ children, style }) => <td style={style} className="border px-2 py-1">{children}</td>,
 }
 
 /**
