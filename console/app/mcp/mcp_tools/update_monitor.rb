@@ -25,10 +25,7 @@ module McpTools
       end
 
       turning_on = switches? && arguments[:enabled]
-      changes = monitor_attributes
-      if arguments.key?(:project) && !arguments.key?(:query) && !arguments.key?(:sql) && monitor.language_query?
-        changes[:query] = with_source(monitor.query, project.slug)
-      end
+      changes = monitor_changes(monitor)
       changes[:disabled_at] = (turning_on ? nil : Time.current) if switches?
       save_monitor!(monitor, changes, refused: turning_on ? "Not saved, so the Monitor stays off" : "Not saved")
 

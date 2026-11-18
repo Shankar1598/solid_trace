@@ -825,6 +825,73 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal 0, Notification.count + MonitorState.count
   end
 
+  test "a SQL Monitor comparing the change reads its SQL over its range, then over the Baseline's, at most 10 s each" do
+    monitor = sql_monitor(compare: "change", baseline: "previous", operator: "rises", threshold: 50, notify_by_group: true,
+      range_minutes: 15)
+    asked = []
+    stub_request(:post, @sql_url).to_return do |request|
+      body = JSON.parse(request.body)
+      asked << body.values_at("sql", "from", "to", "timeout_seconds")
+      rows = asked.size == 1 ? [ [ "api", 90 ], [ "web", 30 ], [ "jobs", 4 ] ] : [ [ "api", 60 ], [ "web", 60 ] ]
+      { status: 200, body: { table: { columns: [ SERVICE, ERRORS ], rows: rows, truncated: false } }.to_json }
+    end
+
+    run = evaluate(monitor)
+
+    assert_equal [ [ monitor.query, "2026-10-17T11:44:00.000Z", "2026-10-17T11:59:00.000Z" ],
+                   [ monitor.query, "2026-10-17T11:29:00.000Z", "2026-10-17T11:44:00.000Z" ] ], asked.map { |each| each.first(3) }
+    assert asked.all? { |each| each.last <= LogMonitor::SQL_READ_TIMEOUT_SECONDS }, "the two reads stay inside the run's 30 s"
+    assert run.status_ok?
+    assert_equal [ "api", "jobs" ], firing_services(monitor), "jobs has no row in the Baseline, so it rises from 0"
+    assert_equal 0, monitor.states.find { |state| state.group["service"] == "jobs" }.last_baseline
+    assert_equal [ 90.0, 60.0, 50.0 ], Notification.find_by(group_key: { "service" => "api" }.to_json).payload
+      .values_at("value", "baseline", "change")
+  end
+
+  test "a SQL Monitor comparing the change, not notifying by group, fires on the worst row's change" do
+    monitor = sql_monitor(compare: "change", baseline: "previous", operator: "rises", threshold: 50)
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    { to => [ [ "api", 110 ], [ "web", 20 ] ], to - 5.minutes => [ [ "api", 100 ], [ "web", 10 ] ] }.each do |end_at, rows|
+      stub_request(:post, @sql_url).with(body: hash_including("from" => (end_at - 5.minutes).utc.iso8601(3)))
+        .to_return(status: 200, body: { table: { columns: [ SERVICE, ERRORS ], rows: rows, truncated: false } }.to_json)
+    end
+
+    evaluate(monitor)
+
+    assert_equal [ "firing", 20, 10 ], state_of(monitor), "web is up 100%, though api's number is larger"
+  end
+
+  test "the preview of a SQL Monitor comparing the change gives each group's number, Baseline and firing, and saves nothing" do
+    monitor = @organization.monitors.new(project: @project, kind: "threshold", language: "sql",
+      query: "SELECT service, count() AS errors FROM logs GROUP BY service", compare: "change", baseline: "day",
+      operator: "rises", threshold: 50, notify_by_group: true)
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    { to => [ [ "api", 90 ], [ "web", 30 ] ], to - 1.day => [ [ "api", 60 ], [ "web", 60 ] ] }.each do |end_at, rows|
+      stub_request(:post, @sql_url).with(body: hash_including("from" => (end_at - 5.minutes).utc.iso8601(3)))
+        .to_return(status: 200, body: { table: { columns: [ SERVICE, ERRORS ], rows: rows, truncated: false } }.to_json)
+    end
+
+    found = MonitorEvaluation.preview(monitor, Time.current)
+
+    assert_equal [ to - 1.day - 5.minutes, to - 1.day ], found.baseline_range
+    assert_equal [ { group: { "service" => "api" }, value: 90, baseline: 60, firing: true },
+                   { group: { "service" => "web" }, value: 30, baseline: 60, firing: false } ], found.groups
+    assert_not_requested(:post, @query_url)
+    assert monitor.new_record?
+  end
+
+  test "the preview of a SQL Monitor while SQL queries are off says so, and asks EventStore nothing" do
+    monitor = @organization.monitors.new(project: @project, kind: "threshold", language: "sql",
+      query: "SELECT count() AS errors FROM logs", operator: ">", threshold: 5)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
+    error = assert_raises(MonitorEvaluation::Unusable) { MonitorEvaluation.preview(monitor, Time.current) }
+
+    assert_equal MonitorEvaluation::SQL_OFF, error.message
+    assert_not_requested(:post, @sql_url)
+  end
+
   test "a saved SQL Monitor's runs fail while SQL queries are off, and ask EventStore nothing" do
     monitor = sql_monitor
     InstanceSetting.current.update!(sql_queries_enabled: false)

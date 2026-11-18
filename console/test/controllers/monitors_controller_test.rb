@@ -561,6 +561,40 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "the groups preview of a SQL Monitor reads its SQL as a run would, over its range and then the Baseline's" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    WebMock::RequestRegistry.instance.reset!
+    freeze_time
+    sql = "SELECT service, count() AS errors FROM logs GROUP BY service"
+    asked = []
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql").to_return do |request|
+      body = JSON.parse(request.body)
+      asked << body.values_at("sql", "from", "timeout_seconds")
+      rows = asked.size == 1 ? [ [ "api", 90 ], [ "web", 4 ] ] : [ [ "api", 60 ] ]
+      { status: 200, body: { table: { columns: [ SERVICE, { "name" => "errors", "type" => "number" } ], rows: rows } }.to_json }
+    end
+
+    answer = preview_groups(language: "sql", query: sql)
+
+    assert_response :success
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    assert_equal [ [ sql, (to - 5.minutes).utc.iso8601(3), 10 ], [ sql, (to - 10.minutes).utc.iso8601(3), 10 ] ], asked
+    assert_equal [ { "group" => { "service" => "api" }, "value" => 90, "baseline" => 60, "firing" => true },
+                   { "group" => { "service" => "web" }, "value" => 4, "baseline" => 0, "firing" => true } ], answer["groups"]
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+  end
+
+  test "the groups preview of a SQL Monitor while SQL queries are off says so in place of the groups, reading nothing" do
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    WebMock::RequestRegistry.instance.reset!
+
+    answer = preview_groups(language: "sql", query: "SELECT count() AS errors FROM logs")
+
+    assert_response :unprocessable_content
+    assert_equal MonitorEvaluation::SQL_OFF, answer["error"]
+    assert_not_requested(:post, %r{/logs/})
+  end
+
   test "the groups preview won't run on another Organization's Project, or past the chart runs Console allows" do
     preview_groups(project_id: @foreign_project.id)
     assert_response :not_found

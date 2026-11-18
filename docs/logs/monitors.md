@@ -96,8 +96,10 @@ The rules:
 - **The table is the group columns and one number column.** The columns other than the number name each group, as for a Query. Groups, notify by group, alert on no data and the Notifications are the same.
 - **Each read stops after 10 seconds**, the SQL user's limit. A timeout is a failed run.
 - **More than 10,000 rows** is an error, as for a Query, and changes no state.
+- **Compare the value or the change.** Comparing the change, each run reads the SQL a second time, over the Baseline's range, with the same Baseline rules as a Query. The two reads stop after 10 seconds each, so they stay inside the run's 30 seconds. A group with no row in the Baseline rises from 0.
+- **Preview before you save.** `run_monitor` with `preview` true reads what a run now would and gives each group's number, Baseline and change, and whether it would fire. It saves nothing and tells no Integration.
 - **Saving runs the SQL once.** SQL that does not run is refused with ClickHouse's message. A table without exactly one number column is refused. A Match monitor can't use SQL: a match in SQL is a count with the threshold `> 0`.
-- **While SQL queries are off,** saving a SQL Monitor is refused, and each run of a saved one fails with the reason. You can still rename it, turn it off or delete it.
+- **While SQL queries are off,** saving or previewing a SQL Monitor is refused, and each run of a saved one fails with the reason. You can still rename it, turn it off or delete it.
 
 Example: Sidekiq jobs that wait too long, by region and queue, but not in a region where Sidekiq restarted in the Monitor's range. With a range of 10 minutes, the operator `>` and the threshold 30, each region and queue whose longest wait is more than 30 seconds fires, except in a region that restarted in the last 10 minutes:
 

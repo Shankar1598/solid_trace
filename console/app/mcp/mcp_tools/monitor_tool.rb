@@ -111,17 +111,17 @@ module McpTools
 
     class_methods do
       # The organization and monitor arguments, which #monitor reads.
-      def takes_monitor
+      def takes_monitor(required: true)
         takes_organization
-        argument :monitor, MONITOR, required: true
+        argument :monitor, MONITOR, required: required
       end
 
-      # The Monitor's fields, with sql after query, listed only while SQL
-      # queries are on.
-      def takes_monitor_fields(required: [])
-        MONITOR_FIELDS.each do |name, schema|
+      # The Monitor's fields, or only those of only, with sql after query,
+      # listed only while SQL queries are on.
+      def takes_monitor_fields(required: [], only: MONITOR_FIELDS.keys, note: SQL_NOTE)
+        MONITOR_FIELDS.slice(*only).each do |name, schema|
           argument name, schema, required: required.include?(name)
-          sql_argument :sql, SQL, note: SQL_NOTE if name == :query
+          sql_argument :sql, SQL, note: note if name == :query
         end
       end
     end
@@ -144,6 +144,18 @@ module McpTools
       attributes.merge!(language: "sql", query: arguments[:sql]) if arguments.key?(:sql)
       attributes[:project] = project if arguments.key?(:project)
       attributes
+    end
+
+    # The changes the arguments make to monitor, as #monitor_attributes
+    # gives them. A new project points a Query's source at it, as the
+    # Monitor form does, unless a query or sql is given; a SQL Monitor's
+    # SQL reads the new Project's tables as it is.
+    def monitor_changes(monitor)
+      changes = monitor_attributes
+      if arguments.key?(:project) && !arguments.key?(:query) && !arguments.key?(:sql) && monitor.language_query?
+        changes[:query] = with_source(monitor.query, project.slug)
+      end
+      changes
     end
 
     # Saves monitor with attributes and the integration_ids given, as the

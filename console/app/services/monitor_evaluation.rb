@@ -18,8 +18,10 @@
 #   LogMonitor::SQL_READ_TIMEOUT_SECONDS for each read. Its table has the
 #   same shape as a Query's, so all else is the same. More than MAX_GROUPS
 #   rows is an error (SQL_TABLE_CUT), and while SQL queries are off each run
-#   fails (SQL_OFF).
-# - Threshold comparing the change: runs the Query again over the Baseline
+#   fails (SQL_OFF). Comparing the change, it reads the SQL a second time
+#   over the Baseline range: two reads of at most 10 s, inside the run's
+#   30 s.
+# - Threshold comparing the change: runs the Query, or the SQL, again over the Baseline
 #   range (LogMonitor#baseline_window) with what's left of the run's
 #   timeout, and each group's change from its Baseline is compared instead:
 #   a row with none in the Baseline rises from 0. Without notify by group
@@ -87,7 +89,9 @@ class MonitorEvaluation
   # Reading and whether it would fire, as the run decides it. It reads
   # EventStore as a run does but takes no lease and writes nothing. Without
   # a threshold only no data fires. Raises Unusable for a table a run can't
-  # compare, and EventStore's errors.
+  # compare and for SQL while SQL queries are off (SQL_OFF), and EventStore's
+  # errors. A SQL Monitor's preview reads as its run does, so comparing the
+  # change, it too reads two times, at most 10 s each.
   def self.preview(monitor, now)
     new(monitor, now).preview
   end
@@ -134,8 +138,6 @@ class MonitorEvaluation
     @monitor.kind_threshold? ? run_threshold : run_match
   rescue EventStore::Rejected => e
     failed(EventStore.error_text(e.body))
-  rescue EventStore::SQLQueriesOff
-    failed(SQL_OFF)
   rescue EventStore::Unavailable => e
     failed(e.message)
   end
@@ -210,6 +212,8 @@ class MonitorEvaluation
     raise Unusable, SQL_TABLE_CUT if table["truncated"] || Array(table["rows"]).size > MAX_GROUPS
 
     table
+  rescue EventStore::SQLQueriesOff
+    raise Unusable, SQL_OFF
   end
 
   # What's left of the run's LogMonitor::RUN_TIMEOUT_SECONDS, for the
