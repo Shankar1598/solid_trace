@@ -171,6 +171,15 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "unit" => "Logs", "decimals" => 0 }, chart.options)
   end
 
+  test "a member saves a line chart's threshold lines from the chart editor" do
+    lines = [ { "value" => 100, "label" => "full", "severity" => "critical" }, { "value" => 80, "severity" => "warn" } ]
+    patch dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug),
+      params: { chart: { viz: "line", options: { stacked: true, thresholds: lines } } }, as: :json
+
+    assert_response :ok
+    assert_equal({ "stacked" => true, "thresholds" => lines }, @chart.reload.options)
+  end
+
   test "a member edits, duplicates and deletes a chart" do
     patch dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug),
       params: { chart: { title: "All requests", viz: "bar", options: { stacked: false } } }

@@ -302,6 +302,25 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal "Not saved: H must be in 1..24.", call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, h: 30).text
   end
 
+  test "add_chart and update_chart take a line or area Chart's threshold lines, and get_dashboard answers them in its options" do
+    stub_query_check(@shop)
+    lines = [ { "value" => 1, "label" => "SLO", "severity" => "critical" }, { "value" => 0.5 } ]
+    answer = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Oldest event",
+      query: "summarize max(age) by bin_auto(time), region", options: { unit: "h", thresholds: lines })
+
+    assert_not answer.error?, answer.text
+    added = @dashboard.charts.find(answer.json["id"])
+    shown = call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id).json["charts"].find { |chart| chart["id"] == added.id }
+    assert_equal({ "unit" => "h", "thresholds" => lines }, shown["options"])
+
+    change = ->(**fields) { call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: added.id, **fields) }
+    assert_equal lines, change.(options: { decimals: 1 }).json.dig("options", "thresholds")
+    assert_equal [ { "value" => 2, "severity" => "warn" } ], change.(options: { thresholds: [ { value: 2, severity: "warn" } ] }).json.dig("options", "thresholds")
+    assert_equal "Not saved: Options thresholds are for line and area charts.", change.(viz: "bar").text
+    assert_not change.(viz: "bar", options: { thresholds: nil }).error?
+    assert_equal({ "unit" => "h", "decimals" => 1 }, added.reload.options)
+  end
+
   test "update_chart moves the Chart to a Section, under its Charts, keeps it there without section_id, and null takes it out" do
     section = create(:dashboard_section, dashboard: @dashboard)
     create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: section, y: 0, h: 3)

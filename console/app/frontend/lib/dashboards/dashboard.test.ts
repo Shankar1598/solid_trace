@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   chartGroups, chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
   parametersOfChart, rangeOfSearch, searchOfRangeAndValues, stackedPlaces, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
-  withSource,
+  drawnThresholds, savedThresholds, thresholdRows, withSource,
   type DashboardChart, type DashboardFilter, type DashboardSection,
 } from './dashboard'
 
@@ -187,5 +187,26 @@ describe('chartGroups', () => {
 
   it('has an empty group for a Section with no charts', () => {
     expect(chartGroups([section(1, 'Empty')], []).map(g => g.charts)).toEqual([[], []])
+  })
+})
+
+describe('the chart editor\'s threshold lines', () => {
+  const rows = thresholdRows([{ value: 100, label: 'full', severity: 'critical' }, { value: 0.5 }])
+
+  it('are rows of a value as typed, a label and a severity, empty when not set', () => {
+    expect(rows).toEqual([{ value: '100', label: 'full', severity: 'critical' }, { value: '0.5', label: '', severity: '' }])
+    expect(thresholdRows(undefined)).toEqual([])
+  })
+
+  it('save each row in order, a value that is not a number as null for the chart to refuse, an empty label or severity as none', () => {
+    expect(savedThresholds([...rows, { value: '', label: ' slow ', severity: 'warn' }, { value: '1e3', label: '  ', severity: '' }])).toEqual([
+      { value: 100, label: 'full', severity: 'critical' }, { value: 0.5 }, { value: null, label: 'slow', severity: 'warn' }, { value: 1000 },
+    ])
+  })
+
+  it('draw in the preview only the rows whose value is a number', () => {
+    expect(drawnThresholds([{ value: '-', label: 'typing', severity: '' }, ...rows])).toEqual([
+      { value: 100, label: 'full', severity: 'critical' }, { value: 0.5 },
+    ])
   })
 })

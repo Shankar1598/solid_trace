@@ -498,7 +498,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
             <RunView run={chart}>
               {({ table }) => (table.rows.length === 0
                 ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
-                : <QueryChart table={table} form="line" threshold={comparesChange ? undefined : thresholdValue ?? undefined} className="pb-1" />)}
+                : <QueryChart table={table} form="line" thresholds={comparesChange || thresholdValue === null ? undefined : [{ value: thresholdValue, label: `threshold ${thresholdValue}`, severity: 'critical' }]} className="pb-1" />)}
             </RunView>
           </div>
           <div className="space-y-1.5" data-monitor-groups>

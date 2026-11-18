@@ -9,8 +9,9 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  DASHBOARD_VIZES, newChartQuery, titleOfQuery, unknownFilterProblems, withSource,
+  DASHBOARD_VIZES, THRESHOLD_VIZES, drawnThresholds, newChartQuery, savedThresholds, thresholdRows, titleOfQuery, unknownFilterProblems, withSource,
   type ChartOptions, type DashboardChart, type DashboardFilter, type DashboardSection, type DashboardViz, type FilterValues,
+  type SavedThreshold, type ThresholdRow,
 } from '@/lib/dashboards/dashboard'
 import { fetchChartPreview } from '@/lib/dashboards/api'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
@@ -18,6 +19,7 @@ import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/buil
 import { fieldInfos } from '@/lib/logs/columns'
 import { BuilderPanel, type ProjectOption } from '../../Logs/components/BuilderPanel'
 import { ChartBody, type ChartRun } from './ChartBody'
+import { ThresholdsField } from './ThresholdsField'
 
 const VIZ_LABELS: Record<DashboardViz, string> = { line: 'Line', area: 'Area', bar: 'Bar', stat: 'Stat', table: 'Table' }
 const NO_FIELDS = fieldInfos([])
@@ -67,6 +69,10 @@ export function ChartEditor({ chart, sectionId = null, projects, sections, orgSl
   const [section, setSection] = useState<number | null>(chart ? chart.section_id : sectionId)
   const [viz, setViz] = useState<DashboardViz>(chart?.viz ?? 'line')
   const [options, setOptions] = useState<ChartOptions>(chart?.options ?? {})
+  // The threshold lines as typed; the preview draws those whose value is a number so far.
+  const [thresholds, setThresholds] = useState<ThresholdRow[]>(() => thresholdRows(chart?.options.thresholds))
+  const takesThresholds = THRESHOLD_VIZES.includes(viz)
+  const previewOptions = useMemo(() => ({ ...options, thresholds: drawnThresholds(thresholds) }), [options, thresholds])
   const [problems, setProblems] = useState<QueryProblem[]>([])
   // The Query names a filter the Dashboard lacks, which keeps Save off.
   const [namesUnknown, setNamesUnknown] = useState(false)
@@ -178,9 +184,11 @@ export function ChartEditor({ chart, sectionId = null, projects, sections, orgSl
       return
     }
     // stacked is always sent, so the options are never an empty hash, which Rails would drop.
-    const saved: Record<string, string | number | boolean> = { stacked: options.stacked !== false }
+    const saved: Record<string, string | number | boolean | SavedThreshold[]> = { stacked: options.stacked !== false }
     if (options.unit) saved.unit = options.unit
     if (options.decimals !== undefined && !Number.isNaN(options.decimals)) saved.decimals = options.decimals
+    // Other vizzes have no threshold lines, so a chart made a bar drops them.
+    if (takesThresholds &&thresholds.length > 0) saved.thresholds = savedThresholds(thresholds)
     // An empty section_id is no Section.
     const data = { chart: { project_id: project.id, section_id: section ?? '', title: title.trim() || titleOfQuery(query), query, viz, options: saved } }
     // The page keeps its range and runs, so only the chart saved runs again.
@@ -331,8 +339,10 @@ export function ChartEditor({ chart, sectionId = null, projects, sections, orgSl
           {errors.options && <p className="text-xs text-destructive">Options {errors.options}</p>}
         </div>
 
+        {takesThresholds &&<ThresholdsField rows={thresholds} onChange={setThresholds} />}
+
         <div className="h-72 overflow-auto border" data-chart-preview>
-          <ChartBody run={preview} viz={viz} options={options} />
+          <ChartBody run={preview} viz={viz} options={previewOptions} />
         </div>
 
         <DialogFooter>

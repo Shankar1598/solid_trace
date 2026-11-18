@@ -189,6 +189,58 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
   expect(errors.filter(e => !/status of 404/.test(e))).toEqual([])
 })
 
+test('a grouped line chart draws its threshold line once, above every value, outside the legend', async ({ page }) => {
+  const errors = watchErrors(page)
+  const name = `Flow threshold ${Date.now()}`
+  await page.goto(`/${ORG}/dashboards`)
+  await page.getByRole('button', { name: 'New dashboard' }).first().click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create dashboard' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Add chart' }).click()
+  const editor = page.getByRole('dialog')
+  await useProject(page, editor)
+  await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
+  await editor.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| summarize count() by bin_auto(time), level`)
+  await editor.getByLabel('Title').fill('Logs by level')
+  await editor.getByRole('button', { name: 'Add chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await pickQuickRange(page, '1 day')
+  await chartsRan(page, 1)
+  const chart = card(page, 'Logs by level')
+  const legend = chart.locator('[data-chart-legend]')
+  const legendText = await legend.innerText()
+  await expect(chart.locator('.chart-threshold-line')).toHaveCount(0)
+
+  // A threshold far above every count: the preview draws it as the member types it.
+  await chart.getByRole('button', { name: 'Menu for Logs by level' }).click()
+  await page.getByRole('menuitem', { name: 'Edit' }).click()
+  await editor.getByRole('button', { name: 'Add threshold' }).click()
+  await editor.getByLabel('Threshold 1 value').fill('1000000')
+  await editor.getByLabel('Threshold 1 label').fill('Limit')
+  await editor.getByRole('group', { name: 'Threshold 1 severity' }).getByRole('button', { name: 'Critical' }).click()
+  await expect(editor.locator('[data-chart-preview] .chart-threshold-line')).toHaveCount(1)
+  await editor.getByRole('button', { name: 'Save chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await chartsRan(page, 1)
+
+  // One line whatever the levels, its label at the line, inside the plot, and the legend as it was.
+  await expect(chart.locator('.chart-threshold-line')).toHaveCount(1)
+  await expect(chart.getByRole('figure').getByText('Limit', { exact: true })).toBeVisible()
+  const plot = await chart.locator('.recharts-cartesian-grid').boundingBox()
+  const line = await chart.locator('.chart-threshold-line').boundingBox()
+  expect(plot && line && line.y >= plot.y - 1 && line.y <= plot.y + plot.height + 1).toBe(true)
+  await expect(legend).toHaveText(legendText)
+  await expect(legend.getByText('Limit')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Dashboard settings' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/dashboards$`))
+  expect(errors).toEqual([])
+})
+
 test('a chart whose Query fails shows the error in its card, and the rest of the Dashboard works', async ({ page }) => {
   const errors = watchErrors(page, [failedLoad(422)])
   const name = `Flow broken chart ${Date.now()}`

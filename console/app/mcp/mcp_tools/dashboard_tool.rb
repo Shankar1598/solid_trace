@@ -93,6 +93,30 @@ module McpTools
           stacked: { type: %w[boolean null], description: "Stack a line, area or bar Chart's series." },
           unit: { type: "string", description: "A short unit shown with the values, such as ms, at most 16 characters." },
           decimals: { type: %w[integer null], description: "How many decimals to show, 0 to #{DashboardChart::MAX_DECIMALS}." },
+          thresholds: {
+            type: %w[array null],
+            description: "Limits a line or area Chart draws as horizontal lines across its whole range, such as an SLO or a capacity: " \
+                         "at most #{DashboardChart::MAX_THRESHOLDS}, in the order given. A threshold line is a limit, not a series: " \
+                         "the Query's by does not split it, it is not in the legend, it does not take one of the 8 series a Chart draws, " \
+                         "and the value axis reaches it. It sends nothing; a Monitor does that. Not for bar, stat or table, " \
+                         "so give null with a change to one of those. The list given replaces the Chart's; [] or null removes them all.",
+            items: {
+              type: "object",
+              properties: {
+                value: { type: "number", description: "Where the line is, in the Chart's unit." },
+                label: {
+                  type: "string",
+                  description: "What the line shows at its right end, at most #{DashboardChart::MAX_THRESHOLD_LABEL} characters. " \
+                               "The value with the Chart's unit when not given.",
+                },
+                severity: {
+                  type: "string", enum: DashboardChart::SEVERITIES,
+                  description: "The line's colour: warn or critical. A muted line when not given.",
+                },
+              },
+              required: %w[value],
+            },
+          },
         },
       },
       x: { type: "integer", description: "The column the Chart starts at, from 0, on a grid #{DashboardChart::COLUMNS} columns wide. 0 when added." },

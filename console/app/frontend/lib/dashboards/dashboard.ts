@@ -4,6 +4,7 @@
 // places a grid change moves charts to, and the groups of charts by Section.
 import type { AutoRefresh } from '../autoRefresh'
 import type { ChartForm } from '../charts/series'
+import type { Severity, Threshold } from '../charts/thresholds'
 import { searchOf, stateFromSearch, type Viz } from '../logs/explorerState'
 import type { QueryProblem } from '../logs/api'
 import { parametersOf, tokenize } from '../logs/queryLexer'
@@ -20,6 +21,45 @@ export interface ChartOptions {
   stacked?: boolean
   unit?: string
   decimals?: number
+  /** A line or area chart's threshold lines, at most MAX_THRESHOLDS, in order. */
+  thresholds?: Threshold[]
+}
+
+/** The most threshold lines a chart has, as the Dashboard Chart model allows. */
+export const MAX_THRESHOLDS = 5
+/** The vizzes that draw threshold lines. */
+export const THRESHOLD_VIZES: readonly DashboardViz[] = ['line', 'area']
+
+/** A threshold line as a row of the chart editor holds it: its value as typed, and '' for no label or severity. */
+export interface ThresholdRow {
+  value: string
+  label: string
+  severity: Severity | ''
+}
+
+/** A threshold line as the chart editor sends it: a value that isn't a number is null, which the chart refuses. */
+export type SavedThreshold = Omit<Threshold, 'value'> & { value: number | null }
+
+export function thresholdRows(thresholds: Threshold[] | undefined): ThresholdRow[] {
+  return (thresholds ?? []).map(t => ({ value: String(t.value), label: t.label ?? '', severity: t.severity ?? '' }))
+}
+
+/** The rows in order as the chart saves them, each label and severity only when set. */
+export function savedThresholds(rows: ThresholdRow[]): SavedThreshold[] {
+  return rows.map(row => {
+    const value = row.value.trim() === '' ? NaN : Number(row.value)
+    const label = row.label.trim()
+    return {
+      value: Number.isFinite(value) ? value : null,
+      ...(label ? { label } : {}),
+      ...(row.severity ? { severity: row.severity } : {}),
+    }
+  })
+}
+
+/** The rows the editor's preview draws: those whose value is a number so far. */
+export function drawnThresholds(rows: ThresholdRow[]): Threshold[] {
+  return savedThresholds(rows).filter((t): t is Threshold => t.value !== null)
 }
 
 export interface DashboardChart {

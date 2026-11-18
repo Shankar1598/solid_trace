@@ -9,6 +9,12 @@ class DashboardChart < ApplicationRecord
   COLUMNS = 12
   MAX_HEIGHT = 24
   MAX_DECIMALS = 6
+  MAX_THRESHOLDS = 5
+  MAX_THRESHOLD_LABEL = 40
+  SEVERITIES = %w[warn critical].freeze
+  # The vizes that draw a time series over a value axis, where a threshold
+  # line can go.
+  THRESHOLD_VIZES = %w[line area].freeze
 
   belongs_to :dashboard, touch: true
   belongs_to :project
@@ -29,23 +35,62 @@ class DashboardChart < ApplicationRecord
 
   private
 
-  # options holds stacked (true or false), unit (a short label such as ms)
-  # and decimals (0 to MAX_DECIMALS), each only when set; other keys go.
+  # options holds stacked (true or false), unit (a short label such as ms),
+  # decimals (0 to MAX_DECIMALS) and thresholds, each only when set; other
+  # keys go.
   def normalize_options
     given = options.is_a?(Hash) ? options.stringify_keys : {}
-    stacked, unit, @decimals_given = given.values_at("stacked", "unit", "decimals")
+    stacked, unit, @decimals_given, thresholds = given.values_at("stacked", "unit", "decimals", "thresholds")
     self.options = {
       "stacked" => stacked.to_s == "" ? nil : ActiveModel::Type::Boolean.new.cast(stacked),
       "unit" => unit.to_s.strip.presence,
       "decimals" => @decimals_given.to_s == "" ? nil : Integer(@decimals_given.to_s, 10, exception: false),
+      "thresholds" => normalize_thresholds(thresholds),
     }.compact
+  end
+
+  # Each threshold line is {value, label, severity}, label and severity only
+  # when given, in the order given; an empty list is none. A value written
+  # as text, as a form sends it, is read as a number. What isn't a list or
+  # a threshold, and a value that isn't a number, are kept for
+  # thresholds_known to refuse.
+  def normalize_thresholds(thresholds)
+    return nil if thresholds.blank?
+    return thresholds unless thresholds.is_a?(Array)
+
+    thresholds.map do |threshold|
+      next threshold unless threshold.is_a?(Hash)
+
+      given = threshold.stringify_keys
+      value = given["value"]
+      value = Float(value.strip, exception: false) || value if value.is_a?(String)
+      { "value" => value, "label" => given["label"].to_s.strip.presence, "severity" => given["severity"].to_s.strip.presence }.compact
+    end
   end
 
   def options_known
     errors.add(:options, "unit must be at most 16 characters") if options["unit"].to_s.length > 16
+    thresholds_known(options["thresholds"]) if options.key?("thresholds")
     return if @decimals_given.to_s == "" || (0..MAX_DECIMALS).cover?(options["decimals"])
 
     errors.add(:options, "decimals must be a whole number from 0 to #{MAX_DECIMALS}")
+  end
+
+  # Errors name a threshold by its place in the list, from 0, as
+  # thresholds[1].value.
+  def thresholds_known(thresholds)
+    return errors.add(:options, "thresholds must be a list") unless thresholds.is_a?(Array)
+    return errors.add(:options, "thresholds are for line and area charts") unless THRESHOLD_VIZES.include?(viz)
+    return errors.add(:options, "thresholds are at most #{MAX_THRESHOLDS}") if thresholds.size > MAX_THRESHOLDS
+
+    thresholds.each_with_index do |threshold, i|
+      at = "thresholds[#{i}]"
+      next errors.add(:options, "#{at} must be an object") unless threshold.is_a?(Hash)
+
+      errors.add(:options, "#{at}.value must be a number") unless threshold["value"].is_a?(Numeric)
+      errors.add(:options, "#{at}.label is too long (at most #{MAX_THRESHOLD_LABEL} characters)") if threshold["label"].to_s.length > MAX_THRESHOLD_LABEL
+      errors.add(:options, "#{at}.severity must be warn or critical") if threshold.key?("severity") && !SEVERITIES.include?(threshold["severity"])
+    end
   end
 
   def fits_the_grid

@@ -81,7 +81,7 @@ class DashboardChartsController < ApplicationController
   # section_id is no Section.
   def chart_params
     @chart_params ||= begin
-      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :viz, :x, :y, :w, :h, options: %i[stacked unit decimals])
+      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :viz, :x, :y, :w, :h, options: [ :stacked, :unit, :decimals, { thresholds: %i[value label severity] } ])
       permitted[:section_id] = permitted[:section_id].presence if permitted.key?(:section_id)
       permitted[:project] = @current_org.projects.find_by(id: permitted.delete(:project_id)) if permitted.key?(:project_id)
       permitted

@@ -167,6 +167,8 @@ A chart draws at most 8 series, the ones with the largest totals, and the legend
 
 **Add to dashboard.** Beside the switch, Add to dashboard saves the Project, the Query that ran and the chart's form to a new or existing Dashboard. It is there for a Query's table, not for Logs or for SQL. Create monitor, beside it, starts a Monitor from the same Query and range: see [Monitors](monitors.md).
 
+**Threshold lines.** A line or area Chart on a Dashboard can show up to 5 limits, such as "oldest unprocessed event under 1 h". Add them in the chart editor under Threshold lines, or give `options.thresholds` to the MCP server's `add_chart` or `update_chart`. Each has a value, in the Chart's unit, an optional label of at most 40 characters, and an optional severity, warn or critical. The Chart draws each one as a dashed horizontal line across the whole range, with its label at the right end: the label you give, or else the value with the Chart's unit and decimals. No severity draws the line in the muted colour of the axes, warn in the warning colour and critical in the danger colour. A threshold line is not a series: the `by` columns do not split it, it is not in the legend, and it does not take one of the 8 series. The value axis reaches each line, so a limit above every value still shows. A bar, stat or table Chart refuses threshold lines, and the chart editor drops them when you change a Chart to one of these. A threshold line only draws a limit and sends nothing; to be told when a number passes a limit, make a [Monitor](monitors.md).
+
 ## Dashboard filters
 
 A Chart on a Dashboard uses the Dashboard's filters by naming them in its Query as `$name`:

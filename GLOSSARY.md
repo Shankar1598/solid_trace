@@ -132,6 +132,10 @@ _Avoid_: live stream, streaming, live mode
 A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single number. A time series needs the last summarize's time bins, which are its x; its number columns are the series and its by columns split them. Bars need a summarize with no time bin. Any table of one row and one number is a single number. The Logs explorer shows it above the table.
 _Avoid_: graph, plot, visualization
 
+**Threshold line**:
+A horizontal line on a line or area **Chart** of a **Dashboard**, at a fixed value in the Chart's unit, with a label and an optional severity, warn or critical. It is drawn once across the whole range, and the value axis reaches it. It is not a series: the by columns do not split it, it is not in the legend, and it does not take one of the Chart's series. It only draws a limit and sends nothing; the threshold of a **Threshold monitor** is a different thing.
+_Avoid_: reference line, limit series, threshold (alone)
+
 **Overview**:
 An Organization's page of what came in, what was kept and what it costs, over Today, 7 or 30 whole UTC days, from **Ingest counts**, **Source counts** and what ClickHouse stores. Any member sees it; `get_overview` answers the same over MCP.
 _Avoid_: stats page, usage page, home
