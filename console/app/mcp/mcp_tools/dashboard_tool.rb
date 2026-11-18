@@ -72,7 +72,13 @@ module McpTools
     }.freeze
 
     CHART_FIELDS = {
-      title: { type: "string", description: "The Chart's title, at most 200 characters." },
+      title: { type: "string", description: "The Chart's title, at most 200 characters. Optional for a Text block." },
+      text: {
+        type: "string",
+        description: "A Text block's Markdown, at most #{DashboardChart::MAX_TEXT} characters: headings, lists, bold, code, links " \
+                     "and tables. The page shows no raw HTML and no images (an image shows as its link), and opens links in a new tab. " \
+                     "Only for viz text, and needed for it.",
+      },
       query: {
         type: "string",
         description: "The Query the Chart runs on its Project over the Dashboard's range. It must answer a table, so end it with " \
@@ -84,7 +90,10 @@ module McpTools
         type: "string",
         enum: DashboardChart::VIZES,
         description: "How the table is drawn. line and area need the last summarize's time bins, such as by bin_auto(time); " \
-                     "bar needs a summarize with no time bin; stat needs a table of one row and one number; table draws any table. line when made.",
+                     "bar needs a summarize with no time bin; stat needs a table of one row and one number; table draws any table. " \
+                     "text is a Text block: a note in Markdown (the text field) with no project, no query and no options, " \
+                     "which runs nothing and does not change with the range or the filters. " \
+                     "A Chart does not change into a Text block, nor a Text block into a Chart. line when made.",
       },
       options: {
         type: "object",
@@ -190,10 +199,10 @@ module McpTools
     # Project changed, is saved only when EventStore finds no mistakes in its
     # Query on its Project, and the Query names only the Dashboard's filters,
     # as the chart editor checks before it saves. The check compiles the
-    # Query and runs nothing.
+    # Query and runs nothing. A Text block has no Query to check.
     def save_chart!(chart)
       chart.validate!
-      if chart.new_record? || chart.query_changed? || chart.project_id_changed?
+      if !chart.text? && (chart.new_record? || chart.query_changed? || chart.project_id_changed?)
         validation = EventStore.validate_logs_query(project_id: chart.project_id, query: chart.query)
         if Array(validation["errors"]).any?
           EventStore.mistakes(validation).each { |mistake| chart.errors.add(:query, mistake) }
@@ -228,9 +237,10 @@ module McpTools
       DashboardSectionSerializer.new(section).as_json
     end
 
-    # A Chart, with the slug of its Project, which the tools take.
+    # A Chart, with the slug of its Project, which the tools take; a Text
+    # block has none.
     def chart_json(chart)
-      DashboardChartSerializer.new(chart).as_json.merge(project: chart.project.slug)
+      DashboardChartSerializer.new(chart).as_json.merge(project: chart.project&.slug)
     end
   end
 end

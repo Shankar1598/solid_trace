@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_17_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_18_100000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -74,15 +74,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_17_100000) do
     t.integer "dashboard_id", null: false
     t.integer "h", default: 4, null: false
     t.json "options", default: {}, null: false
-    t.integer "project_id", null: false
-    t.text "query", null: false
+    t.integer "project_id"
+    t.text "query"
     t.integer "section_id"
-    t.string "title", null: false
+    t.string "title"
     t.datetime "updated_at", null: false
     t.string "viz", default: "line", null: false
     t.integer "w", default: 6, null: false
     t.integer "x", default: 0, null: false
     t.integer "y", default: 0, null: false
+    t.text "text"
     t.index ["dashboard_id"], name: "index_dashboard_charts_on_dashboard_id"
     t.index ["project_id"], name: "index_dashboard_charts_on_project_id"
     t.index ["section_id"], name: "index_dashboard_charts_on_section_id"

@@ -72,6 +72,49 @@ class DashboardChartTest < ActiveSupport::TestCase
     ], refused.("line", [ { value: "high" }, { label: "no value" }, { value: 1, label: "x" * 41 }, { value: 1, severity: "info" }, 5 ])
   end
 
+  test "a Text block is Markdown with no Project, no Query and no title needed" do
+    block = build(:dashboard_chart, :text, dashboard: @dashboard, text: "## Runbook\n\nSee [the wiki](https://wiki.example).")
+
+    assert block.valid?, block.errors.full_messages.to_sentence
+    block.save!
+    assert_equal [ "text", nil, nil, nil ], block.reload.values_at(:viz, :project_id, :query, :title)
+  end
+
+  test "a Text block needs its text, at most 10,000 characters, and refuses a Project, a Query and options" do
+    refused = lambda do |**fields|
+      block = build(:dashboard_chart, :text, dashboard: @dashboard, **fields)
+      assert_not block.valid?
+      block.errors.to_hash.transform_values(&:sole)
+    end
+
+    assert_equal({ text: "can't be blank" }, refused.(text: " "))
+    assert_equal({ text: "is too long (maximum is 10000 characters)" }, refused.(text: "x" * 10_001))
+    assert_equal({ project: "must be empty for a Text block", query: "must be empty for a Text block" },
+      refused.(project: create(:project, organization: @dashboard.organization), query: "summarize count()"))
+    assert_equal({ options: "are not for a Text block" }, refused.(options: { unit: "ms" }))
+  end
+
+  test "a Chart other than a Text block needs a Project, a Query and a title, and takes no text" do
+    chart = build(:dashboard_chart, dashboard: @dashboard, project: nil, query: "", title: "", text: "a note")
+
+    assert_not chart.valid?
+    assert_equal({ project: "must exist", query: "can't be blank", title: "can't be blank", text: "is only for a Text block" },
+      chart.errors.to_hash.transform_values(&:sole))
+  end
+
+  test "a Chart can not become a Text block, nor a Text block a Chart" do
+    chart = create(:dashboard_chart, dashboard: @dashboard)
+    block = create(:dashboard_chart, :text, dashboard: @dashboard)
+
+    chart.assign_attributes(viz: "text", project: nil, query: nil, text: "a note")
+    block.assign_attributes(viz: "line", project: create(:project, organization: @dashboard.organization), query: "summarize count()", text: nil)
+
+    [ chart, block ].each do |record|
+      assert_not record.valid?
+      assert_equal [ "can not change between text and a Chart's viz: delete it and add a new one" ], record.errors[:viz]
+    end
+  end
+
   test "a Dashboard's default range is a span and its auto-refresh off, 1m or 5m" do
     assert build(:dashboard, default_range: "7d", auto_refresh: "5m").valid?
     dashboard = build(:dashboard, default_range: "last week", auto_refresh: "10s")

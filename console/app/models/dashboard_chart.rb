@@ -4,8 +4,11 @@
 # Organization, drawn as a line, area, bar, stat or table, at a place on the
 # Dashboard's grid of COLUMNS columns. A chart in a Section has its place on
 # that Section's grid; a chart in no Section, on the grid above the Sections.
+# A chart of viz text is a Text block: Markdown in text, with no Project, no
+# Query and an optional title. It runs nothing.
 class DashboardChart < ApplicationRecord
-  VIZES = %w[line area bar stat table].freeze
+  VIZES = %w[line area bar stat table text].freeze
+  MAX_TEXT = 10_000
   COLUMNS = 12
   MAX_HEIGHT = 24
   MAX_DECIMALS = 6
@@ -17,14 +20,19 @@ class DashboardChart < ApplicationRecord
   THRESHOLD_VIZES = %w[line area].freeze
 
   belongs_to :dashboard, touch: true
-  belongs_to :project
+  belongs_to :project, optional: true
   belongs_to :section, class_name: "DashboardSection", optional: true, inverse_of: :charts
 
   before_validation :normalize_options
 
-  validates :title, presence: true, length: { maximum: 200 }
-  validates :query, presence: true, length: { maximum: 20_000 }
-  validates :viz, inclusion: { in: VIZES, message: "must be line, area, bar, stat or table" }
+  validates :title, presence: true, unless: :text?
+  validates :title, length: { maximum: 200 }
+  validates :project, presence: { message: "must exist" }, unless: :text?
+  validates :query, presence: true, length: { maximum: 20_000 }, unless: :text?
+  validates :text, presence: true, length: { maximum: MAX_TEXT }, if: :text?
+  validates :viz, inclusion: { in: VIZES, message: "must be line, area, bar, stat, table or text" }
+  validate :text_block_fields
+  validate :viz_kind_kept, on: :update
   validates :x, :y, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
   validates :w, numericality: { only_integer: true, in: 1..COLUMNS }
   validates :h, numericality: { only_integer: true, in: 1..MAX_HEIGHT }
@@ -33,7 +41,33 @@ class DashboardChart < ApplicationRecord
   validate :section_of_the_dashboard, if: :section_id_changed?
   validate :options_known
 
+  # Whether the chart is a Text block.
+  def text?
+    viz == "text"
+  end
+
   private
+
+  # A Text block has no Project, Query or options; a chart that runs a Query
+  # has no text.
+  def text_block_fields
+    unless text?
+      errors.add(:text, "is only for a Text block") unless text.nil?
+      return
+    end
+
+    errors.add(:project, "must be empty for a Text block") unless project.nil?
+    errors.add(:query, "must be empty for a Text block") unless query.nil?
+    errors.add(:options, "are not for a Text block") if options.present?
+  end
+
+  # A chart does not change into a Text block, nor a Text block into a
+  # chart: the two keep different fields.
+  def viz_kind_kept
+    return unless viz_changed? && (viz == "text") != (viz_was == "text")
+
+    errors.add(:viz, "can not change between text and a Chart's viz: delete it and add a new one")
+  end
 
   # options holds stacked (true or false), unit (a short label such as ms),
   # decimals (0 to MAX_DECIMALS) and thresholds, each only when set; other
