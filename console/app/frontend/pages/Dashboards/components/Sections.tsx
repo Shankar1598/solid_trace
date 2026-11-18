@@ -1,5 +1,5 @@
 import { router, useForm } from '@inertiajs/react'
-import { ArrowDown, ArrowUp, ChevronRight, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronRight, MoreHorizontal, Pencil, Plus, Trash2, Type } from 'lucide-react'
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
@@ -18,9 +18,9 @@ const chartsText = (n: number) => `${n} ${n === 1 ? 'chart' : 'charts'}`
 /**
  * A Section's header row: a chevron that folds or unfolds it for this viewer,
  * its title, the count of its charts while folded, and a menu to add a chart
- * in it, rename it, move it up or down, or delete it.
+ * or a Text block in it, rename it, move it up or down, or delete it.
  */
-export function SectionHeader({ section, chartCount, folded, first, last, onToggle, onAddChart, onRename, onMove, onDelete }: {
+export function SectionHeader({ section, chartCount, folded, first, last, onToggle, onAddChart, onAddText, onRename, onMove, onDelete }: {
   section: DashboardSection
   chartCount: number
   folded: boolean
@@ -28,6 +28,7 @@ export function SectionHeader({ section, chartCount, folded, first, last, onTogg
   last: boolean
   onToggle: () => void
   onAddChart: () => void
+  onAddText: () => void
   onRename: () => void
   /** -1 moves it up one place, 1 down one. */
   onMove: (by: -1 | 1) => void
@@ -52,6 +53,7 @@ export function SectionHeader({ section, chartCount, folded, first, last, onTogg
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-44">
           <DropdownMenuItem onClick={onAddChart}><Plus className="h-3.5 w-3.5" /> Add chart here</DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddText}><Type className="h-3.5 w-3.5" /> Add text here</DropdownMenuItem>
           <DropdownMenuItem onClick={onRename}><Pencil className="h-3.5 w-3.5" /> Rename</DropdownMenuItem>
           <DropdownMenuItem onClick={() => onMove(-1)} disabled={first}><ArrowUp className="h-3.5 w-3.5" /> Move up</DropdownMenuItem>
           <DropdownMenuItem onClick={() => onMove(1)} disabled={last}><ArrowDown className="h-3.5 w-3.5" /> Move down</DropdownMenuItem>

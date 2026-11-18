@@ -141,8 +141,12 @@ An Organization's page of what came in, what was kept and what it costs, over To
 _Avoid_: stats page, usage page, home
 
 **Dashboard**:
-A page of **Charts** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows, with the values of the **Dashboard filters** it names. Any member of the organization can see, make, change and delete it.
+A page of **Charts** and **Text blocks** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows, with the values of the **Dashboard filters** it names. Any member of the organization can see, make, change and delete it.
 _Avoid_: board, panel page
+
+**Text block**:
+A note in Markdown on a **Dashboard**, with an optional title, at a place on the grid as a **Chart** has, in a **Section** or in none. A member moves, resizes, changes and deletes it as a Chart. It has no **Project** and no **Query**, so it runs nothing, and the range, the **Dashboard filters** and a refresh do not change it. It shows no raw HTML and no images, and its links open in a new tab.
+_Avoid_: note, markdown panel, text chart
 
 **Dashboard filter**:
 A control in a **Dashboard**'s filter bar, a select or a search box, whose value a **Chart** uses by naming it in its **Query**, as in `where service == $service`. It narrows only the Charts that name it. With no value, it is All, and its comparisons match every **Log**.
@@ -297,6 +301,7 @@ _Avoid_: mandatory 2FA, enforced 2FA
 - A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
 - A **Dashboard** has an ordered list of **Dashboard filters**; each narrows the **Charts** whose **Query** names it
 - A **Dashboard** has an ordered list of **Sections**; a **Chart** is in one Section of its Dashboard or in none
+- A **Dashboard** holds **Text blocks** on the same grid as its **Charts**; a Text block is in one **Section** or in none, and has no **Project** or **Query**
 - A **Console** presents **Projects**, **Issues**, and **Integrations**
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**

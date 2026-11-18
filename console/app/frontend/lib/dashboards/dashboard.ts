@@ -62,21 +62,48 @@ export function drawnThresholds(rows: ThresholdRow[]): Threshold[] {
   return savedThresholds(rows).filter((t): t is Threshold => t.value !== null)
 }
 
-export interface DashboardChart {
+/** What a chart and a Text block share: a place on a Dashboard's grid. */
+interface GridItem {
   id: number
   dashboard_id: number
-  project_id: number
   /** The Section the chart is in, or null for no Section. x and y are its place in that Section's grid. */
   section_id: number | null
-  title: string
-  query: string
-  viz: DashboardViz
-  options: ChartOptions
   x: number
   y: number
   w: number
   h: number
   updated_at: string
+}
+
+/** A chart that runs its Query on a Project and draws the table as its viz. */
+export interface DashboardChart extends GridItem {
+  project_id: number
+  title: string
+  query: string
+  viz: DashboardViz
+  options: ChartOptions
+  text: null
+}
+
+/** A Text block: Markdown on the grid, with an optional title, which runs nothing. */
+export interface TextBlock extends GridItem {
+  project_id: null
+  /** null or '' for none. */
+  title: string | null
+  query: null
+  viz: 'text'
+  options: Record<string, never>
+  text: string
+}
+
+/** What a Dashboard's grid holds: charts and Text blocks. */
+export type DashboardItem = DashboardChart | TextBlock
+
+/** The most characters a Text block holds, as the Dashboard Chart model allows. */
+export const MAX_TEXT = 10_000
+
+export function isTextBlock(item: DashboardItem): item is TextBlock {
+  return item.viz === 'text'
 }
 
 export interface Dashboard {
@@ -94,7 +121,7 @@ export interface Dashboard {
   updated_at: string
   /** The Sections, in the page's order, which come with the charts. */
   sections?: DashboardSection[]
-  charts?: DashboardChart[]
+  charts?: DashboardItem[]
 }
 
 /** A titled group of a Dashboard's charts, under the charts in no Section. */
@@ -110,7 +137,7 @@ export interface DashboardSection {
  * The charts in no Section, then each Section with its charts, in the
  * Sections' order: the groups the page shows, each on a grid of its own.
  */
-export function chartGroups(sections: DashboardSection[], charts: DashboardChart[]): { section: DashboardSection | null; charts: DashboardChart[] }[] {
+export function chartGroups(sections: DashboardSection[], charts: DashboardItem[]): { section: DashboardSection | null; charts: DashboardItem[] }[] {
   const known = new Set(sections.map(s => s.id))
   return [
     { section: null, charts: charts.filter(c => c.section_id === null || !known.has(c.section_id)) },
