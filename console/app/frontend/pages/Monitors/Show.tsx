@@ -12,7 +12,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { valueText } from '@/lib/charts/axis'
 import { providerName } from '@/lib/integrations'
-import { changeText, groupLabel, minutesText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
+import { LANGUAGE_NAMES, changeText, groupLabel, minutesText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
 import { cn } from '@/lib/utils'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
@@ -47,7 +47,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
         title={monitor.name}
         badge={<MonitorStatusBadge monitor={monitor} />}
         description={<>
-          {monitor.kind === 'threshold' ? 'Threshold' : 'Match'} monitor on{' '}
+          {monitor.kind === 'threshold' ? 'Threshold' : 'Match'} monitor{monitor.language === 'sql' ? ' in SQL' : ''} on{' '}
           <Link href={`/${orgSlug}/projects/${monitor.project.slug}/logs`} className="hover:underline">{monitor.project.name}</Link>
           {' · '}{monitor.last_run_at ? `last run ${formatDistanceToNow(new Date(monitor.last_run_at))} ago` : 'not run yet'}
         </>}
@@ -81,6 +81,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
         )}
 
         <section className="space-y-2 border p-4 text-sm">
+          <h2 className="text-xs font-medium text-muted-foreground" data-monitor-language>{LANGUAGE_NAMES[monitor.language]}</h2>
           <pre className="overflow-x-auto whitespace-pre-wrap break-words bg-muted p-2 font-mono text-xs" data-monitor-query>{monitor.query}</pre>
           <p>{ruleText(monitor, has_by_columns)}</p>
           <p className="text-muted-foreground">
@@ -94,7 +95,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
           <section className="space-y-2">
             <h2 className="text-sm font-semibold">Groups</h2>
             {states.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No groups yet: a run lists each group its Query finds, and keeps the firing ones and those just resolved.</p>
+              <p className="text-sm text-muted-foreground">No groups yet: a run lists each group its {LANGUAGE_NAMES[monitor.language]} finds, and keeps the firing ones and those just resolved.</p>
             ) : (
               <div className="border">
                 <Table aria-label="Groups">

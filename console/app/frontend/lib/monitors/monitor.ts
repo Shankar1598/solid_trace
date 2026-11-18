@@ -7,6 +7,8 @@ import { valueText } from '@/lib/charts/axis'
 import { rangeMs, type TimeRange } from '@/lib/timeRange'
 
 export type MonitorKind = 'threshold' | 'match'
+/** What a Monitor's text is: a Query, or, for a Threshold monitor only, a SQL query. */
+export type MonitorLanguage = 'query' | 'sql'
 /** What a Threshold monitor compares with its threshold: each group's number, or its percent change from its Baseline. */
 export type MonitorCompare = 'value' | 'change'
 /** Where a group's Baseline is read: the range just before the current one, or the same range 1 day or 1 week earlier. */
@@ -35,6 +37,8 @@ export interface MonitorSettings {
   name: string
   kind: MonitorKind
   project_id: number | null
+  language: MonitorLanguage
+  /** The Query, or a SQL Monitor's SQL. */
   query: string
   interval_minutes: number
   range_minutes: number
@@ -92,6 +96,23 @@ export interface Monitor extends MonitorSettings {
   states?: MonitorGroupState[]
   runs?: MonitorRun[]
   integrations?: IntegrationOption[]
+}
+
+/** Why a SQL Monitor's SQL can't be changed, as LogMonitor::SQL_OFF says it. */
+export const SQL_OFF = 'SQL queries are off on this install'
+
+export const LANGUAGE_NAMES: Record<MonitorLanguage, string> = { query: 'Query', sql: 'SQL' }
+
+/**
+ * How the form edits a Monitor's text: the Query / SQL switch shows for a
+ * Threshold monitor while SQL queries are on, and a SQL Monitor's SQL is
+ * read-only, with the reason, while they are off.
+ */
+export function textEditing(kind: MonitorKind, language: MonitorLanguage, sqlQueriesEnabled: boolean): { switch: boolean; readOnly: string | null } {
+  return {
+    switch: kind === 'threshold' && sqlQueriesEnabled,
+    readOnly: language === 'sql' && !sqlQueriesEnabled ? SQL_OFF : null,
+  }
 }
 
 /** Whether value passes the threshold, by the operator. */

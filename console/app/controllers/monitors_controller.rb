@@ -34,7 +34,7 @@ class MonitorsController < ApplicationController
 
     render inertia: "Monitors/New", props: form_props.merge(
       monitor: {
-        id: nil, name: "", kind: "threshold", project_id: project&.id,
+        id: nil, name: "", kind: "threshold", project_id: project&.id, language: "query",
         query: params[:query].presence || (project && "['#{project.slug}']\n| summarize count()"),
         interval_minutes: 1, range_minutes: range || 5, compare: "value", baseline: nil, minimum: nil, operator: ">", threshold: nil,
         notify_by_group: false, alert_on_no_data: false, integration_ids: [],
@@ -143,6 +143,7 @@ class MonitorsController < ApplicationController
     {
       projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
       integrations: IntegrationOptionSerializer.list(@current_org.integrations.order(:name)),
+      sql_queries_enabled: InstanceSetting.current.sql_queries_enabled?,
     }
   end
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
 import {
-  baselineOffsetMinutes, breached, changeText, groupLabel, groupsNow, newMonitorHref, previewCaption, rangeMinutesOf, ruleText, runText, withRangeBins,
+  baselineOffsetMinutes, breached, changeText, groupLabel, groupsNow, newMonitorHref, previewCaption, rangeMinutesOf, ruleText, runText, textEditing, withRangeBins,
   withBaselineSeries, withoutTimeBins,
 } from './monitor'
 
@@ -264,5 +264,21 @@ describe('ruleText', () => {
     expect(ruleText({ ...change, interval_minutes: 60, range_minutes: 1440 })).toBe(
       "Runs every 1 hour over the last 1 day, and fires when each group's number rises by 50% or more from the 1 day before.")
     expect(ruleText({ ...change, baseline: 'week', range_minutes: 120 })).toContain('from the same 2 hours 1 week earlier.')
+  })
+})
+
+describe('how the form edits a Monitor\'s text', () => {
+  it('offers the Query / SQL switch for a Threshold monitor while SQL queries are on', () => {
+    expect(textEditing('threshold', 'query', true)).toEqual({ switch: true, readOnly: null })
+    expect(textEditing('threshold', 'sql', true)).toEqual({ switch: true, readOnly: null })
+  })
+
+  it('hides the switch for a Match monitor, and while SQL queries are off', () => {
+    expect(textEditing('match', 'query', true)).toEqual({ switch: false, readOnly: null })
+    expect(textEditing('threshold', 'query', false)).toEqual({ switch: false, readOnly: null })
+  })
+
+  it('shows a SQL Monitor\'s SQL read-only, with the reason, while SQL queries are off', () => {
+    expect(textEditing('threshold', 'sql', false)).toEqual({ switch: false, readOnly: 'SQL queries are off on this install' })
   })
 })
