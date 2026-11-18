@@ -9,7 +9,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  optionsOfText, textOfOptions, type Dashboard, type DashboardChart, type DashboardFilter, type FilterOptions,
+  optionsOfText, textOfOptions, type Dashboard, type DashboardFilter, type DashboardItem, type FilterOptions,
 } from '@/lib/dashboards/dashboard'
 import { parametersOf } from '@/lib/logs/queryLexer'
 import type { ProjectOption } from '../../Logs/components/BuilderPanel'
@@ -154,7 +154,7 @@ function errorText(field: string, message: string): string {
  * change; removing a filter that charts name asks first.
  */
 export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }: {
-  dashboard: Dashboard & { charts: DashboardChart[] }
+  dashboard: Dashboard & { charts: DashboardItem[] }
   /** The Organization's Projects, one of which a select's field is read from. */
   projects: ProjectOption[]
   orgSlug: string
@@ -187,7 +187,8 @@ export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }:
     setDrafts(ds => ds.filter(d => d.key !== key))
     setRemoving(null)
   }
-  const chartsNaming = (name: string) => dashboard.charts.filter(c => parametersOf(c.query).includes(name.trim()))
+  // A Text block has no Query, so it names no filter.
+  const chartsNaming = (name: string) => dashboard.charts.filter(c => c.query !== null && parametersOf(c.query).includes(name.trim()))
   const askOrRemove = (draft: Draft) => (chartsNaming(draft.name).length > 0 ? setRemoving(draft.key) : remove(draft.key))
 
   const save = (e: React.FormEvent) => {

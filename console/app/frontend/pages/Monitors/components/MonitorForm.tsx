@@ -353,6 +353,11 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   // The SQL's mistakes, from saving or from the preview, marked where ClickHouse places them.
   const sqlErrors = [...messagesOf(errors.sql), ...(sqlMode && changed.status === 'error' ? [changed.message] : [])]
   const sqlMarks = sqlErrors.flatMap(m => sqlErrorMarks(m, sql))
+  // The preview draws the Monitor's threshold with the same line that draws a Dashboard chart's
+  // Threshold lines. It stays the Monitor's threshold: it is not a Threshold line.
+  const thresholdDrawn = comparesChange || thresholdValue === null
+    ? undefined
+    : [{ value: thresholdValue, label: `threshold ${thresholdValue}`, severity: 'critical' as const }]
   const groups: PreviewGroup[] | undefined = groupsOnServer
     ? (changed.status === 'done' ? changed.groups : undefined)
     : found?.groups.map(g => ({ ...g, baseline: null }))
@@ -584,7 +589,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
               <RunView run={chart}>
                 {({ table }) => (table.rows.length === 0
                   ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
-                  : <QueryChart table={table} form="line" threshold={comparesChange ? undefined : thresholdValue ?? undefined} className="pb-1" />)}
+                  : <QueryChart table={table} form="line" thresholds={thresholdDrawn} className="pb-1" />)}
               </RunView>
             </div>
           )}

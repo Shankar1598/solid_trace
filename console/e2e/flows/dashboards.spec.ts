@@ -189,6 +189,116 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
   expect(errors.filter(e => !/status of 404/.test(e))).toEqual([])
 })
 
+test('a grouped line chart draws its threshold line once, above every value, outside the legend', async ({ page }) => {
+  const errors = watchErrors(page)
+  const name = `Flow threshold ${Date.now()}`
+  await page.goto(`/${ORG}/dashboards`)
+  await page.getByRole('button', { name: 'New dashboard' }).first().click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create dashboard' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Add chart' }).click()
+  const editor = page.getByRole('dialog')
+  await useProject(page, editor)
+  await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
+  await editor.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| summarize count() by bin_auto(time), level`)
+  await editor.getByLabel('Title').fill('Logs by level')
+  await editor.getByRole('button', { name: 'Add chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await pickQuickRange(page, '1 day')
+  await chartsRan(page, 1)
+  const chart = card(page, 'Logs by level')
+  const legend = chart.locator('[data-chart-legend]')
+  const entries = await legend.locator('[data-chart-series]').allInnerTexts()
+  expect(entries.length).toBeGreaterThan(1)
+  await expect(chart.locator('.chart-threshold-line')).toHaveCount(0)
+
+  // A threshold far above every count: the preview draws it as the member types it.
+  await chart.getByRole('button', { name: 'Menu for Logs by level' }).click()
+  await page.getByRole('menuitem', { name: 'Edit' }).click()
+  await editor.getByRole('button', { name: 'Add threshold' }).click()
+  await editor.getByLabel('Threshold 1 value').fill('1000000')
+  await editor.getByLabel('Threshold 1 label').fill('Limit')
+  await editor.getByRole('group', { name: 'Threshold 1 severity' }).getByRole('button', { name: 'Critical' }).click()
+  await expect(editor.locator('[data-chart-preview] .chart-threshold-line')).toHaveCount(1)
+  await editor.getByRole('button', { name: 'Save chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await chartsRan(page, 1)
+
+  // One line whatever the levels, its label at the line, inside the plot, and the legend as it was.
+  await expect(chart.locator('.chart-threshold-line')).toHaveCount(1)
+  await expect(chart.getByRole('figure').getByText('Limit', { exact: true })).toBeVisible()
+  const plot = await chart.locator('.recharts-cartesian-grid').boundingBox()
+  const line = await chart.locator('.chart-threshold-line').boundingBox()
+  expect(plot && line && line.y >= plot.y - 1 && line.y <= plot.y + plot.height + 1).toBe(true)
+  await expect(legend.locator('[data-chart-series]')).toHaveText(entries)
+  await expect(legend.getByText('Limit')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Dashboard settings' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/dashboards$`))
+  expect(errors).toEqual([])
+})
+
+test('a line chart of two renamed columns by a field shares one value axis once it has a unit, its legend naming the columns', async ({ page }) => {
+  const errors = watchErrors(page)
+  const name = `Flow columns ${Date.now()}`
+  await page.goto(`/${ORG}/dashboards`)
+  await page.getByRole('button', { name: 'New dashboard' }).first().click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create dashboard' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+
+  // As the first team's Chart: two renamed columns of one unit, split by a field.
+  await page.getByRole('button', { name: 'Add chart' }).click()
+  const editor = page.getByRole('dialog')
+  await useProject(page, editor)
+  await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
+  await editor.getByLabel('Query', { exact: true }).fill(
+    `${SOURCE}\n| summarize n = count(), e = countif(level == "error") by bin_auto(time), level\n| project time, level, received = n / 60.0, processed = e / 60.0`,
+  )
+  await editor.getByLabel('Title').fill('Received and processed')
+  await editor.getByRole('group', { name: 'Viz' }).getByRole('button', { name: 'Line' }).click()
+  await editor.getByRole('button', { name: 'Add chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await pickQuickRange(page, '1 day')
+  await chartsRan(page, 1)
+  const chart = card(page, 'Received and processed')
+  const legend = chart.locator('[data-chart-legend] [data-chart-series]')
+
+  // With no unit, each renamed column has a value axis, and the legend an entry for each group.
+  await expect(chart.locator('[data-chart-axis]')).toHaveCount(2)
+  await expect(legend.filter({ hasText: ' · ' })).toHaveCount(0)
+
+  await chart.getByRole('button', { name: 'Menu for Received and processed' }).click()
+  await page.getByRole('menuitem', { name: 'Edit' }).click()
+  await editor.getByLabel('Unit').fill('/s')
+  await editor.getByRole('button', { name: 'Save chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await chartsRan(page, 1)
+
+  // With the unit: one value axis, labelled in it, and an entry for each group and column.
+  await expect(legend.filter({ hasText: / · received$/ }).first()).toBeVisible({ timeout: 30_000 })
+  await expect(chart.locator('[data-chart-axis]')).toHaveCount(0)
+  await expect(chart.locator('[data-chart-panel]')).toHaveCount(0)
+  await expect(chart.locator('.recharts-yAxis')).toHaveCount(1)
+  const ticks = await chart.locator('.recharts-yAxis-tick-labels text').evaluateAll(texts => texts.map(t => t.textContent ?? ''))
+  expect(ticks.length).toBeGreaterThan(1)
+  expect(ticks.every(t => t.endsWith(' /s'))).toBe(true)
+  const entries = await legend.allInnerTexts()
+  expect(entries.length).toBeGreaterThan(1)
+  expect(entries.every(e => / · (received|processed)$/.test(e.trim()))).toBe(true)
+  expect(entries.some(e => e.trim().endsWith(' · received'))).toBe(true)
+
+  await page.getByRole('button', { name: 'Dashboard settings' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/dashboards$`))
+  expect(errors).toEqual([])
+})
+
 test('a chart whose Query fails shows the error in its card, and the rest of the Dashboard works', async ({ page }) => {
   const errors = watchErrors(page, [failedLoad(422)])
   const name = `Flow broken chart ${Date.now()}`

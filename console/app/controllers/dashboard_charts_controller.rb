@@ -43,18 +43,21 @@ class DashboardChartsController < ApplicationController
   end
 
   # A copy of the chart in its Section, placed as a new chart is, its title
-  # marked as a copy.
+  # marked as a copy. A Text block with no title stays with none.
   def duplicate
     copy = @chart.dup
     x, y = @dashboard.place(@chart.section_id, @chart.w)
-    copy.assign_attributes(title: "#{@chart.title} (copy)".truncate(200), x: x, y: y)
+    copy.assign_attributes(title: @chart.title.blank? ? @chart.title : "#{@chart.title} (copy)".truncate(200), x: x, y: y)
     save(copy, notice: "Chart duplicated.", status: :created)
   end
 
   # GET with from and to (ISO 8601), and the page's keys for each filter the
   # Query names that isn't All (Dashboard.filter_values_in): the chart's
   # Query run over that range with those values.
+  # A Text block runs nothing.
   def data
+    return render json: { error: "A Text block runs no Query." }, status: :unprocessable_content if @chart.text?
+
     run_chart(@current_org.projects.find(@chart.project_id), @chart.query, parameters: @dashboard.filter_values(shown_filter_values))
   end
 
@@ -78,11 +81,12 @@ class DashboardChartsController < ApplicationController
 
   # The Project is looked up in the Organization: another Organization's
   # Project is no Project, so the chart is refused as having none. An empty
-  # section_id is no Section.
+  # section_id is no Section, and an empty query or text is none, as a Text
+  # block has no Query and a chart no text.
   def chart_params
     @chart_params ||= begin
-      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :viz, :x, :y, :w, :h, options: %i[stacked unit decimals])
-      permitted[:section_id] = permitted[:section_id].presence if permitted.key?(:section_id)
+      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :text, :viz, :x, :y, :w, :h, options: [ :stacked, :unit, :decimals, { thresholds: %i[value label severity] } ])
+      %i[section_id query text].each { |key| permitted[key] = permitted[key].presence if permitted.key?(key) }
       permitted[:project] = @current_org.projects.find_by(id: permitted.delete(:project_id)) if permitted.key?(:project_id)
       permitted
     end

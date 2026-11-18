@@ -302,6 +302,25 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_equal "Not saved: H must be in 1..24.", call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, h: 30).text
   end
 
+  test "add_chart and update_chart take a line or area Chart's threshold lines, and get_dashboard answers them in its options" do
+    stub_query_check(@shop)
+    lines = [ { "value" => 1, "label" => "SLO", "severity" => "critical" }, { "value" => 0.5 } ]
+    answer = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Oldest event",
+      query: "summarize max(age) by bin_auto(time), region", options: { unit: "h", thresholds: lines })
+
+    assert_not answer.error?, answer.text
+    added = @dashboard.charts.find(answer.json["id"])
+    shown = call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id).json["charts"].find { |chart| chart["id"] == added.id }
+    assert_equal({ "unit" => "h", "thresholds" => lines }, shown["options"])
+
+    change = ->(**fields) { call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: added.id, **fields) }
+    assert_equal lines, change.(options: { decimals: 1 }).json.dig("options", "thresholds")
+    assert_equal [ { "value" => 2, "severity" => "warn" } ], change.(options: { thresholds: [ { value: 2, severity: "warn" } ] }).json.dig("options", "thresholds")
+    assert_equal "Not saved: Options thresholds are for line and area charts.", change.(viz: "bar").text
+    assert_not change.(viz: "bar", options: { thresholds: nil }).error?
+    assert_equal({ "unit" => "h", "decimals" => 1 }, added.reload.options)
+  end
+
   test "update_chart moves the Chart to a Section, under its Charts, keeps it there without section_id, and null takes it out" do
     section = create(:dashboard_section, dashboard: @dashboard)
     create(:dashboard_chart, dashboard: @dashboard, project: @shop, section: section, y: 0, h: 3)
@@ -388,6 +407,48 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     stub_query_check(@shop, parameters: %w[level])
     assert_equal "Not saved: Query names $level, which isn't one of this Dashboard's filters (it has none).",
       call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "None", query: "where level == $level | count").text
+  end
+
+  test "add_chart, update_chart and delete_chart keep a Text block, which get_dashboard answers with its text and no Project" do
+    section = create(:dashboard_section, dashboard: @dashboard)
+    answer = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, viz: "text", text: "## Runbook\n\nRestart the worker.",
+      section_id: section.id, w: 12, h: 2)
+
+    assert_not answer.error?, answer.text
+    block = @dashboard.charts.find(answer.json["id"])
+    shown = call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id).json["charts"].find { |chart| chart["id"] == block.id }
+    assert_equal [ "text", "## Runbook\n\nRestart the worker.", nil, nil, nil, section.id, 12, 2 ],
+      shown.values_at("viz", "text", "title", "project", "query", "section_id", "w", "h")
+
+    changed = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: block.id, text: "Call on-call.", title: "Notes")
+    assert_not changed.error?, changed.text
+    assert_equal [ "Call on-call.", "Notes" ], block.reload.values_at(:text, :title)
+
+    deleted = call_tool(:delete_chart, user: @user, dashboard: @dashboard.id, chart: block.id)
+    assert_equal "Deleted Chart #{block.id}, Notes, from Dashboard Checkout.", deleted.body
+    assert_not DashboardChart.exists?(block.id)
+  end
+
+  test "add_chart refuses a Text block with a Project or a Query, a Chart with no Project, and no text; update_chart a change of kind" do
+    add = ->(**fields) { call_tool(:add_chart, user: @user, dashboard: @dashboard.id, **fields).text }
+
+    assert_equal "Not saved: Project must be empty for a Text block; Query must be empty for a Text block.",
+      add.(viz: "text", text: "a note", project: "shop", query: "summarize count()")
+    assert_equal "Not saved: Text can't be blank.", add.(viz: "text")
+    assert_equal "Give project, title and query for a Chart; only a Text block (viz text) goes without them.", add.(title: "No project")
+    assert_match "Viz can not change between text and a Chart's viz: delete it and add a new one",
+      call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, viz: "text", text: "a note").text
+    assert_equal [ @chart ], @dashboard.charts.reload
+  end
+
+  test "get_chart_data answers that a Text block has no data, with its text, and runs nothing" do
+    block = create(:dashboard_chart, :text, dashboard: @dashboard, title: "Notes", text: "Restart the worker.")
+
+    answer = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: block.id)
+
+    assert_not answer.error?
+    assert_equal({ "chart" => block.id, "title" => "Notes", "viz" => "text", "text" => "Restart the worker.",
+                   "note" => "A Text block: Markdown on the Dashboard. It runs no Query and has no data." }, answer.json)
   end
 
   test "delete_chart deletes the Chart, linking to the Dashboard" do

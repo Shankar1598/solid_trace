@@ -3,19 +3,22 @@ import ReactGridLayout, { type Layout, type LayoutItem } from 'react-grid-layout
 import { toast } from 'sonner'
 import { saveLayout } from '@/lib/dashboards/api'
 import {
-  GRID_COLUMNS, movedPlaces, stackedPlaces, type DashboardChart, type DashboardFilter, type FilterValues, type Place,
+  GRID_COLUMNS, isTextBlock, movedPlaces, stackedPlaces, type DashboardFilter, type DashboardItem, type FilterValues, type Place,
 } from '@/lib/dashboards/dashboard'
 import type { FetchQueue } from '@/lib/dashboards/fetchQueue'
 import type { TimeRange } from '@/lib/timeRange'
 import type { ProjectOption } from '../../Logs/components/BuilderPanel'
 import { ChartCard, type DashboardRun } from './ChartCard'
+import { TextBlockCard } from './TextBlockCard'
 
 /** A grid row's height and the gap between cards, in px. */
 const ROW_PX = 64
 const GAP_PX = 12
 
-const placesOf = (charts: DashboardChart[]): Place[] => charts.map(({ id, x, y, w, h }) => ({ id, x, y, w, h }))
-const layoutOf = (charts: DashboardChart[]): LayoutItem[] => charts.map(c => ({ i: String(c.id), x: c.x, y: c.y, w: c.w, h: c.h, minW: 2, minH: 2 }))
+const placesOf = (charts: DashboardItem[]): Place[] => charts.map(({ id, x, y, w, h }) => ({ id, x, y, w, h }))
+// A Text block can be one row high, for a line of text.
+const layoutOf = (charts: DashboardItem[]): LayoutItem[] =>
+  charts.map(c => ({ i: String(c.id), x: c.x, y: c.y, w: c.w, h: c.h, minW: 2, minH: isTextBlock(c) ? 1 : 2 }))
 
 /**
  * The charts of one group of a Dashboard, the charts in no Section or those
@@ -28,7 +31,7 @@ export function ChartGrid({
   charts, width, stacked, arranging, orgSlug, dashboardId, projectsById, showProject, run, range, filters, values, queue,
   onRunning, onEdit, onDuplicate, onDelete,
 }: {
-  charts: DashboardChart[]
+  charts: DashboardItem[]
   width: number
   stacked: boolean
   arranging: boolean
@@ -42,9 +45,9 @@ export function ChartGrid({
   values: FilterValues
   queue: FetchQueue
   onRunning: (id: number, running: boolean) => void
-  onEdit: (chart: DashboardChart) => void
-  onDuplicate: (chart: DashboardChart) => void
-  onDelete: (chart: DashboardChart) => void
+  onEdit: (item: DashboardItem) => void
+  onDuplicate: (item: DashboardItem) => void
+  onDelete: (item: DashboardItem) => void
 }) {
   // The grid's places, and the ones last saved, so each move saves only what changed.
   const [layout, setLayout] = useState<LayoutItem[]>(() => layoutOf(charts))
@@ -75,24 +78,34 @@ export function ChartGrid({
       onDragStop={persist}
       onResizeStop={persist}
     >
-      {charts.map(chart => (
-        <div key={String(chart.id)}>
-          <ChartCard
-            chart={chart}
-            project={projectsById.get(chart.project_id)}
-            showProject={showProject}
-            orgSlug={orgSlug}
-            run={run}
-            range={range}
-            filters={filters}
-            values={values}
-            queue={queue}
-            editing={arranging}
-            onRunning={onRunning}
-            onEdit={() => onEdit(chart)}
-            onDuplicate={() => onDuplicate(chart)}
-            onDelete={() => onDelete(chart)}
-          />
+      {charts.map(item => (
+        <div key={String(item.id)}>
+          {isTextBlock(item) ? (
+            <TextBlockCard
+              block={item}
+              editing={arranging}
+              onEdit={() => onEdit(item)}
+              onDuplicate={() => onDuplicate(item)}
+              onDelete={() => onDelete(item)}
+            />
+          ) : (
+            <ChartCard
+              chart={item}
+              project={projectsById.get(item.project_id)}
+              showProject={showProject}
+              orgSlug={orgSlug}
+              run={run}
+              range={range}
+              filters={filters}
+              values={values}
+              queue={queue}
+              editing={arranging}
+              onRunning={onRunning}
+              onEdit={() => onEdit(item)}
+              onDuplicate={() => onDuplicate(item)}
+              onDelete={() => onDelete(item)}
+            />
+          )}
         </div>
       ))}
     </ReactGridLayout>

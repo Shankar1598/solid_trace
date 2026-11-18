@@ -3,7 +3,7 @@ import { router, usePage } from '@inertiajs/react'
 import { useContainerWidth } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
-import { Check, ListPlus, Pencil, Plus, RefreshCw, Settings, Square } from 'lucide-react'
+import { Check, ListPlus, Pencil, Plus, RefreshCw, Settings, Square, Type } from 'lucide-react'
 import { copyText } from '@/components/copyText'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -15,8 +15,8 @@ import {
 import { HoverTimeProvider } from '@/components/charts/hoverTime'
 import { Button } from '@/components/ui/button'
 import {
-  chartGroups, pickedOfSearch, rangeOfSearch, searchOfRangeAndPicked, valuesWithDefaults,
-  type AutoRefresh, type Dashboard, type DashboardChart, type DashboardSection, type FilterValues,
+  chartGroups, isTextBlock, pickedOfSearch, rangeOfSearch, searchOfRangeAndPicked, valuesWithDefaults,
+  type AutoRefresh, type Dashboard, type DashboardChart, type DashboardItem, type DashboardSection, type FilterValues, type TextBlock,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
 import { readFolded, writeFolded } from '@/lib/dashboards/foldedSections'
@@ -33,14 +33,24 @@ import { ChartGrid } from './components/ChartGrid'
 import { DashboardSettings } from './components/DashboardSettings'
 import { FilterBar } from './components/FilterBar'
 import { FiltersDialog } from './components/FiltersDialog'
+import { TextBlockEditor } from './components/TextBlockEditor'
 import { DeleteSectionDialog, SectionDialog, SectionHeader } from './components/Sections'
 
 /** Below this grid width (a phone) the cards stack in one column. */
 const STACK_BELOW_PX = 640
 const NO_COLUMNS = { shown: [], toggle: () => {} }
 
+/** The editor open on the page: a chart's or a Text block's, with item null to add one to the Section sectionId (null for none). */
+type ItemEditor =
+  | { kind: 'chart'; item: DashboardChart | null; sectionId: number | null }
+  | { kind: 'text'; item: TextBlock | null; sectionId: number | null }
+
+/** The editor of an item on the grid, which the item's viz decides. */
+const editorOf = (item: DashboardItem): ItemEditor =>
+  isTextBlock(item) ? { kind: 'text', item, sectionId: item.section_id } : { kind: 'chart', item, sectionId: item.section_id }
+
 interface DashboardsShowProps {
-  dashboard: Dashboard & { sections: DashboardSection[]; charts: DashboardChart[] }
+  dashboard: Dashboard & { sections: DashboardSection[]; charts: DashboardItem[] }
   projects: ProjectOption[]
 }
 
@@ -66,8 +76,8 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   useEffect(() => () => queue.abortAll(), [queue])
   const [running, setRunning] = useState<ReadonlySet<number>>(new Set())
   const [editing, setEditing] = useState(false)
-  const [editor, setEditor] = useState<{ chart: DashboardChart | null; sectionId?: number | null } | null>(null)
-  const [deleting, setDeleting] = useState<DashboardChart | null>(null)
+  const [editor, setEditor] = useState<ItemEditor | null>(null)
+  const [deleting, setDeleting] = useState<DashboardItem | null>(null)
   // The Section dialog: null renames none; section null adds one.
   const [sectionEditor, setSectionEditor] = useState<{ section: DashboardSection | null } | null>(null)
   const [deletingSection, setDeletingSection] = useState<DashboardSection | null>(null)
@@ -125,8 +135,8 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   }
 
   const setAutoRefresh = (value: AutoRefresh) => router.patch(`${basePath}${search}`, { dashboard: { auto_refresh: value } }, { preserveScroll: true, preserveState: true })
-  const duplicate = (chart: DashboardChart) => router.post(`${basePath}/charts/${chart.id}/duplicate${search}`, {}, { preserveScroll: true, preserveState: true })
-  const remove = (chart: DashboardChart) => router.delete(`${basePath}/charts/${chart.id}${search}`, {
+  const duplicate = (chart: DashboardItem) => router.post(`${basePath}/charts/${chart.id}/duplicate${search}`, {}, { preserveScroll: true, preserveState: true })
+  const remove = (chart: DashboardItem) => router.delete(`${basePath}/charts/${chart.id}${search}`, {
     preserveScroll: true, preserveState: true, onFinish: () => setDeleting(null),
   })
   const moveSection = (section: DashboardSection, to: number) =>
@@ -138,8 +148,8 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   // Memoized, so a grid's charts change only when the Dashboard is reloaded.
   const groups = useMemo(() => chartGroups(sections, charts), [sections, charts])
   const [unsectioned, ...sectioned] = groups
-  const severalProjects = new Set(charts.map(c => c.project_id)).size > 1
-  const grid = (groupCharts: DashboardChart[]) => (
+  const severalProjects = new Set(charts.flatMap(c => (isTextBlock(c) ? [] : [c.project_id]))).size > 1
+  const grid = (groupCharts: DashboardItem[]) => (
     <ChartGrid
       charts={groupCharts}
       width={width}
@@ -155,7 +165,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
       values={values}
       queue={queue}
       onRunning={onRunning}
-      onEdit={chart => setEditor({ chart })}
+      onEdit={item => setEditor(editorOf(item))}
       onDuplicate={duplicate}
       onDelete={setDeleting}
     />
@@ -177,7 +187,8 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           )}
           <AutoRefreshPicker value={dashboard.auto_refresh} onChange={setAutoRefresh} paused={range.kind === 'absolute' ? 'the range is fixed' : null} />
           <CopyLink onCopy={copyLink} />
-          <Button variant="outline" onClick={() => setEditor({ chart: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
+          <Button variant="outline" onClick={() => setEditor({ kind: 'chart', item: null, sectionId: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
+          <Button variant="outline" onClick={() => setEditor({ kind: 'text', item: null, sectionId: null })}><Type className="h-3.5 w-3.5" /> Add text</Button>
           <Button variant="outline" onClick={() => setSectionEditor({ section: null })}><ListPlus className="h-3.5 w-3.5" /> Add section</Button>
           {editing ? (
             <Button onClick={() => setEditing(false)}><Check className="h-3.5 w-3.5" /> Done</Button>
@@ -202,7 +213,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           <div ref={containerRef} className="flex flex-col gap-4">
             {charts.length === 0 && sections.length === 0 ? (
               <div className="border border-dashed p-10 text-center text-sm text-muted-foreground">
-                No charts yet. Press Add chart, or chart a Query in the Logs explorer and press Add to dashboard beside the chart switch.
+                No charts yet. Press Add chart or Add text, or chart a Query in the Logs explorer and press Add to dashboard beside the chart switch.
               </div>
             ) : mounted && (<>
               {unsectioned.charts.length > 0 && grid(unsectioned.charts)}
@@ -218,7 +229,11 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                     onAddChart={() => {
                       // The new chart must show, so a folded Section unfolds.
                       if (folded.has(section.id)) toggleFold(section.id)
-                      setEditor({ chart: null, sectionId: section.id })
+                      setEditor({ kind: 'chart', item: null, sectionId: section.id })
+                    }}
+                    onAddText={() => {
+                      if (folded.has(section.id)) toggleFold(section.id)
+                      setEditor({ kind: 'text', item: null, sectionId: section.id })
                     }}
                     onRename={() => setSectionEditor({ section })}
                     onMove={by => moveSection(section, i + by)}
@@ -227,8 +242,11 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                   {folded.has(section.id) ? null : inSection.length > 0 ? grid(inSection) : (
                     <div className="flex items-center justify-center gap-3 border border-dashed p-4 text-xs text-muted-foreground">
                       No charts in this section.
-                      <Button variant="outline" size="sm" onClick={() => setEditor({ chart: null, sectionId: section.id })}>
+                      <Button variant="outline" size="sm" onClick={() => setEditor({ kind: 'chart', item: null, sectionId: section.id })}>
                         <Plus className="h-3.5 w-3.5" /> Add chart
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setEditor({ kind: 'text', item: null, sectionId: section.id })}>
+                        <Type className="h-3.5 w-3.5" /> Add text
                       </Button>
                     </div>
                   )}
@@ -240,9 +258,20 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
         </TagMenuProvider>
       </div>
 
-      {editor && (
+      {editor?.kind === 'text' && (
+        <TextBlockEditor
+          block={editor.item}
+          sectionId={editor.sectionId}
+          sections={sections}
+          orgSlug={orgSlug}
+          dashboardId={dashboard.id}
+          search={search}
+          onClose={() => setEditor(null)}
+        />
+      )}
+      {editor?.kind === 'chart' && (
         <ChartEditor
-          chart={editor.chart}
+          chart={editor.item}
           sectionId={editor.sectionId}
           projects={projects}
           sections={sections}
@@ -259,12 +288,16 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
       <AlertDialog open={deleting !== null} onOpenChange={open => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete "{deleting?.title}"?</AlertDialogTitle>
-            <AlertDialogDescription>The chart is removed from this Dashboard for everyone. Its Query isn't kept.</AlertDialogDescription>
+            <AlertDialogTitle>{deleting?.title ? `Delete "${deleting.title}"?` : 'Delete this text?'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleting && isTextBlock(deleting)
+                ? "The text is removed from this Dashboard for everyone. It isn't kept."
+                : "The chart is removed from this Dashboard for everyone. Its Query isn't kept."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button variant="destructive" onClick={() => deleting && remove(deleting)}>Delete chart</Button>
+            <Button variant="destructive" onClick={() => deleting && remove(deleting)}>{deleting && isTextBlock(deleting) ? 'Delete text' : 'Delete chart'}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

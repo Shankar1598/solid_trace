@@ -13,6 +13,7 @@ class DashboardChartSerializer
       section_id: @chart.section_id,
       title: @chart.title,
       query: @chart.query,
+      text: @chart.text,
       viz: @chart.viz,
       options: @chart.options,
       x: @chart.x,

@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react'
 import { QueryChart } from '@/components/charts/QueryChart'
 import { ChartSkeleton } from '@/components/ui/skeleton'
 import { chartOf, formFor } from '@/lib/charts/series'
-import { formOfViz, type ChartOptions, type DashboardViz } from '@/lib/dashboards/dashboard'
+import { THRESHOLD_VIZES, formOfViz, type ChartOptions, type DashboardViz } from '@/lib/dashboards/dashboard'
 import type { LogTable } from '@/lib/logs/table'
 import { LogTableView } from '../../Logs/components/LogTableView'
 
@@ -47,5 +47,7 @@ export function ChartBody({ run, viz, options }: { run: ChartRun; viz: Dashboard
       </div>
     )
   }
-  return <QueryChart table={run.table} form={form} options={options} statName={false} fill colors={colors} hidden={hidden} className="pb-1" />
+  // Only a line or area chart draws its threshold lines, as the editor's preview shows while the viz changes.
+  const thresholds = THRESHOLD_VIZES.includes(viz) ? options.thresholds : undefined
+  return <QueryChart table={run.table} form={form} options={options} statName={false} thresholds={thresholds} fill colors={colors} hidden={hidden} className="pb-1" />
 }

@@ -9,7 +9,8 @@ module McpTools
     description "Runs a Chart's saved Query on its Project over a range and answers the table the Chart draws: " \
                 "#{Table::SHAPE}. With filters, it runs as the Dashboard page does with those values picked in its filter bar; " \
                 "a filter not given runs with its default values, as when the page opens. " \
-                "The answer's filters are the values it ran with, {name: [values]}, and a filter not in it ran as All."
+                "The answer's filters are the values it ran with, {name: [values]}, and a filter not in it ran as All. " \
+                "A Text block (viz text) has no data: the answer says so, with its text."
     read_only!
     takes_chart
     takes_range
@@ -24,6 +25,8 @@ module McpTools
     }
 
     def run
+      return text_block if chart.text?
+
       values = dashboard.filter_values(given_filters, defaults: true)
       answer = ChartRuns.run_chart(organization.projects.find(chart.project_id), chart.query,
         from: time_range.from, to: time_range.to, parameters: values)
@@ -36,6 +39,13 @@ module McpTools
     end
 
     private
+
+    # A Text block runs nothing: the answer says so, with its text.
+    def text_block
+      json({ chart: chart.id, title: chart.title, viz: chart.viz, text: chart.text,
+             note: "A Text block: Markdown on the Dashboard. It runs no Query and has no data." },
+        link: links.dashboard(dashboard))
+    end
 
     # The filters argument, {name => value or [values]}. A name the
     # Dashboard lacks is refused rather than run as All, as it is likely a slip.

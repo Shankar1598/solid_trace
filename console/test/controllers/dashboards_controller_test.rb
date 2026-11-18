@@ -172,6 +172,38 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "unit" => "Logs", "decimals" => 0 }, chart.options)
   end
 
+  test "a member saves a line chart's threshold lines from the chart editor" do
+    lines = [ { "value" => 100, "label" => "full", "severity" => "critical" }, { "value" => 80, "severity" => "warn" } ]
+    patch dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug),
+      params: { chart: { viz: "line", options: { stacked: true, thresholds: lines } } }, as: :json
+
+    assert_response :ok
+    assert_equal({ "stacked" => true, "thresholds" => lines }, @chart.reload.options)
+  end
+
+  test "a member adds a Text block with no Project or Query, changes and duplicates it, and its data runs nothing" do
+    post dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { chart: {
+      project_id: "", query: "", title: "", viz: "text", text: "## Runbook", w: 12, h: 2,
+    } }, as: :json
+
+    assert_response :created
+    block = @dashboard.charts.find(response.parsed_body["id"])
+    assert_equal [ "text", "## Runbook", nil, nil, "" ], [ block.viz, block.text, block.project_id, block.query, block.title ]
+    assert_equal "## Runbook", response.parsed_body["text"]
+
+    patch dashboard_chart_url(@dashboard, block, org_slug: @organization.slug), params: { chart: { text: "Restart the worker." } }, as: :json
+    assert_response :ok
+    assert_equal "Restart the worker.", block.reload.text
+
+    post duplicate_dashboard_chart_url(@dashboard, block, org_slug: @organization.slug), as: :json
+    assert_response :created
+    assert_equal [ "text", "Restart the worker.", "" ], response.parsed_body.values_at("viz", "text", "title")
+
+    get data_dashboard_chart_url(@dashboard, block, org_slug: @organization.slug, from: "2026-10-03T08:00:00Z", to: "2026-10-03T10:00:00Z")
+    assert_response :unprocessable_content
+    assert_equal "A Text block runs no Query.", response.parsed_body["error"]
+  end
+
   test "a member edits, duplicates and deletes a chart" do
     patch dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug),
       params: { chart: { title: "All requests", viz: "bar", options: { stacked: false } } }
