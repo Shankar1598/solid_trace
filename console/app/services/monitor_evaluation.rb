@@ -54,17 +54,17 @@ class MonitorEvaluation
   RUN_LEASE = 5.minutes
   # The most states one statement writes.
   STATES_PER_WRITE = 1_000
-  # EventStore answers at most 10,000 rows. A run that sees only some groups
-  # would compare a different subset each time, firing and resolving groups
-  # it merely missed, so a cut table is an error that changes no state.
-  TABLE_CUT = "The Query gives more than 10,000 rows, the most EventStore answers, so a run can't compare every " \
-    "group with the threshold: group by fewer columns, or filter the Logs before the summarize."
-  # The most groups a run compares. The SQL users' row limit is higher, so a
-  # SQL Monitor's run counts the rows itself.
+  # The most groups a run compares: EventStore answers at most this many
+  # rows to a Query. A run that sees only some groups would compare a
+  # different subset each time, firing and resolving groups it merely
+  # missed, so a cut table is an error that changes no state. The SQL users'
+  # row limit is higher, so a SQL Monitor's run counts the rows itself.
   MAX_GROUPS = 10_000
-  SQL_TABLE_CUT = "The SQL gives more than 10,000 rows, the most groups a Monitor compares, so a run can't compare " \
-    "every group with the threshold: group by fewer columns, or filter the rows before the GROUP BY."
-  SQL_OFF = "#{LogMonitor::SQL_OFF}, so the Monitor's SQL can't run. An instance admin can turn them on again.".freeze
+  TABLE_CUT_TEMPLATE = "The %s gives more than #{MAX_GROUPS.to_fs(:delimited)} rows, the most EventStore answers, so a " \
+    "run can't compare every group with the threshold: group by fewer columns, or filter the Logs before the summarize."
+  TABLE_CUT = format(TABLE_CUT_TEMPLATE, "Query").freeze
+  SQL_TABLE_CUT = format(TABLE_CUT_TEMPLATE, "SQL").freeze
+  SQL_OFF = "#{LogMonitor::SQL_QUERIES_OFF}, so the Monitor's SQL can't run. An instance admin can turn them on again.".freeze
   CHANGED_DURING_RUN = "The Monitor was changed during this run, so the run changed nothing. The next run checks it again."
 
   OUT_OF_TIME = "The Query over the current range took the run's #{LogMonitor::RUN_TIMEOUT_SECONDS} s, leaving none " \

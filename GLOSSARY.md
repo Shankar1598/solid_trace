@@ -113,7 +113,7 @@ A request for Logs written in SolidTrace's KQL-style query language. It always r
 _Avoid_: APL, KQL, search
 
 **SQL query**:
-ClickHouse SQL a user runs directly, on installs that leave it on. It runs as its Project's own database user, so it reads only that Project's Logs and Events, in the `logs` and `events` tables, starting from the time range chosen outside the text; other tables, files and URLs are refused, and it stops at fixed limits of time and memory.
+ClickHouse SQL a user runs directly, on installs that leave it on. It runs as its Project's own database user, so it reads only that Project's Logs, Events and Spans, in the `logs`, `events` and `spans` tables, starting from the time range chosen outside the text; other tables, files and URLs are refused, and it stops at fixed limits of time and memory.
 _Avoid_: raw query, advanced query
 
 **Logs explorer**:

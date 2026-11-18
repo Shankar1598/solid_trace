@@ -17,12 +17,12 @@ We chose this for three reasons:
 
 ## Amended: a Threshold monitor can read its table through EventStore's SQL endpoint (2026-11-18)
 
-Some alerts need a join, a subquery, a window, or a read of `events` or `spans`, and the Query language has none of them. So a Monitor now has a language, `query` (the default) or `sql`, and a SQL Threshold monitor sends `logs/sql` in place of `logs/query`, with its SQL, `from` and `to`. Console still runs it, through the same `MonitorEvaluation.run`. EventStore sets the range outside the SQL, through the SQL user's row policies, as for a SQL query in the Logs explorer. Its answer has the same table shape as a Query's, so the groups, the Baseline compare, the states and the Notifications do not change.
+Some Monitors need a join, a subquery, a window, or a read of `events` or `spans`. The Query language has none of them. So a Monitor now has a language: `query` (the default) or `sql`. A Threshold monitor with SQL sends `logs/sql` in place of `logs/query`, with its SQL, `from` and `to`. Console still runs it, through the same `MonitorEvaluation.run`. EventStore sets the range outside the SQL, through the SQL user's row policies, as for a SQL query in the Logs explorer. Its answer has the same table shape as a Query's. So the groups, the Baseline compare, the states and the Notifications do not change.
 
 - **SQL is for Threshold monitors only.** A Match monitor reads after its cursor (`after_batch`), which only the query API can do.
 - **Each SQL read stops after 10 seconds**, the SQL users' limit for each statement ([ADR 0003](0003-unrestricted-sql-queries-behind-an-instance-setting.md)). A run that compares the change reads two times, at most 20 seconds, inside the run's 30 seconds.
 - **The run counts the rows itself.** The SQL users' row limit is 100,000, so more than 10,000 rows is the same table cut as for a Query.
-- **The instance setting for SQL queries stays the one control.** While it is off, saving a SQL Monitor is refused, and each run of a saved one fails with the reason.
+- **The instance setting for SQL queries stays the one control.** While it is off, saving a Threshold monitor with SQL is refused, and each run of a saved one fails with the reason.
 
 ## Considered options
 

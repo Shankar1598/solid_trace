@@ -87,7 +87,7 @@ A Monitor's page shows each group's last value, Baseline and change in their own
 
 ### SQL
 
-A Threshold monitor can run a [SQL query](sql.md) in place of a Query, on installs where SQL queries are on. Use a Query when you can. Use SQL when the Monitor needs a join, a subquery, a window, or a read of the `events` or `spans` tables. On the Monitor form, the **Builder | Query | SQL** switch of a Threshold monitor opens the Logs explorer's SQL editor, with the readable SQL of the Query to start from. Picking Match goes back to the Query. Over the MCP server, `create_monitor` and `update_monitor` take `sql` in place of `query`, never both. `get_monitor` and `list_monitors` give each Monitor's `language`, `query` or `sql`, and the Monitor's page and the list of Monitors show it.
+A Threshold monitor can run a [SQL query](sql.md) in place of a Query, on installs where SQL queries are on. Use a Query when you can. Use SQL when the Monitor needs a join, a subquery, a window, or a read of the `events` or `spans` tables. On the Monitor form, a Threshold monitor has the **Builder | Query | SQL** switch. SQL opens the Logs explorer's SQL editor, with the readable SQL of the Query to start from. Picking Match goes back to the Query. Picking Threshold again goes back to the SQL. Over the MCP server, `create_monitor` and `update_monitor` take `sql` in place of `query`, never both. `get_monitor` and `list_monitors` give each Monitor's `language`, `query` or `sql`, and the Monitor's page and the list of Monitors show it.
 
 The rules:
 
@@ -99,7 +99,7 @@ The rules:
 - **Compare the value or the change.** Comparing the change, each run reads the SQL a second time, over the Baseline's range, with the same Baseline rules as a Query. The two reads stop after 10 seconds each, so they stay inside the run's 30 seconds. A group with no row in the Baseline rises from 0.
 - **Preview before you save.** The form lists the groups a run now would find, with no chart: the SQL reads one range, so it has no time bins. `run_monitor` with `preview` true reads what a run now would and gives each group's number, Baseline and change, and whether it would fire. It saves nothing and tells no Integration.
 - **Saving runs the SQL once.** SQL that does not run is refused with ClickHouse's message. A table without exactly one number column is refused. A Match monitor can't use SQL: a match in SQL is a count with the threshold `> 0`.
-- **While SQL queries are off,** saving or previewing a SQL Monitor is refused, and each run of a saved one fails with the reason. You can still rename it, turn it off or delete it. Its form shows the SQL read-only, with "SQL queries are off on this install".
+- **While SQL queries are off,** saving or previewing a Threshold monitor with SQL is refused, and each run of a saved one fails with the reason. You can still rename it, turn it off or delete it. Its form shows the SQL read-only, with "SQL queries are off on this install".
 
 Example: Sidekiq jobs that wait too long, by region and queue, but not in a region where Sidekiq restarted in the Monitor's range. With a range of 10 minutes, the operator `>` and the threshold 30, each region and queue whose longest wait is more than 30 seconds fires, except in a region that restarted in the last 10 minutes:
 

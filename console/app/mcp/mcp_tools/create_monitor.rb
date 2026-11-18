@@ -14,9 +14,7 @@ module McpTools
     takes_monitor_fields required: %i[name kind]
 
     def run
-      unless arguments.key?(:query) || arguments.key?(:sql)
-        raise ToolError, InstanceSetting.current.sql_queries_enabled? ? "Give query, or sql for a Monitor that needs SQL." : "Give query."
-      end
+      needs_text!
 
       made = organization.monitors.new
       save_monitor!(made, monitor_attributes)

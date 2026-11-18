@@ -100,9 +100,7 @@ module McpTools
 
     def new_monitor
       raise ToolError, "Give project for a new Monitor, or monitor for a saved one." unless arguments.key?(:project)
-      unless arguments.key?(:query) || arguments.key?(:sql)
-        raise ToolError, InstanceSetting.current.sql_queries_enabled? ? "Give query, or sql for a Monitor that needs SQL." : "Give query."
-      end
+      needs_text!
 
       organization.monitors.new(kind: "threshold")
     end

@@ -7,7 +7,7 @@ module McpTools
     include MonitorTool
 
     description "Changes a Monitor. Only the fields given change. A new project points the Query's source at it, as the " \
-                "Monitor form does, unless a query is given; a SQL Monitor's SQL then reads the new Project's tables. integration_ids replaces the Integrations it tells. enabled false " \
+                "Monitor form does, unless a query is given; a Monitor's SQL then reads the new Project's tables. integration_ids replaces the Integrations it tells. enabled false " \
                 "turns it off, which resolves its firing groups, as switching compare between value and change does; enabled true turns it on, which checks its Query again, and a " \
                 "Query that no longer runs keeps it off."
     writes!(open_world: true)

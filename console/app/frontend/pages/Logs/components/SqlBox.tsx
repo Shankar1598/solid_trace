@@ -1,4 +1,5 @@
 import { QueryEditor } from '@/components/QueryEditor'
+import { SQL_PLACEHOLDER } from '@/lib/logs/sqlMode'
 import { LeavingNotice } from './QueryBox'
 
 interface SqlBoxProps {
@@ -21,7 +22,7 @@ export function SqlBox({ text, onChange, onRun, leaving, onDiscard, onStay }: Sq
         onRun={onRun}
         language="sql"
         label="SQL"
-        placeholder="SELECT level, count(*) FROM logs GROUP BY level"
+        placeholder={SQL_PLACEHOLDER}
         maxLines={12}
         autoFocus
         focusShortcut="focus-query"

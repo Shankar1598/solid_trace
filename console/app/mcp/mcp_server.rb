@@ -80,7 +80,6 @@ module McpServer
   def self.build(user:, request_url:, organization: nil)
     tools = TOOLS.select(&:listed?)
     tools = tools.reject(&:instance_admin_only?) if organization
-    tools = tools.map(&:as_listed)
     MCP::Server.new(
       name: "solidtrace",
       title: "SolidTrace",

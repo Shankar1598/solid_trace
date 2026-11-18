@@ -38,7 +38,11 @@ class LogMonitor < ApplicationRecord
   # The most time a SQL Monitor gives each read: the SQL users' own limit
   # for each statement (ADR 0003).
   SQL_READ_TIMEOUT_SECONDS = 10
-  SQL_OFF = "SQL queries are off on this install"
+  # Why a SQL Monitor is refused, and its SQL is read-only, while SQL
+  # queries are off. MonitorEvaluation::SQL_OFF is a run's message.
+  SQL_QUERIES_OFF = "SQL queries are off on this install"
+  # The most characters of a Monitor's Query or SQL.
+  MAX_TEXT_LENGTH = 20_000
   # A Threshold monitor's range ends this long before its run, so Logs
   # still waiting for Log processing are not counted as missing.
   PROCESSING_LAG = 60.seconds
@@ -66,7 +70,7 @@ class LogMonitor < ApplicationRecord
   scope :due, ->(now) { enabled.where(next_run_at: nil).or(enabled.where(next_run_at: ..(now + SCHEDULE_SLACK))) }
 
   validates :name, presence: true, length: { maximum: 200 }
-  validates :query, presence: true, length: { maximum: 20_000 }, unless: :language_sql?
+  validates :query, presence: true, length: { maximum: MAX_TEXT_LENGTH }, unless: :language_sql?
   validate :sql_given, if: :language_sql?
   validate :sql_for_threshold_only, if: :language_sql?
   validates :interval_minutes, numericality: { only_integer: true, in: 1..MAX_INTERVAL_MINUTES }
@@ -305,7 +309,7 @@ class LogMonitor < ApplicationRecord
   # A SQL Monitor's text, with the Query's limits, named as SQL.
   def sql_given
     if query.blank? then errors.add(:sql, :blank)
-    elsif query.length > 20_000 then errors.add(:sql, :too_long, count: 20_000)
+    elsif query.length > MAX_TEXT_LENGTH then errors.add(:sql, :too_long, count: MAX_TEXT_LENGTH)
     end
   end
 

@@ -43,7 +43,7 @@ class MonitorQueryCheck
   rescue EventStore::Rejected => e
     query_errors(e.body)
   rescue EventStore::SQLQueriesOff
-    @monitor.errors.add(:base, LogMonitor::SQL_OFF)
+    @monitor.errors.add(:base, LogMonitor::SQL_QUERIES_OFF)
   rescue EventStore::TimedOut => e
     add("took longer than #{timeout_seconds} s to run: #{EventStore.error_text(e.body)}")
   rescue EventStore::Unavailable => e
@@ -54,7 +54,7 @@ class MonitorQueryCheck
   private
 
   def check_sql
-    return @monitor.errors.add(:base, LogMonitor::SQL_OFF) unless InstanceSetting.current.sql_queries_enabled?
+    return @monitor.errors.add(:base, LogMonitor::SQL_QUERIES_OFF) unless InstanceSetting.current.sql_queries_enabled?
 
     from, to = @monitor.window(@now)
     answer = EventStore.run_logs_sql(

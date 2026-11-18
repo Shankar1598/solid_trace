@@ -87,14 +87,15 @@ module McpTools
     # tools' descriptions say of it then.
     SQL = {
       type: "string",
-      description: "ClickHouse SQL the Monitor runs in place of a Query, for a threshold Monitor only. Use query first: " \
-                   "use sql only when the Monitor needs a join, a subquery, a window, or a read of the events or spans " \
-                   "tables. The SQL reads the logs, events and spans tables of the Monitor's Project, as run_sql does. The " \
-                   "range is set outside the SQL: each run reads range_minutes ending 60 seconds before the run, so the SQL " \
-                   "needs no time WHERE. Its table must be the group columns and one number column, such as SELECT service, " \
-                   "count() AS errors FROM logs WHERE level = 'error' GROUP BY service; the columns other than the number " \
-                   "name each group. EventStore runs it before it's saved: SQL that doesn't run, or a table without exactly " \
-                   "one number column, is not saved. Give sql or query, not both. Giving it makes the Monitor's language sql.",
+      description: "A SQL query (ClickHouse SQL) that the Monitor runs in place of a Query. Only a threshold Monitor takes it. " \
+                   "Use query first. Use sql only when the Monitor needs a join, a subquery, a window, or a read of the " \
+                   "events or spans tables. The SQL reads the logs, events and spans tables of the Monitor's Project, as " \
+                   "run_sql does. The range is set outside the SQL. Each run reads range_minutes that end 60 seconds before " \
+                   "the run, so the SQL needs no time condition. Its table must be the group columns and one number column. " \
+                   "For example: SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service. The " \
+                   "columns other than the number column name each group. EventStore runs the SQL before the Monitor is " \
+                   "saved. SQL that does not run is not saved. A table without exactly one number column is not saved. " \
+                   "Give sql or query, not both. Giving sql makes the Monitor's language sql.",
     }.freeze
     SQL_NOTE = "A threshold Monitor that needs a join, a subquery, a window, or the events or spans tables takes sql in " \
                "place of query."
@@ -144,6 +145,14 @@ module McpTools
       attributes.merge!(language: "sql", query: arguments[:sql]) if arguments.key?(:sql)
       attributes[:project] = project if arguments.key?(:project)
       attributes
+    end
+
+    # Refuses a new Monitor without its text: query, or sql while SQL queries
+    # are on.
+    def needs_text!
+      return if arguments.key?(:query) || arguments.key?(:sql)
+
+      raise ToolError, InstanceSetting.current.sql_queries_enabled? ? "Give query, or sql for a Monitor that needs SQL." : "Give query."
     end
 
     # The changes the arguments make to monitor, as #monitor_attributes

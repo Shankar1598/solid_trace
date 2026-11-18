@@ -87,6 +87,7 @@ module McpTools
       def argument(name, schema, required: false)
         @properties = properties.merge(name.to_sym => schema)
         @required = (required_arguments + (required ? [ name.to_sym ] : [])).uniq
+        @input_schema_without_sql = nil
         input_schema({ properties: @properties, required: @required.presence }.compact)
       end
 
@@ -121,8 +122,8 @@ module McpTools
       # create_monitor's sql. note, which needs the description given before,
       # is added to the tool's description only while they are on.
       def sql_argument(name, schema, note: nil)
-        @description_without_sql ||= description_value
-        description([ description_value, note ].compact.join(" "))
+        @description_without_sql ||= @description_value
+        description([ @description_value, note ].compact.join(" "))
         argument(name, schema)
         @sql_arguments = sql_arguments + [ name.to_sym ]
       end
@@ -131,26 +132,21 @@ module McpTools
         @sql_arguments || []
       end
 
-      # The tool as the server lists it now: while SQL queries are off, a copy
-      # without its SQL arguments and their note. A call that gives one
-      # anyway is refused where it is saved or run.
-      def as_listed
-        return self if sql_arguments.empty? || InstanceSetting.current.sql_queries_enabled?
-
-        @without_sql ||= begin
-          tool = self
-          Class.new(self) do
-            tool_name tool.name_value
-            description tool.description_without_sql
-            @annotations_value = tool.annotations_value
-            tool.send(:properties).except(*tool.sql_arguments).each do |name, schema|
-              argument name, schema, required: tool.send(:required_arguments).include?(name)
-            end
-          end
-        end
+      # The description and the input schema as the server lists them now.
+      # While SQL queries are off, they do not have the SQL arguments and
+      # their note. A call that gives one anyway is refused where it is saved
+      # or run. The tool class itself is listed, so it keeps all its settings.
+      def description_value
+        sql_hidden? ? @description_without_sql : super
       end
 
-      attr_reader :description_without_sql
+      def input_schema_value
+        return super unless sql_hidden?
+
+        @input_schema_without_sql ||= MCP::Tool::InputSchema.new(
+          { properties: properties.except(*sql_arguments), required: (required_arguments - sql_arguments).presence }.compact
+        )
+      end
 
       # A tool on the install's settings, for an instance admin only. An
       # OAuth token's server does not have it.
@@ -175,6 +171,11 @@ module McpTools
 
       def required_arguments
         @required || []
+      end
+
+      # Whether the tool has SQL arguments that the server must not list now.
+      def sql_hidden?
+        sql_arguments.any? && !InstanceSetting.current.sql_queries_enabled?
       end
     end
 

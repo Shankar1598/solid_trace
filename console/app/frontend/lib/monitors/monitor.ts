@@ -2,6 +2,7 @@
 // Monitor is saved: the groups a run would fire now, read from a table as
 // MonitorEvaluation reads it, and the Queries its preview chart runs.
 import type { Builder } from '@/lib/logs/builder'
+import type { Mode as ExplorerMode } from '@/lib/logs/explorerState'
 import type { LogTable } from '@/lib/logs/table'
 import { valueText } from '@/lib/charts/axis'
 import { rangeMs, type TimeRange } from '@/lib/timeRange'
@@ -98,21 +99,44 @@ export interface Monitor extends MonitorSettings {
   integrations?: IntegrationOption[]
 }
 
-/** Why a SQL Monitor's SQL can't be changed, as LogMonitor::SQL_OFF says it. */
-export const SQL_OFF = 'SQL queries are off on this install'
+/** Why the SQL of a Threshold monitor with SQL can't be changed: a copy of LogMonitor::SQL_QUERIES_OFF. */
+export const SQL_QUERIES_OFF = 'SQL queries are off on this install'
 
 export const LANGUAGE_NAMES: Record<MonitorLanguage, string> = { query: 'Query', sql: 'SQL' }
 
 /**
- * How the form edits a Monitor's text: the Query / SQL switch shows for a
- * Threshold monitor while SQL queries are on, and a SQL Monitor's SQL is
- * read-only, with the reason, while they are off.
+ * How the form edits a Monitor's text. A Threshold monitor shows the Query /
+ * SQL switch while SQL queries are on, and the switch's label then names SQL.
+ * While SQL queries are off, the SQL of a Threshold monitor with SQL is
+ * read-only, and the form shows the reason.
  */
-export function textEditing(kind: MonitorKind, language: MonitorLanguage, sqlQueriesEnabled: boolean): { switch: boolean; readOnly: string | null } {
+export function textEditing(kind: MonitorKind, language: MonitorLanguage, sqlQueriesEnabled: boolean): {
+  switch: boolean; label: string; readOnly: string | null
+} {
+  const offersSql = kind === 'threshold' && sqlQueriesEnabled
   return {
-    switch: kind === 'threshold' && sqlQueriesEnabled,
-    readOnly: language === 'sql' && !sqlQueriesEnabled ? SQL_OFF : null,
+    switch: offersSql,
+    label: offersSql ? 'Edit the Query in, or write SQL' : 'Edit the Query in',
+    readOnly: language === 'sql' && !sqlQueriesEnabled ? SQL_QUERIES_OFF : null,
   }
+}
+
+/** Where the form edits its text, and whether it left SQL for a Match monitor. */
+export interface TextPlace { mode: ExplorerMode; leftSql: boolean }
+
+/**
+ * The form's text after a pick of kind, or null when it does not change. A
+ * Match monitor runs a Query, so it leaves SQL, and Threshold goes back to
+ * the SQL. While SQL queries are off, the read-only SQL stays shown, so a
+ * save never puts the Query in place of the SQL.
+ */
+export function kindPicked(next: MonitorKind, at: TextPlace, sqlQueriesEnabled: boolean): (TextPlace & { notice: string | null }) | null {
+  if (!sqlQueriesEnabled) return null
+  if (next === 'match' && at.mode === 'sql') {
+    return { mode: 'query', leftSql: true, notice: 'A Match monitor runs a Query. Pick Threshold to go back to the SQL.' }
+  }
+  if (next === 'threshold' && at.leftSql) return { mode: 'sql', leftSql: false, notice: null }
+  return null
 }
 
 /** Whether value passes the threshold, by the operator. */

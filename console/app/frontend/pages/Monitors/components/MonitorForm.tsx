@@ -18,11 +18,13 @@ import { RunError, fetchReadableSql, validateQuery, type QueryProblem } from '@/
 import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/builder'
 import { fieldInfos } from '@/lib/logs/columns'
 import { errorParts, sqlErrorMarks } from '@/lib/logs/errorParts'
+import type { Mode as ExplorerMode } from '@/lib/logs/explorerState'
+import { SQL_PLACEHOLDER } from '@/lib/logs/sqlMode'
 import type { LogTable } from '@/lib/logs/table'
 import { fetchGroupsPreview, type PreviewGroup } from '@/lib/monitors/api'
 import {
   BASELINES, CHANGE_OPERATORS, CHANGE_WORDS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, baselineRangeText, changeText,
-  groupLabel, groupsNow, minimumText, previewCaption, textEditing, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
+  groupLabel, groupsNow, kindPicked, minimumText, previewCaption, textEditing, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
   type MonitorBaseline, type MonitorCompare, type MonitorKind, type MonitorLanguage,
   type MonitorSettings, type ValueOperator,
 } from '@/lib/monitors/monitor'
@@ -40,26 +42,30 @@ const PROCESSING_LAG_MS = 60_000
 /** Groups listed under the chart; the rest are counted. */
 const GROUPS_SHOWN = 20
 
-/** How the text is edited: a Query in the Builder or as text, or a Threshold monitor's SQL. */
-type Mode = 'builder' | 'query' | 'sql'
-/** The placeholder of the Logs explorer's SQL editor. */
-const SQL_PLACEHOLDER = 'SELECT level, count(*) FROM logs GROUP BY level'
+/** How the text is edited: a Query in the Builder or as text, or the SQL of a Threshold monitor with SQL. */
+type Mode = ExplorerMode
 type Run = { status: 'running' } | { status: 'done'; table: LogTable } | { status: 'error'; message: string }
 type GroupsRun = { status: 'running' } | { status: 'done'; groups: PreviewGroup[] } | { status: 'error'; message: string }
 
 /**
- * Makes or edits a Monitor: its name, Project and kind, its Query in the
- * Builder or the Query editor (checked through validate), or for a Threshold
- * monitor while SQL queries are on its SQL in the Logs explorer's SQL editor,
- * its schedule and rule, and its Integrations. While SQL queries are off, a
- * SQL Monitor's SQL is read-only, with the reason. A Threshold monitor
- * previews its Query over the last 24 hours, binned by its range, with the threshold drawn, and lists the
- * groups a run would fire now. Comparing the change, the chart has the Query
- * now and over the Baseline's 24 hours, moved onto the same axis, and the
- * server lists the groups that would fire, compared as a run compares them.
- * A SQL Monitor has no chart, as its SQL reads one range and can't be put
- * in time bins: the server lists its groups. Saving posts through Inertia;
- * the server's errors show beside their fields.
+ * Makes or edits a Monitor: its name, its Project, its kind, its text, its
+ * schedule, its rule and its Integrations.
+ *
+ * - The text is a Query in the Builder or the Query editor, checked through
+ *   validate. While SQL queries are on, a Threshold monitor can have SQL in
+ *   place of the Query, in the Logs explorer's SQL editor.
+ * - While SQL queries are off, the SQL of a Threshold monitor with SQL is
+ *   read-only, and the form shows the reason.
+ * - A Threshold monitor charts its Query over the last 24 hours, binned by
+ *   its range, with the threshold drawn. It also lists the groups that a run
+ *   now would fire.
+ * - Comparing the change, the chart also has the Query over the Baseline's
+ *   24 hours, on the same axis. The server lists the groups that would fire,
+ *   compared as a run compares them.
+ * - A Threshold monitor with SQL has no chart, because its SQL reads one
+ *   range and has no time bins. The server lists its groups.
+ *
+ * Saving posts through Inertia. The server's errors show next to their fields.
  */
 export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlug, sqlQueriesEnabled }: {
   monitor: MonitorSettings
@@ -79,8 +85,12 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   const [query, setQuery] = useState(openedInSql && project ? queryOf(EMPTY_BUILDER, project.slug) : monitor.query)
   const [sql, setSql] = useState(openedInSql ? monitor.query : '')
   const [mode, setMode] = useState<Mode>(openedInSql ? 'sql' : 'builder')
+  // Whether picking Match left the SQL, so that picking Threshold goes back to it.
+  const [leftSql, setLeftSql] = useState(false)
   const sqlMode = mode === 'sql'
   const language: MonitorLanguage = sqlMode ? 'sql' : 'query'
+  /** The text a save or the groups preview sends: the SQL in SQL mode, else the Query. */
+  const text = sqlMode ? sql : query
   const [builder, setBuilder] = useState<Builder | null>(null)
   const [intervalText, setIntervalText] = useState(String(monitor.interval_minutes))
   const [range, setRange] = useState(String(monitor.range_minutes))
@@ -211,7 +221,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
     const timer = setTimeout(async () => {
       try {
         const answer = await fetchGroupsPreview(orgSlug, {
-          project_id: project.id, language, query: sqlMode ? sql : query, range_minutes: rangeMinutes, compare,
+          project_id: project.id, language, query: text, range_minutes: rangeMinutes, compare,
           baseline: comparesChange ? baseline : null, operator: comparesChange ? direction : operator,
           threshold: thresholdValue, minimum: minimum.trim(), notify_by_group: byGroup, alert_on_no_data: noData,
         }, controller.signal)
@@ -277,13 +287,14 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       .catch(() => setNotice('The Query has mistakes, so it could not be written as SQL. Write the SQL here.'))
   }
 
-  // A Match monitor runs a Query: picking one leaves SQL, which comes back on picking Threshold and SQL.
+  // A Match monitor runs a Query: picking one leaves SQL, and picking Threshold goes back to it (kindPicked).
   const pickKind = (next: MonitorKind) => {
     setKind(next)
-    if (next === 'match' && sqlMode) {
-      setMode('query')
-      setNotice('A Match monitor runs a Query. Pick Threshold to go back to the SQL.')
-    }
+    const picked = kindPicked(next, { mode, leftSql }, sqlQueriesEnabled)
+    if (!picked) return
+    setMode(picked.mode)
+    setLeftSql(picked.leftSql)
+    setNotice(picked.notice)
   }
 
   const toggleIntegration = (id: number, on: boolean) =>
@@ -311,7 +322,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
     }
     const data = {
       monitor: {
-        name: name.trim(), kind, project_id: project.id, language, query: sqlMode ? sql : query,
+        name: name.trim(), kind, project_id: project.id, language, query: text,
         interval_minutes: intervalText, range_minutes: range, compare, baseline: comparesChange ? baseline : null,
         operator: comparesChange ? direction : operator, threshold, minimum: comparesChange ? minimum.trim() : '',
         notify_by_group: byGroup, alert_on_no_data: noData, integration_ids: integrationIds,
@@ -404,7 +415,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       <FormSection
         title={sqlMode ? 'SQL' : 'Query'}
         actions={modes.includes(mode) && (
-          <Segmented label="Edit the Query in" size="sm" value={mode} options={modes.map(m => ({ value: m, label: MODE_LABELS[m] }))} onChange={switchMode} />
+          <Segmented label={editing.label} size="sm" value={mode} options={modes.map(m => ({ value: m, label: MODE_LABELS[m] }))} onChange={switchMode} />
         )}
       >
         {notice && <p className="text-xs text-warning">{notice}</p>}
@@ -564,7 +575,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
         <FormSection
           title="Preview"
           description={sqlMode
-            ? 'The groups a run now would find. A SQL Monitor has no chart: its SQL reads one range, so it has no time bins.'
+            ? 'The groups a run now would find. There is no chart: the SQL reads one range, so it has no time bins.'
             : previewCaption(rangeMinutes, comparesChange)}
           actions={<Button type="button" variant="outline" size="sm" onClick={() => setAgain(n => n + 1)}>Refresh preview</Button>}
         >
