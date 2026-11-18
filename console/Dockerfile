@@ -14,8 +14,9 @@ FROM docker.io/library/ruby:$RUBY_VERSION-slim AS base
 # Rails app lives here
 WORKDIR /rails
 
-# Install base packages
+# Install base packages, with Debian's security fixes that the Ruby image doesn't have yet
 RUN apt-get update -qq && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install --no-install-recommends -y curl libjemalloc2 libvips sqlite3 && \
     ln -s /usr/lib/$(uname -m)-linux-gnu/libjemalloc.so.2 /usr/local/lib/libjemalloc.so && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
