@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/pkg/logger"
 )
@@ -216,6 +217,9 @@ func (ch *ClickHouse) tableTTL(ctx context.Context, table string) (string, error
 }
 
 // setTTL sets a table's TTL to want, or removes it for "", when it differs.
+// The ALTER returns once the TTL is set: ClickHouse then works out every
+// part's move time again in the background, a mutation that reads each
+// part's time column, from the bucket too, and that can take minutes.
 func (ch *ClickHouse) setTTL(ctx context.Context, table, want string) error {
 	have, err := ch.tableTTL(ctx, table)
 	if err != nil {
@@ -228,6 +232,8 @@ func (ch *ClickHouse) setTTL(ctx context.Context, table, want string) error {
 	if want == "" {
 		alter = fmt.Sprintf("ALTER TABLE %s REMOVE TTL", table)
 	}
+	// alter_sync 1, the default, would wait for the mutation.
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"alter_sync": 0}))
 	if err := ch.conn.Exec(ctx, alter); err != nil {
 		return fmt.Errorf("setting when the %s table's parts move to the bucket: %w", table, err)
 	}
