@@ -53,7 +53,7 @@ interface QueryChartProps {
    * the explorer's value menu; without it, the legend only shows and hides.
    */
   legendValue?: (field: string, value: SplitValue) => React.ReactNode
-  /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values, and the unit the value axis. */
+  /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values, and the unit labels the value axis, which every column then shares. */
   options?: ChartOptions
   /** A single number's column name over it; off on a Dashboard, whose card title names it. */
   statName?: boolean
@@ -99,12 +99,12 @@ const RIGHT_DASH = '5 3'
  */
 export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, statName = true, thresholds, fill = false, className }: QueryChartProps) {
   const model = useMemo(() => {
-    const made = chartOf(table)
+    const made = chartOf(table, { unit: options?.unit })
     if (!colors) return made
     const kept = keepColors(made, colors.current)
     colors.current = kept.slots
     return kept.model
-  }, [table, colors])
+  }, [table, colors, options?.unit])
   // A table with no series, such as a single number, leaves the ones hidden for the next chart, as it does their colours.
   const hiddenNow = useMemo(() => {
     const kept = keepHidden(model, hidden?.current ?? new Set())
@@ -172,7 +172,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   const [measure, width] = useWidth()
   const [markedTime, setHoverTime] = useHoverTime(useId())
   const config = useMemo<ChartConfig>(
-    () => Object.fromEntries(model.series.map(s => [s.key, { label: s.name, color: s.color }])),
+    () => Object.fromEntries(model.series.map(s => [s.key, { label: s.label, color: s.color }])),
     [model],
   )
   const toggle = (id: string) => {

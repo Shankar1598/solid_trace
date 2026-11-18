@@ -242,6 +242,63 @@ test('a grouped line chart draws its threshold line once, above every value, out
   expect(errors).toEqual([])
 })
 
+test('a line chart of two renamed columns by a field shares one value axis once it has a unit, its legend naming the columns', async ({ page }) => {
+  const errors = watchErrors(page)
+  const name = `Flow columns ${Date.now()}`
+  await page.goto(`/${ORG}/dashboards`)
+  await page.getByRole('button', { name: 'New dashboard' }).first().click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create dashboard' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+
+  // As the first team's Chart: two renamed columns of one unit, split by a field.
+  await page.getByRole('button', { name: 'Add chart' }).click()
+  const editor = page.getByRole('dialog')
+  await useProject(page, editor)
+  await editor.getByRole('group', { name: 'Edit the Query in' }).getByRole('button', { name: 'Query' }).click()
+  await editor.getByLabel('Query', { exact: true }).fill(
+    `${SOURCE}\n| summarize n = count(), e = countif(level == "error") by bin_auto(time), level\n| project time, level, received = n / 60.0, processed = e / 60.0`,
+  )
+  await editor.getByLabel('Title').fill('Received and processed')
+  await editor.getByRole('group', { name: 'Viz' }).getByRole('button', { name: 'Line' }).click()
+  await editor.getByRole('button', { name: 'Add chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await pickQuickRange(page, '1 day')
+  await chartsRan(page, 1)
+  const chart = card(page, 'Received and processed')
+  const legend = chart.locator('[data-chart-legend] [data-chart-series]')
+
+  // With no unit, each renamed column has a value axis, and the legend an entry for each group.
+  await expect(chart.locator('[data-chart-axis]')).toHaveCount(2)
+  await expect(legend.filter({ hasText: ' · ' })).toHaveCount(0)
+
+  await chart.getByRole('button', { name: 'Menu for Received and processed' }).click()
+  await page.getByRole('menuitem', { name: 'Edit' }).click()
+  await editor.getByLabel('Unit').fill('/s')
+  await editor.getByRole('button', { name: 'Save chart' }).click()
+  await expect(editor).toHaveCount(0)
+  await chartsRan(page, 1)
+
+  // With the unit: one value axis, labelled in it, and an entry for each group and column.
+  await expect(legend.filter({ hasText: / · received$/ }).first()).toBeVisible({ timeout: 30_000 })
+  await expect(chart.locator('[data-chart-axis]')).toHaveCount(0)
+  await expect(chart.locator('[data-chart-panel]')).toHaveCount(0)
+  await expect(chart.locator('.recharts-yAxis')).toHaveCount(1)
+  const ticks = await chart.locator('.recharts-yAxis-tick-labels text').evaluateAll(texts => texts.map(t => t.textContent ?? ''))
+  expect(ticks.length).toBeGreaterThan(1)
+  expect(ticks.every(t => t.endsWith(' /s'))).toBe(true)
+  const entries = await legend.allInnerTexts()
+  expect(entries.length).toBeGreaterThan(1)
+  expect(entries.every(e => / · (received|processed)$/.test(e.trim()))).toBe(true)
+  expect(entries.some(e => e.trim().endsWith(' · received'))).toBe(true)
+
+  await page.getByRole('button', { name: 'Dashboard settings' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete dashboard' }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/dashboards$`))
+  expect(errors).toEqual([])
+})
+
 test('a chart whose Query fails shows the error in its card, and the rest of the Dashboard works', async ({ page }) => {
   const errors = watchErrors(page, [failedLoad(422)])
   const name = `Flow broken chart ${Date.now()}`
