@@ -70,8 +70,9 @@ module McpServer
   TEXT
 
   # A server for one request, with the tools listed now: one that needs SQL
-  # queries only while they're on. request_url is the address the request
-  # reached Console at, which the tools' links fall back to (PublicUrls).
+  # queries, or an argument that does, only while they're on. request_url
+  # is the address the request reached Console at, which the tools' links
+  # fall back to (PublicUrls).
   #
   # organization is an OAuth token's one Organization: the tools then act
   # only in it, and the install's settings tools are not on the server, as

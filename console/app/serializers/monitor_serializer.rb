@@ -19,6 +19,7 @@ class MonitorSerializer
       kind: @monitor.kind,
       project_id: @monitor.project_id,
       project: { id: @monitor.project.id, name: @monitor.project.name, slug: @monitor.project.slug },
+      language: @monitor.language,
       query: @monitor.query,
       interval_minutes: @monitor.interval_minutes,
       range_minutes: @monitor.range_minutes,

@@ -14,15 +14,18 @@ import { valueText } from '@/lib/charts/axis'
 import { fetchPreview } from '@/lib/dashboards/api'
 import { withSource } from '@/lib/dashboards/dashboard'
 import { providerName } from '@/lib/integrations'
-import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
+import { RunError, fetchReadableSql, validateQuery, type QueryProblem } from '@/lib/logs/api'
 import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/builder'
 import { fieldInfos } from '@/lib/logs/columns'
+import { errorParts, sqlErrorMarks } from '@/lib/logs/errorParts'
+import type { Mode as ExplorerMode } from '@/lib/logs/explorerState'
+import { SQL_PLACEHOLDER } from '@/lib/logs/sqlMode'
 import type { LogTable } from '@/lib/logs/table'
 import { fetchGroupsPreview, type PreviewGroup } from '@/lib/monitors/api'
 import {
   BASELINES, CHANGE_OPERATORS, CHANGE_WORDS, MAX_INTERVAL_MINUTES, MAX_RANGE_MINUTES, OPERATORS, baselineOffsetMinutes, baselineRangeText, changeText,
-  groupLabel, groupsNow, minimumText, previewCaption, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
-  type MonitorBaseline, type MonitorCompare, type MonitorKind,
+  groupLabel, groupsNow, kindPicked, minimumText, previewCaption, textEditing, withBaselineSeries, withRangeBins, withoutTimeBins, type ChangeOperator, type IntegrationOption,
+  type MonitorBaseline, type MonitorCompare, type MonitorKind, type MonitorLanguage,
   type MonitorSettings, type ValueOperator,
 } from '@/lib/monitors/monitor'
 import { cn } from '@/lib/utils'
@@ -39,34 +42,55 @@ const PROCESSING_LAG_MS = 60_000
 /** Groups listed under the chart; the rest are counted. */
 const GROUPS_SHOWN = 20
 
-type Mode = 'builder' | 'query'
+/** How the text is edited: a Query in the Builder or as text, or the SQL of a Threshold monitor with SQL. */
+type Mode = ExplorerMode
 type Run = { status: 'running' } | { status: 'done'; table: LogTable } | { status: 'error'; message: string }
 type GroupsRun = { status: 'running' } | { status: 'done'; groups: PreviewGroup[] } | { status: 'error'; message: string }
 
 /**
- * Makes or edits a Monitor: its name, Project and kind, its Query in the
- * Builder or the Query editor (checked through validate), its schedule and
- * rule, and its Integrations. A Threshold monitor previews its Query over the
- * last 24 hours, binned by its range, with the threshold drawn, and lists the
- * groups a run would fire now. Comparing the change, the chart has the Query
- * now and over the Baseline's 24 hours, moved onto the same axis, and the
- * server lists the groups that would fire, compared as a run compares them. Saving posts through Inertia; the server's
- * errors show beside their fields.
+ * Makes or edits a Monitor: its name, its Project, its kind, its text, its
+ * schedule, its rule and its Integrations.
+ *
+ * - The text is a Query in the Builder or the Query editor, checked through
+ *   validate. While SQL queries are on, a Threshold monitor can have SQL in
+ *   place of the Query, in the Logs explorer's SQL editor.
+ * - While SQL queries are off, the SQL of a Threshold monitor with SQL is
+ *   read-only, and the form shows the reason.
+ * - A Threshold monitor charts its Query over the last 24 hours, binned by
+ *   its range, with the threshold drawn. It also lists the groups that a run
+ *   now would fire.
+ * - Comparing the change, the chart also has the Query over the Baseline's
+ *   24 hours, on the same axis. The server lists the groups that would fire,
+ *   compared as a run compares them.
+ * - A Threshold monitor with SQL has no chart, because its SQL reads one
+ *   range and has no time bins. The server lists its groups.
+ *
+ * Saving posts through Inertia. The server's errors show next to their fields.
  */
-export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlug }: {
+export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlug, sqlQueriesEnabled }: {
   monitor: MonitorSettings
   /** The Monitor edited, or undefined for a new one. */
   monitorId?: number
   projects: ProjectOption[]
   integrations: IntegrationOption[]
   orgSlug: string
+  sqlQueriesEnabled: boolean
 }) {
   const [name, setName] = useState(monitor.name)
   const [kind, setKind] = useState<MonitorKind>(monitor.kind)
   const [projectId, setProjectId] = useState(monitor.project_id ?? projects[0]?.id)
   const project = projects.find(p => p.id === projectId) ?? projects[0]
-  const [query, setQuery] = useState(monitor.query)
-  const [mode, setMode] = useState<Mode>('builder')
+  const openedInSql = monitor.language === 'sql'
+  // The Query and the SQL are kept apart, so switching between them while the form is open loses neither.
+  const [query, setQuery] = useState(openedInSql && project ? queryOf(EMPTY_BUILDER, project.slug) : monitor.query)
+  const [sql, setSql] = useState(openedInSql ? monitor.query : '')
+  const [mode, setMode] = useState<Mode>(openedInSql ? 'sql' : 'builder')
+  // Whether picking Match left the SQL, so that picking Threshold goes back to it.
+  const [leftSql, setLeftSql] = useState(false)
+  const sqlMode = mode === 'sql'
+  const language: MonitorLanguage = sqlMode ? 'sql' : 'query'
+  /** The text a save or the groups preview sends: the SQL in SQL mode, else the Query. */
+  const text = sqlMode ? sql : query
   const [builder, setBuilder] = useState<Builder | null>(null)
   const [intervalText, setIntervalText] = useState(String(monitor.interval_minutes))
   const [range, setRange] = useState(String(monitor.range_minutes))
@@ -102,9 +126,9 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
     const controller = new AbortController()
     validateQuery({ orgSlug, projectSlug: project.slug, query, signal: controller.signal })
       .then(({ chips }) => {
-        if (!chips) return setMode('query')
+        if (!chips) return setMode(m => (m === 'sql' ? m : 'query'))
         let read = builderOf(chips)
-        if (monitorId === undefined) {
+        if (monitorId === undefined && !openedInSql) {
           if (!read.summarize || read.summarize.aggregates.length === 0) {
             setKind('match')
           } else {
@@ -118,7 +142,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
         }
         setBuilder(read)
       })
-      .catch(() => { if (!controller.signal.aborted) setMode('query') })
+      .catch(() => { if (!controller.signal.aborted) setMode(m => (m === 'sql' ? m : 'query')) })
     return () => controller.abort()
     // Once, for the Query the form opened with.
   }, [])
@@ -129,7 +153,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   // Baseline's 24 hours.
   const previewRun = useRef<AbortController | null>(null)
   useEffect(() => {
-    if (!project || kind !== 'threshold') return
+    if (!project || kind !== 'threshold' || sqlMode) return
     const withBaseline = compare === 'change'
     const controller = new AbortController()
     previewRun.current?.abort()
@@ -183,19 +207,22 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       clearTimeout(timer)
       controller.abort()
     }
-  }, [query, project?.slug, rangeMinutes, kind, compare, baseline, again])
+  }, [query, project?.slug, rangeMinutes, kind, compare, baseline, sqlMode, again])
 
-  // Comparing the change, the groups that would fire now, a moment after the last change: read
-  // over both ranges and compared on the server, as a run reads and compares them.
+  // Comparing the change, or for SQL, the groups that would fire now, a moment after the last
+  // change: read over both ranges and compared on the server, as a run reads and compares them.
   const comparesChange = compare === 'change'
+  const groupsOnServer = comparesChange || sqlMode
   useEffect(() => {
-    if (!project || kind !== 'threshold' || !comparesChange) return
+    if (!project || kind !== 'threshold' || !groupsOnServer) return
+    if (sqlMode && sql.trim() === '') return setChanged({ status: 'error', message: 'Write the SQL to preview its groups.' })
     const controller = new AbortController()
     setChanged({ status: 'running' })
     const timer = setTimeout(async () => {
       try {
         const answer = await fetchGroupsPreview(orgSlug, {
-          project_id: project.id, query, range_minutes: rangeMinutes, compare, baseline, operator: direction,
+          project_id: project.id, language, query: text, range_minutes: rangeMinutes, compare,
+          baseline: comparesChange ? baseline : null, operator: comparesChange ? direction : operator,
           threshold: thresholdValue, minimum: minimum.trim(), notify_by_group: byGroup, alert_on_no_data: noData,
         }, controller.signal)
         setChanged({ status: 'done', groups: answer.groups })
@@ -208,7 +235,8 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       clearTimeout(timer)
       controller.abort()
     }
-  }, [query, project?.id, rangeMinutes, kind, comparesChange, baseline, direction, thresholdValue, minimum, byGroup, noData, again])
+  }, [query, sql, sqlMode, project?.id, rangeMinutes, kind, groupsOnServer, comparesChange, baseline, direction, operator, thresholdValue, minimum,
+    byGroup, noData, again])
 
   const found = useMemo(
     () => (now.status === 'done'
@@ -231,6 +259,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
 
   const switchMode = (next: Mode) => {
     setNotice(null)
+    if (next === 'sql') return openSql()
     if (next === 'query') {
       setMode('query')
       return
@@ -247,6 +276,27 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       .catch(error => setNotice(error.message))
   }
 
+  // Into SQL with the SQL typed before, or else the readable SQL of the Query, as the Logs
+  // explorer opens SQL mode. A run sets the range, so the SQL needs no time condition.
+  const openSql = () => {
+    setMode('sql')
+    if (sql.trim() !== '') return
+    const to = new Date(Date.now() - PROCESSING_LAG_MS)
+    fetchReadableSql({ orgSlug, projectSlug: project.slug, query, from: new Date(to.getTime() - rangeMinutes * 60_000), to })
+      .then(readable => setSql(s => (s.trim() === '' ? readable : s)))
+      .catch(() => setNotice('The Query has mistakes, so it could not be written as SQL. Write the SQL here.'))
+  }
+
+  // A Match monitor runs a Query: picking one leaves SQL, and picking Threshold goes back to it (kindPicked).
+  const pickKind = (next: MonitorKind) => {
+    setKind(next)
+    const picked = kindPicked(next, { mode, leftSql }, sqlQueriesEnabled)
+    if (!picked) return
+    setMode(picked.mode)
+    setLeftSql(picked.leftSql)
+    setNotice(picked.notice)
+  }
+
   const toggleIntegration = (id: number, on: boolean) =>
     setIntegrationIds(ids => (on ? [...ids.filter(i => i !== id), id] : ids.filter(i => i !== id)))
 
@@ -254,22 +304,25 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
     e.preventDefault()
     setSaving(true)
     setErrors({})
-    try {
-      const { errors: mistakes } = await validateQuery({ orgSlug, projectSlug: project.slug, query })
-      setProblems(mistakes)
-      if (mistakes.length > 0) {
+    // A Query is checked here first; SQL only by the server's dry run.
+    if (!sqlMode) {
+      try {
+        const { errors: mistakes } = await validateQuery({ orgSlug, projectSlug: project.slug, query })
+        setProblems(mistakes)
+        if (mistakes.length > 0) {
+          setSaving(false)
+          setMode('query')
+          return
+        }
+      } catch (error) {
+        setErrors({ query: error instanceof Error ? error.message : 'The Query could not be checked.' })
         setSaving(false)
-        setMode('query')
         return
       }
-    } catch (error) {
-      setErrors({ query: error instanceof Error ? error.message : 'The Query could not be checked.' })
-      setSaving(false)
-      return
     }
     const data = {
       monitor: {
-        name: name.trim(), kind, project_id: project.id, query,
+        name: name.trim(), kind, project_id: project.id, language, query: text,
         interval_minutes: intervalText, range_minutes: range, compare, baseline: comparesChange ? baseline : null,
         operator: comparesChange ? direction : operator, threshold, minimum: comparesChange ? minimum.trim() : '',
         notify_by_group: byGroup, alert_on_no_data: noData, integration_ids: integrationIds,
@@ -295,12 +348,17 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   }
 
   const isThreshold = kind === 'threshold'
-  const groups: PreviewGroup[] | undefined = comparesChange
+  const editing = textEditing(kind, language, sqlQueriesEnabled)
+  const modes: Mode[] = editing.switch ? ['builder', 'query', 'sql'] : ['builder', 'query']
+  // The SQL's mistakes, from saving or from the preview, marked where ClickHouse places them.
+  const sqlErrors = [...messagesOf(errors.sql), ...(sqlMode && changed.status === 'error' ? [changed.message] : [])]
+  const sqlMarks = sqlErrors.flatMap(m => sqlErrorMarks(m, sql))
+  const groups: PreviewGroup[] | undefined = groupsOnServer
     ? (changed.status === 'done' ? changed.groups : undefined)
     : found?.groups.map(g => ({ ...g, baseline: null }))
   const firing = groups?.filter(g => g.firing) ?? []
   const listed = [...firing, ...(groups?.filter(g => !g.firing) ?? [])]
-  const groupsRun: Run | GroupsRun = comparesChange ? changed : now
+  const groupsRun: Run | GroupsRun = groupsOnServer ? changed : now
   const minimumValue = minimum.trim() !== '' && Number(minimum) > 0 ? Number(minimum) : null
   // Comparing the value it follows the range; comparing the change it leads the rule's sentence.
   const compareField = (
@@ -342,22 +400,46 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
             label="Kind"
             value={kind}
             options={[{ value: 'threshold', label: 'Threshold' }, { value: 'match', label: 'Match' }]}
-            onChange={setKind}
+            onChange={pickKind}
           />
           <p className="text-xs text-muted-foreground">
             {isThreshold
-              ? 'Runs its Query over a range and fires on a group\'s number: past a threshold, or changed by a percent from its Baseline. The Query ends in a summarize of one number.'
+              ? sqlMode
+                ? 'Runs its SQL over a range and fires on a group\'s number: past a threshold, or changed by a percent from its Baseline. The SQL gives the group columns and one number column.'
+                : 'Runs its Query over a range and fires on a group\'s number: past a threshold, or changed by a percent from its Baseline. The Query ends in a summarize of one number.'
               : 'Reads the Logs ingested since its last run and sends one message when any match its Query.'}
           </p>
         </div>
       </div>
 
       <FormSection
-        title="Query"
-        actions={<Segmented label="Edit the Query in" size="sm" value={mode} options={[{ value: 'builder', label: 'Builder' }, { value: 'query', label: 'Query' }]} onChange={switchMode} />}
+        title={sqlMode ? 'SQL' : 'Query'}
+        actions={modes.includes(mode) && (
+          <Segmented label={editing.label} size="sm" value={mode} options={modes.map(m => ({ value: m, label: MODE_LABELS[m] }))} onChange={switchMode} />
+        )}
       >
         {notice && <p className="text-xs text-warning">{notice}</p>}
-        {mode === 'builder' ? (
+        {sqlMode ? (
+          <div data-monitor-sql>
+            <QueryEditor
+              value={sql}
+              onChange={setSql}
+              onRun={() => setAgain(n => n + 1)}
+              language="sql"
+              label="SQL"
+              placeholder={SQL_PLACEHOLDER}
+              marks={sqlMarks}
+              maxLines={12}
+              readOnly={editing.readOnly !== null}
+            />
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              {editing.readOnly
+                ? <span className="text-warning" data-monitor-sql-off>{editing.readOnly}, so the SQL can't be changed.</span>
+                : <>ClickHouse SQL over the Project's <code>logs</code>, <code>events</code> and <code>spans</code>. Each run sets its range, so the SQL needs no time condition. Give the group columns and one number column.</>}
+            </div>
+            <FieldError name="SQL" error={errors.sql} sql={sql} />
+          </div>
+        ) : mode === 'builder' ? (
           <div className="border">
             {builder ? (
               <BuilderPanel
@@ -394,6 +476,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
           </div>
         )}
         <FieldError name="Query" error={errors.query} />
+        <FieldError error={errors.base} />
       </FormSection>
 
       <FormSection title={isThreshold ? 'When it fires' : 'When it runs'}>
@@ -491,20 +574,24 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
       {isThreshold && (
         <FormSection
           title="Preview"
-          description={previewCaption(rangeMinutes, comparesChange)}
+          description={sqlMode
+            ? 'The groups a run now would find. There is no chart: the SQL reads one range, so it has no time bins.'
+            : previewCaption(rangeMinutes, comparesChange)}
           actions={<Button type="button" variant="outline" size="sm" onClick={() => setAgain(n => n + 1)}>Refresh preview</Button>}
         >
-          <div className="min-h-48 border" data-monitor-preview>
-            <RunView run={chart}>
-              {({ table }) => (table.rows.length === 0
-                ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
-                : <QueryChart table={table} form="line" threshold={comparesChange ? undefined : thresholdValue ?? undefined} className="pb-1" />)}
-            </RunView>
-          </div>
+          {!sqlMode && (
+            <div className="min-h-48 border" data-monitor-preview>
+              <RunView run={chart}>
+                {({ table }) => (table.rows.length === 0
+                  ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
+                  : <QueryChart table={table} form="line" threshold={comparesChange ? undefined : thresholdValue ?? undefined} className="pb-1" />)}
+              </RunView>
+            </div>
+          )}
           <div className="space-y-1.5" data-monitor-groups>
             <h3 className="text-sm font-medium">If it ran now</h3>
-            <RunView run={groupsRun}>
-              {() => (!comparesChange && found?.error ? (
+            <RunView run={groupsRun} sql={sqlMode ? sql : undefined}>
+              {() => (!groupsOnServer && found?.error ? (
                 <p role="alert" className="text-xs text-destructive">{found.error}</p>
               ) : listed.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Finds no rows, so nothing would fire{noData ? '' : ' (turn on Alert on no data to fire on that)'}.</p>
@@ -598,21 +685,46 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   )
 }
 
-/** A field's errors from the server, each after the field's name, wrapping within the field's width rather than widening it. */
-function FieldError({ name, error }: { name: string; error: unknown }) {
-  const messages = (Array.isArray(error) ? error : error ? [error] : []).map(String)
+const MODE_LABELS: Record<Mode, string> = { builder: 'Builder', query: 'Query', sql: 'SQL' }
+
+function messagesOf(error: unknown): string[] {
+  return (Array.isArray(error) ? error : error ? [error] : []).map(String)
+}
+
+/**
+ * A field's errors from the server, each after the field's name, wrapping within the field's width rather than widening it.
+ * With the SQL, an error at a position also shows the SQL's line and a caret under it, as the Logs explorer does.
+ */
+function FieldError({ name, error, sql }: { name?: string; error: unknown; sql?: string }) {
   return (
     <>
-      {messages.map((m, i) => <p key={i} role="alert" className="w-0 min-w-full text-xs text-destructive">{name} {m}</p>)}
+      {messagesOf(error).map((m, i) => (
+        <div key={i} role="alert" className="w-0 min-w-full text-xs text-destructive">
+          <ErrorText message={name ? `${name} ${m}` : m} sql={sql} />
+        </div>
+      ))}
     </>
   )
 }
 
-function RunView<R extends Run | GroupsRun>({ run, children }: { run: R; children: (done: Extract<R, { status: 'done' }>) => React.ReactNode }) {
+/** An error's prose, and for SQL that fails at a position, the SQL's line with a caret under it. */
+function ErrorText({ message, sql }: { message: string; sql?: string }) {
+  return (
+    <>
+      {errorParts(message, sql).map((part, i) => (part.kind === 'pointer'
+        ? <pre key={i} className="overflow-x-auto font-mono">{part.text}</pre>
+        : <p key={i} className="whitespace-pre-wrap break-words">{part.text}</p>))}
+    </>
+  )
+}
+
+function RunView<R extends Run | GroupsRun>({ run, sql, children }: {
+  run: R; sql?: string; children: (done: Extract<R, { status: 'done' }>) => React.ReactNode
+}) {
   if (run.status === 'running') {
     return <ChartSkeleton label="Running the preview" />
   }
-  if (run.status === 'error') return <p role="alert" className="p-3 text-xs text-destructive">{run.message}</p>
+  if (run.status === 'error') return <div role="alert" className="space-y-2 p-3 text-xs text-destructive"><ErrorText message={run.message} sql={sql} /></div>
   return <>{children(run as Extract<R, { status: 'done' }>)}</>
 }
 

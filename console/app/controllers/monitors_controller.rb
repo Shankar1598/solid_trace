@@ -34,7 +34,7 @@ class MonitorsController < ApplicationController
 
     render inertia: "Monitors/New", props: form_props.merge(
       monitor: {
-        id: nil, name: "", kind: "threshold", project_id: project&.id,
+        id: nil, name: "", kind: "threshold", project_id: project&.id, language: "query",
         query: params[:query].presence || (project && "['#{project.slug}']\n| summarize count()"),
         interval_minutes: 1, range_minutes: range || 5, compare: "value", baseline: nil, minimum: nil, operator: ">", threshold: nil,
         notify_by_group: false, alert_on_no_data: false, integration_ids: [],
@@ -113,7 +113,9 @@ class MonitorsController < ApplicationController
   # number, its Baseline when comparing the change, and whether it would
   # fire, read and compared as a run does (MonitorEvaluation.preview). Both
   # reads are one chart run. A rule saving would refuse (LogMonitor#rule_problems)
-  # is said in place of the groups, reading nothing.
+  # is said in place of the groups, reading nothing. With language sql, query
+  # is the SQL, read through EventStore's SQL endpoint as a run reads it;
+  # while SQL queries are off the preview says so in place of the groups.
   def preview_groups
     monitor = @current_org.monitors.new(monitor_params.merge(kind: "threshold"))
     raise ActiveRecord::RecordNotFound, "no such Project" unless monitor.project
@@ -141,6 +143,7 @@ class MonitorsController < ApplicationController
     {
       projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
       integrations: IntegrationOptionSerializer.list(@current_org.integrations.order(:name)),
+      sql_queries_enabled: InstanceSetting.current.sql_queries_enabled?,
     }
   end
 
@@ -148,7 +151,7 @@ class MonitorsController < ApplicationController
   # Project is no Project. LogMonitor#save_with looks up the Integrations.
   def monitor_params
     permitted = params.require(:monitor).permit(
-      :project_id, :name, :kind, :query, :interval_minutes, :range_minutes, :compare, :baseline, :minimum, :operator, :threshold,
+      :project_id, :name, :kind, :language, :query, :interval_minutes, :range_minutes, :compare, :baseline, :minimum, :operator, :threshold,
       :notify_by_group, :alert_on_no_data
     )
     permitted[:project] = @current_org.projects.find_by(id: permitted.delete(:project_id)) if permitted.key?(:project_id)
@@ -163,9 +166,10 @@ class MonitorsController < ApplicationController
   # Whether a Threshold monitor's Query groups by columns, as its summarize
   # in the Builder's chips shows, so its summary sentence can say "the
   # number" for its one group. nil when that can't be known: a Match
-  # monitor, a Query the Builder can't show, or EventStore not answering.
+  # monitor, a SQL Monitor, a Query the Builder can't show, or EventStore
+  # not answering.
   def by_columns?(monitor)
-    return unless monitor.kind_threshold?
+    return unless monitor.kind_threshold? && monitor.language_query?
 
     summarize = EventStore.validate_logs_query(project_id: monitor.project_id, query: monitor.query).dig("chips", "summarize")
     summarize["by"].present? if summarize

@@ -113,7 +113,7 @@ A request for Logs written in SolidTrace's KQL-style query language. It always r
 _Avoid_: APL, KQL, search
 
 **SQL query**:
-ClickHouse SQL a user runs directly, on installs that leave it on. It runs as its Project's own database user, so it reads only that Project's Logs and Events, in the `logs` and `events` tables, starting from the time range chosen outside the text; other tables, files and URLs are refused, and it stops at fixed limits of time and memory.
+ClickHouse SQL a user runs directly, on installs that leave it on. It runs as its Project's own database user, so it reads only that Project's Logs, Events and Spans, in the `logs`, `events` and `spans` tables, starting from the time range chosen outside the text; other tables, files and URLs are refused, and it stops at fixed limits of time and memory.
 _Avoid_: raw query, advanced query
 
 **Logs explorer**:
@@ -149,11 +149,11 @@ A titled group of a **Dashboard**'s **Charts**, in an order the members set. The
 _Avoid_: group, row, panel, folder
 
 **Monitor**:
-A saved **Query** on one of an organization's **Projects** that runs every few minutes and tells its **Integrations** what it finds. A Threshold monitor's Query ends in a summarize of one number per group; a group fires when its number passes the threshold and resolves when it no longer does. A Match monitor sends the **Logs** ingested since its last run that match its Query. Any member of the organization can see, make, change and delete it.
+A saved **Query** or **SQL query** on one of an organization's **Projects** that runs every few minutes and tells its **Integrations** what it finds. A Threshold monitor's Query or SQL query gives one number per group; a group fires when its number passes the threshold and resolves when it no longer does. A Match monitor sends the **Logs** ingested since its last run that match its Query. Any member of the organization can see, make, change and delete it.
 _Avoid_: alert, alert rule, check
 
 **Threshold monitor**:
-A **Monitor** whose **Query** ends in a summarize of one number per row. Each row is a group, named by its other columns, and each run reads the Monitor's range ending 60 seconds before the run. A group is **firing** while its number passes the threshold and **ok** otherwise. The number is either the value itself or its percent change from its **Baseline**.
+A **Monitor** whose **Query** ends in a summarize of one number per row, or whose **SQL query** gives one number per row. Each row is a group, named by its other columns, and each run reads the Monitor's range ending 60 seconds before the run. A group is **firing** while its number passes the threshold and **ok** otherwise. The number is either the value itself or its percent change from its **Baseline**.
 _Avoid_: metric alert, threshold alert, threshold rule
 
 **Baseline**:
@@ -161,7 +161,7 @@ A **Threshold monitor** group's number over an earlier range of the same length:
 _Avoid_: previous value, comparison window, reference period
 
 **Match monitor**:
-A **Monitor** whose **Query** returns **Logs**. Each run reads the Logs ingested since the last one, in **Log batch** order, and sends one **Notification** when any match. It keeps no state between runs, so it is never firing.
+A **Monitor** whose **Query** returns **Logs**. Each run reads the Logs ingested since the last one, in **Log batch** order, and sends one **Notification** when any match. It keeps no state between runs, so it is never firing. Its text is always a Query.
 _Avoid_: log alert, match rule
 
 **Firing** and **ok**:

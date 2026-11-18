@@ -47,6 +47,13 @@ module McpTestHelper
     ToolAnswer.new(response[:result])
   end
 
+  # The tools the server lists now for user, through its tools/list, each
+  # as a client reads it: name, description and inputSchema.
+  def listed_tools(user: @user)
+    server = McpServer.build(user: user, request_url: CONSOLE_URL)
+    server.handle({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })[:result][:tools]
+  end
+
   # Runs a tool class as user, as the server calls it but without checking
   # its input schema: for tools the server doesn't list, such as a test's.
   def run_tool(tool, user:, **arguments)

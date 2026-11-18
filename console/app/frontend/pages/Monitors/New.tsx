@@ -7,16 +7,17 @@ import type { ProjectOption } from '../Logs/components/BuilderPanel'
 import { MonitorForm } from './components/MonitorForm'
 
 /** A new Monitor, from the explorer's Project, Query and range when it came from there. */
-export default function MonitorsNew({ monitor, projects, integrations }: {
+export default function MonitorsNew({ monitor, projects, integrations, sql_queries_enabled }: {
   monitor: MonitorSettings
   projects: ProjectOption[]
   integrations: IntegrationOption[]
+  sql_queries_enabled: boolean
 }) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
   return (
     <DashboardLayout>
       <PageHeader breadcrumbs={[{ label: 'Monitors', href: `/${orgSlug}/monitors` }, { label: 'New monitor' }]} title="New monitor" />
-      <MonitorForm monitor={monitor} projects={projects} integrations={integrations} orgSlug={orgSlug} />
+      <MonitorForm monitor={monitor} projects={projects} integrations={integrations} orgSlug={orgSlug} sqlQueriesEnabled={sql_queries_enabled} />
     </DashboardLayout>
   )
 }

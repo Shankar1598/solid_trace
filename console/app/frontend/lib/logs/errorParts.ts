@@ -12,6 +12,8 @@
 // Those two lines keep their columns, or the caret points at nothing, while
 // the prose above them wraps to fit a phone.
 
+import type { ProgramMark } from '@/lib/logTransform/program'
+
 /** Some of an error's lines: prose to wrap, or a LINE and its caret to keep as written. */
 export type ErrorPart = { kind: 'prose' | 'pointer'; text: string }
 
@@ -32,6 +34,18 @@ export function errorParts(message: string, sql?: string): ErrorPart[] {
   // Tabs stay tabs, so the caret lines up however wide they are drawn.
   const indent = ' '.repeat(label.length) + before.replace(/[^\t]/g, ' ')
   return [prose, { kind: 'pointer', text: `${label}${line}\n${indent}^` }]
+}
+
+/**
+ * The mark an editor puts under the character at the position ClickHouse
+ * gives for a SQL error, with the error as its message; none when the
+ * message has no position, or its position is not in the SQL.
+ */
+export function sqlErrorMarks(message: string, sql: string): ProgramMark[] {
+  const position = POSITION.exec(message)
+  const at = position ? charIndex(sql, Number(position[1]) - 1) : null
+  if (at === null || at >= sql.length) return []
+  return [{ from: at, to: at + (sql.codePointAt(at)! > 0xffff ? 2 : 1), severity: 'error', message }]
 }
 
 /** The index in `text` of the character that starts at UTF-8 byte `offset`; its length at the end; null past it. */

@@ -437,6 +437,183 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal 1, @monitor.runs.count
   end
 
+  # SQL
+
+  SQL = "SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service"
+
+  test "create_monitor makes a SQL Threshold monitor once EventStore has dry-run its SQL, and get_monitor and list_monitors give its language" do
+    stub_monitor_sql_check(@shop)
+
+    answer = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors in SQL", kind: "threshold", sql: SQL,
+      operator: ">", threshold: 5, notify_by_group: true)
+
+    assert_not answer.error?, answer.text
+    made = @acme.monitors.find_by!(name: "Errors in SQL")
+    assert_equal [ "sql", SQL ], [ made.language, made.query ]
+    assert_equal [ "sql", SQL ], answer.json.values_at("language", "query")
+    assert_requested(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql") { |request| JSON.parse(request.body)["sql"] == SQL }
+    assert_equal [ "sql", SQL ], call_tool(:get_monitor, user: @user, monitor: made.id).json.values_at("language", "query")
+    assert_equal({ "Checkout errors" => "query", "Errors in SQL" => "sql" },
+      call_tool(:list_monitors, user: @user).json["monitors"].to_h { |m| m.values_at("name", "language") })
+  end
+
+  test "create_monitor and update_monitor refuse sql and query together, naming both, and create_monitor needs one" do
+    stub_monitor_sql_check(@shop)
+    both = "Give query or sql, not both: a Monitor runs one of them."
+
+    made = call_tool(:create_monitor, user: @user, project: "shop", name: "Both", kind: "threshold", sql: SQL,
+      query: "['shop'] | summarize count()", operator: ">", threshold: 5)
+    assert_equal both, made.text
+    assert_equal both, call_tool(:update_monitor, user: @user, monitor: @monitor.id, sql: SQL, query: @monitor.query).text
+    assert_equal "Give query, or sql for a Monitor that needs SQL.",
+      call_tool(:create_monitor, user: @user, project: "shop", name: "None", kind: "threshold", operator: ">", threshold: 5).text
+    assert_not LogMonitor.exists?(name: %w[Both None])
+  end
+
+  test "update_monitor changes a Monitor from a Query to SQL and back" do
+    stub_monitor_sql_check(@shop)
+
+    to_sql = call_tool(:update_monitor, user: @user, monitor: @monitor.id, sql: SQL)
+    assert_not to_sql.error?, to_sql.text
+    assert_equal [ "sql", SQL ], [ @monitor.reload.language, @monitor.query ]
+
+    query = "['shop']\n| summarize count() by service"
+    back = call_tool(:update_monitor, user: @user, monitor: @monitor.id, query: query)
+    assert_not back.error?, back.text
+    assert_equal [ "query", query ], [ @monitor.reload.language, @monitor.query ]
+  end
+
+  test "SQL on a Match monitor, and a table without one number column, are refused with words that name the SQL" do
+    stub_monitor_sql_check(@shop, columns: [ SERVICE_COLUMN ])
+
+    match = call_tool(:create_monitor, user: @user, project: "shop", name: "Match SQL", kind: "match", sql: SQL)
+    assert_equal "Not saved: SQL is for Threshold monitors only.", match.text
+
+    no_number = call_tool(:create_monitor, user: @user, project: "shop", name: "No number", kind: "threshold", sql: SQL,
+      operator: ">", threshold: 5)
+    assert_match(/\ANot saved: SQL must give exactly one number per group/, no_number.text)
+  end
+
+  test "a SQL Monitor compares the change with the Baseline's rules: one is needed, apart from the range and within Retention" do
+    stub_monitor_sql_check(@shop)
+    @shop.update!(log_retention_days: 3)
+    change = { project: "shop", name: "SQL change", kind: "threshold", sql: SQL, compare: "change", operator: "rises", threshold: 50 }
+    refused = {
+      {} => "Not saved: Baseline must be previous, day or week.",
+      { baseline: "previous", threshold: 0 } => "Not saved: Threshold must be a percent greater than 0.",
+      { baseline: "day", range_minutes: 2 * 24 * 60 } => "Not saved: Baseline can't be 1 day earlier with a range over 1 day, " \
+        "as the two ranges would overlap: choose 1 week earlier, or a range of at most 1 day.",
+      { baseline: "week" } => "Not saved: Baseline reaches 7 days and 5 minutes back, past the Project's Log Retention of " \
+        "3 days, so it would have no Logs to compare with: choose a nearer Baseline or a shorter range, or keep the " \
+        "Project's Logs longer.",
+    }
+    refused.each do |fields, error|
+      assert_equal error, call_tool(:create_monitor, user: @user, **change, **fields).text, fields.inspect
+    end
+    assert_not LogMonitor.exists?(name: "SQL change")
+
+    made = call_tool(:create_monitor, user: @user, **change, baseline: "day", minimum: 10)
+    assert_not made.error?, made.text
+    assert_equal [ "sql", "change", "day", 10.0 ], made.json.values_at("language", "compare", "baseline", "minimum")
+  end
+
+  test "run_monitor runs a SQL Monitor through EventStore's SQL endpoint" do
+    stub_monitor_sql_check(@shop)
+    monitor = create(:monitor, :sql, project: @shop, name: "Errors in SQL", threshold: 5, notify_by_group: true)
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql").to_return(status: 200, body: {
+      table: { columns: [ SERVICE_COLUMN, COUNT_COLUMN ], rows: [ [ "api", 9 ], [ "web", 1 ] ], truncated: false },
+    }.to_json)
+
+    answer = call_tool(:run_monitor, user: @user, monitor: monitor.id)
+
+    assert_not answer.error?, answer.text
+    assert_equal [ { "service" => "api" } ], monitor.states.select(&:status_firing?).map(&:group)
+  end
+
+  test "run_monitor with preview gives a SQL Monitor's groups, numbers, Baselines and which would fire, saving and telling nothing" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    asked = []
+    answer = travel_to Time.utc(2026, 10, 3, 10) do
+      { "2026-10-03T09:54:00.000Z" => [ [ "api", 120 ], [ "web", 7 ], [ "jobs", 3 ] ],
+        "2026-10-03T09:49:00.000Z" => [ [ "api", 60 ], [ "web", 10 ] ] }.each do |from, rows|
+        stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql").with(body: hash_including("from" => from))
+          .to_return do |request|
+            asked << JSON.parse(request.body).values_at("sql", "timeout_seconds")
+            { status: 200, body: { table: { columns: [ SERVICE_COLUMN, COUNT_COLUMN ], rows: rows, truncated: false } }.to_json }
+          end
+      end
+
+      call_tool(:run_monitor, user: @user, preview: true, project: "shop", sql: SQL, compare: "change", baseline: "previous",
+        operator: "rises", threshold: 50, notify_by_group: true)
+    end
+
+    assert_not answer.error?, answer.text
+    assert_equal [ [ SQL, 10 ], [ SQL, 10 ] ], asked
+    assert_equal [ "2026-10-03T09:54:00Z", "2026-10-03T09:59:00Z", "2026-10-03T09:49:00Z", "2026-10-03T09:54:00Z", 2 ],
+      answer.json.values_at("from", "to", "baseline_from", "baseline_to", "firing")
+    assert_equal [ [ { "service" => "api" }, 120, 60, 100.0, true ], [ { "service" => "jobs" }, 3, 0, nil, true ],
+                   [ { "service" => "web" }, 7, 10, -30.0, false ] ],
+      answer.json["groups"].map { |group| group.values_at("group", "value", "baseline", "change", "firing") }
+    assert_equal "http://console.test/acme/monitors", answer.link
+    assert_equal [ @monitor ], @acme.monitors.to_a
+    assert_equal 0, Notification.count + MonitorRun.count
+  end
+
+  test "run_monitor with preview previews a saved Monitor with the fields given changed, and leaves it as it was" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
+      .to_return(status: 200, body: { table: { columns: [ COUNT_COLUMN ], rows: [ [ 42 ] ], truncated: false } }.to_json)
+
+    answer = call_tool(:run_monitor, user: @user, monitor: @monitor.id, preview: true, sql: "SELECT count() FROM logs",
+      operator: ">", threshold: 10)
+
+    assert_not answer.error?, answer.text
+    assert_equal [ [ {}, 42, true ] ], answer.json["groups"].map { |group| group.values_at("group", "value", "firing") }
+    assert_equal "http://console.test/acme/monitors/#{@monitor.id}", answer.link
+    assert_equal [ "query", 0, 0 ], [ @monitor.reload.language, @monitor.runs.count, @monitor.states.count ]
+  end
+
+  test "run_monitor with preview refuses what saving would refuse, a Match monitor, and SQL while SQL queries are off" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    WebMock::RequestRegistry.instance.reset!
+    new_sql = { preview: true, project: "shop", sql: SQL, operator: "rises", compare: "change", baseline: "previous" }
+
+    assert_equal "Saving would refuse it: Threshold must be a percent greater than 0.",
+      call_tool(:run_monitor, user: @user, **new_sql, threshold: 0).text
+    assert_equal "Give query or sql, not both: a Monitor runs one of them.",
+      call_tool(:run_monitor, user: @user, **new_sql, query: @monitor.query, threshold: 50).text
+    match = create(:monitor, :match, project: @shop).tap { WebMock::RequestRegistry.instance.reset! }
+    assert_equal "Only a threshold Monitor previews: a match Monitor's run reads the Logs ingested since its last run.",
+      call_tool(:run_monitor, user: @user, monitor: match.id, preview: true).text
+    assert_equal "Give monitor to run it, or preview true to preview a Monitor's settings.",
+      call_tool(:run_monitor, user: @user, project: "shop", sql: SQL).text
+
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    assert_equal MonitorEvaluation::SQL_OFF, call_tool(:run_monitor, user: @user, **new_sql, threshold: 50).text
+    assert_not_requested(:post, %r{/logs/})
+  end
+
+  test "while SQL queries are off, the sql argument isn't listed, a SQL Monitor isn't saved, and a saved one's runs fail" do
+    stub_monitor_sql_check(@shop)
+    saved = create(:monitor, :sql, project: @shop, name: "Errors in SQL")
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
+    %w[create_monitor update_monitor run_monitor].each do |name|
+      tool = listed_tools.find { |each| each[:name] == name }
+      assert_not_includes tool[:inputSchema][:properties].keys, :sql, name
+      assert_no_match(/\bsql\b/, tool[:description], name)
+    end
+    made = call_tool(:create_monitor, user: @user, project: "shop", name: "Off", kind: "threshold", sql: SQL, operator: ">", threshold: 5)
+    assert_equal "Not saved: SQL queries are off on this install.", made.text
+    assert_equal "The run failed: #{MonitorEvaluation::SQL_OFF}", call_tool(:run_monitor, user: @user, monitor: saved.id).text
+
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    create_monitor = listed_tools.find { |each| each[:name] == "create_monitor" }
+    sql = create_monitor[:inputSchema][:properties][:sql][:description]
+    [ /use query first/i, /join, a subquery, a window/, /events or spans/, /logs, events and spans/,
+      /range is set outside the SQL/, /group columns and one number column/ ].each { |words| assert_match words, sql }
+  end
+
   # Another Organization's
 
   test "another Organization's Monitor is not found, and its Monitors and Integrations aren't listed" do

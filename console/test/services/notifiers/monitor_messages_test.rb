@@ -196,6 +196,31 @@ module Notifiers
       end
     end
 
+    test "a Threshold monitor with SQL links to the explorer's SQL, over the range read and over the Baseline" do
+      stub_monitor_sql_check(@project)
+      @monitor.update!(language: "sql", query: "SELECT service, count() AS errors FROM logs GROUP BY service")
+      message = MonitorMessage.build(row(IntegrationNotification::MONITOR_FIRING, GROUP, change_payload(120.0, 60.0)))
+
+      now, before = [ message.link, message.baseline_link ].map { |url| Rack::Utils.parse_query(URI(url).query) }
+      assert_equal [ "sql", @monitor.query, nil, "2026-10-17T11:44:00Z", "2026-10-17T11:59:00Z" ],
+        now.values_at("mode", "sql", "q", "from", "to")
+      assert_equal [ "sql", @monitor.query, nil, "2026-10-17T11:29:00Z", "2026-10-17T11:44:00Z" ],
+        before.values_at("mode", "sql", "q", "from", "to")
+    end
+
+    test "a deleted Monitor's message links by the language it kept, and by the Query when it kept none" do
+      kept = MonitorMessage.about(@monitor).merge("language" => "sql", "query" => "SELECT count() FROM logs")
+      sql = Notification.new(integration: @slack, group_key: GROUP, kind: IntegrationNotification::MONITOR_FIRING,
+        payload: threshold_payload(120.0).merge("monitor" => kept))
+      assert_equal [ "sql", "SELECT count() FROM logs" ],
+        Rack::Utils.parse_query(URI(MonitorMessage.build(sql).link).query).values_at("mode", "sql")
+
+      older = Notification.new(integration: @slack, group_key: GROUP, kind: IntegrationNotification::MONITOR_FIRING,
+        payload: threshold_payload(120.0).merge("monitor" => MonitorMessage.about(@monitor).except("language")))
+      assert_equal [ "query", @monitor.query ],
+        Rack::Utils.parse_query(URI(MonitorMessage.build(older).link).query).values_at("mode", "q")
+    end
+
     test "Email: a change trigger links to both ranges" do
       message = MonitorMessage.build(row(IntegrationNotification::MONITOR_FIRING, GROUP, change_payload(120.0, 60.0)))
       mail = MonitorMailer.notify(message.to_h, [ "ops@example.com" ])
