@@ -1,16 +1,13 @@
-import { useMemo, useState } from 'react'
-import { router } from '@inertiajs/react'
+import { useState } from 'react'
 import { Markdown } from '@/components/Markdown'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { MAX_TEXT, type DashboardSection, type TextBlock } from '@/lib/dashboards/dashboard'
-
-/** The section select's value for no Section. */
-const NO_SECTION = 'none'
+import { saveItem } from './saveItem'
+import { SectionSelect } from './SectionSelect'
 
 /**
  * Adds a Text block, or edits one: its Markdown in a textarea with a
@@ -41,21 +38,10 @@ export function TextBlockEditor({ block, sectionId = null, sections, orgSlug, da
     setErrors({})
     // An empty section_id is no Section.
     const data = { chart: { viz: 'text', text, title: title.trim(), section_id: section ?? '' } }
-    const visit = {
-      preserveScroll: true,
-      preserveState: true,
-      onSuccess: onClose,
-      onError: (e: Record<string, string>) => setErrors(e),
-      onFinish: () => setSaving(false),
-    }
-    if (block) router.patch(`/${orgSlug}/dashboards/${dashboardId}/charts/${block.id}${search}`, data, visit)
-    else router.post(`/${orgSlug}/dashboards/${dashboardId}/charts${search}`, data, visit)
+    saveItem({
+      orgSlug, dashboardId, id: block?.id ?? null, search, data, onSuccess: onClose, onError: setErrors, onFinish: () => setSaving(false),
+    })
   }
-
-  const sectionItems = useMemo(
-    () => [{ value: NO_SECTION, label: 'No section' }, ...sections.map(s => ({ value: String(s.id), label: s.title }))],
-    [sections],
-  )
 
   return (
     <Dialog open onOpenChange={open => !open && onClose()}>
@@ -70,24 +56,7 @@ export function TextBlockEditor({ block, sectionId = null, sections, orgSlug, da
             <Input id="text-title" value={title} placeholder="None" maxLength={200} onChange={e => setTitle(e.target.value)} />
             {errors.title && <p className="text-xs text-destructive">Title {errors.title}</p>}
           </div>
-          {sections.length > 0 && (
-            <div className="space-y-1">
-              <Label>Section</Label>
-              <Select
-                value={section === null ? NO_SECTION : String(section)}
-                onValueChange={value => value && setSection(value === NO_SECTION ? null : Number(value))}
-                items={sectionItems}
-              >
-                <SelectTrigger aria-label="Section" className="min-w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {sectionItems.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {errors.section && <p className="text-xs text-destructive">Section {errors.section}</p>}
-            </div>
-          )}
+          {sections.length > 0 && <SectionSelect sections={sections} value={section} error={errors.section} onChange={setSection} />}
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">

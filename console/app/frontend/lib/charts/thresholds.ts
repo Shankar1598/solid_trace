@@ -1,7 +1,9 @@
 // Threshold lines: fixed values a time chart draws as horizontal lines
-// across its plot, such as a Dashboard chart's limits or a Monitor's
-// threshold. A threshold line is not a series: the chart's groups do not
-// split it, it is not in the legend, and it takes none of the series.
+// across its plot, which are a Dashboard chart's limits. The Monitor form
+// draws the threshold of a Threshold monitor with the same line, but that
+// threshold is a different thing, not a Threshold line. A line is not a
+// series: the chart's groups do not split it, it is not in the legend, and
+// it takes none of the series.
 import { optionsText, type ValueOptions } from './axis'
 
 export type Severity = 'warn' | 'critical'

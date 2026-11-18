@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { router } from '@inertiajs/react'
 import { QueryEditor } from '@/components/QueryEditor'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -19,6 +18,8 @@ import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/buil
 import { fieldInfos } from '@/lib/logs/columns'
 import { BuilderPanel, type ProjectOption } from '../../Logs/components/BuilderPanel'
 import { ChartBody, type ChartRun } from './ChartBody'
+import { saveItem } from './saveItem'
+import { SectionSelect } from './SectionSelect'
 import { ThresholdsField } from './ThresholdsField'
 
 const VIZ_LABELS: Record<DashboardViz, string> = { line: 'Line', area: 'Area', bar: 'Bar', stat: 'Stat', table: 'Table' }
@@ -26,8 +27,6 @@ const NO_FIELDS = fieldInfos([])
 const noValues = () => []
 /** How long typing pauses before the preview runs again. */
 const PREVIEW_DELAY_MS = 500
-/** The section select's value for no Section. */
-const NO_SECTION = 'none'
 
 type Mode = 'builder' | 'query'
 
@@ -191,23 +190,12 @@ export function ChartEditor({ chart, sectionId = null, projects, sections, orgSl
     if (takesThresholds &&thresholds.length > 0) saved.thresholds = savedThresholds(thresholds)
     // An empty section_id is no Section.
     const data = { chart: { project_id: project.id, section_id: section ?? '', title: title.trim() || titleOfQuery(query), query, viz, options: saved } }
-    // The page keeps its range and runs, so only the chart saved runs again.
-    const visit = {
-      preserveScroll: true,
-      preserveState: true,
-      onSuccess: onClose,
-      onError: (e: Record<string, string>) => setErrors(e),
-      onFinish: () => setSaving(false),
-    }
-    if (chart) router.patch(`/${orgSlug}/dashboards/${dashboardId}/charts/${chart.id}${search}`, data, visit)
-    else router.post(`/${orgSlug}/dashboards/${dashboardId}/charts${search}`, data, visit)
+    saveItem({
+      orgSlug, dashboardId, id: chart?.id ?? null, search, data, onSuccess: onClose, onError: setErrors, onFinish: () => setSaving(false),
+    })
   }
 
   const projectItems = useMemo(() => projects.map(p => ({ value: String(p.id), label: p.name })), [projects])
-  const sectionItems = useMemo(
-    () => [{ value: NO_SECTION, label: 'No section' }, ...sections.map(s => ({ value: String(s.id), label: s.title }))],
-    [sections],
-  )
   if (!project) {
     return (
       <Dialog open onOpenChange={open => !open && onClose()}>
@@ -244,24 +232,7 @@ export function ChartEditor({ chart, sectionId = null, projects, sections, orgSl
             </Select>
             {errors.project && <p className="text-xs text-destructive">Project {errors.project}</p>}
           </div>
-          {sections.length > 0 && (
-            <div className="space-y-1">
-              <Label>Section</Label>
-              <Select
-                value={section === null ? NO_SECTION : String(section)}
-                onValueChange={value => value && setSection(value === NO_SECTION ? null : Number(value))}
-                items={sectionItems}
-              >
-                <SelectTrigger aria-label="Section" className="min-w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {sectionItems.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {errors.section && <p className="text-xs text-destructive">Section {errors.section}</p>}
-            </div>
-          )}
+          {sections.length > 0 && <SectionSelect sections={sections} value={section} error={errors.section} onChange={setSection} />}
         </div>
 
         <div className="space-y-2">

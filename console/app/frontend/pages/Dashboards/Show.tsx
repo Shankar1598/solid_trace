@@ -16,7 +16,7 @@ import { HoverTimeProvider } from '@/components/charts/hoverTime'
 import { Button } from '@/components/ui/button'
 import {
   chartGroups, filterValues, filterValuesOfSearch, isTextBlock, rangeOfSearch, searchOfRangeAndValues,
-  type AutoRefresh, type Dashboard, type DashboardItem, type DashboardSection, type FilterValues,
+  type AutoRefresh, type Dashboard, type DashboardChart, type DashboardItem, type DashboardSection, type FilterValues, type TextBlock,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
 import { readFolded, writeFolded } from '@/lib/dashboards/foldedSections'
@@ -39,6 +39,15 @@ import { DeleteSectionDialog, SectionDialog, SectionHeader } from './components/
 /** Below this grid width (a phone) the cards stack in one column. */
 const STACK_BELOW_PX = 640
 const NO_COLUMNS = { shown: [], toggle: () => {} }
+
+/** The editor open on the page: a chart's or a Text block's, with item null to add one to the Section sectionId (null for none). */
+type ItemEditor =
+  | { kind: 'chart'; item: DashboardChart | null; sectionId: number | null }
+  | { kind: 'text'; item: TextBlock | null; sectionId: number | null }
+
+/** The editor of an item on the grid, which the item's viz decides. */
+const editorOf = (item: DashboardItem): ItemEditor =>
+  isTextBlock(item) ? { kind: 'text', item, sectionId: item.section_id } : { kind: 'chart', item, sectionId: item.section_id }
 
 interface DashboardsShowProps {
   dashboard: Dashboard & { sections: DashboardSection[]; charts: DashboardItem[] }
@@ -66,8 +75,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   useEffect(() => () => queue.abortAll(), [queue])
   const [running, setRunning] = useState<ReadonlySet<number>>(new Set())
   const [editing, setEditing] = useState(false)
-  // The chart or Text block edited; chart null adds one, a Text block when text is set.
-  const [editor, setEditor] = useState<{ chart: DashboardItem | null; sectionId?: number | null; text?: boolean } | null>(null)
+  const [editor, setEditor] = useState<ItemEditor | null>(null)
   const [deleting, setDeleting] = useState<DashboardItem | null>(null)
   // The Section dialog: null renames none; section null adds one.
   const [sectionEditor, setSectionEditor] = useState<{ section: DashboardSection | null } | null>(null)
@@ -155,7 +163,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
       values={values}
       queue={queue}
       onRunning={onRunning}
-      onEdit={chart => setEditor({ chart })}
+      onEdit={item => setEditor(editorOf(item))}
       onDuplicate={duplicate}
       onDelete={setDeleting}
     />
@@ -177,8 +185,8 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           )}
           <AutoRefreshPicker value={dashboard.auto_refresh} onChange={setAutoRefresh} paused={range.kind === 'absolute' ? 'the range is fixed' : null} />
           <CopyLink onCopy={copyLink} />
-          <Button variant="outline" onClick={() => setEditor({ chart: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
-          <Button variant="outline" onClick={() => setEditor({ chart: null, text: true })}><Type className="h-3.5 w-3.5" /> Add text</Button>
+          <Button variant="outline" onClick={() => setEditor({ kind: 'chart', item: null, sectionId: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
+          <Button variant="outline" onClick={() => setEditor({ kind: 'text', item: null, sectionId: null })}><Type className="h-3.5 w-3.5" /> Add text</Button>
           <Button variant="outline" onClick={() => setSectionEditor({ section: null })}><ListPlus className="h-3.5 w-3.5" /> Add section</Button>
           {editing ? (
             <Button onClick={() => setEditing(false)}><Check className="h-3.5 w-3.5" /> Done</Button>
@@ -219,11 +227,11 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                     onAddChart={() => {
                       // The new chart must show, so a folded Section unfolds.
                       if (folded.has(section.id)) toggleFold(section.id)
-                      setEditor({ chart: null, sectionId: section.id })
+                      setEditor({ kind: 'chart', item: null, sectionId: section.id })
                     }}
                     onAddText={() => {
                       if (folded.has(section.id)) toggleFold(section.id)
-                      setEditor({ chart: null, sectionId: section.id, text: true })
+                      setEditor({ kind: 'text', item: null, sectionId: section.id })
                     }}
                     onRename={() => setSectionEditor({ section })}
                     onMove={by => moveSection(section, i + by)}
@@ -232,10 +240,10 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
                   {folded.has(section.id) ? null : inSection.length > 0 ? grid(inSection) : (
                     <div className="flex items-center justify-center gap-3 border border-dashed p-4 text-xs text-muted-foreground">
                       No charts in this section.
-                      <Button variant="outline" size="sm" onClick={() => setEditor({ chart: null, sectionId: section.id })}>
+                      <Button variant="outline" size="sm" onClick={() => setEditor({ kind: 'chart', item: null, sectionId: section.id })}>
                         <Plus className="h-3.5 w-3.5" /> Add chart
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => setEditor({ chart: null, sectionId: section.id, text: true })}>
+                      <Button variant="outline" size="sm" onClick={() => setEditor({ kind: 'text', item: null, sectionId: section.id })}>
                         <Type className="h-3.5 w-3.5" /> Add text
                       </Button>
                     </div>
@@ -248,9 +256,9 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
         </TagMenuProvider>
       </div>
 
-      {editor && (editor.text || (editor.chart && isTextBlock(editor.chart))) ? (
+      {editor?.kind === 'text' && (
         <TextBlockEditor
-          block={editor.chart && isTextBlock(editor.chart) ? editor.chart : null}
+          block={editor.item}
           sectionId={editor.sectionId}
           sections={sections}
           orgSlug={orgSlug}
@@ -258,9 +266,10 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           search={search}
           onClose={() => setEditor(null)}
         />
-      ) : editor && (
+      )}
+      {editor?.kind === 'chart' && (
         <ChartEditor
-          chart={editor.chart && !isTextBlock(editor.chart) ? editor.chart : null}
+          chart={editor.item}
           sectionId={editor.sectionId}
           projects={projects}
           sections={sections}

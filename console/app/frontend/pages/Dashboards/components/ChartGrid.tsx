@@ -45,9 +45,9 @@ export function ChartGrid({
   values: FilterValues
   queue: FetchQueue
   onRunning: (id: number, running: boolean) => void
-  onEdit: (chart: DashboardItem) => void
-  onDuplicate: (chart: DashboardItem) => void
-  onDelete: (chart: DashboardItem) => void
+  onEdit: (item: DashboardItem) => void
+  onDuplicate: (item: DashboardItem) => void
+  onDelete: (item: DashboardItem) => void
 }) {
   // The grid's places, and the ones last saved, so each move saves only what changed.
   const [layout, setLayout] = useState<LayoutItem[]>(() => layoutOf(charts))
@@ -78,20 +78,20 @@ export function ChartGrid({
       onDragStop={persist}
       onResizeStop={persist}
     >
-      {charts.map(chart => (
-        <div key={String(chart.id)}>
-          {isTextBlock(chart) ? (
+      {charts.map(item => (
+        <div key={String(item.id)}>
+          {isTextBlock(item) ? (
             <TextBlockCard
-              block={chart}
+              block={item}
               editing={arranging}
-              onEdit={() => onEdit(chart)}
-              onDuplicate={() => onDuplicate(chart)}
-              onDelete={() => onDelete(chart)}
+              onEdit={() => onEdit(item)}
+              onDuplicate={() => onDuplicate(item)}
+              onDelete={() => onDelete(item)}
             />
           ) : (
             <ChartCard
-              chart={chart}
-              project={projectsById.get(chart.project_id)}
+              chart={item}
+              project={projectsById.get(item.project_id)}
               showProject={showProject}
               orgSlug={orgSlug}
               run={run}
@@ -101,9 +101,9 @@ export function ChartGrid({
               queue={queue}
               editing={arranging}
               onRunning={onRunning}
-              onEdit={() => onEdit(chart)}
-              onDuplicate={() => onDuplicate(chart)}
-              onDelete={() => onDelete(chart)}
+              onEdit={() => onEdit(item)}
+              onDuplicate={() => onDuplicate(item)}
+              onDelete={() => onDelete(item)}
             />
           )}
         </div>

@@ -295,6 +295,11 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
   }
 
   const isThreshold = kind === 'threshold'
+  // The preview draws the Monitor's threshold with the same line that draws a Dashboard chart's
+  // Threshold lines. It stays the Monitor's threshold: it is not a Threshold line.
+  const thresholdDrawn = comparesChange || thresholdValue === null
+    ? undefined
+    : [{ value: thresholdValue, label: `threshold ${thresholdValue}`, severity: 'critical' as const }]
   const groups: PreviewGroup[] | undefined = comparesChange
     ? (changed.status === 'done' ? changed.groups : undefined)
     : found?.groups.map(g => ({ ...g, baseline: null }))
@@ -498,7 +503,7 @@ export function MonitorForm({ monitor, monitorId, projects, integrations, orgSlu
             <RunView run={chart}>
               {({ table }) => (table.rows.length === 0
                 ? <p className="p-3 text-xs text-muted-foreground">No rows over the last {CHART_HOURS} hours.</p>
-                : <QueryChart table={table} form="line" thresholds={comparesChange || thresholdValue === null ? undefined : [{ value: thresholdValue, label: `threshold ${thresholdValue}`, severity: 'critical' }]} className="pb-1" />)}
+                : <QueryChart table={table} form="line" thresholds={thresholdDrawn} className="pb-1" />)}
             </RunView>
           </div>
           <div className="space-y-1.5" data-monitor-groups>

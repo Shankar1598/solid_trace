@@ -27,6 +27,8 @@ export interface ChartOptions {
 
 /** The most threshold lines a chart has, as the Dashboard Chart model allows. */
 export const MAX_THRESHOLDS = 5
+/** The longest label a threshold line has, as the Dashboard Chart model allows. */
+export const MAX_LABEL = 40
 /** The vizzes that draw threshold lines. */
 export const THRESHOLD_VIZES: readonly DashboardViz[] = ['line', 'area']
 

@@ -3,15 +3,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
-import { MAX_THRESHOLDS, type ThresholdRow } from '@/lib/dashboards/dashboard'
+import { MAX_LABEL, MAX_THRESHOLDS, type ThresholdRow } from '@/lib/dashboards/dashboard'
 
 const SEVERITIES: { value: ThresholdRow['severity']; label: string }[] = [
   { value: '', label: 'None' },
   { value: 'warn', label: 'Warn' },
   { value: 'critical', label: 'Critical' },
 ]
-/** The longest label a threshold line has, as the Dashboard Chart model allows. */
-const MAX_LABEL = 40
 
 /**
  * The chart editor's threshold lines of a line or area chart: a row for

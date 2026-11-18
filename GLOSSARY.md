@@ -133,7 +133,7 @@ A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single 
 _Avoid_: graph, plot, visualization
 
 **Threshold line**:
-A horizontal line on a line or area **Chart** of a **Dashboard**, at a fixed value in the Chart's unit, with a label and an optional severity, warn or critical. It is drawn once across the whole range, and the value axis reaches it. It is not a series: the by columns do not split it, it is not in the legend, and it does not take one of the Chart's series. It only draws a limit and sends nothing; the threshold of a **Threshold monitor** is a different thing.
+A horizontal line on a line or area **Chart** of a **Dashboard**, at a fixed value in the Chart's unit, with a label and an optional severity, warn or critical. It is drawn once across the whole range, and the value axis reaches it. It is not a series: the by columns do not split it, it is not in the legend, and it does not take one of the Chart's series. Its severity only sets its colour and is not a Log's **Level**. It only draws a limit and sends nothing; the threshold of a **Threshold monitor** is a different thing.
 _Avoid_: reference line, limit series, threshold (alone)
 
 **Overview**:

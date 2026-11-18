@@ -58,9 +58,10 @@ interface QueryChartProps {
   /** A single number's column name over it; off on a Dashboard, whose card title names it. */
   statName?: boolean
   /**
-   * Threshold lines, such as a Monitor's threshold or a Dashboard chart's
-   * limits: each drawn once across each panel, whose value axis reaches it.
-   * They are never series.
+   * Horizontal lines at fixed values: a Dashboard chart's Threshold lines,
+   * or the threshold that the Monitor form draws with the same line. Each is
+   * drawn once across each panel, whose value axis reaches it. They are
+   * never series.
    */
   thresholds?: readonly Threshold[]
   /** Fill the parent's height, as in a Dashboard card: the plots share the room under the legend. Without it, each plot has a fixed height. */
