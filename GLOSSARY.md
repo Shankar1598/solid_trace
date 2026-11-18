@@ -141,7 +141,7 @@ A page of **Charts** that belongs to an organization. Each chart saves a **Query
 _Avoid_: board, panel page
 
 **Dashboard filter**:
-A control in a **Dashboard**'s filter bar, a select or a search box, whose value a **Chart** uses by naming it in its **Query**, as in `where service == $service`. It narrows only the Charts that name it. With no value, it is All, and its comparisons match every **Log**.
+A control in a **Dashboard**'s filter bar, a select or a search box, whose value a **Chart** uses by naming it in its **Query**, as in `where service == $service`. It narrows only the Charts that name it. With no value, it is All, and its comparisons match every **Log**. It can have default values, which it has when the Dashboard opens, until a member picks others or All.
 _Avoid_: variable, dashboard parameter, template variable
 
 **Section**:

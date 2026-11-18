@@ -93,10 +93,12 @@ export type FieldValue = { value: string; count: number | null }
 /**
  * One of a Dashboard's filters, which a chart's Query names as `$name`: a
  * select of one value or several, or a search box. Its label is never empty.
+ * Its default values, when it has them, are its values when the Dashboard
+ * opens with none for it in its URL.
  */
 export type DashboardFilter =
-  | { name: string; label: string; kind: 'select'; multiple: boolean; options: FilterOptions }
-  | { name: string; label: string; kind: 'search' }
+  | { name: string; label: string; kind: 'select'; multiple: boolean; options: FilterOptions; default?: string[] }
+  | { name: string; label: string; kind: 'search'; default?: string[] }
 
 /** The values chosen in a Dashboard's filters, by name. A filter left out is All. */
 export type FilterValues = Record<string, string[]>
@@ -136,6 +138,23 @@ export function searchOfRangeAndValues(range: TimeRange, values: FilterValues = 
   return `?${params}`
 }
 
+/**
+ * A range, and the values picked in a Dashboard's filters, as its URL
+ * search. The search leaves out a filter that nobody picked, so the URL opens
+ * it on its default values, also after its default changes. A filter with
+ * default values that a member set to All is an empty `v_<name>`, so the URL
+ * opens it on All.
+ */
+export function searchOfRangeAndPicked(range: TimeRange, filters: DashboardFilter[], picked: FilterValues): string {
+  const values = filterValues(filters, picked)
+  const params = new URLSearchParams(searchOfRangeAndValues(range, values))
+  for (const filter of filters) {
+    const all = Object.hasOwn(picked, filter.name) && !Object.hasOwn(values, filter.name)
+    if (all && (filter.default ?? []).length > 0) params.append(`v_${filter.name}`, '')
+  }
+  return `?${params}`
+}
+
 /** Each value as a `v_<name>` key. */
 export function appendValues(params: URLSearchParams, values: FilterValues) {
   for (const [name, list] of Object.entries(values)) {
@@ -158,10 +177,31 @@ export function filterValues(filters: DashboardFilter[], given: Record<string, r
   return values
 }
 
-/** The values a Dashboard's URL holds for its filters. */
-export function filterValuesOfSearch(search: string, filters: DashboardFilter[]): FilterValues {
+/**
+ * The values picked in a Dashboard's filters, by name, as its URL holds
+ * them: an empty `v_<name>` is All, as []. A filter it has no key of isn't picked.
+ */
+export function pickedOfSearch(search: string, filters: DashboardFilter[]): FilterValues {
   const params = new URLSearchParams(search)
-  return filterValues(filters, Object.fromEntries(filters.map(f => [f.name, params.getAll(`v_${f.name}`)])))
+  const picked: FilterValues = {}
+  for (const filter of filters) {
+    const key = `v_${filter.name}`
+    if (params.has(key)) picked[filter.name] = params.getAll(key).filter(value => value !== '')
+  }
+  return picked
+}
+
+/**
+ * The values a Dashboard's filters run with: those picked, by name, and a
+ * filter's default values while none are picked for it.
+ */
+export function valuesWithDefaults(filters: DashboardFilter[], picked: FilterValues): FilterValues {
+  return filterValues(filters, Object.fromEntries(filters.map(f => [f.name, Object.hasOwn(picked, f.name) ? picked[f.name] : f.default])))
+}
+
+/** The values a Dashboard's URL holds for its filters, with the defaults of those it has no key of. */
+export function filterValuesOfSearch(search: string, filters: DashboardFilter[]): FilterValues {
+  return valuesWithDefaults(filters, pickedOfSearch(search, filters))
 }
 
 /** The values a chart's Query runs with: those of the Dashboard's filters it names that aren't All. */

@@ -93,15 +93,16 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
 
   test "a member saves a Dashboard's filters as the whole list, and its page carries them" do
     filters = [
-      { name: "level", label: "Level", kind: "select", multiple: true, options: { from: "list", items: [ { label: "Error", value: "error" } ] } },
-      { name: "q", label: "", kind: "search" }
+      { name: "level", label: "Level", kind: "select", multiple: true, default: [ "error" ], options: { from: "list", items: [ { label: "Error", value: "error" } ] } },
+      { name: "q", label: "", kind: "search", default: "timeout" }
     ]
     patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: filters } }, as: :json
 
     assert_response :success
     saved = [
-      { "name" => "level", "label" => "Level", "kind" => "select", "multiple" => true, "options" => { "from" => "list", "items" => [ { "label" => "Error", "value" => "error" } ] } },
-      { "name" => "q", "label" => "q", "kind" => "search" }
+      { "name" => "level", "label" => "Level", "kind" => "select", "multiple" => true, "options" => { "from" => "list", "items" => [ { "label" => "Error", "value" => "error" } ] },
+        "default" => [ "error" ] },
+      { "name" => "q", "label" => "q", "kind" => "search", "default" => [ "timeout" ] }
     ]
     assert_equal saved, response.parsed_body["filters"]
     assert_equal saved, inertia_page(dashboard_url(@dashboard, org_slug: @organization.slug), "Dashboards/Show")["dashboard"]["filters"]

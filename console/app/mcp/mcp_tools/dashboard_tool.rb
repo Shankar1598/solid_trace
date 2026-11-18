@@ -49,6 +49,15 @@ module McpTools
             field: { type: "string" },
           },
         },
+        default: {
+          type: %w[string array], items: { type: "string" },
+          description: "The values the filter has when the Dashboard opens, until someone picks others: a string, or a list of strings. " \
+                       "One value for a search, or for a select that isn't multiple; a fixed list's values must be its options' values. " \
+                       "None, which is All, when not given; \"\" or [] removes the default. " \
+                       "For an on/off filter, give a select the options hide and show, and the default hide. " \
+                       "Then a Chart's Query where $known_issues == \"show\" or not(store_id in (1, 2)) leaves those Logs out with hide, " \
+                       "and keeps them with show or All.",
+        },
       },
     }.freeze
 
@@ -66,7 +75,8 @@ module McpTools
         description: "The Dashboard's filters, the controls of the bar under its header, in the bar's order, at most " \
                      "#{Dashboard::MAX_FILTERS}. A Chart uses a filter by naming it in its Query as $name, such as " \
                      "where service == $service, and runs it with the values picked, or as All, as if the comparison weren't there, " \
-                     "when none is; query_language_reference's Dashboard filters says where $name can go. The list given replaces " \
+                     "when none is. The Dashboard opens with each filter on its default values, or on All when it has none. " \
+                     "query_language_reference's Dashboard filters says where $name can go. The list given replaces " \
                      "the Dashboard's filters whole, so give every filter to keep; [] removes them all. None when made.",
       },
     }.freeze

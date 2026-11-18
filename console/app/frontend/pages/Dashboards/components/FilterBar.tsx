@@ -25,7 +25,7 @@ interface Shown {
 /**
  * The Dashboard's filters under its header, each a select or a search box
  * whose values the charts that name it run with, and the Filters button that
- * edits them. Every filter is All until a value is picked.
+ * edits them. A filter opens on its default values, or on All when it has none.
  */
 export function FilterBar({ filters, values, orgSlug, dashboardId, shown, onChange, onEdit }: {
   filters: DashboardFilter[]
