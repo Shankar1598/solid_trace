@@ -112,7 +112,7 @@ export function ChartCard({
           {notItsFilters(unknown)}, so the chart runs {unknown.length === 1 ? 'it' : 'them'} as All.
         </p>
       )}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto" data-chart-body>
         <ChartBody run={answer} viz={chart.viz} options={chart.options} />
       </div>
     </div>

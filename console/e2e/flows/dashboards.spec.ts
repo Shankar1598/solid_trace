@@ -75,6 +75,16 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
   await pickQuickRange(page, '1 day')
   await chartsRan(page, 1)
   await expect(card(page, 'Logs by level').getByRole('figure')).toHaveAttribute('aria-label', /^Bar chart of .* over time$/)
+  // The chart fills its card under the legend, so the card never scrolls, however many lines the legend takes.
+  const body = card(page, 'Logs by level').locator('[data-chart-body]')
+  for (const height of [420, 220]) {
+    await card(page, 'Logs by level').evaluate((el, h) => { el.style.height = `${h}px` }, height)
+    await expect.poll(() => body.evaluate(el => ({
+      scrolls: el.scrollHeight > el.clientHeight,
+      fills: el.getBoundingClientRect().bottom - el.querySelector('[role="figure"]')!.getBoundingClientRect().bottom < 8,
+    }))).toEqual({ scrolls: false, fills: true })
+  }
+  await card(page, 'Logs by level').evaluate(el => { el.style.height = '' })
 
   // Add a chart in the editor: a Query whose single number shows as a stat.
   // The preview runs as a chart does, with the Query in a POST body, never

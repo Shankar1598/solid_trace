@@ -47,5 +47,5 @@ export function ChartBody({ run, viz, options }: { run: ChartRun; viz: Dashboard
       </div>
     )
   }
-  return <QueryChart table={run.table} form={form} options={options} statName={false} colors={colors} hidden={hidden} className="pb-1" />
+  return <QueryChart table={run.table} form={form} options={options} statName={false} fill colors={colors} hidden={hidden} className="pb-1" />
 }

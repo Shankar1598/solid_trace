@@ -58,6 +58,8 @@ interface QueryChartProps {
   statName?: boolean
   /** A Monitor's threshold, drawn as a line across each panel, whose value axis reaches it. */
   threshold?: number
+  /** Fill the parent's height, as in a Dashboard card: the plots share the room under the legend. Without it, each plot has a fixed height. */
+  fill?: boolean
   className?: string
 }
 
@@ -90,7 +92,7 @@ const RIGHT_DASH = '5 3'
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, statName = true, threshold, className }: QueryChartProps) {
+export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, statName = true, threshold, fill = false, className }: QueryChartProps) {
   const model = useMemo(() => {
     const made = chartOf(table)
     if (!colors) return made
@@ -126,6 +128,7 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, legen
       legendValue={legendValue}
       options={options}
       threshold={threshold}
+      fill={fill}
       className={className}
     />
   )
@@ -146,7 +149,7 @@ function StatTile({ name, value, options }: { name: string | null; value: number
 /** The bins a drag has covered, by their points' indexes. */
 type Drag = { start: number; end: number }
 
-function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, options, threshold, className }: {
+function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, options, threshold, fill, className }: {
   model: SeriesChartModel
   form: ChartForm
   initialHidden: ReadonlySet<string>
@@ -156,6 +159,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   legendValue?: QueryChartProps['legendValue']
   options?: ChartOptions
   threshold?: number
+  fill: boolean
   className?: string
 }) {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
@@ -290,6 +294,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     />
   )
 
+  // Lying bars are as tall as their names need, so they never fill.
+  const fills = fill && !across
   const height = !several ? 'h-44 sm:h-56' : panels.length === 2 ? 'h-32 sm:h-40' : 'h-28 sm:h-32'
   const valueAxis = ({ values, label }: typeof panels[number], right: boolean) => (
     <YAxis
@@ -306,8 +312,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   )
 
   return (
-    <div ref={measure} className={cn('flex flex-col', className)}>
-      <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
+    <div ref={measure} className={cn('flex flex-col', fill && 'h-full', className)}>
+      <div className="flex min-h-7 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
         <Legend model={model} form={form} hidden={hidden} onToggle={toggle} legendValue={legendValue} dashed={twoAxes ? rightOnly(model, panels[1].series) : new Set()} />
         {(time || actions) && (
           <div className="ml-auto flex items-center gap-3">
@@ -316,14 +322,14 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
           </div>
         )}
       </div>
-      <div role="figure" aria-label={chartLabel(model, form, twoAxes)}>
+      <div role="figure" aria-label={chartLabel(model, form, twoAxes)} className={cn(fills && 'flex min-h-0 flex-1 flex-col')}>
         {views.map((layers, i) => {
           const [{ panel, values, label, tips, tipWidth }] = layers
           return (
-          <div key={panel.keys[0]}>
-            {several && <div className="truncate px-3 pt-1 font-mono text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
+          <div key={panel.keys[0]} className={cn(fills && 'flex min-h-0 flex-1 flex-col')}>
+            {several && <div className="shrink-0 truncate px-3 pt-1 font-mono text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
             {twoAxes && (
-              <div className="flex justify-between gap-3 px-3 pt-1 font-mono text-[10px] text-muted-foreground">
+              <div className="flex shrink-0 justify-between gap-3 px-3 pt-1 font-mono text-[10px] text-muted-foreground">
                 <span className="truncate" data-chart-axis="left">{layers[0].panel.columns.join(', ')}</span>
                 <span className="flex min-w-0 items-center gap-1.5" data-chart-axis="right">
                   <span className="w-3 shrink-0 border-t-2 border-dashed border-muted-foreground" />
@@ -333,7 +339,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
             )}
             <ChartContainer
               config={config}
-              className={cn('aspect-auto w-full px-1 font-mono', !across && height, zooms && 'cursor-crosshair select-none')}
+              className={cn('aspect-auto w-full px-1 font-mono', fills ? 'min-h-20 flex-1' : !across && height, zooms && 'cursor-crosshair select-none')}
               style={across ? { height: names.length * BAND_PX + 32 } : undefined}
             >
               <PanelChart
