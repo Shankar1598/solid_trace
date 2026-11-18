@@ -210,7 +210,8 @@ test('a grouped line chart draws its threshold line once, above every value, out
   await chartsRan(page, 1)
   const chart = card(page, 'Logs by level')
   const legend = chart.locator('[data-chart-legend]')
-  const legendText = await legend.innerText()
+  const entries = await legend.locator('[data-chart-series]').allInnerTexts()
+  expect(entries.length).toBeGreaterThan(1)
   await expect(chart.locator('.chart-threshold-line')).toHaveCount(0)
 
   // A threshold far above every count: the preview draws it as the member types it.
@@ -231,7 +232,7 @@ test('a grouped line chart draws its threshold line once, above every value, out
   const plot = await chart.locator('.recharts-cartesian-grid').boundingBox()
   const line = await chart.locator('.chart-threshold-line').boundingBox()
   expect(plot && line && line.y >= plot.y - 1 && line.y <= plot.y + plot.height + 1).toBe(true)
-  await expect(legend).toHaveText(legendText)
+  await expect(legend.locator('[data-chart-series]')).toHaveText(entries)
   await expect(legend.getByText('Limit')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Dashboard settings' }).click()
