@@ -60,10 +60,10 @@ class MonitorEvaluation
   # missed, so a cut table is an error that changes no state. The SQL users'
   # row limit is higher, so a SQL Monitor's run counts the rows itself.
   MAX_GROUPS = 10_000
-  TABLE_CUT_TEMPLATE = "The %s gives more than #{MAX_GROUPS.to_fs(:delimited)} rows, the most EventStore answers, so a " \
-    "run can't compare every group with the threshold: group by fewer columns, or filter the Logs before the summarize."
-  TABLE_CUT = format(TABLE_CUT_TEMPLATE, "Query").freeze
-  SQL_TABLE_CUT = format(TABLE_CUT_TEMPLATE, "SQL").freeze
+  TABLE_CUT_TEMPLATE = "The %s gives more than #{MAX_GROUPS.to_fs(:delimited)} rows, the most %s, so a " \
+    "run can't compare every group with the threshold: group by fewer columns, or filter the %s."
+  TABLE_CUT = format(TABLE_CUT_TEMPLATE, "Query", "EventStore answers", "Logs before the summarize").freeze
+  SQL_TABLE_CUT = format(TABLE_CUT_TEMPLATE, "SQL", "a run compares", "rows before the GROUP BY").freeze
   SQL_OFF = "#{LogMonitor::SQL_QUERIES_OFF}, so the Monitor's SQL can't run. An instance admin can turn them on again.".freeze
   CHANGED_DURING_RUN = "The Monitor was changed during this run, so the run changed nothing. The next run checks it again."
 
