@@ -15,4 +15,4 @@ A future reader may wonder why `$` changed meaning in the lexer, and why `where 
 - `$` no longer starts a field name. A field named `$type` is written `['$type']`.
 - A filter's value is text. Compared with an Attribute, it matches the text, or the number or bool the text reads as.
 - The values become literals in the compiled SQL, so the bin cache keeps each set of values apart without a change. All compiles to the SQL of the Query without the comparison, and shares its cached bins.
-- A name the request doesn't fill is All. So the explorer, the MCP server's `query_logs` and anything else that sends no values runs every filter as All. Monitors refuse Queries that name one.
+- A name the request doesn't fill is All. Console fills in a filter's default values, never EventStore. The Dashboard page uses them when its URL has no value for the filter. The MCP server's `get_chart_data` uses them when the request gives no value for the filter. The URL keeps a filter set to All as an empty `v_<name>`. So the explorer, the MCP server's `query_logs` and anything else that sends no values runs every filter as All. Monitors refuse Queries that name one.

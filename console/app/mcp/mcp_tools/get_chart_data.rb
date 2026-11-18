@@ -8,7 +8,8 @@ module McpTools
 
     description "Runs a Chart's saved Query on its Project over a range and answers the table the Chart draws: " \
                 "#{Table::SHAPE}. With filters, it runs as the Dashboard page does with those values picked in its filter bar; " \
-                "the answer's filters are the values it ran with, {name: [values]}, and a filter not in it ran as All."
+                "a filter not given runs with its default values, as when the page opens. " \
+                "The answer's filters are the values it ran with, {name: [values]}, and a filter not in it ran as All."
     read_only!
     takes_chart
     takes_range
@@ -18,12 +19,12 @@ module McpTools
       additionalProperties: { type: %w[string array], items: { type: "string" } },
       description: "Values for the Dashboard's filters by name, as get_dashboard lists them: a string, or a list of strings " \
                    "for several, such as {\"service\": [\"api\", \"web\"], \"q\": \"timeout\"}. Where the Chart's Query names a " \
-                   "filter as $name, it runs with these values; a filter left out, or given \"\" or [], runs as All, " \
-                   "as if its comparisons weren't there.",
+                   "filter as $name, it runs with these values. A filter left out runs with its default values, as get_dashboard " \
+                   "lists them, or as All when it has none; a filter given \"\" or [] runs as All, as if its comparisons weren't there.",
     }
 
     def run
-      values = filter_values
+      values = dashboard.filter_values(given_filters, defaults: true)
       answer = ChartRuns.run_chart(organization.projects.find(chart.project_id), chart.query,
         from: time_range.from, to: time_range.to, parameters: values)
       table = answer["table"]
@@ -31,19 +32,21 @@ module McpTools
       json({ chart: chart.id, title: chart.title, viz: chart.viz,
              from: table["from"] || time_range.from.utc.iso8601(3), to: table["to"] || time_range.to.utc.iso8601(3),
              filters: values, **Table.compact(table) },
-        link: links.dashboard(dashboard, range: time_range, values: values))
+        link: links.dashboard(dashboard, range: time_range, values: dashboard.filter_link_values(given_filters)))
     end
 
     private
 
-    # The filters argument as EventStore's parameters. A name the Dashboard
-    # lacks is refused rather than run as All, as it is likely a slip.
-    def filter_values
-      given = (arguments[:filters] || {}).transform_keys(&:to_s)
-      unknown = given.keys - dashboard.filter_names
-      raise ToolError, "#{unknown.to_sentence} #{not_its_filters(unknown)}." if unknown.any?
+    # The filters argument, {name => value or [values]}. A name the
+    # Dashboard lacks is refused rather than run as All, as it is likely a slip.
+    def given_filters
+      @given_filters ||= begin
+        given = (arguments[:filters] || {}).transform_keys(&:to_s)
+        unknown = given.keys - dashboard.filter_names
+        raise ToolError, "#{unknown.to_sentence} #{not_its_filters(unknown)}." if unknown.any?
 
-      dashboard.filter_values(given)
+        given
+      end
     end
 
     # The range given, or the Dashboard's default range, as the page first

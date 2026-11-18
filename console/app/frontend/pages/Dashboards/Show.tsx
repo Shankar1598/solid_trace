@@ -15,7 +15,7 @@ import {
 import { HoverTimeProvider } from '@/components/charts/hoverTime'
 import { Button } from '@/components/ui/button'
 import {
-  chartGroups, filterValues, filterValuesOfSearch, rangeOfSearch, searchOfRangeAndValues,
+  chartGroups, pickedOfSearch, rangeOfSearch, searchOfRangeAndPicked, valuesWithDefaults,
   type AutoRefresh, type Dashboard, type DashboardChart, type DashboardSection, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
@@ -50,7 +50,8 @@ interface DashboardsShowProps {
  * its header, and the folds are kept in their browser only. Each chart runs
  * over the range in the URL (the
  * Dashboard's default range until another is picked) with the values of the
- * filters it names, at most a few at once. The values sit in the URL beside
+ * filters it names (their default values until others are picked), at most a
+ * few at once. The values sit in the URL beside
  * the range; changing one runs again only the charts that name its filter.
  * Refresh runs them all again, as auto-refresh does on a relative range.
  * Edit lets the cards be dragged by their titles and resized from their
@@ -73,22 +74,23 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   const [folded, setFolded] = useState<ReadonlySet<number>>(() => readFolded(browserStorage(), dashboard.id))
   const [settings, setSettings] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [picked, setPicked] = useState<FilterValues>(() => filterValuesOfSearch(window.location.search, dashboard.filters))
+  // The values picked, by name; [] is All. A filter not picked has its default values.
+  const [picked, setPicked] = useState<FilterValues>(() => pickedOfSearch(window.location.search, dashboard.filters))
   // Only the values of the filters the Dashboard has now: a removed filter's go.
-  const values = useMemo(() => filterValues(dashboard.filters, picked), [dashboard.filters, picked])
-  const search = searchOfRangeAndValues(range, values)
+  const values = useMemo(() => valuesWithDefaults(dashboard.filters, picked), [dashboard.filters, picked])
+  const search = searchOfRangeAndPicked(range, dashboard.filters, picked)
 
   const rerun = useCallback((r: TimeRange) => setRun(prev => ({ ...resolveRange(r, new Date()), n: prev.n + 1 })), [])
   const pickRange = (next: TimeRange) => {
     setRange(next)
-    router.replace({ url: basePath + searchOfRangeAndValues(next, values), preserveState: true, preserveScroll: true })
+    router.replace({ url: basePath + searchOfRangeAndPicked(next, dashboard.filters, picked), preserveState: true, preserveScroll: true })
     rerun(next)
   }
   // The charts that name the filter run again when their values change; the run stays.
   const pickValues = (name: string, next: string[]) => {
-    const nextValues = filterValues(dashboard.filters, { ...values, [name]: next })
-    setPicked(nextValues)
-    router.replace({ url: basePath + searchOfRangeAndValues(range, nextValues), preserveState: true, preserveScroll: true })
+    const nextPicked = { ...picked, [name]: next }
+    setPicked(nextPicked)
+    router.replace({ url: basePath + searchOfRangeAndPicked(range, dashboard.filters, nextPicked), preserveState: true, preserveScroll: true })
   }
 
   // Auto-refresh runs a relative range again, counting from when the last run
@@ -119,7 +121,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
 
   const copyLink = (kind: LinkKind) => {
     const shown: TimeRange = kind === 'shown' && range.kind === 'relative' ? { kind: 'absolute', from: run.from, to: run.to } : range
-    copyText(window.location.origin + basePath + searchOfRangeAndValues(shown, values), 'Link')
+    copyText(window.location.origin + basePath + searchOfRangeAndPicked(shown, dashboard.filters, picked), 'Link')
   }
 
   const setAutoRefresh = (value: AutoRefresh) => router.patch(`${basePath}${search}`, { dashboard: { auto_refresh: value } }, { preserveScroll: true, preserveState: true })

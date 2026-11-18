@@ -496,6 +496,28 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
                  "&v_service=api&v_service=web&v_level=error", answer.link
   end
 
+  test "get_chart_data runs a filter not given with its default values, and one given empty as All, linking only what was given" do
+    @dashboard.update!(filters: [
+      { name: "known_issues", kind: "select", default: "hide", options: { from: "list", items: [ { value: "hide" }, { value: "show" } ] } },
+      { name: "q", kind: "search", default: "timeout" }
+    ])
+    @chart.update!(query: "where $known_issues == \"show\" or not(store_id in (489)) | search $q | summarize count()")
+    body = ->(parameters) { { query: @chart.query, from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
+                              timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: parameters }.to_json }
+    answer = { table: { columns: [ { name: "count_", type: "number" } ], rows: [ [ 7 ] ] } }.to_json
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+      .with(body: body.call({ known_issues: [ "hide" ] })).to_return(status: 200, body: answer)
+
+    answer = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: @chart.id,
+      from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", filters: { q: "" })
+
+    assert_not answer.error?
+    assert_requested run
+    assert_equal({ "known_issues" => [ "hide" ] }, answer.json["filters"])
+    assert_equal "http://console.test/acme/dashboards/#{@dashboard.id}?from=2026-10-03T09%3A00%3A00.000Z&to=2026-10-03T10%3A00%3A00.000Z" \
+                 "&v_q=", answer.link
+  end
+
   test "get_chart_data refuses a filter the Dashboard lacks, naming its filters" do
     @dashboard.update!(filters: [ { name: "q", kind: "search" } ])
     run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")

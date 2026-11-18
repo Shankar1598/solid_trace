@@ -180,7 +180,18 @@ where service == $service and level == $level
 
 - **One value** works as if it were written there as a string: picking `api` makes `service == $service` mean `service == "api"`.
 - **Several values:** `==`, `=~`, `contains` and `startswith` match any of them, and `!=`, `!~`, `!contains` and `!startswith` match none of them.
-- **All**, a filter with no value, makes its comparison true, as if it weren't there. Every Dashboard opens with its filters on All.
+- **All**, a filter with no value, makes its comparison true, as if it weren't there.
+
+A Dashboard opens with each filter on its default values, or on All when it has none. A member can still pick other values, or All.
+
+**An on/off filter** is a select with two options, such as `hide` and `show`, and the default `hide`. Compare it with a string, and use `or`:
+
+```
+where $known_issues == "show" or not(store_id in (489, 512))
+| summarize count() by bin_auto(time)
+```
+
+With `hide`, the comparison is false, so the Query leaves out those stores. With `show`, it is true, and with All it isn't there, so the Query keeps every store.
 
 A value is text. Compared with a built-in field, it is text. Compared with an Attribute, it matches the text or the number or bool the text reads as, so `status == $status` with `500` matches both `500` and `"500"`. Compared with a number column after `summarize` or `extend`, it is a number, and a value that isn't one matches nothing.
 
@@ -188,7 +199,7 @@ A value is text. Compared with a built-in field, it is text. Compared with an At
 
 A filter goes on either side of `==`, `!=`, `=~` and `!~`, after `contains`, `startswith` and their `!` and `_cs` forms, and after `search`. Anywhere else it's an error: in `project`, `extend`, `summarize` or `sort`, in an `in (…)` list, in an order comparison such as `>`, after `matches regex`, and inside `not(…)`, where All would keep nothing. To leave a value out, use `!=`.
 
-Only a Dashboard's Charts fill filters in, on the Dashboard page or through the MCP server's `get_chart_data`. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have. A Monitor's Query can't name a filter.
+Only a Dashboard's Charts fill filters in, on the Dashboard page or through the MCP server's `get_chart_data`, which runs a filter it isn't given with its default values. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have. A Monitor's Query can't name a filter.
 
 ## Reading less
 

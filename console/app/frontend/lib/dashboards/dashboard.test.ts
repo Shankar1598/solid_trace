@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   chartGroups, chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
-  parametersOfChart, rangeOfSearch, searchOfRangeAndValues, stackedPlaces, textOfOptions, titleOfQuery, unknownFilterProblems, unknownFilters, vizOfForm,
+  parametersOfChart, pickedOfSearch, rangeOfSearch, searchOfRangeAndPicked, searchOfRangeAndValues, stackedPlaces, textOfOptions, titleOfQuery,
+  unknownFilterProblems, unknownFilters, valuesWithDefaults, vizOfForm,
   withSource,
   type DashboardChart, type DashboardFilter, type DashboardSection,
 } from './dashboard'
@@ -46,6 +47,31 @@ describe('a Dashboard\'s filter values', () => {
     expect(search).toBe('?range=6h&v_level=error&v_level=warn&v_q=time+out')
     expect(rangeOfSearch(search, '1h')).toEqual({ kind: 'relative', span: '6h' })
     expect(filterValuesOfSearch(search, FILTERS)).toEqual({ level: ['error', 'warn'], q: ['time out'] })
+  })
+
+  it('start at a filter\'s default values when the URL has no key of it, and an empty key is All', () => {
+    const known: DashboardFilter = {
+      name: 'known_issues', label: 'Known issues', kind: 'select', multiple: false, default: ['hide'],
+      options: { from: 'list', items: [{ label: 'hide', value: 'hide' }, { label: 'show', value: 'show' }] },
+    }
+    const q: DashboardFilter = { ...Q, default: ['timeout'] }
+    const filters = [LEVEL, known, q]
+    expect(filterValuesOfSearch('?range=1h', filters)).toEqual({ known_issues: ['hide'], q: ['timeout'] })
+    expect(filterValuesOfSearch('?v_known_issues=show&v_q=', filters)).toEqual({ known_issues: ['show'] })
+
+    // The URL holds only what a member picked: All as an empty key, and a filter not picked follows its default.
+    const range = { kind: 'relative' as const, span: '1h' }
+    const all = searchOfRangeAndPicked(range, filters, { level: ['error'], known_issues: [], q: [] })
+    expect(all).toBe('?range=1h&v_level=error&v_known_issues=&v_q=')
+    expect(filterValuesOfSearch(all, filters)).toEqual({ level: ['error'] })
+    const notPicked = searchOfRangeAndPicked(range, filters, { level: [], known_issues: ['show', 'hide'], gone: ['x'] })
+    expect(notPicked).toBe('?range=1h&v_known_issues=show')
+    expect(filterValuesOfSearch(notPicked, filters)).toEqual({ known_issues: ['show'], q: ['timeout'] })
+
+    // A filter picked as All stays All; one not picked follows its default, as when it is added.
+    expect(pickedOfSearch('?v_known_issues=&v_level=error', filters)).toEqual({ known_issues: [], level: ['error'] })
+    expect(valuesWithDefaults(filters, { known_issues: [] })).toEqual({ q: ['timeout'] })
+    expect(valuesWithDefaults([...filters, { ...ENV, name: 'constructor', default: ['prod'] }], {})).toEqual({ known_issues: ['hide'], q: ['timeout'], constructor: ['prod'] })
   })
 
   it('a chart sends are those of the Dashboard\'s filters its Query names', () => {
