@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 # Checks, when a Monitor is saved, that EventStore can run its Query the way
-# its kind needs, and adds to the Monitor's errors on :query when it can't.
+# its kind needs, and adds to the Monitor's errors on :query when it can't
+# (on :sql for a SQL Monitor, LogMonitor#text_attribute).
 #
 # - Either kind: validate says the Query has no mistakes and names no
 #   Dashboard filter ($service), which only a Dashboard's Charts fill in; a
@@ -12,6 +13,10 @@
 # - Match: arming it (after_batch "") checks the Query returns Logs, and
 #   gives the ingest_cursor its runs start from, which the Monitor keeps when
 #   it has to start again (#arm?).
+# - SQL, for a Threshold monitor only: refused while SQL queries are off;
+#   else a dry run over the Monitor's range on EventStore's SQL endpoint
+#   gives a table with exactly one number column. SQL that doesn't run gives
+#   ClickHouse's message.
 class MonitorQueryCheck
   SUMMARIZE = "must end in a summarize that gives one number per group, such as " \
     "| summarize count() by service, for a Threshold monitor to compare with its threshold"
@@ -26,6 +31,8 @@ class MonitorQueryCheck
   end
 
   def call
+    return check_sql if @monitor.language_sql?
+
     validation = EventStore.validate_logs_query(project_id: @monitor.project_id, query: @monitor.query)
     return query_errors(validation) if Array(validation["errors"]).any?
 
@@ -35,14 +42,32 @@ class MonitorQueryCheck
     @monitor.kind_threshold? ? check_threshold(validation) : check_match
   rescue EventStore::Rejected => e
     query_errors(e.body)
+  rescue EventStore::SQLQueriesOff
+    @monitor.errors.add(:base, LogMonitor::SQL_OFF)
   rescue EventStore::TimedOut => e
-    add("took longer than #{LogMonitor::RUN_TIMEOUT_SECONDS} s to run: #{EventStore.error_text(e.body)}")
+    add("took longer than #{timeout_seconds} s to run: #{EventStore.error_text(e.body)}")
   rescue EventStore::Unavailable => e
     Rails.logger.error(e.message)
     add("could not be checked, as EventStore is unavailable. Try again shortly.")
   end
 
   private
+
+  def check_sql
+    return @monitor.errors.add(:base, LogMonitor::SQL_OFF) unless InstanceSetting.current.sql_queries_enabled?
+
+    from, to = @monitor.window(@now)
+    answer = EventStore.run_logs_sql(
+      project_id: @monitor.project_id, sql: @monitor.query, from: from, to: to, timeout_seconds: timeout_seconds
+    )
+    check_columns(answer.dig("table", "columns") || [])
+  rescue EventStore::Rejected => e
+    add("can't run: #{EventStore.error_text(e.body)}")
+  end
+
+  def timeout_seconds
+    @monitor.language_sql? ? LogMonitor::SQL_READ_TIMEOUT_SECONDS : LogMonitor::RUN_TIMEOUT_SECONDS
+  end
 
   def check_threshold(validation)
     return add(SUMMARIZE) unless ends_in_summarize?(Array(validation["stages"]).last)
@@ -71,7 +96,7 @@ class MonitorQueryCheck
     if numbers.size != 1
       add("must give exactly one number per group to compare with the threshold, " \
         "but gives #{numbers.size}#{numbers.any? ? " (#{numbers.join(', ')})" : ''}. " \
-        "A number to group by can be turned into text with tostring()")
+        "A number to group by can be turned into text with #{@monitor.language_sql? ? 'toString()' : 'tostring()'}")
     elsif bins.any?
       add("can't group by a time bin (#{bins.join(', ')}): a Threshold monitor compares one number " \
         "per group over its whole range. Remove the bin from the summarize's by")
@@ -92,6 +117,6 @@ class MonitorQueryCheck
   end
 
   def add(message)
-    @monitor.errors.add(:query, message)
+    @monitor.errors.add(@monitor.text_attribute, message)
   end
 end

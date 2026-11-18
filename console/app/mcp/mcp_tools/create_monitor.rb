@@ -11,9 +11,13 @@ module McpTools
                 "EventStore checks the Query before it's saved. run_monitor runs it now. #{READING_LESS}"
     writes!
     takes_project
-    takes_monitor_fields required: %i[name kind query]
+    takes_monitor_fields required: %i[name kind]
 
     def run
+      unless arguments.key?(:query) || arguments.key?(:sql)
+        raise ToolError, InstanceSetting.current.sql_queries_enabled? ? "Give query, or sql for a Monitor that needs SQL." : "Give query."
+      end
+
       made = organization.monitors.new
       save_monitor!(made, monitor_attributes)
 

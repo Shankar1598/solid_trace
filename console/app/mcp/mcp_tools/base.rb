@@ -117,6 +117,41 @@ module McpTools
         @needs_sql_queries || false
       end
 
+      # An argument listed only while SQL queries are on, such as
+      # create_monitor's sql. note, which needs the description given before,
+      # is added to the tool's description only while they are on.
+      def sql_argument(name, schema, note: nil)
+        @description_without_sql ||= description_value
+        description([ description_value, note ].compact.join(" "))
+        argument(name, schema)
+        @sql_arguments = sql_arguments + [ name.to_sym ]
+      end
+
+      def sql_arguments
+        @sql_arguments || []
+      end
+
+      # The tool as the server lists it now: while SQL queries are off, a copy
+      # without its SQL arguments and their note. A call that gives one
+      # anyway is refused where it is saved or run.
+      def as_listed
+        return self if sql_arguments.empty? || InstanceSetting.current.sql_queries_enabled?
+
+        @without_sql ||= begin
+          tool = self
+          Class.new(self) do
+            tool_name tool.name_value
+            description tool.description_without_sql
+            @annotations_value = tool.annotations_value
+            tool.send(:properties).except(*tool.sql_arguments).each do |name, schema|
+              argument name, schema, required: tool.send(:required_arguments).include?(name)
+            end
+          end
+        end
+      end
+
+      attr_reader :description_without_sql
+
       # A tool on the install's settings, for an instance admin only. An
       # OAuth token's server does not have it.
       def instance_admin_only!

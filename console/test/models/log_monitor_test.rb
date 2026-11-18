@@ -232,6 +232,89 @@ class LogMonitorTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
+  # SQL
+  # ---------------------------------------------------------------------------
+
+  test "a Monitor's language is query unless it is saved with SQL" do
+    assert create(:monitor, project: @project).language_query?
+  end
+
+  test "saving a SQL Threshold monitor dry-runs its SQL over its range on EventStore's SQL endpoint, at most 10 s" do
+    stub_monitor_sql_check(@project)
+
+    monitor = travel_to(Time.utc(2026, 10, 17, 12, 0, 0)) { create(:monitor, :sql, project: @project, range_minutes: 15) }
+
+    assert monitor.language_sql?
+    assert_requested(:post, "#{EventStore.base_url}/api/#{@project.id}/logs/sql") do |request|
+      body = JSON.parse(request.body)
+      body["sql"] == monitor.query && body["from"] == "2026-10-17T11:44:00.000Z" &&
+        body["to"] == "2026-10-17T11:59:00.000Z" && body["timeout_seconds"] == 10
+    end
+    assert_not_requested(:post, %r{/logs/(validate|query)})
+  end
+
+  test "SQL that doesn't run is refused with ClickHouse's message" do
+    stub_monitor_sql_check(@project)
+    stub_request(:post, %r{/logs/sql}).to_return(status: 400, body: { error: "Unknown function cuont" }.to_json)
+
+    monitor = build(:monitor, :sql, project: @project)
+
+    assert_not monitor.valid?
+    assert_equal [ "SQL can't run: Unknown function cuont" ], monitor.errors.full_messages
+  end
+
+  test "a SQL Monitor's table must give exactly one number per group, in words that name the SQL" do
+    stub_monitor_sql_check(@project, columns: [ SERVICE_COLUMN ])
+    none = build(:monitor, :sql, project: @project)
+    assert_not none.valid?
+    assert_match(/\ASQL must give exactly one number per group to compare with the threshold, but gives 0\./,
+      none.errors.full_messages.sole)
+
+    stub_monitor_sql_check(@project, columns: [ COUNT_COLUMN, { "name" => "p95", "type" => "number" } ])
+    two = build(:monitor, :sql, project: @project)
+    assert_not two.valid?
+    assert_match "gives 2 (count_, p95)", two.errors.full_messages.sole
+  end
+
+  test "SQL is for Threshold monitors only, and a Match monitor's SQL runs nothing" do
+    stub_monitor_sql_check(@project)
+
+    monitor = build(:monitor, :match, project: @project, language: "sql", query: "SELECT * FROM logs")
+
+    assert_not monitor.valid?
+    assert_equal [ "SQL is for Threshold monitors only" ], monitor.errors.full_messages
+    assert_not_requested(:post, %r{/logs/})
+  end
+
+  test "while SQL queries are off, saving a SQL Monitor is refused, but a saved one can still be renamed or turned off" do
+    stub_monitor_sql_check(@project)
+    saved = create(:monitor, :sql, project: @project)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    WebMock::RequestRegistry.instance.reset!
+
+    made = build(:monitor, :sql, project: @project)
+    assert_not made.valid?
+    assert_equal [ "SQL queries are off on this install" ], made.errors.full_messages
+
+    assert saved.update(name: "Renamed", disabled_at: Time.current)
+    assert_not saved.update(disabled_at: nil)
+    assert_equal [ "SQL queries are off on this install" ], saved.errors.full_messages
+    assert_not_requested(:post, %r{/logs/})
+  end
+
+  test "a SQL Monitor changed back to a Query is checked as a Query" do
+    stub_monitor_sql_check(@project)
+    monitor = create(:monitor, :sql, project: @project)
+    WebMock::RequestRegistry.instance.reset!
+
+    monitor.update!(language: "query", query: "['shop']\n| summarize count() by service")
+
+    assert monitor.reload.language_query?
+    assert_requested(:post, %r{/logs/validate}, times: 1)
+    assert_not_requested(:post, %r{/logs/sql})
+  end
+
+  # ---------------------------------------------------------------------------
   # Schedule
   # ---------------------------------------------------------------------------
 

@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
-# A Monitor: a saved Query on one of an Organization's Projects that runs
-# every interval_minutes and tells the Monitor's Integrations what it finds.
+# A Monitor: a saved Query, or for a Threshold monitor a SQL query, on one
+# of an Organization's Projects that runs every interval_minutes and tells
+# the Monitor's Integrations what it finds. language says which; the text is
+# in query either way.
 # The class is LogMonitor because Ruby's standard library already has a
 # Monitor; its model name, table and foreign keys are Monitor's.
 #
-# - A Threshold monitor's Query ends in a summarize of one number. Each row
+# - A Threshold monitor's Query ends in a summarize of one number, or its
+#   SQL gives the group columns and one number column. Each row
 #   of its table over the last range_minutes is a group, keyed by its other
 #   columns; a group whose number passes the threshold is firing. It
 #   compares either the number itself (compare value) or its percent change
@@ -32,6 +35,10 @@ class LogMonitor < ApplicationRecord
   SCHEDULE_SLACK = 30.seconds
   # How long EventStore may take over a run, as for a Dashboard's chart.
   RUN_TIMEOUT_SECONDS = 30
+  # The most time a SQL Monitor gives each read: the SQL users' own limit
+  # for each statement (ADR 0003).
+  SQL_READ_TIMEOUT_SECONDS = 10
+  SQL_OFF = "SQL queries are off on this install"
   # A Threshold monitor's range ends this long before its run, so Logs
   # still waiting for Log processing are not counted as missing.
   PROCESSING_LAG = 60.seconds
@@ -42,6 +49,7 @@ class LogMonitor < ApplicationRecord
 
   enum :kind, { threshold: "threshold", match: "match" }, prefix: true, validate: true
   enum :compare, { value: "value", change: "change" }, prefix: true, validate: true
+  enum :language, { query: "query", sql: "sql" }, prefix: true, validate: true
 
   belongs_to :organization
   belongs_to :project
@@ -58,7 +66,9 @@ class LogMonitor < ApplicationRecord
   scope :due, ->(now) { enabled.where(next_run_at: nil).or(enabled.where(next_run_at: ..(now + SCHEDULE_SLACK))) }
 
   validates :name, presence: true, length: { maximum: 200 }
-  validates :query, presence: true, length: { maximum: 20_000 }
+  validates :query, presence: true, length: { maximum: 20_000 }, unless: :language_sql?
+  validate :sql_given, if: :language_sql?
+  validate :sql_for_threshold_only, if: :language_sql?
   validates :interval_minutes, numericality: { only_integer: true, in: 1..MAX_INTERVAL_MINUTES }
   validates :range_minutes, numericality: { only_integer: true, in: 1..MAX_RANGE_MINUTES }
   validates :operator, inclusion: { in: OPERATORS, message: "must be >, >=, < or <=" }, if: :compares_the_value?
@@ -121,6 +131,17 @@ class LogMonitor < ApplicationRecord
       self.integrations = linked unless linked.nil?
       true
     end
+  end
+
+  # What the Monitor's text is called in its errors: Query or SQL.
+  def text_name
+    language_sql? ? "SQL" : "Query"
+  end
+
+  # The attribute errors about the Monitor's text are on: :query, or :sql
+  # for a SQL Monitor, which the errors call SQL.
+  def text_attribute
+    language_sql? ? :sql : :query
   end
 
   # Whether the scheduler should run it at now.
@@ -275,10 +296,23 @@ class LogMonitor < ApplicationRecord
   # Monitor is turned back on, which arms a Match monitor again.
   def query_check_needed?
     return false if validation_context == :preview
-    return false if errors.include?(:query) || errors.include?(:project) || project.nil? || kind.nil?
+    return false if errors.include?(:query) || errors.include?(:sql) || errors.include?(:project) || project.nil? || kind.nil?
 
-    new_record? || will_save_change_to_query? || will_save_change_to_kind? ||
+    new_record? || will_save_change_to_query? || will_save_change_to_language? || will_save_change_to_kind? ||
       will_save_change_to_project_id? || (kind_threshold? && will_save_change_to_range_minutes?) || turned_on?
+  end
+
+  # A SQL Monitor's text, with the Query's limits, named as SQL.
+  def sql_given
+    if query.blank? then errors.add(:sql, :blank)
+    elsif query.length > 20_000 then errors.add(:sql, :too_long, count: 20_000)
+    end
+  end
+
+  # A Match monitor reads the Logs ingested after its cursor, which only the
+  # Query API can do. A match in SQL is a count with threshold > 0.
+  def sql_for_threshold_only
+    errors.add(:sql, "is for Threshold monitors only") if kind_match?
   end
 
   # A Baseline 1 day earlier would overlap a range over 1 day. One 1 week

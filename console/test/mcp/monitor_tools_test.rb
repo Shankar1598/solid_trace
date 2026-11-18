@@ -437,6 +437,97 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal 1, @monitor.runs.count
   end
 
+  # SQL
+
+  SQL = "SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service"
+
+  test "create_monitor makes a SQL Threshold monitor once EventStore has dry-run its SQL, and get_monitor and list_monitors give its language" do
+    stub_monitor_sql_check(@shop)
+
+    answer = call_tool(:create_monitor, user: @user, project: "shop", name: "Errors in SQL", kind: "threshold", sql: SQL,
+      operator: ">", threshold: 5, notify_by_group: true)
+
+    assert_not answer.error?, answer.text
+    made = @acme.monitors.find_by!(name: "Errors in SQL")
+    assert_equal [ "sql", SQL ], [ made.language, made.query ]
+    assert_equal [ "sql", SQL ], answer.json.values_at("language", "query")
+    assert_requested(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql") { |request| JSON.parse(request.body)["sql"] == SQL }
+    assert_equal [ "sql", SQL ], call_tool(:get_monitor, user: @user, monitor: made.id).json.values_at("language", "query")
+    assert_equal({ "Checkout errors" => "query", "Errors in SQL" => "sql" },
+      call_tool(:list_monitors, user: @user).json["monitors"].to_h { |m| m.values_at("name", "language") })
+  end
+
+  test "create_monitor and update_monitor refuse sql and query together, naming both, and create_monitor needs one" do
+    stub_monitor_sql_check(@shop)
+    both = "Give query or sql, not both: a Monitor runs one of them."
+
+    made = call_tool(:create_monitor, user: @user, project: "shop", name: "Both", kind: "threshold", sql: SQL,
+      query: "['shop'] | summarize count()", operator: ">", threshold: 5)
+    assert_equal both, made.text
+    assert_equal both, call_tool(:update_monitor, user: @user, monitor: @monitor.id, sql: SQL, query: @monitor.query).text
+    assert_equal "Give query, or sql for a Monitor that needs SQL.",
+      call_tool(:create_monitor, user: @user, project: "shop", name: "None", kind: "threshold", operator: ">", threshold: 5).text
+    assert_not LogMonitor.exists?(name: %w[Both None])
+  end
+
+  test "update_monitor changes a Monitor from a Query to SQL and back" do
+    stub_monitor_sql_check(@shop)
+
+    to_sql = call_tool(:update_monitor, user: @user, monitor: @monitor.id, sql: SQL)
+    assert_not to_sql.error?, to_sql.text
+    assert_equal [ "sql", SQL ], [ @monitor.reload.language, @monitor.query ]
+
+    query = "['shop']\n| summarize count() by service"
+    back = call_tool(:update_monitor, user: @user, monitor: @monitor.id, query: query)
+    assert_not back.error?, back.text
+    assert_equal [ "query", query ], [ @monitor.reload.language, @monitor.query ]
+  end
+
+  test "SQL on a Match monitor, and a table without one number column, are refused with words that name the SQL" do
+    stub_monitor_sql_check(@shop, columns: [ SERVICE_COLUMN ])
+
+    match = call_tool(:create_monitor, user: @user, project: "shop", name: "Match SQL", kind: "match", sql: SQL)
+    assert_equal "Not saved: SQL is for Threshold monitors only.", match.text
+
+    no_number = call_tool(:create_monitor, user: @user, project: "shop", name: "No number", kind: "threshold", sql: SQL,
+      operator: ">", threshold: 5)
+    assert_match(/\ANot saved: SQL must give exactly one number per group/, no_number.text)
+  end
+
+  test "run_monitor runs a SQL Monitor through EventStore's SQL endpoint" do
+    stub_monitor_sql_check(@shop)
+    monitor = create(:monitor, :sql, project: @shop, name: "Errors in SQL", threshold: 5, notify_by_group: true)
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql").to_return(status: 200, body: {
+      table: { columns: [ SERVICE_COLUMN, COUNT_COLUMN ], rows: [ [ "api", 9 ], [ "web", 1 ] ], truncated: false },
+    }.to_json)
+
+    answer = call_tool(:run_monitor, user: @user, monitor: monitor.id)
+
+    assert_not answer.error?, answer.text
+    assert_equal [ { "service" => "api" } ], monitor.states.select(&:status_firing?).map(&:group)
+  end
+
+  test "while SQL queries are off, the sql argument isn't listed, a SQL Monitor isn't saved, and a saved one's runs fail" do
+    stub_monitor_sql_check(@shop)
+    saved = create(:monitor, :sql, project: @shop, name: "Errors in SQL")
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
+    %w[create_monitor update_monitor].each do |name|
+      tool = listed_tools.find { |each| each[:name] == name }
+      assert_not_includes tool[:inputSchema][:properties].keys, :sql, name
+      assert_no_match(/\bsql\b/, tool[:description], name)
+    end
+    made = call_tool(:create_monitor, user: @user, project: "shop", name: "Off", kind: "threshold", sql: SQL, operator: ">", threshold: 5)
+    assert_equal "Not saved: SQL queries are off on this install.", made.text
+    assert_equal "The run failed: #{MonitorEvaluation::SQL_OFF}", call_tool(:run_monitor, user: @user, monitor: saved.id).text
+
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    create_monitor = listed_tools.find { |each| each[:name] == "create_monitor" }
+    sql = create_monitor[:inputSchema][:properties][:sql][:description]
+    [ /use query first/i, /join, a subquery, a window/, /events or spans/, /logs, events and spans/,
+      /range is set outside the SQL/, /group columns and one number column/ ].each { |words| assert_match words, sql }
+  end
+
   # Another Organization's
 
   test "another Organization's Monitor is not found, and its Monitors and Integrations aren't listed" do

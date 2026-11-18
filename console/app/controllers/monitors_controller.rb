@@ -163,9 +163,10 @@ class MonitorsController < ApplicationController
   # Whether a Threshold monitor's Query groups by columns, as its summarize
   # in the Builder's chips shows, so its summary sentence can say "the
   # number" for its one group. nil when that can't be known: a Match
-  # monitor, a Query the Builder can't show, or EventStore not answering.
+  # monitor, a SQL Monitor, a Query the Builder can't show, or EventStore
+  # not answering.
   def by_columns?(monitor)
-    return unless monitor.kind_threshold?
+    return unless monitor.kind_threshold? && monitor.language_query?
 
     summarize = EventStore.validate_logs_query(project_id: monitor.project_id, query: monitor.query).dig("chips", "summarize")
     summarize["by"].present? if summarize

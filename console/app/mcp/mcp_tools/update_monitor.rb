@@ -7,7 +7,7 @@ module McpTools
     include MonitorTool
 
     description "Changes a Monitor. Only the fields given change. A new project points the Query's source at it, as the " \
-                "Monitor form does, unless a query is given. integration_ids replaces the Integrations it tells. enabled false " \
+                "Monitor form does, unless a query is given; a SQL Monitor's SQL then reads the new Project's tables. integration_ids replaces the Integrations it tells. enabled false " \
                 "turns it off, which resolves its firing groups, as switching compare between value and change does; enabled true turns it on, which checks its Query again, and a " \
                 "Query that no longer runs keeps it off."
     writes!(open_world: true)
@@ -16,14 +16,19 @@ module McpTools
     takes_monitor_fields
     argument :enabled, { type: "boolean", description: "Whether the Monitor is on and runs." }
 
-    CHANGES = [ :project, :enabled, *MONITOR_FIELDS.keys ].freeze
+    CHANGES = [ :project, :enabled, *MONITOR_FIELDS.keys, :sql ].freeze
 
     def run
-      raise ToolError, "Give at least one of #{CHANGES.join(', ')} to change." unless arguments.keys.intersect?(CHANGES)
+      unless arguments.keys.intersect?(CHANGES)
+        listed = InstanceSetting.current.sql_queries_enabled? ? CHANGES : CHANGES - [ :sql ]
+        raise ToolError, "Give at least one of #{listed.join(', ')} to change."
+      end
 
       turning_on = switches? && arguments[:enabled]
       changes = monitor_attributes
-      changes[:query] = with_source(monitor.query, project.slug) if arguments.key?(:project) && !arguments.key?(:query)
+      if arguments.key?(:project) && !arguments.key?(:query) && !arguments.key?(:sql) && monitor.language_query?
+        changes[:query] = with_source(monitor.query, project.slug)
+      end
       changes[:disabled_at] = (turning_on ? nil : Time.current) if switches?
       save_monitor!(monitor, changes, refused: turning_on ? "Not saved, so the Monitor stays off" : "Not saved")
 

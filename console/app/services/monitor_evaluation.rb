@@ -13,6 +13,12 @@
 #   firing sends nothing. A group with no row is ok, and no rows at all fire
 #   the Monitor's one group only with alert_on_no_data. A table cut at
 #   EventStore's row limit is an error (TABLE_CUT).
+# - Threshold with SQL: reads the same range through EventStore's SQL
+#   endpoint, which sets the range outside the SQL, at most
+#   LogMonitor::SQL_READ_TIMEOUT_SECONDS for each read. Its table has the
+#   same shape as a Query's, so all else is the same. More than MAX_GROUPS
+#   rows is an error (SQL_TABLE_CUT), and while SQL queries are off each run
+#   fails (SQL_OFF).
 # - Threshold comparing the change: runs the Query again over the Baseline
 #   range (LogMonitor#baseline_window) with what's left of the run's
 #   timeout, and each group's change from its Baseline is compared instead:
@@ -51,6 +57,12 @@ class MonitorEvaluation
   # it merely missed, so a cut table is an error that changes no state.
   TABLE_CUT = "The Query gives more than 10,000 rows, the most EventStore answers, so a run can't compare every " \
     "group with the threshold: group by fewer columns, or filter the Logs before the summarize."
+  # The most groups a run compares. The SQL users' row limit is higher, so a
+  # SQL Monitor's run counts the rows itself.
+  MAX_GROUPS = 10_000
+  SQL_TABLE_CUT = "The SQL gives more than 10,000 rows, the most groups a Monitor compares, so a run can't compare " \
+    "every group with the threshold: group by fewer columns, or filter the rows before the GROUP BY."
+  SQL_OFF = "#{LogMonitor::SQL_OFF}, so the Monitor's SQL can't run. An instance admin can turn them on again.".freeze
   CHANGED_DURING_RUN = "The Monitor was changed during this run, so the run changed nothing. The next run checks it again."
 
   OUT_OF_TIME = "The Query over the current range took the run's #{LogMonitor::RUN_TIMEOUT_SECONDS} s, leaving none " \
@@ -122,6 +134,8 @@ class MonitorEvaluation
     @monitor.kind_threshold? ? run_threshold : run_match
   rescue EventStore::Rejected => e
     failed(EventStore.error_text(e.body))
+  rescue EventStore::SQLQueriesOff
+    failed(SQL_OFF)
   rescue EventStore::Unavailable => e
     failed(e.message)
   end
@@ -172,15 +186,28 @@ class MonitorEvaluation
     reading.value.nil? || @monitor.breached?(reading.value, reading.baseline)
   end
 
-  # The table the Query gives over [from, to), stopped after timeout
-  # seconds.
+  # The table the Query, or the SQL, gives over [from, to), stopped after
+  # timeout seconds, and for SQL at most SQL_READ_TIMEOUT_SECONDS.
   def table_over(from, to, timeout)
+    return sql_table_over(from, to, timeout) if @monitor.language_sql?
+
     answer = EventStore.query_logs(
       project_id: @monitor.project_id, query: @monitor.query, from: from, to: to, timeout_seconds: timeout
     )
     table = answer["table"]
     raise Unusable, "The Query returns Logs, not a table: end it in a summarize of one number." unless table
     raise Unusable, TABLE_CUT if table["truncated"]
+
+    table
+  end
+
+  def sql_table_over(from, to, timeout)
+    answer = EventStore.run_logs_sql(
+      project_id: @monitor.project_id, sql: @monitor.query, from: from, to: to,
+      timeout_seconds: [ timeout, LogMonitor::SQL_READ_TIMEOUT_SECONDS ].min
+    )
+    table = answer["table"] || {}
+    raise Unusable, SQL_TABLE_CUT if table["truncated"] || Array(table["rows"]).size > MAX_GROUPS
 
     table
   end
@@ -202,7 +229,7 @@ class MonitorEvaluation
     columns = table["columns"] || []
     numbers = columns.each_index.select { |i| columns[i]["type"] == "number" }
     unless numbers.size == 1
-      raise Unusable, "The Query gives #{numbers.size} numbers per group, not one to compare with the threshold."
+      raise Unusable, "The #{@monitor.text_name} gives #{numbers.size} numbers per group, not one to compare with the threshold."
     end
 
     at = numbers.first

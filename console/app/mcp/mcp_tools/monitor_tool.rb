@@ -24,7 +24,8 @@ module McpTools
         type: "string",
         description: "The Query the Monitor runs on its Project. EventStore checks it as kind needs before it's saved: " \
                      "a Query it can't run, a threshold Query that doesn't end in a summarize of one number, or a Query naming " \
-                     "a Dashboard filter ($name), which only Dashboard Charts fill in, is not saved.",
+                     "a Dashboard filter ($name), which only Dashboard Charts fill in, is not saved. Giving it makes the " \
+                     "Monitor's language query.",
       },
       interval_minutes: { type: "integer", description: "How often the Monitor runs, in minutes, 1 to #{LogMonitor::MAX_INTERVAL_MINUTES}. 1 when made." },
       range_minutes: {
@@ -82,6 +83,22 @@ module McpTools
       },
     }.freeze
 
+    # The sql argument, listed only while SQL queries are on, and what the
+    # tools' descriptions say of it then.
+    SQL = {
+      type: "string",
+      description: "ClickHouse SQL the Monitor runs in place of a Query, for a threshold Monitor only. Use query first: " \
+                   "use sql only when the Monitor needs a join, a subquery, a window, or a read of the events or spans " \
+                   "tables. The SQL reads the logs, events and spans tables of the Monitor's Project, as run_sql does. The " \
+                   "range is set outside the SQL: each run reads range_minutes ending 60 seconds before the run, so the SQL " \
+                   "needs no time WHERE. Its table must be the group columns and one number column, such as SELECT service, " \
+                   "count() AS errors FROM logs WHERE level = 'error' GROUP BY service; the columns other than the number " \
+                   "name each group. EventStore runs it before it's saved: SQL that doesn't run, or a table without exactly " \
+                   "one number column, is not saved. Give sql or query, not both. Giving it makes the Monitor's language sql.",
+    }.freeze
+    SQL_NOTE = "A threshold Monitor that needs a join, a subquery, a window, or the events or spans tables takes sql in " \
+               "place of query."
+
     # The fields the Monitor takes as attributes; integration_ids is saved
     # with them.
     ATTRIBUTES = (MONITOR_FIELDS.keys - [ :integration_ids ]).freeze
@@ -99,8 +116,13 @@ module McpTools
         argument :monitor, MONITOR, required: true
       end
 
+      # The Monitor's fields, with sql after query, listed only while SQL
+      # queries are on.
       def takes_monitor_fields(required: [])
-        MONITOR_FIELDS.each { |name, schema| argument name, schema, required: required.include?(name) }
+        MONITOR_FIELDS.each do |name, schema|
+          argument name, schema, required: required.include?(name)
+          sql_argument :sql, SQL, note: SQL_NOTE if name == :query
+        end
       end
     end
 
@@ -112,9 +134,14 @@ module McpTools
     end
 
     # The fields given in the arguments, as the Monitor takes them, with the
-    # Project when one is named.
+    # Project when one is named. query or sql sets the Monitor's language,
+    # and its text.
     def monitor_attributes
+      raise ToolError, "Give query or sql, not both: a Monitor runs one of them." if arguments.key?(:query) && arguments.key?(:sql)
+
       attributes = arguments.slice(*ATTRIBUTES)
+      attributes[:language] = "query" if arguments.key?(:query)
+      attributes.merge!(language: "sql", query: arguments[:sql]) if arguments.key?(:sql)
       attributes[:project] = project if arguments.key?(:project)
       attributes
     end

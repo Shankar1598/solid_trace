@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_17_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_18_100000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -229,6 +229,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_17_100000) do
     t.datetime "ingest_cursor_at"
     t.integer "interval_minutes", default: 1, null: false
     t.string "kind", null: false
+    t.string "language", default: "query", null: false
     t.text "last_error"
     t.datetime "last_run_at"
     t.datetime "logs_skipped_at"

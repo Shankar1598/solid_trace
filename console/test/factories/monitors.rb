@@ -18,5 +18,11 @@ FactoryBot.define do
       operator { nil }
       threshold { nil }
     end
+
+    # A Threshold monitor that runs SQL in place of a Query.
+    trait :sql do
+      language { "sql" }
+      query { "SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service" }
+    end
   end
 end
