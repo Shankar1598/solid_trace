@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -44,6 +45,12 @@ type Config struct {
 	// IngestMaxWaiting caps the requests waiting to store their Event.
 	// Past it, ingest answers 503.
 	IngestMaxWaiting int
+	// IngestIdleTimeout is how long ingest keeps a keep-alive connection
+	// that waits for its next request.
+	IngestIdleTimeout time.Duration
+	// IngestRefuseForwardedHTTP refuses ingest requests that a proxy
+	// forwarded from plain HTTP (handler.RefuseForwardedHTTP).
+	IngestRefuseForwardedHTTP bool
 
 	StorageTiers []StorageTier
 
@@ -65,6 +72,11 @@ type Config struct {
 	// to log.
 	Warnings []string
 }
+
+// DefaultIngestIdleTimeoutSeconds is how long ingest keeps an idle
+// keep-alive connection unless the file says. It is short, as a client that
+// faces the internet may hold connections open to use them up.
+const DefaultIngestIdleTimeoutSeconds = 10
 
 // DefaultLogsBinCacheMB is the bin cache's size, in MiB, unless the file says.
 const DefaultLogsBinCacheMB = 64
@@ -151,21 +163,23 @@ type objectStoreFile struct {
 }
 
 type fileConfig struct {
-	IngestPort         *string        `yaml:"ingest_port"`
-	QueryPort          *string        `yaml:"query_port"`
-	PebblePath         *string        `yaml:"pebble_path"`
-	LogsParquetPath    *string        `yaml:"logs_parquet_path"`
-	LogsDiskLimitGB    *int64         `yaml:"logs_disk_limit_gb"`
-	LogsBinCacheMB     *int64         `yaml:"logs_bin_cache_mb"`
-	LogsHeavyReadSlots *int           `yaml:"logs_heavy_read_slots"`
-	SQLitePath         *string        `yaml:"sqlite_path"`
-	MessageQueuePath   *string        `yaml:"message_queue_path"`
-	IngestMaxWaiting   *int           `yaml:"ingest_max_waiting"`
-	StorageTiers       *[]StorageTier `yaml:"storage_tiers"`
-	ObjectStore        yaml.Node      `yaml:"object_store"`
-	ClickHouse         yaml.Node      `yaml:"clickhouse"`
-	CPUProfileDir      *string        `yaml:"cpu_profile_dir"`
-	Debug              *bool          `yaml:"debug"`
+	IngestPort                *string        `yaml:"ingest_port"`
+	QueryPort                 *string        `yaml:"query_port"`
+	PebblePath                *string        `yaml:"pebble_path"`
+	LogsParquetPath           *string        `yaml:"logs_parquet_path"`
+	LogsDiskLimitGB           *int64         `yaml:"logs_disk_limit_gb"`
+	LogsBinCacheMB            *int64         `yaml:"logs_bin_cache_mb"`
+	LogsHeavyReadSlots        *int           `yaml:"logs_heavy_read_slots"`
+	SQLitePath                *string        `yaml:"sqlite_path"`
+	MessageQueuePath          *string        `yaml:"message_queue_path"`
+	IngestMaxWaiting          *int           `yaml:"ingest_max_waiting"`
+	IngestIdleTimeoutSeconds  *int           `yaml:"ingest_idle_timeout_seconds"`
+	IngestRefuseForwardedHTTP *bool          `yaml:"ingest_refuse_forwarded_http"`
+	StorageTiers              *[]StorageTier `yaml:"storage_tiers"`
+	ObjectStore               yaml.Node      `yaml:"object_store"`
+	ClickHouse                yaml.Node      `yaml:"clickhouse"`
+	CPUProfileDir             *string        `yaml:"cpu_profile_dir"`
+	Debug                     *bool          `yaml:"debug"`
 
 	// v0.17.0's budget of a Query that matches text, which an Instance
 	// admin sets on Console's Settings → Instance now. It loads with a
@@ -226,6 +240,7 @@ func Defaults() *Config {
 		MessageQueuePath: "../storage/sqlite/development/message_queue.sqlite3",
 
 		IngestMaxWaiting:   10000,
+		IngestIdleTimeout:  DefaultIngestIdleTimeoutSeconds * time.Second,
 		LogsBinCacheBytes:  DefaultLogsBinCacheMB << 20,
 		LogsHeavyReadSlots: DefaultLogsHeavyReadSlots(runtime.NumCPU()),
 
@@ -301,6 +316,15 @@ func applyFileConfig(cfg *Config, path string) error {
 			return fmt.Errorf("ingest_max_waiting must be positive, got %d", *config.IngestMaxWaiting)
 		}
 		cfg.IngestMaxWaiting = *config.IngestMaxWaiting
+	}
+	if config.IngestIdleTimeoutSeconds != nil {
+		if *config.IngestIdleTimeoutSeconds <= 0 {
+			return fmt.Errorf("ingest_idle_timeout_seconds must be positive, got %d", *config.IngestIdleTimeoutSeconds)
+		}
+		cfg.IngestIdleTimeout = time.Duration(*config.IngestIdleTimeoutSeconds) * time.Second
+	}
+	if config.IngestRefuseForwardedHTTP != nil {
+		cfg.IngestRefuseForwardedHTTP = *config.IngestRefuseForwardedHTTP
 	}
 	if config.StorageTiers != nil {
 		cfg.StorageTiers = *config.StorageTiers

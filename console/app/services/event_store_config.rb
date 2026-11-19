@@ -33,6 +33,8 @@ class EventStoreConfig
       row("Bin cache", "logs_bin_cache_mb", bin_cache),
       row("Heavy Log reads at once", "logs_heavy_read_slots", heavy_read_slots),
       row("Most ingest requests waiting", "ingest_max_waiting", @config["ingest_max_waiting"]),
+      row("Ingest idle timeout (seconds)", "ingest_idle_timeout_seconds", @config["ingest_idle_timeout_seconds"]),
+      row("Ingest refuses forwarded HTTP", "ingest_refuse_forwarded_http", @config["ingest_refuse_forwarded_http"]),
       *bucket_rows,
       row("CPU profile directory", "cpu_profile_dir", @config["cpu_profile_dir"]),
       row("Debug", "debug", @config["debug"])

@@ -64,6 +64,22 @@ message_queue_path: /storage/sqlite/production/message_queue.sqlite3
 # Requests waiting to store their Event or Logs before ingest answers 503.
 # ingest_max_waiting: 10000
 
+# How long ingest keeps a keep-alive connection open while it waits for the next
+# request. Keep it short where clients connect to ingest from the internet, as a
+# client can hold idle connections open to use them up. Behind a load balancer,
+# make it longer than the load balancer's keep-alive to the backend, or the load
+# balancer sends requests on connections that ingest closed, and clients get 502s.
+# GCP's classic Application Load Balancer keeps them 610 seconds, and Google says
+# to set more than 620; 660 is 11 minutes.
+# ingest_idle_timeout_seconds: 10
+
+# Behind a load balancer that also forwards plain HTTP to ingest, refuse an ingest
+# request whose X-Forwarded-Proto says it came as plain HTTP, with a 403 that says
+# to use an https:// URL. It makes a client with an http:// URL fail clearly; it
+# is not a security control, as the client sent its key already. A request with no
+# X-Forwarded-Proto passes, as does /health, for the load balancer's health check.
+# ingest_refuse_forwarded_http: false
+
 # A directory for CPU profiles: one of 30 seconds at half a minute past each hour,
 # and one at half past, keeping the newest 48. Off unless set. Read one with
 # `go tool pprof -top <file>`. It samples EventStore's Go threads only: queries run

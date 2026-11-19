@@ -529,7 +529,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
-	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
+	env.App = handler.NewIngestApp(ingestHandler, healthHandler, handler.IngestOptions{IdleTimeout: 10 * time.Second})
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
 		handler.NewOverviewHandler(handler.OverviewConfig{

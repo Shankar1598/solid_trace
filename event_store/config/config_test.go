@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/event_store/config"
 )
@@ -393,5 +394,29 @@ func TestABadClickHouseBlockFailsToLoadSayingWhatIsWrong(t *testing.T) {
 				t.Errorf("error = %v, want one saying %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestIngestKeepsAnIdleConnection10SecondsUnlessTheConfigFileSays(t *testing.T) {
+	if got := loadFrom(t, "../../deploy/event_store.yml").IngestIdleTimeout; got != 10*time.Second {
+		t.Errorf("Default ingest idle timeout = %v, want 10s", got)
+	}
+	// Longer than a load balancer's keep-alive of 620 s.
+	if got := loadFrom(t, writeConfig(t, "ingest_idle_timeout_seconds: 660\n")).IngestIdleTimeout; got != 11*time.Minute {
+		t.Errorf("Ingest idle timeout = %v, want 11m", got)
+	}
+	for _, bad := range []string{"0", "-1"} {
+		if _, err := config.LoadFile(writeConfig(t, "ingest_idle_timeout_seconds: "+bad+"\n")); err == nil || !strings.Contains(err.Error(), "ingest_idle_timeout_seconds must be positive") {
+			t.Errorf("Expected an ingest idle timeout of %s to fail, got %v", bad, err)
+		}
+	}
+}
+
+func TestIngestTakesForwardedHTTPUnlessTheConfigFileSays(t *testing.T) {
+	if loadFrom(t, "../../deploy/event_store.yml").IngestRefuseForwardedHTTP {
+		t.Error("Ingest refuses forwarded HTTP by default, want it to take it")
+	}
+	if !loadFrom(t, writeConfig(t, "ingest_refuse_forwarded_http: true\n")).IngestRefuseForwardedHTTP {
+		t.Error("Ingest takes forwarded HTTP, want it to refuse it as the file says")
 	}
 }

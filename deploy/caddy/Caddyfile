@@ -13,8 +13,9 @@
 
 (proxy) {
 	reverse_proxy {args[0]} {
-		# Shorter than the upstream's idle timeout (EventStore's is 10 seconds),
-		# so Caddy never sends a request on a connection the upstream is closing.
+		# Shorter than the upstream's idle timeout (EventStore's is
+		# ingest_idle_timeout_seconds, 10 by default), so Caddy never sends a
+		# request on a connection the upstream is closing.
 		transport http {
 			keepalive 5s
 		}

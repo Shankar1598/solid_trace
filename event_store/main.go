@@ -166,7 +166,9 @@ func main() {
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
-	app := handler.NewIngestApp(ingestHandler, healthHandler)
+	app := handler.NewIngestApp(ingestHandler, healthHandler, handler.IngestOptions{
+		IdleTimeout: cfg.IngestIdleTimeout, RefuseForwardedHTTP: cfg.IngestRefuseForwardedHTTP,
+	})
 
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
