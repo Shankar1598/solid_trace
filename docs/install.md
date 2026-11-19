@@ -46,7 +46,7 @@ Every MCP tool call and its Log reads are timed into the Meta Organization's "So
 
 ## Upgrading
 
-To upgrade to a newer release: `git fetch --tags && git checkout <tag> && deploy/install`. To run `main`'s code: `git pull && deploy/install --build`. Either way it keeps the config and the secrets. Each release's notes, with anything an upgrade needs, are in [`docs/changelogs/`](changelogs/).
+To upgrade to a newer release: `bin/upgrade <tag>`, or `bin/upgrade` for the newest. It does `git fetch --tags && git checkout <tag> && deploy/install`, and stops if the checkout has changes to tracked files. To run `main`'s code: `git pull && deploy/install --build`. Either way it keeps the config and the secrets. Each release's notes, with anything an upgrade needs, are in [`docs/changelogs/`](changelogs/).
 
 Upgrading from a release that kept Logs in DuckDB (v0.10.0 or older), `deploy/install` first stops the services and runs the last such release's `prepare-clickhouse`, which readies its Logs for ClickHouse; EventStore won't start on DuckDB Logs that weren't prepared. The Logs from before the upgrade stay in their Log files, on disk or in the bucket, and are read in place until Retention deletes them; nothing is copied. Events from before it aren't moved. Once the upgrade has started, `logs.duckdb` and `events.duckdb` in `deploy/data/storage/duckdb/production/` can be deleted; keep `logs_parquet/` beside them. The config's DuckDB keys are ignored, each with a warning at start.
 

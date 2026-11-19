@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Upgrades this install to a release: fetches the tags, checks out the
+# release and runs deploy/install, which keeps the config and the secrets.
+#
+#   bin/upgrade v0.21.1   # to this release
+#   bin/upgrade           # to the newest release
+#
+# Stops if the checkout has changes to tracked files, so that the checkout
+# does not lose them.
+
+set -euo pipefail
+
+# The checkout can replace this file while it runs. Bash reads a script as
+# it runs it, so all of it is in main, which bash reads in full first.
+main() {
+  cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+  if ! git diff --quiet HEAD; then
+    echo "The checkout has changes to tracked files. Commit or stash them first." >&2
+    exit 1
+  fi
+
+  git fetch --tags
+  local version="${1:-$(git tag --list 'v*' --sort=-version:refname | head -n 1)}"
+  if ! git rev-parse --quiet --verify "refs/tags/$version" >/dev/null; then
+    echo "There is no release $version." >&2
+    exit 1
+  fi
+
+  git checkout "$version"
+  exec deploy/install
+}
+
+main "$@"
