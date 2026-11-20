@@ -171,8 +171,22 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		return
 	}
 	prompt := run.prompt
-	if prompt != "" && run.cause.any() {
-		prompt = run.cause.withStandingTask(prompt)
+	var mcp *dispatcherapi.MCPToken
+	if run.cause.any() {
+		if prompt != "" {
+			prompt = run.cause.withStandingTask(prompt)
+		}
+		mcp, err = d.mcpToken(r.Context(), e, run.startedAt)
+		if errors.Is(err, errEnded) {
+			writeProblem(w, http.StatusConflict, errEnded.Error())
+			return
+		}
+		if err != nil {
+			d.log.Error("could not make a Run's MCP token", "execution", e.id, "error", err)
+			d.endByDispatcher(e.id, "the Dispatcher could not make the Run's MCP token at SolidTrace", nil)
+			writeProblem(w, http.StatusBadGateway, "the Dispatcher could not make the Run's MCP token at SolidTrace")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, dispatcherapi.Task{
 		RunID:         e.runID,
@@ -193,6 +207,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		IngestURL:     d.config.ingestURL(),
 		Limits:        run.limits,
 		Uploads:       uploads,
+		MCP:           mcp,
 		FactoryFile:   file.Path,
 		Setup:         file.Setup,
 		Checks:        file.Checks,

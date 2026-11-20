@@ -531,6 +531,9 @@ func (e *execution) headless() []string {
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--replay-user-messages", "--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion",
 		"--settings", e.cfg.harnessSettings()}
+	if e.task.MCP != nil {
+		args = append(args, "--mcp-config", e.cfg.mcpConfig())
+	}
 	if e.task.Resume {
 		return append(args, "--resume", e.task.SessionID)
 	}
@@ -544,7 +547,7 @@ func (e *execution) headless() []string {
 func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	cmd := exec.Command(e.cfg.harness, e.headless()...)
 	cmd.Dir = e.workDir
-	cmd.Env = append(append(e.gitEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...),
+	cmd.Env = append(append(append(e.gitEnv(environ, e.cfg.socket()), e.uploads.claudeEnv(e.cfg)...), e.mcpEnv()...),
 		EnvRunState+"="+e.cfg.runState(),
 		// The account's token is in the harness's environment only: not in
 		// a file, and not in git's environment.

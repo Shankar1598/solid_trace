@@ -60,6 +60,7 @@ type Recorder struct {
 	eventStoreDown bool
 
 	refuseChildren int
+	refuseScopes   map[string]int
 	children       []*ChildToken
 	uploads        []Upload
 	files          map[string]map[string]*storedFile
@@ -78,7 +79,7 @@ type Project struct {
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
 	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{},
-		files: map[string]map[string]*storedFile{}}
+		files: map[string]map[string]*storedFile{}, refuseScopes: map[string]int{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
