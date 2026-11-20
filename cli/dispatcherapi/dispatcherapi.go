@@ -31,6 +31,14 @@ const (
 	// StateStopped is a Run that a person, or the Dispatcher's backstop,
 	// stopped. A message continues it.
 	StateStopped = "stopped"
+	// StateWaitingOnAccountLimit is a Run that waits for a free
+	// subscription account (ticket 63 sets it). A message waits on the
+	// Run until it continues.
+	StateWaitingOnAccountLimit = "waiting_on_account_limit"
+	// StateTakenOver is a Run whose Execution a person works in (ticket
+	// 61 sets it). A message waits on the Run, in its events, and is not
+	// typed into the terminal.
+	StateTakenOver = "taken_over"
 )
 
 // The outcomes of a Run's PR (Run.PROutcome). A PR that the forge closed
@@ -322,7 +330,8 @@ type Task struct {
 	SaveExclude []string `json:"save_exclude,omitempty"`
 	// Messages are the Run's messages that no Execution delivered: the
 	// wrapper writes each one after the prompt. An Execution that
-	// continues the Agent session for them has no prompt.
+	// resumes the Agent session (Resume, and the restore found it) for
+	// them does not write the prompt again.
 	Messages []Message `json:"messages,omitempty"`
 }
 
@@ -429,6 +438,10 @@ type MessageAccepted struct {
 	ID         string    `json:"id"`
 	RunID      string    `json:"run_id"`
 	AcceptedAt time.Time `json:"accepted_at"`
+	// Continued is true when the message queued a Run that waited on a
+	// person, was done, failed or stopped: a new Execution continues its
+	// Agent session.
+	Continued bool `json:"continued,omitempty"`
 }
 
 // The message events that a wrapper sends (MessageEvent.Event).
@@ -924,9 +937,10 @@ func (c *Client) Stop(ctx context.Context, id string) (Run, error) {
 	return run, err
 }
 
-// Message sends a message to a queued or running Run. A running Run's
-// agent gets it in its current turn, or in a new turn of the same
-// Execution.
+// Message sends a message to a Run. A running Run's agent gets it in its
+// current turn, or in a new turn of the same Execution. A message to a
+// Run that waits on a person, is done, failed or stopped queues the Run
+// (MessageAccepted.Continued).
 func (c *Client) Message(ctx context.Context, id, text string) (MessageAccepted, error) {
 	var accepted MessageAccepted
 	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/messages", SendMessage{Text: text}, &accepted)

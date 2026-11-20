@@ -10,8 +10,8 @@
 //
 // The checkout is at a fixed path for each repository, on the Run's branch
 // (checkout.go). Each process that it starts runs as the run user
-// (runuser.go). A later ticket adds the restore of the Agent session
-// directory (59).
+// (runuser.go). An Execution that resumes the Run's Agent session
+// restores its directory from SolidTrace first (restore.go).
 package wrapper
 
 import (
@@ -215,6 +215,9 @@ type execution struct {
 	// startTip is the commit of the Run's branch after the setup: a push
 	// is necessary only when the branch moved.
 	startTip string
+	// resumed is true when the task resumes the Agent session and the
+	// restore put its transcript back: the harness gets --resume.
+	resumed bool
 	// prMu holds one pr call at a time, and the push before the end until
 	// a pr call's push ended. pushedTip is the commit that the last pr
 	// call pushed.
@@ -535,7 +538,7 @@ func (e *execution) headless() []string {
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--replay-user-messages", "--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion",
 		"--settings", e.cfg.harnessSettings()}
-	if e.task.Resume {
+	if e.resumed {
 		return append(args, "--resume", e.task.SessionID)
 	}
 	return append(args, "--session-id", e.task.SessionID)
@@ -618,10 +621,10 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
 	// The write is not under mu: a harness that does not read its stdin
 	// blocks it, and a stop or a limit must still end the Execution. An
-	// Execution that continues the Agent session for its messages has no
-	// prompt.
+	// Execution that resumes the Agent session for its messages does not
+	// write the prompt again: the first message is the first of them.
 	e.writing.Lock()
-	if _, ending := e.endedEarly(); !ending && (e.task.Prompt != "" || len(e.task.Messages) == 0) {
+	if _, ending := e.endedEarly(); !ending && (!e.resumed || len(e.task.Messages) == 0) {
 		if _, err := e.stdin.Write(append(message, '\n')); err != nil {
 			fmt.Fprintln(e.log, "wrapper: write the task:", err)
 		}
