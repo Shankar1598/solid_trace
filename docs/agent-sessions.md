@@ -251,10 +251,13 @@ Each member opens **Runs** in the Organization's navigation. The page shows each
 The Run page shows one Run from its run events:
 
 - The state and its reason, the trigger and who started the Run, the Project, the repository, the folder, the base branch, and the PR with its outcome.
-- The **Executions**: for each, its start, its end, its duration, why it ended, the subscription account and the VM. An Execution that has not ended shows "Live".
+- The **Executions**: for each, its start, its end, its duration, why it ended, the subscription account, the VM, and its form (headless, or take-over). An Execution that has not ended shows "Live".
+- While the Run is taken over: who took it over, the VM, and the command that attaches to its terminal there.
 - The **interventions**: each message, interrupt, stop, take-over, account switch and continue, with the person who did it. Below them, all the events of the Run in order.
 - The **last report**: each check with pass or fail and the last lines of its output, the Evidence files (an image shows on the page; click another file to download it), and `evidence/report.md` in full. A done report with no check that passed shows **no Evidence**. The report of an Issue or a Monitor Run shows its cause report.
 - Links to the Run's Agent sessions, and the CLI commands to message the Run, take it over or stop it.
+
+**Take over** a running Run with `solidtrace take-over <run id>`. The Run's agent stops, and its Agent session continues in a terminal on the same VM, in a new Execution. The command prints the VM and the command to attach, from the Dispatcher's Take-over setting (`DISPATCHER_TAKE_OVER_ATTACH`, such as ssh to the VM, then `sudo -u <run user> hc connect`). During the take-over, the Stop hook does not ask for a report, and only the total limit applies, not the idle limit. A message to the Run is kept, and starts a new Execution when the take-over ends. When you leave the Agent session with no report, the Run waits on a person with the reason "take-over ended with no report". A report of done gives done.
 
 **Stop** ends a Run that goes wrong. It shows only when Settings → Instance has the Dispatcher's URL, and only on a Run that can stop (queued, running, taken over, or waiting on a person or an account limit). Console sends the stop to the Dispatcher as you, with a factory token that lasts 5 minutes. The page shows the state that the Dispatcher gives at once; the stop event shows when it arrives from the Dispatcher.
 
