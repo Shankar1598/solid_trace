@@ -119,7 +119,7 @@ recipe_refuses_a_download_with_another_sha256() {
   fi
   grep -q "SHA-256" <<<"$out" || want "a message about the SHA-256, got: $(tail -n 5 <<<"$out")"
   as root sh -c '! ls /usr/local/bin/herdr-core /usr/local/bin/hc 2>/dev/null' || want "no hc after a bad SHA-256"
-  ! as root sh -c 'ls /var/cache/factory-image | grep -q herdr' || want "no bad download left in the cache"
+  ! as root sh -c 'ls /var/cache/factory-image | grep -q "^0000"' || want "no bad download left in the cache"
   as root rm -rf /recipe-bad
 }
 

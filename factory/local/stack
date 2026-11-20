@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Starts and stops the local factory stack (factory/local/README.md).
 #
-#   factory/local/stack up            build the images, start the stack, wait until the agent machine is a ready Nomad client
+#   factory/local/stack up            build the wrapper, the agent CLI and the images, start the stack, wait until the agent machine is a ready Nomad client
 #   factory/local/stack down          stop the stack and delete its containers and volumes
 #   factory/local/stack clean         the same, and delete its images (about 1 GB)
 #   factory/local/stack nomad <args>  run the Nomad CLI on the server, with the management token

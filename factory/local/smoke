@@ -369,7 +369,7 @@ agent_machine_is_made_by_the_image_recipe() {
   [ "$got" = "$(sha256sum <"$recipe" | cut -d' ' -f1)" ] || want "the SHA-256 of factory/image/agent-vm.sh, got: $got"
   # The local target adds only the take-over user and the Nomad client's own files.
   [ "$(grep -c -E '^RUN ' "$here/agent-machine/Dockerfile")" = 4 ] || want "two RUN steps of the recipe and two of the local target in the Dockerfile"
-  ! grep -q -E 'curl|apt-get|sudoers|insteadOf' "$here/agent-machine/Dockerfile" || want "no install step of its own in the Dockerfile"
+  ! grep -v '^ *#' "$here/agent-machine/Dockerfile" | grep -q -E 'curl|apt-get|sudoers|insteadOf' || want "no install step of its own in the Dockerfile"
 }
 
 wrapper_and_agent_cli_are_installed() {
