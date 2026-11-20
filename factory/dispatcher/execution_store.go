@@ -203,7 +203,15 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	// The task always has the prompt: the wrapper writes it only when it
 	// cannot resume the Agent session, or has no message to write.
 	if state == dispatcherapi.ExecutionDispatched {
-		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
+		details := map[string]any{"execution.id": id}
+		if run.prompt != "" {
+			// The task is a message of the factory: its uuid and the hash of
+			// its text let the Agent session page say that the factory said
+			// it. The event's actor stays the person who caused the Execution.
+			details["message.id"] = dispatcherapi.TaskMessageID(id)
+			details["message.sha256"] = dispatcherapi.TextSHA256(run.prompt)
+		}
+		if err := recordEvent(tx, at, runID, eventExecutionStarted, details); err != nil {
 			return run, err
 		}
 	}

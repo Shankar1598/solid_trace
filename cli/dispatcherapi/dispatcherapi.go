@@ -8,6 +8,8 @@ package dispatcherapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +67,14 @@ const ActorSchedule = "schedule"
 // ActorSender is the kind of a Run's starter that is a sender of the
 // generic webhook.
 const ActorSender = "sender"
+
+// TextSHA256 is the hex SHA-256 of a message's text, which the message
+// events carry (message.sha256): the Agent session page can match a
+// person message to its event by it when the uuid is not in the record.
+func TextSHA256(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
 
 // ActorTracker is the kind of a Run's starter that is a tracker user.
 const ActorTracker = "tracker"
@@ -277,6 +287,12 @@ type Task struct {
 	RunID       string `json:"run_id"`
 	ExecutionID string `json:"execution_id"`
 	Prompt      string `json:"prompt"`
+	// MessageID is the uuid that the wrapper gives the prompt when it
+	// writes it to the harness (see TaskMessageID). The Execution's
+	// started event names it, so that the Agent session page can say that
+	// the factory said the prompt. "" from an older Dispatcher: the
+	// wrapper makes a uuid.
+	MessageID string `json:"message_id,omitempty"`
 	// Repository is host/workspace/name.
 	Repository string `json:"repository"`
 	// CloneURL is the HTTPS URL that git clones from. It holds no token.
@@ -442,6 +458,17 @@ type MessageAccepted struct {
 	// person, was done, failed or stopped: a new Execution continues its
 	// Agent session.
 	Continued bool `json:"continued,omitempty"`
+}
+
+// TaskMessageID is the uuid of the prompt that an Execution's wrapper
+// writes to the harness. It follows from the Execution's id, so that the
+// Dispatcher can name it in the Execution's started event, and a second
+// task call gives the same one.
+func TaskMessageID(executionID string) string {
+	sum := sha256.Sum256([]byte("task/" + executionID))
+	sum[6] = sum[6]&0x0f | 0x50
+	sum[8] = sum[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // The message events that a wrapper sends (MessageEvent.Event).
