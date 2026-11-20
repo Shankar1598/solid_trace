@@ -536,7 +536,6 @@ func (a API) Comments(ctx context.Context, token, issueID string) (string, []Com
 	return team, comments, nil
 }
 
-
 // Webhook is what a Linear webhook says.
 type Webhook struct {
 	// Type is the kind of entity, such as Issue or Comment.
