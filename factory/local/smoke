@@ -23,7 +23,8 @@ compose() { docker compose -p factory-local -f "$here/compose.yml" "$@"; }
 export COMPOSE_PROJECT_NAME=factory-local-smoke-decoy
 # The image recipe's target, built from the same cached layers as the local target.
 agent_vm_image=factory-local/agent-vm:smoke
-pinned() { sed -n "s/^ARG $1=//p" "$here/agent-machine/Dockerfile"; }
+recipe="$repo/factory/image/agent-vm.sh"
+pinned() { sed -n "s/^$1=//p" "$recipe"; }
 
 passed=0
 failed=0
@@ -278,13 +279,15 @@ take_over_rule_refuses_everything_else() {
 }
 
 agent_vm_target_has_no_local_take_over_user() {
-  docker build -q --target agent-vm -t "$agent_vm_image" "$here/agent-machine" >/dev/null
+  docker build -q --target agent-vm --build-context image="$repo/factory/image" -t "$agent_vm_image" "$here/agent-machine" >/dev/null
   vm() { docker run --rm --network none -m 64m --entrypoint "$1" "$agent_vm_image" "${@:2}"; }
   vm getent passwd engineer && want "no user engineer in the agent-vm target"
   vm getent group factory-access >/dev/null || want "the access group in the agent-vm target"
   [ "$(vm getent group factory-access | cut -d: -f4)" = "" ] || want "no member of the access group in the agent-vm target"
   vm getent passwd agent >/dev/null || want "the run user in the agent-vm target"
   vm visudo -c >/dev/null || want "the take-over rule in the agent-vm target"
+  [ "$(vm cat /etc/sudoers.d/factory-take-over | grep -v '^#')" = "%factory-access ALL=(agent) NOPASSWD: /usr/local/bin/hc connect" ] ||
+    want "the one take-over rule in the agent-vm target"
 }
 
 check "the run user is not root and is in the docker group" run_user_is_not_root_and_is_in_the_docker_group
@@ -359,7 +362,42 @@ claude_starts_in_an_hc_terminal_with_no_first_run_dialog() {
   as agent hc kill "$terminal" >/dev/null 2>&1
 }
 
+# The agent machine is the image recipe's work: the recipe's SHA-256 is in the image.
+agent_machine_is_made_by_the_image_recipe() {
+  local got
+  got="$(as root cat /etc/factory/image-recipe)"
+  [ "$got" = "$(sha256sum <"$recipe" | cut -d' ' -f1)" ] || want "the SHA-256 of factory/image/agent-vm.sh, got: $got"
+  # The local target adds only the take-over user and the Nomad client's own files.
+  [ "$(grep -c -E '^RUN ' "$here/agent-machine/Dockerfile")" = 4 ] || want "two RUN steps of the recipe and two of the local target in the Dockerfile"
+  ! grep -q -E 'curl|apt-get|sudoers|insteadOf' "$here/agent-machine/Dockerfile" || want "no install step of its own in the Dockerfile"
+}
+
+wrapper_and_agent_cli_are_installed() {
+  local got
+  got="$(as agent factory-wrapper version)"
+  [ "$got" = dev ] || want "the wrapper of this checkout (dev), got: $got"
+  got="$(as agent solidtrace --version)"
+  [[ $got == *" dev" ]] || want "the agent CLI of this checkout (dev), got: $got"
+}
+
+# The Nomad client (and so each raw_exec task) and a "docker exec" have the proxy
+# settings of the recipe's file, as a login and the Docker daemon have them on a VM.
+proxy_settings_come_from_the_recipes_file() {
+  local file client exec_env
+  file="$(as root grep -v '^#' /etc/factory/proxy.env | sort)"
+  [ -n "$file" ] || want "the recipe's /etc/factory/proxy.env"
+  client="$(as root sh -c "tr '\\0' '\\n' </proc/1/environ" | grep -E '^(HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy)=' | sort)"
+  [ "$client" = "$file" ] || want "the file's settings in the Nomad client, got: $client"
+  exec_env="$(as agent env | grep -E '^(HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy)=' | sort)"
+  [ "$exec_env" = "$file" ] || want "the file's settings in docker exec, got: $exec_env"
+  [ "$(as root grep -v '^#' /etc/systemd/system/docker.service.d/factory-proxy.conf | tr '\n' ' ')" = "[Service] EnvironmentFile=/etc/factory/proxy.env " ] ||
+    want "the file for the Docker daemon"
+}
+
+check "the agent machine is made by the image recipe" agent_machine_is_made_by_the_image_recipe
 check "Claude Code and hc are at the pinned versions" pinned_versions_are_installed
+check "the wrapper and the agent CLI of this checkout are installed" wrapper_and_agent_cli_are_installed
+check "the Nomad client and docker exec have the proxy settings of the recipe's file" proxy_settings_come_from_the_recipes_file
 check "the hc core starts as the run user from root in a new home, as the wrapper will start it" start_hc_core_as_the_wrapper_does
 check "a member of the access group reaches that core with 'sudo -u agent hc connect', and it has no SUDO_ variable" take_over_connects_to_the_core_of_the_run_user
 check "Claude Code starts in an hc terminal in bypass mode with no first-run dialog, from a new home and a new CLAUDE_CONFIG_DIR" claude_starts_in_an_hc_terminal_with_no_first_run_dialog

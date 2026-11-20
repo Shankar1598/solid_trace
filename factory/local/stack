@@ -65,6 +65,8 @@ wait_for_client() {
 
 case "${1:-}" in
 up)
+  # The wrapper and the agent CLI of this checkout, for the image recipe.
+  "$here/../image/build" "$here/agent-machine/bin" >/dev/null
   compose build --quiet
   compose up --detach --wait --quiet-pull
   management_token >/dev/null
