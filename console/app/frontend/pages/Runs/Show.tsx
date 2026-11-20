@@ -18,6 +18,7 @@ import {
   type RunExecution,
   type RunReport,
   type RunRow,
+  type RunTakeOver,
 } from '@/lib/runs'
 
 interface RunProps {
@@ -29,6 +30,7 @@ interface RunProps {
   interventions: RunEvent[]
   report: RunReport | null
   agent_sessions: { id: string; path: string }[]
+  take_over: RunTakeOver | null
   commands: { message: string; take_over: string; stop: string }
   list_path: string
   stop: { can: boolean; path: string; sent_state: string | null }
@@ -79,6 +81,7 @@ export default function RunShow({ run: view }: { run: RunProps }) {
             The Dispatcher says that the Run is {stateText(view.stop.sent_state).toLowerCase()}. The stop event shows here when it arrives.
           </div>
         )}
+        {view.take_over && <TakeOver takeOver={view.take_over} />}
         <Facts view={view} />
         <Executions executions={view.executions} />
         {view.report ? <Report report={view.report} /> : <Section title="Report"><None text="No report yet." /></Section>}
@@ -107,6 +110,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <CardHeader className="pb-2"><CardTitle className="text-base">{title}</CardTitle></CardHeader>
       <CardContent className="text-sm">{children}</CardContent>
     </Card>
+  )
+}
+
+function TakeOver({ takeOver }: { takeOver: RunTakeOver }) {
+  return (
+    <Section title="Take-over">
+      <p className="mb-2">
+        {actorText(takeOver.by)} took over this Run. Its Agent session continues in a terminal on{' '}
+        <span className="font-mono text-xs" data-take-over="vm">{takeOver.vm ?? 'its VM'}</span>.
+      </p>
+      {takeOver.attach
+        ? <div><span className="text-muted-foreground">Attach with: </span><code className="bg-muted px-1.5 py-0.5 text-xs break-all" data-take-over="attach">{takeOver.attach}</code></div>
+        : <None text="The attach command is not known yet." />}
+    </Section>
   )
 }
 
@@ -155,6 +172,7 @@ function Executions({ executions }: { executions: RunExecution[] }) {
                 <TableHead>Reason</TableHead>
                 <TableHead>Account</TableHead>
                 <TableHead>VM</TableHead>
+                <TableHead>Form</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -166,6 +184,7 @@ function Executions({ executions }: { executions: RunExecution[] }) {
                   <TableCell className="text-xs">{e.reason ?? <None text="-" />}{e.exit_code !== null && <span className="text-muted-foreground"> (exit code {e.exit_code})</span>}</TableCell>
                   <TableCell className="font-mono text-xs">{e.account ?? '-'}</TableCell>
                   <TableCell className="font-mono text-xs">{e.vm ?? '-'}</TableCell>
+                  <TableCell className="text-xs">{e.form === 'interactive' ? 'Take-over' : 'Headless'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -128,6 +128,38 @@ class RunPageTest < ActionDispatch::IntegrationTest
       execution.values_at("id", "start", "end", "reason", "account", "vm", "duration_seconds", "exit_code")
   end
 
+  test "a taken-over Run shows its VM and the attach command, and the take-over's Execution is interactive" do
+    attach = "docker exec -i -u engineer factory-local-agent-machine-1 sudo -u agent hc connect"
+    place = { "execution.vm" => "agent-machine-1", "execution.attach" => attach }
+    list = events(last_state: "running").first(4) + [
+      event(5, "2026-10-03T11:00:00Z", "execution_ended", "running", "execution.id" => "x1", "execution.vm" => "agent-machine-1",
+        "execution.reason" => "taken over", "execution.exit_code" => 130),
+      event(6, "2026-10-03T11:00:01Z", "take_over", "taken_over", actor: { kind: "person", id: "12", name: "Dee" },
+        "execution.id" => "x2", "take_over.from_execution" => "x1", **place),
+      event(7, "2026-10-03T11:00:02Z", "execution_started", "taken_over", actor: { kind: "person", id: "12", name: "Dee" },
+        "execution.id" => "x2", "execution.form" => "interactive", "execution.account" => "team-2", **place)
+    ]
+    stub_run(list)
+    sign_in_as(@member)
+
+    view = page
+
+    assert_equal({ "vm" => "agent-machine-1", "attach" => attach, "by" => { "kind" => "person", "id" => "12", "name" => "Dee" } },
+      view["take_over"])
+    assert_equal [ [ "x1", "headless", nil ], [ "x2", "interactive", attach ] ],
+      view["executions"].map { |e| e.values_at("id", "form", "attach") }
+  end
+
+  test "a Run that is not taken over has no take-over" do
+    stub_run
+    stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
+    sign_in_as(@member)
+
+    view = page
+
+    assert_nil view["take_over"]
+  end
+
   test "an Execution that has not ended has no end and no duration" do
     stub_run(events.first(3))
     sign_in_as(@member)

@@ -110,7 +110,18 @@ export interface RunExecution {
   exit_code: number | null
   account: string | null
   vm: string | null
+  /** headless, or interactive for the Execution of a take-over. */
+  form: string
+  /** The command that attaches to a take-over's terminal. */
+  attach: string | null
   duration_seconds: number | null
+}
+
+/** The take-over of a Run that is taken over. */
+export interface RunTakeOver {
+  vm: string | null
+  attach: string | null
+  by: { kind: string; id: string; name: string }
 }
 
 /** One run event, in run.seq order. */

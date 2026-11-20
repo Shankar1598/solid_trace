@@ -37,6 +37,11 @@ import (
 //     execution.vm, and agent.session_id (the Execution's Agent session);
 //     execution_ended also execution.reason, execution.exit_code and
 //     execution.background_killed (the count of background tasks killed).
+//     The Execution of a take-over (execution.form interactive) also has
+//     execution.attach, the command that attaches to its terminal, and its
+//     execution_started has as actor.* the person who took over.
+//   - take_over: execution.id (the new, interactive Execution),
+//     take_over.from_execution, execution.vm and execution.attach.
 //   - message_accepted: message.text.
 //   - report: report.outcome (done, needs_a_person or failed),
 //     report.summary, report.question, report.cause_report (an Issue or a
