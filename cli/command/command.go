@@ -164,11 +164,12 @@ Usage:
       The next report sends the records. A check that you run with a
       tool of your own is not a check. Exit 1 when a check failed.
   solidtrace report --outcome done|needs-a-person|failed --summary TEXT
-          [--question TEXT]
+          [--question TEXT] [--cause-report TEXT]
       Inside a Run only: report the outcome of your work to the wrapper.
       The last report sets the Run's outcome. needs-a-person needs
       --question, and ends the Execution at once; a person's answer
-      continues the Run.
+      continues the Run. --cause-report goes with done, in a Run that
+      an Issue or a Monitor started: the cause and what proves it.
   solidtrace pr --title TEXT [--description TEXT]
       Inside a Run only: push the Run's branch, and open its PR to the
       base branch. Each later pr updates the title and description of

@@ -34,7 +34,7 @@ func report(ctx context.Context, args []string, env Env) int {
 	wire, known := outcomes[*outcome]
 	if !known || len(positional) > 0 {
 		fmt.Fprintln(env.Stderr, "solidtrace report: give --outcome done, needs-a-person or failed, with --summary TEXT "+
-			"(and --question TEXT for needs-a-person)")
+			"(and --question TEXT for needs-a-person, --cause-report TEXT for the cause that an Issue or a Monitor Run found)")
 		return 2
 	}
 	r := dispatcherapi.Report{Outcome: wire, Summary: strings.TrimSpace(*summary), Question: strings.TrimSpace(*question),
