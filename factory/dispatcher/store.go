@@ -349,6 +349,19 @@ var migrations = []string{
 	CREATE INDEX messages_by_execution ON messages (execution_id, seq);
 	ALTER TABLE commands ADD COLUMN message_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE executions ADD COLUMN end_agreed INTEGER NOT NULL DEFAULT 0;`,
+	// ticket_comments are the trigger comments on tickets that the
+	// Dispatcher read, by the connection and the comment's id, with the
+	// edit that it read: a comment goes to a Run one time, and again
+	// after an edit. run_id is the Run that it was for.
+	`CREATE TABLE ticket_comments (
+		connection_id TEXT NOT NULL,
+		comment_id TEXT NOT NULL,
+		ticket_id TEXT NOT NULL,
+		run_id TEXT NOT NULL,
+		edit TEXT NOT NULL,
+		read_at INTEGER NOT NULL,
+		PRIMARY KEY (connection_id, comment_id)
+	);`,
 }
 
 // store is the Dispatcher's SQLite database.

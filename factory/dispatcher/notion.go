@@ -92,10 +92,11 @@ type notion struct {
 	users map[[2]string]notionUser
 }
 
-// notionUser is a user's name, or the time when Notion refused to give it.
+// notionUser is a user's name and type (person or bot), or the time when
+// Notion refused to give them.
 type notionUser struct {
-	name    string
-	refused time.Time
+	name, kind string
+	refused    time.Time
 }
 
 // notionUserRetry is how long the kind keeps Notion's refusal to give a
@@ -346,8 +347,10 @@ type notionPage struct {
 	Parent struct {
 		DatabaseID string `json:"database_id"`
 	} `json:"parent"`
-	Archived   bool `json:"archived"`
-	InTrash    bool `json:"in_trash"`
+	// PublicURL is set when the page is published to the web.
+	PublicURL  *string `json:"public_url"`
+	Archived   bool    `json:"archived"`
+	InTrash    bool    `json:"in_trash"`
 	Properties map[string]struct {
 		Type   string       `json:"type"`
 		Title  []notionText `json:"title"`
@@ -524,32 +527,120 @@ func (n *notion) user(ctx context.Context, c TrackerConnection, id string) strin
 	if id == "" {
 		return ""
 	}
+	u, err := n.author(ctx, c, id)
+	if err != nil {
+		return id // try again at the next read
+	}
+	return u.name
+}
+
+// author reads a Notion user. A user that Notion refuses to give (the
+// integration cannot read user information) or does not have is a user
+// with the id as its name and no type, kept for notionUserRetry. Each
+// other failure is an error, and the next read tries again.
+func (n *notion) author(ctx context.Context, c TrackerConnection, id string) (notionUser, error) {
 	key := [2]string{c.ID, id}
 	n.mu.Lock()
 	kept, ok := n.users[key]
 	n.mu.Unlock()
-	switch {
-	case ok && kept.refused.IsZero():
-		return kept.name
-	case ok && n.now().Sub(kept.refused) < notionUserRetry:
-		return id
+	if ok && (kept.refused.IsZero() || n.now().Sub(kept.refused) < notionUserRetry) {
+		return kept, nil
 	}
 	var u struct {
 		Name string `json:"name"`
+		Type string `json:"type"`
 	}
 	err := n.call(ctx, c, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, &u)
 	var e *notionError
 	if err != nil && !(errors.As(err, &e) && (e.status == http.StatusForbidden || e.status == http.StatusNotFound)) {
-		return id // try again at the next read
+		return notionUser{}, err
 	}
-	kept = notionUser{name: cmp.Or(u.Name, id)}
+	kept = notionUser{name: cmp.Or(u.Name, id), kind: u.Type}
 	if err != nil {
-		kept.refused = n.now()
+		kept = notionUser{name: id, refused: n.now()}
 	}
 	n.mu.Lock()
 	n.users[key] = kept
 	n.mu.Unlock()
-	return kept.name
+	return kept, nil
+}
+
+// notionComment is the part of a comment object that the kind reads.
+type notionComment struct {
+	ID             string       `json:"id"`
+	CreatedTime    time.Time    `json:"created_time"`
+	LastEditedTime string       `json:"last_edited_time"`
+	RichText       []notionText `json:"rich_text"`
+	CreatedBy      struct {
+		ID string `json:"id"`
+	} `json:"created_by"`
+}
+
+// Comments lists the open comments on a page of the connection's
+// database. Only a person is an insider: Notion gives a guest whom the
+// team invited as a person too. A bot (the integration itself, or
+// another one), an author that the integration cannot read, and each
+// comment on a page that is published to the web (public_url is set)
+// are not.
+func (n *notion) Comments(ctx context.Context, c TrackerConnection, id string) ([]TicketComment, error) {
+	p, err := n.page(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	var list []TicketComment
+	cursor := ""
+	for range notionMaxPages {
+		query := url.Values{"block_id": {p.ID}, "page_size": {fmt.Sprint(notionPageSize)}}
+		if cursor != "" {
+			query.Set("start_cursor", cursor)
+		}
+		var answer struct {
+			Results    []notionComment `json:"results"`
+			HasMore    bool            `json:"has_more"`
+			NextCursor string          `json:"next_cursor"`
+		}
+		err := n.call(ctx, c, http.MethodGet, "/v1/comments?"+query.Encode(), nil, &answer)
+		if notFound(err) {
+			return nil, ErrNoTicket
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, nc := range answer.Results {
+			comment := TicketComment{ID: nc.ID, Edit: nc.LastEditedTime, Text: plain(nc.RichText),
+				CreatedAt: nc.CreatedTime, By: TrackerUser{ID: nc.CreatedBy.ID, Name: nc.CreatedBy.ID}}
+			switch {
+			case p.PublicURL != nil && *p.PublicURL != "":
+				comment.Refusal = "the page is published to the web"
+			case nc.CreatedBy.ID == "":
+				comment.Refusal = "Notion gives no author"
+			}
+			if comment.Refusal != "" {
+				list = append(list, comment)
+				continue
+			}
+			u, err := n.author(ctx, c, nc.CreatedBy.ID)
+			if err != nil {
+				return nil, err
+			}
+			comment.By.Name = u.name
+			switch u.kind {
+			case "person":
+				comment.Insider = true
+			case "bot":
+				comment.Refusal = "a bot or an integration wrote it"
+			default:
+				comment.Refusal = "the Dispatcher cannot read the author: give the integration the capability " +
+					"to read user information"
+			}
+			list = append(list, comment)
+		}
+		if !answer.HasMore || answer.NextCursor == "" {
+			break
+		}
+		cursor = answer.NextCursor
+	}
+	return list, nil
 }
 
 // notionBlock is a block of a page's content, with the text of a block
