@@ -26,6 +26,7 @@ func report(ctx context.Context, args []string, env Env) int {
 	outcome := flags.String("outcome", "", "done, needs-a-person or failed")
 	summary := flags.String("summary", "", "what you did, or why it failed")
 	question := flags.String("question", "", "what you ask a person (with needs-a-person)")
+	cause := flags.String("cause-report", "", "the cause that an Issue or a Monitor Run found, and what proves it (with done)")
 	positional, ok := parseInterspersed(flags, args)
 	if !ok {
 		return 2
@@ -36,7 +37,8 @@ func report(ctx context.Context, args []string, env Env) int {
 			"(and --question TEXT for needs-a-person)")
 		return 2
 	}
-	r := dispatcherapi.Report{Outcome: wire, Summary: strings.TrimSpace(*summary), Question: strings.TrimSpace(*question)}
+	r := dispatcherapi.Report{Outcome: wire, Summary: strings.TrimSpace(*summary), Question: strings.TrimSpace(*question),
+		CauseReport: strings.TrimSpace(*cause)}
 	if err := agentsocket.Report(ctx, env.AgentSocket, r); err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace report: %v\n", err)
 		return 1

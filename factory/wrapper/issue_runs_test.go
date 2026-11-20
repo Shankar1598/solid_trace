@@ -238,6 +238,86 @@ func TestARunThatAnIssueDidNotStartGetsNoMCPToken(t *testing.T) {
 	}
 }
 
+const cause = "The cart rounds each line before the sum: see the Log of 10:02 and cart.go line 40."
+
+func TestADoneIssueOrMonitorRunWithACauseReportAndNoPRShowsCauseReportAndNeitherFlag(t *testing.T) {
+	for name, attributes := range map[string]map[string]string{
+		"Issue": issueAttributes("7"), "Monitor": monitorAttributes("12"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			env, ana := newEnv(t)
+			sender, path := env.Sender("Factory")
+			env.Runner.Agent(takeTask, initLine(t),
+				reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
+			id := factoryDelivery(t, env, path, sender.Secret, "d-1", attributes)
+			run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+			if !slices.Equal(run.Flags, []string{dispatcherapi.FlagCauseReport}) {
+				t.Errorf("flags %v, want only %q", run.Flags, dispatcherapi.FlagCauseReport)
+			}
+			reports := reportEvents(env, id)
+			if len(reports) != 1 || reports[0]["report.cause_report"] != cause {
+				t.Errorf("the report events: %v", reports)
+			}
+			session := firstToken(t, env).AgentSessionIDs[0]
+			if md := env.SolidTrace.Stored(session, "evidence/report.md"); !bytes.Contains(md, []byte("## Cause report\n\n"+cause)) {
+				t.Errorf("evidence/report.md has no cause report:\n%s", md)
+			}
+		})
+	}
+}
+
+func TestADoneIssueRunWithNoCauseReportKeepsTheUsualFlags(t *testing.T) {
+	env, ana := newEnv(t)
+	sender, path := env.Sender("Factory")
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Looked"), reply, result, waitForEnd)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if want := []string{dispatcherapi.FlagNoEvidence, dispatcherapi.FlagNoPR}; !slices.Equal(run.Flags, want) {
+		t.Errorf("flags %v, want %v", run.Flags, want)
+	}
+}
+
+func TestTheDispatcherRefusesACauseReportThatDoesNotFit(t *testing.T) {
+	long := strings.Repeat("x", 64<<10+1)
+	for name, c := range map[string]struct {
+		issue bool
+		args  []string
+	}{
+		"a person's Run":   {false, []string{"--outcome", "done", "--summary", "S", "--cause-report", cause}},
+		"needs a person":   {true, []string{"--outcome", "needs-a-person", "--question", "Q", "--cause-report", cause}},
+		"failed":           {true, []string{"--outcome", "failed", "--summary", "S", "--cause-report", cause}},
+		"more than 64 KiB": {true, []string{"--outcome", "done", "--summary", "S", "--cause-report", long}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env, ana := newEnv(t)
+			refused := filepath.Join(t.TempDir(), "refused")
+			// The refused report's error goes to the file refused. It changes
+			// nothing, and a report after it counts.
+			step, _ := json.Marshal(map[string]any{"fake": "run", "args": append([]string{"sh", "-c",
+				`"$@" 2> ` + refused, "sh", "solidtrace", "report"}, c.args...)})
+			env.Runner.Agent(takeTask, initLine(t), string(step), reportStep("--outcome", "done", "--summary", "Second"),
+				reply, result, waitForEnd)
+			var id string
+			if c.issue {
+				sender, path := env.Sender("Factory")
+				id = factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+			} else {
+				id = start(t, env, ana, "Fix the cart")
+			}
+			run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+			stderr, _ := os.ReadFile(refused)
+			if run.Summary != "Second" || !strings.Contains(string(stderr), "cause report") {
+				t.Errorf("summary %q; the refused report printed %q", run.Summary, stderr)
+			}
+			for _, ev := range reportEvents(env, id) {
+				if ev["report.cause_report"] != nil && ev["report.cause_report"] != "" {
+					t.Errorf("a refused cause report is in a report event: %v", ev)
+				}
+			}
+		})
+	}
+}
+
 func TestAnIssueRunFailsWhenSolidTraceRefusesItsMCPToken(t *testing.T) {
 	env, ana := newEnv(t)
 	sender, path := env.Sender("Factory")

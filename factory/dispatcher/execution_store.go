@@ -238,8 +238,9 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 		return err
 	}
 	err = tx.QueryRow(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?,
-		report_checks = ?, report_evidence = ?, report_delivered = ? WHERE id = ? AND state = ? RETURNING run_id`,
-		report.Outcome, report.Summary, report.Question, checks, evidence, report.DeliveredMessages, id,
+		report_checks = ?, report_evidence = ?, report_delivered = ?, report_cause = ? WHERE id = ? AND state = ?
+		RETURNING run_id`,
+		report.Outcome, report.Summary, report.Question, checks, evidence, report.DeliveredMessages, report.CauseReport, id,
 		dispatcherapi.ExecutionRunning).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errEnded
@@ -250,7 +251,7 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 	err = recordEvent(tx, at, runID, eventReport, map[string]any{"execution.id": id,
 		"report.outcome": report.Outcome, "report.summary": report.Summary, "report.question": report.Question,
 		"report.checks": nonNil(report.Checks), "report.evidence": nonNil(report.Evidence),
-		"report.delivered_messages": report.DeliveredMessages})
+		"report.delivered_messages": report.DeliveredMessages, "report.cause_report": report.CauseReport})
 	if err != nil {
 		return err
 	}
@@ -265,12 +266,13 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		return err
 	}
 	defer tx.Rollback()
-	var runID, state, checks string
+	var runID, state, checks, startedBy, attributes string
 	var prID int
 	var report dispatcherapi.Report
-	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks, r.pr_id
-		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
-		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &prID)
+	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks,
+		report_cause, r.pr_id, r.started_by_kind, r.attributes FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
+		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &report.CauseReport, &prID,
+			&startedBy, &attributes)
 	if err != nil {
 		return err
 	}
@@ -315,7 +317,11 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		if err := unmarshalList(checks, &report.Checks); err != nil {
 			return err
 		}
-		if flags, err = jsonList(doneFlags(report.Checks, prID)); err != nil {
+		cause, err := causeOf(startedBy, attributes)
+		if err != nil {
+			return err
+		}
+		if flags, err = jsonList(cause.doneFlags(report, prID)); err != nil {
 			return err
 		}
 	}

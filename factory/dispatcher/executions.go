@@ -225,9 +225,20 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 	}
 	report.Summary = strings.TrimSpace(report.Summary)
 	report.Question = strings.TrimSpace(report.Question)
+	report.CauseReport = strings.TrimSpace(report.CauseReport)
 	problem := checkReport(report)
 	if problem == "" {
 		problem = checkEvidence(report)
+	}
+	if problem == "" && report.CauseReport != "" {
+		cause, err := d.store.runCause(e.runID)
+		if err != nil {
+			d.serverError(w, "read the Run", err)
+			return
+		}
+		if !cause.any() {
+			problem = "only a Run that an Issue or a Monitor started has a cause report"
+		}
 	}
 	if problem != "" {
 		writeProblem(w, http.StatusBadRequest, problem)
@@ -253,8 +264,12 @@ func checkReport(r dispatcherapi.Report) string {
 		return "the outcome must be done, needs_a_person or failed"
 	case len(r.Summary) > maxReportText || len(r.Question) > maxReportText:
 		return "a summary or a question can have at most 64 KiB; put the full text in evidence/"
-	case !utf8.ValidString(r.Summary) || !utf8.ValidString(r.Question):
-		return "a summary and a question must be UTF-8 text"
+	case len(r.CauseReport) > maxReportText:
+		return "a cause report can have at most 64 KiB; put the full text in evidence/"
+	case !utf8.ValidString(r.Summary) || !utf8.ValidString(r.Question) || !utf8.ValidString(r.CauseReport):
+		return "a summary, a question and a cause report must be UTF-8 text"
+	case r.CauseReport != "" && r.Outcome != dispatcherapi.OutcomeDone:
+		return "only a report of done has a cause report"
 	case r.Outcome == dispatcherapi.OutcomeNeedsAPerson && r.Question == "":
 		return "a report of needs a person needs a question"
 	case r.Outcome != dispatcherapi.OutcomeNeedsAPerson && r.Question != "":

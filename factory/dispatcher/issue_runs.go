@@ -83,3 +83,24 @@ func (c runCause) withStandingTask(prompt string) string {
 		"that $" + dispatcherapi.EnvMCPTokenFile + " names, and stops at the end of this Execution.\n\n" +
 		"The notification:\n\n" + prompt
 }
+
+// doneFlags are the flags of a done Run of this cause, from its last
+// report: "Cause report" alone for an Issue or a Monitor Run with a cause
+// report and no PR, else the usual flags. With a PR, a check that passed
+// is still needed: a PR with no passed check keeps "no Evidence".
+func (c runCause) doneFlags(report dispatcherapi.Report, prID int) []string {
+	if c.any() && report.CauseReport != "" && prID == 0 {
+		return []string{dispatcherapi.FlagCauseReport}
+	}
+	return doneFlags(report.Checks, prID)
+}
+
+// runCause reads the cause of the Run.
+func (s *store) runCause(runID string) (runCause, error) {
+	var startedBy, attributes string
+	if err := s.db.QueryRow(`SELECT started_by_kind, attributes FROM runs WHERE id = ?`, runID).
+		Scan(&startedBy, &attributes); err != nil {
+		return runCause{}, err
+	}
+	return causeOf(startedBy, attributes)
+}

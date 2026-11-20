@@ -439,7 +439,8 @@ func (e *execution) report(w http.ResponseWriter, r *http.Request) {
 	// Only these fields go on: the Run and the Execution are the
 	// wrapper's, and so are the checks, the Evidence paths and the
 	// delivered-message counter.
-	report = dispatcherapi.Report{Outcome: report.Outcome, Summary: report.Summary, Question: report.Question}
+	report = dispatcherapi.Report{Outcome: report.Outcome, Summary: report.Summary, Question: report.Question,
+		CauseReport: report.CauseReport}
 	a, ok := e.sendReport(w, r, &report)
 	if !ok {
 		return
