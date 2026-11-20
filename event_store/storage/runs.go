@@ -38,6 +38,10 @@ import (
 //     execution_ended also execution.reason, execution.exit_code and
 //     execution.background_killed (the count of background tasks killed).
 //   - message_accepted: message.text.
+//   - interrupt: execution.id (the Execution that got it), and for an
+//     interrupt with a message, message.id and message.text. That message
+//     has no message_accepted event; its written and delivered events
+//     follow with the same message.id.
 //   - report: report.outcome (done, needs_a_person or failed),
 //     report.summary, report.question, report.cause_report (an Issue or a
 //     Monitor Run's cause report), report.checks (a list of {name,

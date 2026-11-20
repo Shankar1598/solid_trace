@@ -63,6 +63,8 @@ func (e *execution) pollCommands(ctx context.Context) {
 				if c.Message != nil {
 					e.takeMessage(*c.Message, c.Seq)
 				}
+			case dispatcherapi.CommandInterrupt:
+				e.takeInterrupt(c)
 			default:
 				fmt.Fprintf(e.log, "wrapper: the Dispatcher sent the command %q, which this wrapper does not know\n", c.Kind)
 			}
