@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -168,6 +169,20 @@ func (b *Boundary) Populated() (bool, error) {
 		}
 	}
 	return false, fmt.Errorf("%s/cgroup.events has no populated line", b.dir)
+}
+
+// Holds tells if the process pid is in the child cgroup.
+func (b *Boundary) Holds(pid int) (bool, error) {
+	procs, err := os.ReadFile(filepath.Join(b.dir, "cgroup.procs"))
+	if err != nil {
+		return false, err
+	}
+	for _, p := range strings.Fields(string(procs)) {
+		if p == strconv.Itoa(pid) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Kill sends SIGKILL to each process in the cgroup (a write of 1 to

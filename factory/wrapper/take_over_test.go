@@ -3,6 +3,7 @@ package wrapper_test
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -361,5 +362,41 @@ func TestALostMachineDuringTheTakeOverMakesTheRunWaitOnAPersonWithTheReason(t *t
 	}
 	if len(env.Runner.Dispatched()) != 1 {
 		t.Errorf("a lost take-over started again by itself: %v", env.Runner.Dispatched())
+	}
+}
+
+// A core that is not in the Execution's cgroup (a person's hc connect
+// started it before the wrapper's core) would hold the take-over outside
+// the kill boundary: the take-over does not start, and the wrapper kills
+// that core.
+func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.T) {
+	env, ana := newEnv(t)
+	outside := exec.Command("sleep", "60")
+	if err := outside.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan error, 1)
+	go func() { ended <- outside.Wait() }()
+	t.Cleanup(func() { outside.Process.Kill() })
+	if err := env.Runner.TakeOver.EscapeCore(outside.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, ana, id)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if !strings.Contains(run.Reason, "take-over ended") || !strings.Contains(run.Reason, "not in the Execution's cgroup") {
+		t.Errorf("the reason is %q", run.Reason)
+	}
+	if e := run.Executions[1]; !strings.HasPrefix(e.EndReason, dispatcherapi.EndSetupFailed) {
+		t.Errorf("the take-over Execution ended with %q, want the setup failure", e.EndReason)
+	}
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second):
+		t.Error("the core outside the cgroup still runs")
+	}
+	if terminals := env.Runner.TakeOver.Terminals(); len(terminals) != 1 || !env.Runner.TakeOver.Finished(terminals[0]) {
+		t.Errorf("the take-over's harness still runs: %v", terminals)
 	}
 }

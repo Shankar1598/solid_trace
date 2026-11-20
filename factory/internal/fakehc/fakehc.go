@@ -170,8 +170,12 @@ func Main(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 	var err error
 	switch args[0] {
 	case "server":
+		if len(args) >= 2 && args[1] == "status" {
+			err = status(dir, stdout)
+			break
+		}
 		if len(args) < 2 || args[1] != "start" {
-			err = errors.New("only server start")
+			err = errors.New("only server start and server status")
 			break
 		}
 		var b []byte
@@ -282,6 +286,7 @@ func hold(dir string, args []string) int {
 		return 2
 	}
 	tdir := filepath.Join(dir, args[0])
+	os.WriteFile(filepath.Join(tdir, "holder"), []byte(strconv.Itoa(os.Getpid())), 0o666)
 	var argv []string
 	b, err := os.ReadFile(filepath.Join(tdir, "argv"))
 	if err == nil {
@@ -384,4 +389,27 @@ func kill(dir string, args []string, stdout io.Writer) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return errors.New("the terminal's program did not end in 5 s")
+}
+
+// EscapeCore makes the fake's core seem to be outside the Execution's
+// cgroup: server status gives a process that is not in it (a core that
+// a person's hc connect started before the wrapper's).
+func (h *HC) EscapeCore(pid int) error {
+	return os.WriteFile(filepath.Join(h.dir, "escaped"), []byte(strconv.Itoa(pid)), 0o666)
+}
+
+// status prints the core's pid: the fake has no core process, so it is
+// the holder of the last terminal, which is in the cgroup of hc run.
+func status(dir string, stdout io.Writer) error {
+	pid := 0
+	if b, err := os.ReadFile(filepath.Join(dir, "escaped")); err == nil {
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+	} else if list := (&HC{dir: dir}).Terminals(); len(list) > 0 {
+		b, _ := os.ReadFile(filepath.Join(dir, list[len(list)-1], "holder"))
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+	}
+	if pid <= 0 {
+		return errors.New("no core")
+	}
+	return json.NewEncoder(stdout).Encode(map[string]any{"pid": pid, "holders": []map[string]any{{"pid": pid}}})
 }

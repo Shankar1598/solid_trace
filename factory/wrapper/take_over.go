@@ -131,7 +131,7 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 	}
 	// The harness's environment is in a file of the secrets directory,
 	// not on the terminal's command line.
-	harnessEnv := append(append(withoutSudo(e.gitEnv(environ, e.cfg.socket())), e.uploads.claudeEnv(e.cfg)...),
+	harnessEnv := append(append(coreEnv(e.gitEnv(environ, e.cfg.socket())), e.uploads.claudeEnv(e.cfg)...),
 		EnvAccountToken+"="+e.task.AccountToken, EnvSubprocessScrub+"=0")
 	envFile := filepath.Join(e.cfg.secrets(), "harness-env")
 	if err := writeSecret(e.runUser, envFile, []byte(strings.Join(harnessEnv, "\x00")), 0o440); err != nil {
@@ -149,7 +149,7 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 	// there, and the end kills it. It is the wrapper's child, so it has
 	// no SUDO_ variable (a core that 'sudo hc connect' starts has them,
 	// and takes the person's user from them).
-	e.coreEnv = withoutSudo(e.gitEnv(environ, ""))
+	e.coreEnv = coreEnv(e.gitEnv(environ, ""))
 	if out, err := e.hc("server", "start"); err != nil {
 		fmt.Fprintf(e.log, "wrapper: hc server start: %v: %s\n", err, lastLines(out, 5))
 	}
@@ -160,10 +160,17 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 		return failed(fmt.Errorf("hc run: %v: %s", err, lastLines(out, 5)))
 	}
 	var started struct{ Address string }
-	if err := json.Unmarshal([]byte(lastLines(out, 1)), &started); err != nil || started.Address == "" {
+	if err := decodeJSON(out, &started); err != nil || started.Address == "" {
 		return failed(fmt.Errorf("hc run gave no terminal: %s", lastLines(out, 5)))
 	}
 	address := started.Address
+	// The core and its holder must be in the Execution's cgroup, so that
+	// the end kills the take-over. A core that was there before (a
+	// person's hc connect started it) or that systemd started is not.
+	if err := e.checkCore(); err != nil {
+		e.hc("kill", address)
+		return failed(err)
+	}
 	// The start of the end ends the terminal's program; the kill after
 	// endWait ends what is left, the core too.
 	e.mu.Lock()
@@ -212,7 +219,7 @@ func (e *execution) waitForTerminal(address string) *int {
 			ExitCode *int   `json:"exit_code"`
 		}
 		if err == nil {
-			err = json.Unmarshal([]byte(lastLines(out, 1)), &t)
+			err = decodeJSON(out, &t)
 		}
 		if err != nil {
 			if failures++; failures >= hcFailures {
@@ -239,7 +246,7 @@ func (e *execution) hc(args ...string) (string, error) {
 	cmd.Env = e.coreEnv
 	e.runUser.start(cmd)
 	var out bytes.Buffer
-	if args[0] == "server" {
+	if len(args) > 1 && args[0] == "server" && args[1] == "start" {
 		// The core stays, with the output open: it writes to no pipe of
 		// the wrapper.
 		cmd.Stdout, cmd.Stderr = nil, nil
@@ -257,16 +264,70 @@ func (e *execution) hc(args ...string) (string, error) {
 	return out.String(), err
 }
 
-// withoutSudo is env with no SUDO_ name: the wrapper's own start can be
-// through sudo, and hc takes SUDO_USER as the user of its core.
-func withoutSudo(env []string) []string {
+// coreEnv is env with no SUDO_ name and no HC_ name: the wrapper's own
+// start can be through sudo, and hc takes SUDO_USER as the user of its
+// core; an HC_ name (HC_SESSION, HC_SOCKET) chooses another core.
+func coreEnv(env []string) []string {
 	var out []string
 	for _, kv := range env {
-		if !strings.HasPrefix(kv, "SUDO_") {
+		if !strings.HasPrefix(kv, "SUDO_") && !strings.HasPrefix(kv, "HC_") {
 			out = append(out, kv)
 		}
 	}
 	return out
+}
+
+// decodeJSON decodes the first JSON object of an hc command's output.
+func decodeJSON(out string, v any) error {
+	i := strings.IndexByte(out, '{')
+	if i < 0 {
+		return errors.New("no JSON object")
+	}
+	return json.NewDecoder(strings.NewReader(out[i:])).Decode(v)
+}
+
+// checkCore checks that the hc core and each holder of its terminals are
+// in the Execution's kill boundary. Else it kills them, if they are the
+// run user's, and gives an error.
+func (e *execution) checkCore() error {
+	out, err := e.hc("server", "status", "--json")
+	var status struct {
+		PID     int `json:"pid"`
+		Holders []struct {
+			PID int `json:"pid"`
+		} `json:"holders"`
+	}
+	if err == nil {
+		err = decodeJSON(out, &status)
+	}
+	if err != nil || status.PID <= 0 {
+		return fmt.Errorf("hc server status: %v: %s", err, lastLines(out, 5))
+	}
+	pids := []int{status.PID}
+	for _, h := range status.Holders {
+		if h.PID > 0 {
+			pids = append(pids, h.PID)
+		}
+	}
+	var outside []int
+	for _, pid := range pids {
+		if in, err := e.boundary.Holds(pid); err != nil {
+			return fmt.Errorf("find the hc core in the Execution's cgroup: %w", err)
+		} else if !in {
+			outside = append(outside, pid)
+		}
+	}
+	if len(outside) == 0 {
+		return nil
+	}
+	for _, pid := range outside {
+		var st syscall.Stat_t
+		if syscall.Stat(fmt.Sprintf("/proc/%d", pid), &st) == nil && int(st.Uid) == e.runUser.uid {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	return fmt.Errorf("the hc core is not in the Execution's cgroup (processes %v): a core started before the wrapper's, "+
+		"such as by an early hc connect, or by systemd; try the take-over again", outside)
 }
 
 // HarnessEnv is the harness-env command: args are the environment file

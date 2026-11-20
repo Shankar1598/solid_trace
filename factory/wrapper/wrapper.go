@@ -188,6 +188,8 @@ type killBoundary interface {
 	Populated() (bool, error)
 	Kill() error
 	Remove(within time.Duration) error
+	// Holds tells if the process pid is in the boundary.
+	Holds(pid int) (bool, error)
 }
 
 // prCallTimeout is the limit of the wrapper's pr call to the Dispatcher.
