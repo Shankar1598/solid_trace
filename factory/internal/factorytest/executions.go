@@ -26,8 +26,8 @@ import (
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakedocker"
-	"github.com/solidtrace/factory/internal/fakehc"
 	"github.com/solidtrace/factory/internal/fakeharness"
+	"github.com/solidtrace/factory/internal/fakehc"
 	"github.com/solidtrace/factory/internal/fakerunner"
 	"github.com/solidtrace/factory/internal/killboundary"
 	"github.com/solidtrace/factory/wrapper"
@@ -169,10 +169,10 @@ type Runner struct {
 	// TakeOver is the fake hc of the take-over: the test is the person at
 	// its terminals.
 	TakeOver *fakehc.HC
-	dir    string
-	bin    string
-	key    *rsa.PrivateKey
-	jwks   *httptest.Server
+	dir      string
+	bin      string
+	key      *rsa.PrivateKey
+	jwks     *httptest.Server
 
 	mu         sync.Mutex
 	scripts    []string
