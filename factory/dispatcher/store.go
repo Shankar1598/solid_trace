@@ -349,6 +349,9 @@ var migrations = []string{
 	CREATE INDEX messages_by_execution ON messages (execution_id, seq);
 	ALTER TABLE commands ADD COLUMN message_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE executions ADD COLUMN end_agreed INTEGER NOT NULL DEFAULT 0;`,
+	// report_cause is the cause report of the Execution's last valid
+	// report: an Issue or a Monitor Run's ('' is none).
+	`ALTER TABLE executions ADD COLUMN report_cause TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.

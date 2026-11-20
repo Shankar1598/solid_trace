@@ -28,6 +28,10 @@ const maxRunSessions = 32
 // sessionScopes are the scopes of an Execution's child token.
 var sessionScopes = []string{"sessions:write", "sessions:read"}
 
+// mcpScopes are the scopes of an Issue or a Monitor Run's MCP token, for
+// the Run's Project only.
+var mcpScopes = []string{"mcp:read"}
+
 // sessionIDPattern is an Agent session id as Claude Code makes it: a UUID
 // in lower case.
 var sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -44,11 +48,28 @@ type childTokens struct {
 	http       *http.Client
 }
 
-// make makes a child token with sessionScopes for ids, and gives its id
-// and secret.
-func (c *childTokens) make(ctx context.Context, name string, ids []string, expires time.Time) (id, secret string, err error) {
-	body, _ := json.Marshal(map[string]any{"name": name, "scopes": sessionScopes,
-		"expires_at": expires.UTC().Format(time.RFC3339), "agent_session_ids": ids})
+// child is a child token to make: its name, scopes, expiry and limits.
+type child struct {
+	name    string
+	scopes  []string
+	expires time.Time
+	// sessionIDs is the limit to Agent sessions (nil is none).
+	sessionIDs []string
+	// projectID is the limit to one SolidTrace Project ("" is none).
+	projectID string
+}
+
+// make makes the child token, and gives its id and secret.
+func (c *childTokens) make(ctx context.Context, want child) (id, secret string, err error) {
+	request := map[string]any{"name": want.name, "scopes": want.scopes,
+		"expires_at": want.expires.UTC().Format(time.RFC3339)}
+	if want.sessionIDs != nil {
+		request["agent_session_ids"] = want.sessionIDs
+	}
+	if want.projectID != "" {
+		request["project_id"] = want.projectID
+	}
+	body, _ := json.Marshal(request)
 	resp, err := c.send(ctx, http.MethodPost, c.url+"/api/child_tokens", body)
 	if err != nil {
 		return "", "", err
@@ -123,22 +144,62 @@ func (d *Dispatcher) sessionToken(ctx context.Context, e storedExecution, starte
 	if err != nil {
 		return dispatcherapi.SessionToken{}, err
 	}
-	limit, err := d.store.totalLimit(e.id)
+	expires, err := d.executionExpiry(e, started)
 	if err != nil {
 		return dispatcherapi.SessionToken{}, err
 	}
-	expires := started.Add(limit + tokenMargin).UTC().Truncate(time.Second)
-	id, secret, err := d.children.make(ctx, "Execution "+e.id+" of Run "+e.runID, ids, expires)
+	secret, err := d.executionToken(ctx, e, child{name: "Execution " + e.id + " of Run " + e.runID,
+		scopes: sessionScopes, expires: expires, sessionIDs: ids})
 	if err != nil {
 		return dispatcherapi.SessionToken{}, fmt.Errorf("make the Execution's token: %w", err)
 	}
-	if err := d.store.addExecutionToken(e.id, id, expires); err != nil {
+	return dispatcherapi.SessionToken{Token: secret, ExpiresAt: expires, AgentSessionIDs: ids, SessionID: current}, nil
+}
+
+// mcpToken makes the MCP token of an Issue or a Monitor Run's Execution:
+// mcp:read for the Run's Project only, with the Execution's expiry. It is
+// kept for the revocation as the Execution's other token is.
+func (d *Dispatcher) mcpToken(ctx context.Context, e storedExecution, started time.Time) (*dispatcherapi.MCPToken, error) {
+	if e.projectID == "" {
+		return nil, errors.New("the Run has no SolidTrace Project id")
+	}
+	expires, err := d.executionExpiry(e, started)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := d.executionToken(ctx, e, child{name: "MCP of Execution " + e.id + " of Run " + e.runID,
+		scopes: mcpScopes, expires: expires, projectID: e.projectID})
+	if err != nil {
+		return nil, fmt.Errorf("make the Run's MCP token: %w", err)
+	}
+	return &dispatcherapi.MCPToken{Token: secret, ExpiresAt: expires, URL: d.config.SolidTraceURL + "/mcp"}, nil
+}
+
+// executionExpiry is the expiry of an Execution's tokens: its total limit
+// plus tokenMargin from its start.
+func (d *Dispatcher) executionExpiry(e storedExecution, started time.Time) (time.Time, error) {
+	limit, err := d.store.totalLimit(e.id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return started.Add(limit + tokenMargin).UTC().Truncate(time.Second), nil
+}
+
+// executionToken makes a child token for the running Execution and keeps
+// it for the revocation, and gives its secret. A token made while the
+// Execution ended is revoked at once, and gives errEnded.
+func (d *Dispatcher) executionToken(ctx context.Context, e storedExecution, want child) (string, error) {
+	id, secret, err := d.children.make(ctx, want)
+	if err != nil {
+		return "", err
+	}
+	if err := d.store.addExecutionToken(e.id, id, want.expires); err != nil {
 		if rerr := d.children.revoke(context.Background(), id); rerr != nil {
 			d.log.Warn("could not revoke a child token", "execution", e.id, "token", id, "error", rerr)
 		}
-		return dispatcherapi.SessionToken{}, err
+		return "", err
 	}
-	return dispatcherapi.SessionToken{Token: secret, ExpiresAt: expires, AgentSessionIDs: ids, SessionID: current}, nil
+	return secret, nil
 }
 
 // token is the wrapper's token call: it adds a new Agent session id to
