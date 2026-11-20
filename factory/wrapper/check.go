@@ -258,7 +258,7 @@ func (e *execution) addEvidence(report *dispatcherapi.Report) (commit func(accep
 	// in it only through the directory that it opened before the run
 	// user's first process, so a link of the agent's takes no write out
 	// of it. The run user can read the report.
-	root := e.uploads.dir
+	root := e.uploads.root()
 	final := evidenceDir + "/" + reportFile
 	if err := root.WriteFile(nextReportFile, []byte(reportText(*report)), 0o644); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write evidence/report.md:", err)

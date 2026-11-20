@@ -128,3 +128,26 @@ func TestTheWrapperExitsWith1WhenTheEndProcedureLeftProcesses(t *testing.T) {
 		})
 	}
 }
+
+// A notice in the setup, before the project directory is open: the last
+// upload has nothing to send, and the handler still ends with the end
+// call that has the preemption.
+func TestAPreemptionBeforeTheProjectDirectoryIsOpenEndsWithTheEndCall(t *testing.T) {
+	e, d := executionWithDispatcher(t, &fakeBoundary{emptyAfter: 1})
+	e.cfg.dir = t.TempDir()
+
+	e.trigger(dispatcherapi.EndPreempted, e.clock.Now())
+	<-e.preempted
+
+	ends := d.got("end")
+	if len(ends) != 1 {
+		t.Fatalf("%d end calls, want 1", len(ends))
+	}
+	var end dispatcherapi.ExecutionEnd
+	if err := json.Unmarshal(ends[0], &end); err != nil || end.Preemption == nil {
+		t.Fatalf("the end call %s: %v", ends[0], err)
+	}
+	if end.Preemption.Reason != dispatcherapi.EndPreempted {
+		t.Errorf("the preemption's reason: %q", end.Preemption.Reason)
+	}
+}

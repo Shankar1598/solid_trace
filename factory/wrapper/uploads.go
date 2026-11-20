@@ -51,13 +51,14 @@ type uploads struct {
 	client     *client
 	task       dispatcherapi.Task
 	projectDir string
-	// dir is projectDir, open from before the run user's first process.
-	dir      *os.Root
-	every    time.Duration
-	log      io.Writer
-	capturer *capture.Capturer
+	every      time.Duration
+	log        io.Writer
+	capturer   *capture.Capturer
 
-	mu    sync.Mutex
+	mu sync.Mutex
+	// dir is projectDir, open from before the run user's first process.
+	// It is nil until prepare: the preemption handler can start before.
+	dir   *os.Root
 	token dispatcherapi.SessionToken
 	// refused are the Agent session ids that the Dispatcher did not add
 	// to the Run: the wrapper does not ask for them again.
@@ -96,8 +97,17 @@ func (u *uploads) prepare(r runUser) error {
 	if err != nil {
 		return err
 	}
+	u.mu.Lock()
 	u.dir = dir
+	u.mu.Unlock()
 	return nil
+}
+
+// root is the open project directory, or nil before prepare.
+func (u *uploads) root() *os.Root {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.dir
 }
 
 // Token is the Execution's child token (agentapi.Tokens).
@@ -194,8 +204,8 @@ func (u *uploads) finish(ctx context.Context) {
 // the usual end and of the preemption handler: the handler's last upload
 // comes after finish.
 func (u *uploads) close() {
-	if u.dir != nil {
-		u.dir.Close()
+	if dir := u.root(); dir != nil {
+		dir.Close()
 	}
 }
 
@@ -306,9 +316,14 @@ func (r ctxReader) Read(p []byte) (int, error) {
 
 // pass is one upload of each of the Run's Agent sessions on disk. An
 // Agent session id that the Run does not have (a /clear) is added first.
-// final sends each file that is not .jsonl at once.
+// final sends each file that is not .jsonl at once. Before prepare there
+// is no project directory, so there is nothing to send.
 func (u *uploads) pass(ctx context.Context, final bool) {
-	entries, err := fs.ReadDir(u.dir.FS(), ".")
+	dir := u.root()
+	if dir == nil {
+		return
+	}
+	entries, err := fs.ReadDir(dir.FS(), ".")
 	if err != nil {
 		fmt.Fprintln(u.log, "wrapper: upload: read the project directory:", err)
 		return
@@ -342,7 +357,7 @@ func (u *uploads) pass(ctx context.Context, final bool) {
 		if !slices.Contains(tok.AgentSessionIDs, id) || ctx.Err() != nil {
 			continue
 		}
-		r := capture.RunUpload{SessionID: id, ProjectDir: u.projectDir, Dir: u.dir, RunID: u.task.RunID, Project: u.task.Project,
+		r := capture.RunUpload{SessionID: id, ProjectDir: u.projectDir, Dir: dir, RunID: u.task.RunID, Project: u.task.Project,
 			Repository: capture.Repository{Name: u.task.Repository, Folder: u.task.Folder}, Final: final}
 		if id == tok.SessionID {
 			r.Extra = []string{evidenceDir}
