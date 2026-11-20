@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -44,6 +45,13 @@ type Config struct {
 	// WrapperURL is the Dispatcher's private listener as the agent machine
 	// reaches it.
 	WrapperURL string
+	// ExecutionsDir is the directory on the agent machine that holds the
+	// directory of each Execution, <ExecutionsDir>/<execution> (the
+	// wrapper's WRAPPER_DIR; default DefaultExecutionsDir). Root owns it
+	// and each parent, and the run user cannot write them: the task's own
+	// directory is in Nomad's data_dir (0700), which the run user cannot
+	// reach.
+	ExecutionsDir string
 	// IdentityTTL is the life of a workload identity JWT; Nomad renews it
 	// in the file before it ends (default 1 hour).
 	IdentityTTL time.Duration
@@ -81,6 +89,9 @@ const (
 	// stops: the wrapper's end procedure and preemption handler need it.
 	// Each client's max_kill_timeout must be at least this.
 	KillTimeout = 120 * time.Second
+	// DefaultExecutionsDir is the image recipe's directory of the
+	// Executions' directories.
+	DefaultExecutionsDir = "/var/lib/factory/executions"
 )
 
 var jobPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
@@ -124,6 +135,9 @@ func New(cfg Config) (*Runner, error) {
 	}
 	if cfg.IdentityTTL == 0 {
 		cfg.IdentityTTL = time.Hour
+	}
+	if cfg.ExecutionsDir == "" {
+		cfg.ExecutionsDir = DefaultExecutionsDir
 	}
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -266,6 +280,7 @@ func (r *Runner) job(kind dispatcher.MachineKind) *api.Job {
 		"WRAPPER_DISPATCHER_URL": r.cfg.WrapperURL,
 		"WRAPPER_EXECUTION_ID":   "${NOMAD_META_" + MetaExecution + "}",
 		"WRAPPER_IDENTITY_FILE":  "${NOMAD_SECRETS_DIR}/nomad_" + IdentityName + ".jwt",
+		"WRAPPER_DIR":            path.Join(r.cfg.ExecutionsDir, "${NOMAD_META_"+MetaExecution+"}"),
 	}
 	task.KillTimeout = &killTimeout
 	task.KillSignal = "SIGTERM"

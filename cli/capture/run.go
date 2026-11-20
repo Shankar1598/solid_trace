@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -13,6 +14,11 @@ type RunUpload struct {
 	// ProjectDir is the Claude project directory: it holds <id>.jsonl and
 	// the <id>/ directory.
 	ProjectDir string
+	// Dir is ProjectDir, opened by the caller before the agent's first
+	// process starts (nil: UploadRun opens ProjectDir). Each read goes
+	// through it, so a link that the agent puts in place of ProjectDir, or
+	// of a parent of it, does not move the upload to another directory.
+	Dir *os.Root
 	// Repository is the Run's repository, from its Factory settings.
 	Repository Repository
 	// RunID and Project name the Run and its Project (slug).
@@ -29,7 +35,7 @@ type RunUpload struct {
 // each other file whole, when it did not change since the last upload or
 // the upload is Final. It has no captured repositories check: a Run's
 // repository comes from its Factory settings, and its token reaches only
-// the Run's Agent sessions. Files open inside ProjectDir only.
+// the Run's Agent sessions. Files open inside Dir only.
 func (c *Capturer) UploadRun(ctx context.Context, r RunUpload) error {
 	if !sessionIDShape.MatchString(r.SessionID) {
 		return fmt.Errorf("%q is not an Agent session id", r.SessionID)
@@ -43,6 +49,13 @@ func (c *Capturer) UploadRun(ctx context.Context, r RunUpload) error {
 		return err
 	}
 	defer unlock()
-	u := &upload{c: c, in: in, repo: r.Repository, root: r.ProjectDir, forRun: &r}
+	dir := r.Dir
+	if dir == nil {
+		if dir, err = os.OpenRoot(r.ProjectDir); err != nil {
+			return err
+		}
+		defer dir.Close()
+	}
+	u := &upload{c: c, in: in, repo: r.Repository, root: r.ProjectDir, dir: dir, forRun: &r}
 	return u.run(ctx)
 }

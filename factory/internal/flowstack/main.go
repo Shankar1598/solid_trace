@@ -21,6 +21,10 @@
 //	GET  /executions                        the Executions that the Runner started
 //	GET  /child-tokens                      each child token that Console made
 //
+// "flowstack demo up" and "flowstack demo down" are the factory demo
+// (bin/factory-demo, demo.go): the same Dispatcher for a person's dev
+// stack, with Runs of different outcomes.
+//
 // The program is also the wrapper, the harness and the agent's solidtrace
 // CLI, by its program name (factorytest.MainIfAsked).
 package main
@@ -44,6 +48,9 @@ import (
 
 func main() {
 	factorytest.MainIfAsked()
+	if len(os.Args) > 1 && os.Args[1] == "demo" {
+		os.Exit(runDemo(os.Args[2:]))
+	}
 	os.Exit(run())
 }
 

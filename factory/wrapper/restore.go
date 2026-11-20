@@ -40,8 +40,10 @@ var errNoAgentSession = errors.New("SolidTrace has no Agent session")
 // directory. It is true when the transcript (<session id>.jsonl) is back,
 // so that the harness can resume it. It is false, with no error, when
 // SolidTrace has no Agent session or no complete transcript of it: the
-// harness then starts the Agent session again, with the task.
-func (u *uploads) restore(ctx context.Context) (bool, error) {
+// harness then starts the Agent session again, with the task. It writes
+// through the open project directory (prepare), and gives each file and
+// folder that it makes to the run user.
+func (u *uploads) restore(ctx context.Context, r runUser) (bool, error) {
 	if !sessionIDShape(u.task.SessionID) {
 		return false, fmt.Errorf("%q is not an Agent session id", u.task.SessionID)
 	}
@@ -69,7 +71,7 @@ func (u *uploads) restore(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		defer download.Archive.Close()
-		restored, err := extract(download.Archive, u.projectDir, u.log)
+		restored, err := extract(download.Archive, u.dir, r.giveIn, u.log)
 		if err != nil {
 			return false, err
 		}
@@ -85,20 +87,14 @@ func (u *uploads) restore(ctx context.Context) (bool, error) {
 // sessionIDShape is true for a lower-case UUID.
 func sessionIDShape(id string) bool { return sessionFile.MatchString(id + ".jsonl") }
 
-// extract writes each file of the tar archive into dir, and gives the
-// paths that it wrote. A file that is partial (Retention dropped its
-// start) or cut (it has missing ranges) is not written: its offsets would
-// not agree with SolidTrace's, and a resume from it is not promised. A
-// path that is not a plain relative path stops the restore.
-func extract(archive io.Reader, dir string, log io.Writer) (map[string]bool, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
+// extract writes each file of the tar archive into root, gives each file
+// and folder that it makes with give, and gives the paths that it wrote.
+// A file that is partial (Retention dropped its start) or cut (it has
+// missing ranges) is not written: its offsets would not agree with
+// SolidTrace's, and a resume from it is not promised. A path that is not
+// a plain relative path stops the restore.
+func extract(archive io.Reader, root *os.Root, give func(root *os.Root, name string) error,
+	log io.Writer) (map[string]bool, error) {
 	restored := map[string]bool{}
 	r := tar.NewReader(archive)
 	for {
@@ -122,20 +118,41 @@ func extract(archive io.Reader, dir string, log io.Writer) (map[string]bool, err
 			fmt.Fprintf(log, "wrapper: restore: %s is %s in SolidTrace: it is not restored\n", name, flags)
 			continue
 		}
-		if err := root.MkdirAll(filepath.Dir(filepath.FromSlash(name)), 0o700); err != nil {
-			return nil, err
+		// Each folder of the path that is not there yet.
+		parts := strings.Split(name, "/")
+		for i := 1; i < len(parts); i++ {
+			folder := filepath.Join(parts[:i]...)
+			if err := root.Mkdir(folder, 0o700); err == nil {
+				if err := give(root, folder); err != nil {
+					return nil, err
+				}
+			} else if !errors.Is(err, os.ErrExist) {
+				return nil, fmt.Errorf("restore %s: %w", name, err)
+			}
 		}
-		f, err := root.OpenFile(filepath.FromSlash(name), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		file := filepath.FromSlash(name)
+		f, err := root.OpenFile(file, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("restore %s: %w", name, err)
 		}
 		_, err = io.Copy(f, r)
 		if closeErr := f.Close(); err == nil {
 			err = closeErr
+		}
+		if err == nil {
+			err = give(root, file)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("restore %s: %w", name, err)
 		}
 		restored[name] = true
 	}
+}
+
+// giveIn makes the path in root the run user's.
+func (r runUser) giveIn(root *os.Root, name string) error {
+	if !r.changes() {
+		return nil
+	}
+	return root.Lchown(name, r.uid, r.gid)
 }

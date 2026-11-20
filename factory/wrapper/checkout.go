@@ -1,6 +1,7 @@
 package wrapper
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -28,11 +29,13 @@ const (
 	commitEmail = "factory@solidtrace.invalid"
 )
 
-// setup makes the workspace, the run user's home and the caches folder,
-// writes the forge token and the git configuration outside the checkout,
-// and clones the repository into its fixed checkout path, on the Run's
-// branch: the first Execution makes the branch from the base branch, and
-// a later one checks it out.
+// setup makes the workspace, the run user's home and the caches folder
+// for the run user, writes the forge token and the git configuration
+// outside the checkout, and clones the repository into its fixed checkout
+// path as the run user, on the Run's branch: the first Execution makes
+// the branch from the base branch, and a later one checks it out. Root
+// writes each file before the run user's first process (the first git
+// call), and after it writes in no folder of the run user's.
 func (e *execution) setup(ctx context.Context, environ []string) error {
 	repository, err := checkRepository(e.task.Repository)
 	if err != nil {
@@ -57,8 +60,16 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 			return fmt.Errorf("delete what an earlier Execution left: %w", err)
 		}
 	}
-	for _, dir := range []string{secrets, e.cfg.workspace, e.cfg.home, e.cfg.cache} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+	// The secrets directory is root's: the run user reads its files and
+	// cannot change them.
+	if err := os.Mkdir(secrets, 0o700); err != nil {
+		return err
+	}
+	if err := e.runUser.share(secrets, 0o750); err != nil {
+		return err
+	}
+	for _, dir := range []string{e.cfg.workspace, e.cfg.home, e.cfg.cache} {
+		if err := e.runUser.mkdirAll(dir); err != nil {
 			return err
 		}
 	}
@@ -66,8 +77,13 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 		return err
 	}
 	checkout := e.cfg.checkout(repository)
-	if err := os.MkdirAll(filepath.Dir(checkout), 0o700); err != nil {
+	if err := e.runUser.mkdirAll(filepath.Dir(checkout)); err != nil {
 		return err
+	}
+	// Before the run user's first process: the uploads read through the
+	// open project directory.
+	if err := e.uploads.prepare(e.runUser); err != nil {
+		return fmt.Errorf("make the project directory: %w", err)
 	}
 	branch := e.task.Branch
 	_, code, err := e.git(ctx, environ, "", "ls-remote", "--exit-code", "--heads", "--", e.task.CloneURL, "refs/heads/"+branch)
@@ -109,6 +125,16 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	if info, err := os.Stat(e.workDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the repository %s has no folder %s, the Project's folder", e.task.Repository, folder)
 	}
+	// After the clone, before the setup command and the harness: the
+	// Agent session directory of the Run, so that a resume works on this
+	// machine.
+	if e.task.Resume {
+		resumed, err := e.uploads.restore(ctx, e.runUser)
+		if err != nil {
+			return fmt.Errorf("restore the Agent session %s: %w", e.task.SessionID, err)
+		}
+		e.resumed = resumed
+	}
 	if e.task.Setup != "" {
 		return e.runSetupCommand(ctx, environ)
 	}
@@ -134,7 +160,7 @@ func (e *execution) writeGitConfig(secrets string) error {
 		}
 		helper := filepath.Join(secrets, "git-credential")
 		token := filepath.Join(secrets, "forge-token")
-		if err := os.WriteFile(token, []byte(e.task.ForgeToken), 0o600); err != nil {
+		if err := writeSecret(e.runUser, token, []byte(e.task.ForgeToken), 0o440); err != nil {
 			return err
 		}
 		if strings.ContainsAny(e.task.ForgeUsername, "\n\x00") {
@@ -144,7 +170,7 @@ func (e *execution) writeGitConfig(secrets string) error {
 			"test \"$1\" = get || exit 0\n" +
 			"printf 'username=%s\\n' " + shellQuote(e.task.ForgeUsername) + "\n" +
 			"printf 'password=%s\\n' \"$(cat '" + token + "')\"\n"
-		if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		if err := writeSecret(e.runUser, helper, []byte(script), 0o550); err != nil {
 			return err
 		}
 		// Only for the forge's git URL: another host that asks for
@@ -159,7 +185,20 @@ func (e *execution) writeGitConfig(secrets string) error {
 			"\tinsteadOf = " + gitValue("ssh://git@"+host+"/") + "\n")
 	}
 	b.WriteString("[user]\n\tname = " + gitValue(commitName) + "\n\temail = " + gitValue(commitEmail) + "\n")
-	return os.WriteFile(e.cfg.gitConfig(), []byte(b.String()), 0o600)
+	// The run user's own file in its home: no secret is in it.
+	path := e.cfg.gitConfig()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(b.String())
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return e.runUser.give(path)
 }
 
 // gitValue is s as a value in a git configuration file.
@@ -360,11 +399,13 @@ func removeAll(dir string) error {
 	return os.RemoveAll(dir)
 }
 
-// gitEnv is the environment of git and of the harness: the run user's
-// home and git configuration, and the caches folder. The harness also
-// gets the fixed Claude Code paths (uploads.claudeEnv).
+// gitEnv is the environment of the run user's processes (git, the setup
+// command, the checks and the harness): the run user's names, its home
+// and git configuration, and the caches folder. The harness also gets the
+// fixed Claude Code paths (uploads.claudeEnv). The fixed home comes after
+// the run user's home of the machine, so it is the HOME that counts.
 func (e *execution) gitEnv(environ []string, socket string) []string {
-	return append(harnessEnv(environ, socket),
+	return append(e.runUser.env(harnessEnv(environ, socket)),
 		"HOME="+e.cfg.home,
 		"GIT_CONFIG_GLOBAL="+e.cfg.gitConfig(),
 		"XDG_CACHE_HOME="+e.cfg.cache)
@@ -374,7 +415,11 @@ func (e *execution) gitEnv(environ []string, socket string) []string {
 // ended and its process group was killed.
 const gitWait = 2 * time.Second
 
-// git runs git, and gives its output and exit code.
+// git runs git as the run user in the Execution's kill boundary, as each
+// process of the run user: a hook that git starts is in the child cgroup,
+// and the end kills what it leaves. It gives git's output and exit code.
+// Root never runs git in the checkout: its hooks and its .git/config are
+// the agent's.
 func (e *execution) git(ctx context.Context, environ []string, dir string, args ...string) (string, int, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -385,11 +430,21 @@ func (e *execution) git(ctx context.Context, environ []string, dir string, args 
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = gitWait
 	cmd.Env = append(e.gitEnv(environ, ""), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), cmd.ProcessState.ExitCode(), fmt.Errorf("git %s: %v: %s", args[0], err, lastLines(string(out), 20))
+	e.runUser.start(cmd)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := e.boundary.Start(cmd)
+	if err == nil {
+		// A process that git started and that holds the output open does
+		// not hold the setup.
+		if err = cmd.Wait(); errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
 	}
-	return string(out), 0, nil
+	if err != nil {
+		return out.String(), cmd.ProcessState.ExitCode(), fmt.Errorf("git %s: %v: %s", args[0], err, lastLines(out.String(), 20))
+	}
+	return out.String(), 0, nil
 }
 
 // projectDirName is the Claude Code project directory name of a
