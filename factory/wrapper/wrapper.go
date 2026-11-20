@@ -90,12 +90,56 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 		boundary.Remove(emptyWait)
 		return 2
 	}
-	c := newClient(cfg)
-	task, err := c.task(ctx)
+	// A take-over Execution follows in the same allocation: the same
+	// wrapper starts it, on the same machine, in a new cgroup.
+	var kept *keptWork
+	for {
+		code, next, left := execute(ctx, &cfg, boundary, runUser, environ, stderr, kept)
+		if next == "" {
+			return code
+		}
+		fmt.Fprintf(stderr, "wrapper: the take-over Execution %s starts on this machine\n", next)
+		cfg.execution, kept = next, left
+		if boundary, err = killboundary.Open(CgroupName(next)); err != nil {
+			fmt.Fprintln(stderr, "wrapper: no kill boundary for the take-over, so it does not start:", err)
+			kept.cleanUp(cfg, stderr)
+			return 2
+		}
+	}
+}
+
+// keptWork is what an Execution that a take-over follows leaves on the
+// machine for it: the checkout and the run user's home stay, and the
+// project directory stays open (it was opened before the run user's
+// first process, so a link that the agent made does not move it).
+type keptWork struct {
+	projectDir *os.Root
+}
+
+// cleanUp deletes what a take-over did not use: the workspace and the
+// run user's home.
+func (k *keptWork) cleanUp(cfg config, log io.Writer) {
+	if k.projectDir != nil {
+		k.projectDir.Close()
+	}
+	(&execution{cfg: cfg, log: log}).cleanUp()
+}
+
+// execute runs one Execution, from its task call to its end call, and
+// gives the wrapper's exit code. When a take-over Execution follows, it
+// gives its id and what this Execution kept for it. kept is what an
+// earlier Execution kept (nil for the first one).
+func execute(ctx context.Context, cfg *config, boundary killBoundary, runUser runUser, environ []string, stderr io.Writer,
+	kept *keptWork) (int, string, *keptWork) {
+	c := newClient(*cfg)
+	task, err := c.task(ctx, dispatcherapi.TaskRequest{VM: cfg.vm, Attach: cfg.attachCommand(runUser.name)})
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
 		boundary.Remove(emptyWait)
-		return 1
+		if kept != nil {
+			kept.cleanUp(*cfg, stderr)
+		}
+		return 1, "", nil
 	}
 	if cfg.projectName == "" {
 		// One project directory name for each repository: a resume on
@@ -104,8 +148,8 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	}
 	work, cancelWork := context.WithCancel(ctx)
 	defer cancelWork()
-	e := &execution{cfg: cfg, client: c, task: task, log: stderr, boundary: boundary, runUser: runUser, needsPerson: make(chan struct{}, 1),
-		uploads: newUploads(cfg, c, task, stderr), cancelWork: cancelWork, inbox: newInbox()}
+	e := &execution{cfg: *cfg, client: c, task: task, log: stderr, boundary: boundary, runUser: runUser, needsPerson: make(chan struct{}, 1),
+		uploads: newUploads(*cfg, c, task, stderr), cancelWork: cancelWork, inbox: newInbox(), kept: kept}
 	// The commands and the limits count from the task, and stop at the
 	// end call.
 	watch, stopWatching := context.WithCancel(ctx)
@@ -115,14 +159,26 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 	go e.sendEvents(watch)
 	end := e.run(work, environ)
 	stopWatching()
-	if err := c.end(ctx, end); err != nil {
+	next, err := c.end(ctx, end)
+	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
-		return 1
 	}
-	if e.left != nil {
-		return 1
+	if err != nil || e.left != nil || next == "" {
+		e.closeProjectDir()
+		e.cleanUp()
+		if err != nil || e.left != nil {
+			return 1, "", nil
+		}
+		return 0, "", nil
 	}
-	return 0
+	return 0, next, &keptWork{projectDir: e.uploads.dir}
+}
+
+// closeProjectDir closes the open project directory of the uploads.
+func (e *execution) closeProjectDir() {
+	if e.uploads != nil && e.uploads.dir != nil {
+		e.uploads.dir.Close()
+	}
 }
 
 // killBoundary is the Execution's kill boundary, a *killboundary.Boundary.
@@ -203,6 +259,8 @@ type execution struct {
 	harness  *exec.Cmd
 	kill     *time.Timer
 	killOnce sync.Once
+	// killed is true after the cgroup kill.
+	killed atomic.Bool
 	// left is the error when the cgroup was not empty after the end.
 	left error
 	// checkout is the clone ("" before the clone), and workDir the
@@ -216,22 +274,36 @@ type execution struct {
 	// call pushed.
 	prMu      sync.Mutex
 	pushedTip string
+	// kept is what the Execution that this take-over follows left on the
+	// machine (nil: this is the allocation's first Execution).
+	kept *keptWork
+	// stopTerminal ends the interactive form's terminal (nil: the
+	// headless form, or no terminal yet). The end calls it, under mu.
+	stopTerminal func()
+	// coreEnv is the environment of the hc commands (the interactive
+	// form): the run user's names and home, and no secret.
+	coreEnv []string
 }
+
+// interactive tells if the Execution is a take-over, in the interactive
+// form.
+func (e *execution) interactive() bool { return e.task.Form == dispatcherapi.FormInteractive }
 
 // run sets up and runs the harness, then does the end procedure, and gives
 // the end call's body.
 func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
 	end := e.work(ctx, environ)
 	e.finish()
-	// Before the end: each commit that is not pushed. After the
-	// Execution: no workspace and no home of the run user.
+	// Before the end: each commit that is not pushed, and no secret file.
+	// After the end call: no workspace and no home of the run user,
+	// unless a take-over follows on this machine (Main).
 	if failed := e.push(environ); failed != "" {
 		if end.Error != "" {
 			end.Error += "; "
 		}
 		end.Error += failed
 	}
-	e.cleanUp()
+	e.removeSecrets()
 	// The output stream is read to its end now: the last
 	// background_tasks_changed event counts, also when the harness wrote
 	// it just before it exited.
@@ -267,6 +339,7 @@ func (e *execution) finish() {
 // count as killed.
 func (e *execution) killAll() {
 	e.killOnce.Do(func() {
+		defer e.killed.Store(true)
 		populated, err := e.boundary.Populated()
 		if err != nil {
 			fmt.Fprintln(e.log, "wrapper: read the Execution's cgroup:", err)
@@ -324,7 +397,11 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 	if e.task.AccountToken == "" {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: "the task has no account token"}
 	}
-	if err := e.setup(ctx, environ); err != nil {
+	setup, harness := e.setup, e.runHarness
+	if e.interactive() {
+		setup, harness = e.setupTakeOver, e.runInteractive
+	}
+	if err := setup(ctx, environ); err != nil {
 		// A stop or a limit during the setup stops the clone.
 		if end, ok := e.endedEarly(); ok {
 			return end
@@ -336,7 +413,7 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
 	e.uploads.start()
-	end := e.runHarness(environ)
+	end := harness(environ)
 	// The last bytes go before the end call: the end step revokes the
 	// Execution's token.
 	e.uploads.finish()
@@ -799,11 +876,17 @@ func (e *execution) beginEnd(reason, why string, interrupt bool) {
 	if e.cancelWork != nil {
 		e.cancelWork()
 	}
-	stdin := e.stdin
-	if stdin != nil {
+	stdin, stopTerminal := e.stdin, e.stopTerminal
+	if stdin != nil || stopTerminal != nil {
 		e.kill = time.AfterFunc(endWait, e.killAll)
 	}
 	e.mu.Unlock()
+	if stopTerminal != nil {
+		// The interactive form: the terminal's program ends, and the
+		// kill after endWait ends what is left.
+		go stopTerminal()
+		return
+	}
 	if stdin == nil {
 		return
 	}

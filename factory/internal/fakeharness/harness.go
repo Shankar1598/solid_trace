@@ -118,6 +118,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
+	if !f.print {
+		return interactive(f, stdin, stdout, stderr, getenv)
+	}
 	script, err := loadScript(getenv)
 	if err != nil {
 		fmt.Fprintln(stderr, "fake harness:", err)
@@ -139,11 +142,12 @@ type flags struct {
 	settings                          string
 	replay                            bool
 	disallowed                        map[string]bool
+	// print is the headless form (-p); with no -p, the interactive form.
+	print bool
 }
 
 func parseFlags(args []string) (flags, error) {
 	f := flags{disallowed: map[string]bool{}, permissionMode: "default"}
-	var print bool
 	var input, output string
 	value := func(i *int) string {
 		if *i+1 < len(args) {
@@ -162,7 +166,7 @@ func parseFlags(args []string) (flags, error) {
 		}
 		switch a {
 		case "-p", "--print":
-			print = true
+			f.print = true
 		case "--input-format":
 			input = get()
 		case "--output-format":
@@ -188,8 +192,9 @@ func parseFlags(args []string) (flags, error) {
 		}
 	}
 	switch {
-	case !print:
-		return f, errors.New("the fake harness has only the headless form: give -p")
+	case !f.print && (input != "" || output != ""):
+		return f, errors.New("--input-format and --output-format need --print")
+	case !f.print:
 	case input != "stream-json" || output != "stream-json":
 		return f, errors.New("the fake harness needs --input-format stream-json and --output-format stream-json")
 	case f.sessionID != "" && f.resume != "":

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakedocker"
+	"github.com/solidtrace/factory/internal/fakehc"
 	"github.com/solidtrace/factory/internal/fakeharness"
 	"github.com/solidtrace/factory/internal/fakerunner"
 	"github.com/solidtrace/factory/internal/killboundary"
@@ -39,6 +41,7 @@ const (
 	harnessName    = "claude"
 	solidtraceName = "solidtrace"
 	dockerName     = "docker"
+	hcName         = "hc"
 )
 
 // MainIfAsked runs the test binary as the wrapper, the harness or the
@@ -50,11 +53,16 @@ func MainIfAsked() {
 		if len(os.Args) > 1 && os.Args[1] == wrapper.StopHookCommand {
 			os.Exit(wrapper.StopHook(os.Stdin, os.Stdout, os.Stderr, os.Getenv))
 		}
+		if len(os.Args) > 1 && os.Args[1] == wrapper.HarnessEnvCommand {
+			os.Exit(wrapper.HarnessEnv(os.Args[2:], os.Environ(), os.Stderr))
+		}
 		os.Exit(wrapper.Main(context.Background(), os.Getenv, os.Environ(), os.Stderr))
 	case harnessName:
 		os.Exit(fakeharness.Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
 	case dockerName:
 		os.Exit(fakedocker.Main(os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
+	case hcName:
+		os.Exit(fakehc.Main(os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 	case solidtraceName:
 		os.Exit(command.Run(context.Background(), os.Args[1:], command.Env{
 			Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
@@ -158,6 +166,9 @@ type Runner struct {
 	Fake *fakerunner.Runner
 	// Docker is the fake Docker of the agent and of the wrapper's end.
 	Docker *fakedocker.Docker
+	// TakeOver is the fake hc of the take-over: the test is the person at
+	// its terminals.
+	TakeOver *fakehc.HC
 	dir    string
 	bin    string
 	key    *rsa.PrivateKey
@@ -177,6 +188,20 @@ type Runner struct {
 	before    func(execution string)
 	// keepSessions gives each Execution the same Claude Code directory.
 	keepSessions bool
+	// inAllocation are the Executions that a wrapper started with no
+	// dispatch (a take-over), for the clean-up of their cgroups.
+	inAllocation []string
+}
+
+// InAllocation tells the Runner of an Execution that a wrapper started in
+// the allocation of another one (a take-over): the test's clean-up kills
+// and removes its cgroup too, as a lost machine takes it with it.
+func (r *Runner) InAllocation(execution string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !slices.Contains(r.inAllocation, execution) {
+		r.inAllocation = append(r.inAllocation, execution)
+	}
 }
 
 // KeepAgentSessions gives the next Executions one Claude Code directory
@@ -285,7 +310,7 @@ func newRunner(e *Env, runUser *user.User) (*Runner, error) {
 	if err := os.Chmod(dir, 0o711); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{wrapperName, harnessName, solidtraceName, dockerName} {
+	for _, name := range []string{wrapperName, harnessName, solidtraceName, dockerName, hcName} {
 		if err := os.Symlink(self, filepath.Join(r.bin, name)); err != nil {
 			return nil, err
 		}
@@ -311,6 +336,9 @@ func newRunner(e *Env, runUser *user.User) (*Runner, error) {
 		return nil, err
 	}
 	if r.Docker, err = fakedocker.New(filepath.Join(dir, "docker")); err != nil {
+		return nil, err
+	}
+	if r.TakeOver, err = fakehc.New(filepath.Join(dir, "hc")); err != nil {
 		return nil, err
 	}
 	if err := r.forRunUser(filepath.Join(dir, "docker"), filepath.Join(dir, "agent-config")); err != nil {
@@ -345,6 +373,13 @@ func (r *Runner) Agent(lines ...string) {
 	defer r.mu.Unlock()
 	r.scripts = append(r.scripts, f.Name())
 }
+
+// VM is the machine name of the fake Runner's wrapper of an Execution:
+// each dispatched Execution is on its own machine.
+func VM(execution string) string { return "agent-vm-" + execution }
+
+// TakeOverAttach is the Take-over setting of the fake Runner's wrappers.
+const TakeOverAttach = "docker exec -i -u engineer {vm} sudo -u {run_user} hc connect"
 
 // Workload is the subject of the fake JWT of an Execution.
 func Workload(execution string) string { return "fake-runner:" + execution }
@@ -402,6 +437,12 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// Never the dev box's real Docker: the end kills each container.
 		wrapper.EnvDocker + "=" + docker,
 		fakedocker.EnvDir + "=" + r.Docker.Dir(),
+		// Never the dev box's real hc: its core holds a person's
+		// terminals.
+		wrapper.EnvHC + "=" + filepath.Join(r.bin, hcName),
+		fakehc.EnvDir + "=" + r.TakeOver.Dir(),
+		wrapper.EnvVM + "=" + VM(x.Execution),
+		wrapper.EnvTakeOverAttach + "=" + TakeOverAttach,
 		// Each Execution is on its own machine: its own workspace and run
 		// user's home. The caches are of the Runner, as on a VM that
 		// keeps them across Executions.
@@ -601,7 +642,10 @@ const ForgeConnection = "forge"
 // removeCgroups kills and removes the child cgroup that an Execution's
 // wrapper left.
 func (r *Runner) removeCgroups() {
-	for _, execution := range r.Dispatched() {
+	r.mu.Lock()
+	extra := slices.Clone(r.inAllocation)
+	r.mu.Unlock()
+	for _, execution := range append(r.Dispatched(), extra...) {
 		b, err := killboundary.Reopen(wrapper.CgroupName(execution))
 		if err != nil {
 			continue

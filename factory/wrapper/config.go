@@ -56,7 +56,24 @@ const (
 	// 3339). The wrapper's limits then read their clock from it, and the
 	// wrapper checks them every 20 ms, not every second.
 	EnvClockFile = "WRAPPER_CLOCK_FILE"
+	// EnvVM is the name of the machine that the wrapper runs on, as a
+	// person reaches it (default: the host name). The Nomad Runner sets
+	// the Nomad node's name.
+	EnvVM = "WRAPPER_VM"
+	// EnvTakeOverAttach is the Take-over setting: the command that
+	// attaches a person to a take-over on this machine, with {vm} and
+	// {run_user} in it (default DefaultTakeOverAttach).
+	EnvTakeOverAttach = "WRAPPER_TAKE_OVER_ATTACH"
+	// EnvHC is the hc program of the take-over (default hc). A test gives
+	// a fake one: no test may reach the hc of the dev box.
+	EnvHC = "WRAPPER_HC"
 )
+
+// DefaultTakeOverAttach is the attach command when the Take-over setting
+// is not set: ssh to the machine, then hc connect as the run user. The
+// first team's VMs use ssh through IAP; the local factory stack uses
+// docker exec (factory/local/README.md).
+const DefaultTakeOverAttach = "ssh {vm} sudo -u {run_user} hc connect"
 
 // limitEvery is how often the wrapper checks the Execution's limits.
 const limitEvery = time.Second
@@ -79,6 +96,15 @@ type config struct {
 	// wrapper checks them.
 	clock      func() time.Time
 	limitEvery time.Duration
+	// vm, attach and hc are the take-over's: the machine's name, the
+	// attach command's template, and the hc program.
+	vm, attach, hc string
+}
+
+// attachCommand is the command that attaches a person to a take-over of
+// this machine, as the run user.
+func (c config) attachCommand(runUser string) string {
+	return strings.NewReplacer("{vm}", c.vm, "{run_user}", runUser).Replace(c.attach)
 }
 
 // fileClock is a clock that reads the time from path. When the file
@@ -122,6 +148,18 @@ func loadConfig(getenv func(string) string) (config, error) {
 		uploadEvery:   uploadEvery,
 		clock:         time.Now,
 		limitEvery:    limitEvery,
+		vm:            getenv(EnvVM),
+		attach:        getenv(EnvTakeOverAttach),
+		hc:            getenv(EnvHC),
+	}
+	if c.vm == "" {
+		c.vm, _ = os.Hostname()
+	}
+	if c.attach == "" {
+		c.attach = DefaultTakeOverAttach
+	}
+	if c.hc == "" {
+		c.hc = "hc"
 	}
 	for _, d := range []struct {
 		value *string

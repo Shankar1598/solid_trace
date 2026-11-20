@@ -83,10 +83,11 @@ func (a answer) err(verb string) error {
 	return fmt.Errorf("the Dispatcher answered the %s call with %d: %s", verb, a.status, a.message)
 }
 
-// task is the task and secrets call.
-func (c *client) task(ctx context.Context) (dispatcherapi.Task, error) {
+// task is the task and secrets call. place names the machine, and the
+// command that attaches a person to a take-over there.
+func (c *client) task(ctx context.Context, place dispatcherapi.TaskRequest) (dispatcherapi.Task, error) {
 	var task dispatcherapi.Task
-	a, err := c.call(ctx, "task", struct{}{})
+	a, err := c.call(ctx, "task", place)
 	if err == nil {
 		err = a.err("task")
 	}
@@ -101,25 +102,35 @@ func (c *client) task(ctx context.Context) (dispatcherapi.Task, error) {
 const endTries = 5
 
 // end is the end call. It tries again when the Dispatcher cannot be
-// reached or answers 5xx.
-func (c *client) end(ctx context.Context, end dispatcherapi.ExecutionEnd) error {
+// reached or answers 5xx. It gives the take-over Execution that follows
+// on this machine ("" is none).
+func (c *client) end(ctx context.Context, end dispatcherapi.ExecutionEnd) (string, error) {
 	var last error
 	for try := 0; try < endTries; try++ {
 		if try > 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return "", ctx.Err()
 			case <-time.After(time.Duration(try) * time.Second):
 			}
 		}
 		a, err := c.call(ctx, "end", end)
 		if err == nil && a.status/100 != 5 {
-			return a.err("end")
+			if err := a.err("end"); err != nil {
+				return "", err
+			}
+			var next dispatcherapi.EndAnswer
+			if len(a.body) > 0 {
+				if err := json.Unmarshal(a.body, &next); err != nil {
+					return "", fmt.Errorf("read the end call's answer: %w", err)
+				}
+			}
+			return next.TakeOver, nil
 		}
 		if err == nil {
 			err = a.err("end")
 		}
 		last = err
 	}
-	return last
+	return "", last
 }

@@ -175,7 +175,8 @@ func (u *uploads) finish() {
 	ctx, cancel := context.WithTimeout(context.Background(), finalWait)
 	defer cancel()
 	u.pass(ctx, true)
-	u.dir.Close()
+	// The project directory stays open: a take-over on this machine
+	// uploads through it (Main closes it).
 }
 
 // pass is one upload of each of the Run's Agent sessions on disk. An

@@ -374,6 +374,14 @@ func (e *execution) cleanUp() {
 	}
 }
 
+// removeSecrets deletes the secret files of the Execution, before its
+// end call.
+func (e *execution) removeSecrets() {
+	if err := removeAll(e.cfg.secrets()); err != nil {
+		fmt.Fprintln(e.log, "wrapper: delete after the Execution:", err)
+	}
+}
+
 // removeAll is os.RemoveAll, also of a folder that the agent made read
 // only.
 func removeAll(dir string) error {

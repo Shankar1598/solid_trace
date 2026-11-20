@@ -59,6 +59,10 @@ func (e *execution) pollCommands(ctx context.Context) {
 			switch c.Kind {
 			case dispatcherapi.CommandStop:
 				e.beginEnd(dispatcherapi.EndStopped, "", true)
+			case dispatcherapi.CommandTakeOver:
+				// The usual end procedure; the end call's answer names the
+				// take-over Execution, which starts on this machine.
+				e.beginEnd(dispatcherapi.EndTakenOver, "", true)
 			case dispatcherapi.CommandMessage:
 				if c.Message != nil {
 					e.takeMessage(*c.Message, c.Seq)

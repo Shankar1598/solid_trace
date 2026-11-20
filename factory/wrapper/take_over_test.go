@@ -1,0 +1,365 @@
+package wrapper_test
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/internal/factorytest"
+	"github.com/solidtrace/factory/internal/recorder"
+)
+
+var takenOverLine = regexp.MustCompile(`(?m)^Run (\S+) is taken over\. Its Agent session continues in a terminal on (\S+)\.\nAttach with:\n  (.+)$`)
+
+// takeOverCLI runs 'solidtrace take-over' as p, and gives the machine and
+// the attach command that it printed.
+func takeOverCLI(t *testing.T, env *factorytest.Env, p *factorytest.Person, id string) (vm, attach string) {
+	t.Helper()
+	got := p.CLI("take-over", "--dispatcher", env.URL(), id)
+	m := takenOverLine.FindStringSubmatch(got.Stdout)
+	if got.Code != 0 || m == nil || m[1] != id {
+		t.Fatalf("solidtrace take-over: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	return m[2], m[3]
+}
+
+// inToolCallRun starts a Run whose agent works in a long tool call, and
+// waits until it is there.
+func inToolCallRun(t *testing.T, env *factorytest.Env, p *factorytest.Person) string {
+	t.Helper()
+	here, reached := marker(t)
+	env.Runner.Agent(takeTask, initLine(t), here, inToolCall, interrupted, thenEOF)
+	id := start(t, env, p, "Fix the cart")
+	reached()
+	return id
+}
+
+// takeOverTerminal waits until the take-over Execution runs and the
+// harness shows its screen in the terminal, and gives the Run and the
+// terminal.
+func takeOverTerminal(t *testing.T, env *factorytest.Env, p *factorytest.Person, id string) (dispatcherapi.Run, string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var run dispatcherapi.Run
+	for {
+		run = getRun(t, p, id)
+		if n := len(run.Executions); n >= 2 {
+			env.Runner.InAllocation(run.Executions[n-1].ID)
+			if run.Executions[n-1].State == dispatcherapi.ExecutionRunning {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no take-over Execution runs after 30 s: %s (%s) %+v\n%s\n%s", run.State, run.Reason, run.Executions,
+				env.Runner.Fake.Output(run.Executions[0].ID), env.Logs())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// One terminal for each take-over of the test.
+	terminal, err := env.Runner.TakeOver.WaitForTerminal(max(1, len(env.Runner.TakeOver.Terminals())), 30*time.Second)
+	if err == nil {
+		_, err = env.Runner.TakeOver.WaitForScreen(terminal, `"subtype":"init"`, 30*time.Second)
+	}
+	if err != nil {
+		t.Fatalf("%v\nwrapper output:\n%s", err, env.Runner.Fake.Output(run.Executions[0].ID))
+	}
+	return run, terminal
+}
+
+// screenInit is the harness's init event on the terminal's screen.
+func screenInit(t *testing.T, screen string) map[string]any {
+	t.Helper()
+	for _, line := range strings.Split(screen, "\n") {
+		var ev map[string]any
+		if json.Unmarshal([]byte(line), &ev) == nil && ev["subtype"] == "init" {
+			return ev
+		}
+	}
+	t.Fatalf("no init event on the screen: %s", screen)
+	return nil
+}
+
+// typeLine types a line into the terminal as the person, and waits until
+// the harness shows want.
+func typeLine(t *testing.T, env *factorytest.Env, terminal, line, want string) string {
+	t.Helper()
+	if err := env.Runner.TakeOver.Type(terminal, line); err != nil {
+		t.Fatal(err)
+	}
+	screen, err := env.Runner.TakeOver.WaitForScreen(terminal, want, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return screen
+}
+
+func leave(t *testing.T, env *factorytest.Env, terminal string) {
+	t.Helper()
+	if err := env.Runner.TakeOver.Leave(terminal); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestATakeOverOfARunningRunContinuesTheAgentSessionInATerminalOnTheSameMachine(t *testing.T) {
+	env, ana := newEnv(t)
+	ben := env.Member("Ben")
+	id := inToolCallRun(t, env, ana)
+	first := getRun(t, ana, id).Executions[0]
+
+	vm, attach := takeOverCLI(t, env, ben, id)
+
+	runUser := env.Runner.RunUser().Username
+	if want := "docker exec -i -u engineer " + factorytest.VM(first.ID) + " sudo -u " + runUser + " hc connect"; vm != factorytest.VM(first.ID) || attach != want {
+		t.Errorf("the take-over printed the machine %q and the attach command %q, want %q and %q", vm, attach,
+			factorytest.VM(first.ID), want)
+	}
+	run, terminal := takeOverTerminal(t, env, ana, id)
+	if run.State != dispatcherapi.StateTakenOver || run.Reason != "taken over by ben@example.com" {
+		t.Errorf("the Run is %s (%s), want taken over by Ben", run.State, run.Reason)
+	}
+	headless, takeOver := run.Executions[0], run.Executions[1]
+	if headless.State != dispatcherapi.ExecutionEnded || headless.EndReason != dispatcherapi.EndTakenOver {
+		t.Errorf("the headless Execution is %s with the end reason %q, want ended, taken over", headless.State, headless.EndReason)
+	}
+	if headless.ExitCode == nil || *headless.ExitCode != interruptedCode {
+		t.Errorf("the headless harness's exit code is %v: the take-over did not interrupt the agent first", headless.ExitCode)
+	}
+	if takeOver.Form != dispatcherapi.FormInteractive || takeOver.VM != headless.VM || takeOver.VM != vm ||
+		takeOver.Attach != attach || takeOver.Account != headless.Account {
+		t.Errorf("the take-over Execution %+v is not in the interactive form on the machine and account of %+v", takeOver, headless)
+	}
+	if takeOver.TakenOverBy == nil || takeOver.TakenOverBy.Name != "ben@example.com" {
+		t.Errorf("the take-over Execution names %+v as the person who took over, want Ben", takeOver.TakenOverBy)
+	}
+	if got := env.Runner.Dispatched(); len(got) != 1 {
+		t.Errorf("the take-over is a new dispatch on the Runner (%v): it must be in the same allocation", got)
+	}
+
+	// The same Agent session, in bypass mode, with AskUserQuestion: a
+	// person is there.
+	started := eventsOf(env, id, "execution_started")
+	if len(started) != 2 {
+		t.Fatalf("want two execution_started events, got %v", started)
+	}
+	init := screenInit(t, env.Runner.TakeOver.Screen(terminal))
+	if init["session_id"] != started[0]["agent.session_id"] || init["resumed"] != true {
+		t.Errorf("the interactive harness has the Agent session %v (resumed %v), want %v resumed", init["session_id"],
+			init["resumed"], started[0]["agent.session_id"])
+	}
+	if tools, _ := init["tools"].([]any); !slices.Contains(tools, any("AskUserQuestion")) || init["permissionMode"] != "bypassPermissions" {
+		t.Errorf("the interactive harness has the tools %v in %v mode, want AskUserQuestion in bypass mode", init["tools"], init["permissionMode"])
+	}
+	// The take-over event names the person, and so does the take-over
+	// Execution's start: each person message in it is from Ben.
+	takeOverEvent := waitForEvent(t, env, id, "take_over")
+	if takeOverEvent["actor.name"] != "ben@example.com" || takeOverEvent["run.state"] != dispatcherapi.StateTakenOver ||
+		takeOverEvent["execution.id"] != takeOver.ID || takeOverEvent["execution.vm"] != vm || takeOverEvent["execution.attach"] != attach {
+		t.Errorf("the take-over event: %v", takeOverEvent)
+	}
+	if s := started[1]; s["actor.name"] != "ben@example.com" || s["execution.id"] != takeOver.ID ||
+		s["execution.form"] != dispatcherapi.FormInteractive || s["agent.session_id"] != started[0]["agent.session_id"] {
+		t.Errorf("the take-over Execution's start event: %v", s)
+	}
+	// The core is the run user's, started by the wrapper: no SUDO_ name.
+	coreEnv, uid := env.Runner.TakeOver.Core()
+	if want, _ := strconv.Atoi(env.Runner.RunUser().Uid); uid != want {
+		t.Errorf("the hc core runs as the user id %d, want the run user's %d", uid, want)
+	}
+	for _, kv := range coreEnv {
+		if strings.HasPrefix(kv, "SUDO_") || strings.HasPrefix(kv, "WRAPPER_") || strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") {
+			t.Errorf("the hc core's environment has %s", kv)
+		}
+	}
+
+	// The person talks to the agent: the Stop hook never refuses, though
+	// there is no report.
+	screen := typeLine(t, env, terminal, "Why does the cart fail?", "Done.")
+	time.Sleep(100 * time.Millisecond)
+	if screen = env.Runner.TakeOver.Screen(terminal); strings.Contains(screen, "Stop hook feedback") {
+		t.Errorf("the Stop hook refused during the take-over: %s", screen)
+	}
+	if run := getRun(t, ana, id); run.State != dispatcherapi.StateTakenOver {
+		t.Errorf("a turn of the person changed the Run to %s (%s)", run.State, run.Reason)
+	}
+
+	leave(t, env, terminal)
+	run = waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if run.Reason != dispatcherapi.ReasonTakeOverNoReport {
+		t.Errorf("the reason is %q, want %q", run.Reason, dispatcherapi.ReasonTakeOverNoReport)
+	}
+	if e := run.Executions[1]; e.EndReason != dispatcherapi.EndSessionEnded || e.ExitCode == nil || *e.ExitCode != 0 {
+		t.Errorf("the take-over Execution ended with %q and exit code %v", e.EndReason, e.ExitCode)
+	}
+	// The end procedure left no process of the take-over.
+	pid, err := os.ReadFile(filepath.Join(env.Runner.TakeOver.Dir(), terminal, "pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := strconv.Atoi(strings.TrimSpace(string(pid))); alive(n) {
+		t.Errorf("the harness of the take-over (pid %d) still runs after the end", n)
+	}
+	if _, err := os.Stat(env.Runner.Workspace(first.ID)); !os.IsNotExist(err) {
+		t.Errorf("the workspace is there after the take-over's end: %v", err)
+	}
+}
+
+func TestAReportDuringTheTakeOverSetsTheRunsStateWhenTheAgentSessionEnds(t *testing.T) {
+	env, ana := newEnv(t)
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	typeLine(t, env, terminal, `!solidtrace report --outcome done --summary "The cart is fixed by hand." && echo reported`, "reported")
+	if run := getRun(t, ana, id); run.State != dispatcherapi.StateTakenOver {
+		t.Errorf("the report changed the Run to %s before the take-over ended", run.State)
+	}
+	typeLine(t, env, terminal, "Thanks", "Done.")
+	leave(t, env, terminal)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if run.Summary != "The cart is fixed by hand." {
+		t.Errorf("the summary is %q", run.Summary)
+	}
+	if report := waitForEvent(t, env, id, "report"); report["execution.id"] != run.Executions[1].ID {
+		t.Errorf("the report is of the Execution %v, want the take-over's", report["execution.id"])
+	}
+}
+
+func TestOnlyTheTotalLimitAppliesDuringTheTakeOver(t *testing.T) {
+	env, ana := newEnv(t)
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	// A person reads: no output event for longer than the idle limit.
+	env.Clock.Advance(dispatcherapi.DefaultIdleLimit + time.Minute)
+	time.Sleep(settle)
+	if run := getRun(t, ana, id); run.State != dispatcherapi.StateTakenOver || run.Executions[1].State != dispatcherapi.ExecutionRunning {
+		t.Fatalf("after the idle limit the Run is %s (%s): %+v", run.State, run.Reason, run.Executions)
+	}
+	if env.Runner.TakeOver.Finished(terminal) {
+		t.Fatal("the idle limit ended the take-over's harness")
+	}
+
+	env.Clock.Advance(dispatcherapi.DefaultTotalLimit - dispatcherapi.DefaultIdleLimit)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if !strings.HasPrefix(run.Reason, dispatcherapi.ReasonTakeOverNoReport) || !strings.Contains(run.Reason, "total limit") {
+		t.Errorf("the reason is %q, want the take-over's end with no report at the total limit", run.Reason)
+	}
+	if e := run.Executions[1]; !strings.HasPrefix(e.EndReason, dispatcherapi.EndTimeout) {
+		t.Errorf("the take-over Execution's end reason is %q", e.EndReason)
+	}
+}
+
+func TestAMessageDuringTheTakeOverIsKeptAndStartsANewExecutionWhenTheTakeOverEnds(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.KeepAgentSessions()
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	// The next Execution takes the message, and reports.
+	env.Runner.Agent(takeTask, initLine(t), done("Added the test."), reply, result, waitForEnd)
+	message := send(t, env, ana, id, "Add a test for the cart")
+	time.Sleep(settle)
+	events := messageEvents(env, id, message)
+	if len(events["message_accepted"]) != 1 || len(events["message_written"]) != 0 {
+		t.Errorf("the message during the take-over has the events %v, want accepted only", events)
+	}
+	if strings.Contains(env.Runner.TakeOver.Screen(terminal), "Add a test") {
+		t.Error("the message was typed into the take-over's terminal")
+	}
+
+	leave(t, env, terminal)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 3 || run.Executions[2].Form != dispatcherapi.FormHeadless {
+		t.Fatalf("want a third, headless Execution after the take-over: %+v", run.Executions)
+	}
+	delivered := waitForMessageEvent(t, env, id, message, "message_delivered")
+	if delivered["execution.id"] != run.Executions[2].ID {
+		t.Errorf("the message was delivered in %v, want the Execution after the take-over", delivered["execution.id"])
+	}
+}
+
+func TestStopDuringTheTakeOverEndsTheInteractiveExecutionAndGivesStopped(t *testing.T) {
+	env, ana := newEnv(t)
+	ben := env.Member("Ben")
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	if got := ben.CLI("stop", "--dispatcher", env.URL(), id); got.Code != 0 {
+		t.Fatalf("solidtrace stop: exit %d: %s", got.Code, got.Stderr)
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateStopped)
+	if e := run.Executions[1]; e.EndReason != dispatcherapi.EndStopped {
+		t.Errorf("the take-over Execution ended with %q, want stopped", e.EndReason)
+	}
+	if !env.Runner.TakeOver.Finished(terminal) {
+		t.Error("the take-over's harness still runs after the stop")
+	}
+	if stop := waitForEvent(t, env, id, "stop"); stop["actor.name"] != "ben@example.com" {
+		t.Errorf("the stop's actor is %v", stop["actor.name"])
+	}
+}
+
+func TestATakeOverIsRefusedForARunThatIsNotRunning(t *testing.T) {
+	env, ana := newEnv(t)
+	ben := env.Member("Ben")
+	env.Runner.Agent(takeTask, initLine(t), done("Fixed."), reply, result, waitForEnd)
+	done := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, done, dispatcherapi.StateDone)
+
+	got := ana.CLI("take-over", "--dispatcher", env.URL(), done)
+	if got.Code != 1 || !strings.Contains(got.Stderr, "only a running Run can be taken over") {
+		t.Errorf("a take-over of a done Run: exit %d: %s", got.Code, got.Stderr)
+	}
+	if got := ana.CLI("take-over", "--dispatcher", env.URL(), "no-such-run"); got.Code != 1 || !strings.Contains(got.Stderr, "no Run") {
+		t.Errorf("a take-over of no Run: exit %d: %s", got.Code, got.Stderr)
+	}
+
+	running := inToolCallRun(t, env, ana)
+	other := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
+	if got := other.CLI("take-over", "--dispatcher", env.URL(), running); got.Code != 1 || !strings.Contains(got.Stderr, "403") {
+		t.Errorf("a take-over from another Organization: exit %d: %s", got.Code, got.Stderr)
+	}
+	if run := getRun(t, ana, running); run.State != dispatcherapi.StateRunning || len(run.Executions) != 1 {
+		t.Errorf("the refused take-over from another Organization changed the Run: %s %+v", run.State, run.Executions)
+	}
+	takeOverCLI(t, env, ana, running)
+	got = ben.CLI("take-over", "--dispatcher", env.URL(), running)
+	if got.Code != 1 || !strings.Contains(got.Stderr, "taken over already, by ana@example.com") {
+		t.Errorf("a second take-over: exit %d: %s", got.Code, got.Stderr)
+	}
+	run, _ := takeOverTerminal(t, env, ana, running)
+	if len(run.Executions) != 2 || len(eventsOf(env, running, "take_over")) != 1 {
+		t.Errorf("the refused take-over changed the Run: %+v", run.Executions)
+	}
+}
+
+func TestALostMachineDuringTheTakeOverMakesTheRunWaitOnAPersonWithTheReason(t *testing.T) {
+	env, ana := newEnv(t)
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, ana, id)
+	run, _ := takeOverTerminal(t, env, ana, id)
+
+	if err := env.Runner.Fake.LoseMachine(run.Executions[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	run = waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if !strings.Contains(run.Reason, "the take-over ended") || !strings.Contains(run.Reason, "the machine was lost") {
+		t.Errorf("the reason is %q", run.Reason)
+	}
+	if len(env.Runner.Dispatched()) != 1 {
+		t.Errorf("a lost take-over started again by itself: %v", env.Runner.Dispatched())
+	}
+}
