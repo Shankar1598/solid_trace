@@ -218,8 +218,16 @@ func TestATakeOverOfARunningRunContinuesTheAgentSessionInATerminalOnTheSameMachi
 	if n, _ := strconv.Atoi(strings.TrimSpace(string(pid))); alive(n) {
 		t.Errorf("the harness of the take-over (pid %d) still runs after the end", n)
 	}
-	if _, err := os.Stat(env.Runner.Workspace(first.ID)); !os.IsNotExist(err) {
-		t.Errorf("the workspace is there after the take-over's end: %v", err)
+	// The wrapper deletes the workspace after its end call.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		_, err := os.Stat(env.Runner.Workspace(first.ID))
+		if os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("the workspace is there 10 s after the take-over's end: %v", err)
+			break
+		}
 	}
 }
 
