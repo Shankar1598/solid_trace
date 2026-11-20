@@ -148,6 +148,8 @@ type startedRun struct {
 	// messages are the Run's kept messages that the Execution's task
 	// gives.
 	messages []dispatcherapi.Message
+	// cause is the Issue or the Monitor that started the Run, if one did.
+	cause runCause
 }
 
 // startExecution marks a dispatched Execution running and its Run
@@ -188,11 +190,16 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 		}
 	}
 	var started int64
+	var startedBy, attributes string
 	err = tx.QueryRow(`SELECT prompt, session_id, project, repository, folder, base_branch, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
 		AND e.id != ? AND e.started_at IS NOT NULL), (SELECT started_at FROM executions WHERE id = ?),
-		(SELECT total_limit FROM executions WHERE id = ?) FROM runs r WHERE id = ?`, id, id, id, runID).
-		Scan(&run.prompt, &run.sessionID, &run.project, &run.repository, &run.folder, &run.baseBranch, &run.resume, &started, &run.limits.TotalSeconds)
+		(SELECT total_limit FROM executions WHERE id = ?), started_by_kind, attributes FROM runs r WHERE id = ?`, id, id, id, runID).
+		Scan(&run.prompt, &run.sessionID, &run.project, &run.repository, &run.folder, &run.baseBranch, &run.resume, &started,
+			&run.limits.TotalSeconds, &startedBy, &attributes)
 	if err != nil {
+		return run, err
+	}
+	if run.cause, err = causeOf(startedBy, attributes); err != nil {
 		return run, err
 	}
 	run.startedAt = time.UnixMicro(started).UTC()

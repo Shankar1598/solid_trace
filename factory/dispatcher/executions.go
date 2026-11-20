@@ -170,10 +170,14 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		writeProblem(w, http.StatusBadGateway, "the Dispatcher could not make the Execution's token at SolidTrace")
 		return
 	}
+	prompt := run.prompt
+	if prompt != "" && run.cause.any() {
+		prompt = run.cause.withStandingTask(prompt)
+	}
 	writeJSON(w, http.StatusOK, dispatcherapi.Task{
 		RunID:         e.runID,
 		ExecutionID:   e.id,
-		Prompt:        run.prompt,
+		Prompt:        prompt,
 		Repository:    repository,
 		CloneURL:      cloneURL,
 		BaseBranch:    run.baseBranch,
