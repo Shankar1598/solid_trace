@@ -73,6 +73,9 @@ type (
 		Tokens     *agentStepTokens `json:"tokens"`
 		CostUSD    *float64         `json:"cost_usd"`
 		Cut        bool             `json:"cut"`
+		// Author is who said a person message of a Run's Agent session; nil
+		// on any other step, and on each step of another Agent session.
+		Author *storage.AgentAuthor `json:"author,omitempty"`
 	}
 	agentStepTokens struct {
 		Input      uint64 `json:"input"`
@@ -170,6 +173,12 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 		raw, _ := json.Marshal(steps[limit-1].CursorOf())
 		answer.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
+	var authors map[string]storage.AgentAuthor
+	if session.RunID != "" {
+		if authors, err = h.runAuthors(ctx, projectID, session); err != nil {
+			return fail("authors", err)
+		}
+	}
 	for _, s := range steps {
 		step := agentStep{
 			ID: s.ID.String(), Time: s.Time, Path: s.Path, Version: s.Version, Offset: s.Offset, Line: s.Line, Role: s.Role,
@@ -179,9 +188,45 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 		if t := s.Tokens; t != nil {
 			step.Tokens = &agentStepTokens{Input: t.Input, Output: t.Output, CacheRead: t.CacheRead, CacheWrite: t.CacheWrite}
 		}
+		if authors != nil && s.Role == "person" {
+			author, ok := authors[s.ID.String()]
+			if !ok {
+				// A person message of a subagent's transcript is the
+				// agent's own prompt.
+				author = storage.AgentAuthor{Kind: storage.AuthorNotFromAPerson}
+			}
+			step.Author = &author
+		}
 		answer.Steps = append(answer.Steps, step)
 	}
 	return c.JSON(answer)
+}
+
+// agentPeopleLimit is the most person messages of one Agent session that
+// the join of authors reads.
+const agentPeopleLimit = 5000
+
+// runAuthors joins the person messages of a Run's Agent session to the
+// Run's message events (storage.AgentAuthors). It reads all the person
+// messages of the main transcripts, not only the page's, because the
+// fallback matches them in order. The join is at read time: an event can
+// arrive after the parse.
+func (h *AgentSessionsHandler) runAuthors(ctx context.Context, projectID uint32, session storage.AgentSessionTotals) (map[string]storage.AgentAuthor, error) {
+	var paths []string
+	for _, f := range session.Files {
+		if strings.HasSuffix(f.Path, ".jsonl") && !storage.IsSubagentFile(f.Path) {
+			paths = append(paths, f.Path)
+		}
+	}
+	people, err := h.sessions.AgentSessionTimeline(ctx, projectID, session, storage.AgentTimelinePage{Paths: paths, Limit: agentPeopleLimit, Role: "person"})
+	if err != nil {
+		return nil, err
+	}
+	events, err := h.sessions.RunEvents(ctx, projectID, session.RunID)
+	if err != nil {
+		return nil, err
+	}
+	return storage.AgentAuthors(events, people), nil
 }
 
 // subagentID is the agent id of a subagent's transcript, which Claude
