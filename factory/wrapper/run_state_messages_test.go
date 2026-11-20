@@ -347,3 +347,63 @@ func TestAMessageToARunWhosePRIsMergedIsRefusedAndSaysWhy(t *testing.T) {
 		t.Errorf("a refused message is accepted: %v", accepted)
 	}
 }
+
+func TestARestoreThatSolidTraceCannotGiveEndsTheExecutionBeforeTheHarnessAndTheMessageGoesAgain(t *testing.T) {
+	for name, c := range map[string]struct {
+		fails int
+		state string
+	}{
+		// The next Execution gets the message, and resumes.
+		"one time": {1, dispatcherapi.StateDone},
+		// The message went to two Executions: the Run fails.
+		"each time": {2, dispatcherapi.StateFailed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env, ana := newEnv(t)
+			env.Runner.Agent(takeTask, initLine(t), done("First"), reply, result, waitForEnd)
+			// Each Execution takes a script. Only an Execution that
+			// restored the Agent session starts the harness.
+			for range c.fails {
+				env.Runner.Agent(takeTask, done("Not restored"), reply, result, waitForEnd)
+			}
+			env.Runner.Agent(takeTask, done("Second"), reply, result, waitForEnd)
+			id := start(t, env, ana, "Fix the cart")
+			waitFor(t, env, ana, id, dispatcherapi.StateDone)
+			env.SolidTrace.DownloadsFail(c.fails)
+
+			message := sendContinued(t, env, ana, id, "Also fix the tax")
+			waitForExecutions(t, env, ana, id, 3)
+			run := waitFor(t, env, ana, id, c.state)
+			if len(run.Executions) != 3 {
+				t.Fatalf("the Run is %s with %d Executions, want 3: %+v", run.State, len(run.Executions),
+					run.Executions)
+			}
+			for _, e := range run.Executions[1 : 1+c.fails] {
+				if !strings.HasPrefix(e.EndReason, dispatcherapi.EndSetupFailed+": ") ||
+					!strings.Contains(e.EndReason, "restore the Agent session") || e.TaskDeliveredAt != nil {
+					t.Errorf("the Execution %s ended with %q (task delivered %v), want the failed restore",
+						e.ID, e.EndReason, e.TaskDeliveredAt)
+				}
+			}
+			delivered := messageEvents(env, id, message)["message_delivered"]
+			if c.state == dispatcherapi.StateDone {
+				last := run.Executions[2]
+				if run.Summary != "Second" || last.TaskDeliveredAt != nil || env.SolidTrace.Downloads() != 1 {
+					t.Errorf("the last Execution did not resume the Agent session: %q, task delivered %v, "+
+						"%d downloads", run.Summary, last.TaskDeliveredAt, env.SolidTrace.Downloads())
+				}
+				if len(delivered) != 1 || delivered[0]["execution.id"] != last.ID {
+					t.Errorf("the delivered events: %v, want one in %s", delivered, last.ID)
+				}
+				return
+			}
+			if len(delivered) != 0 || env.SolidTrace.Downloads() != 0 {
+				t.Errorf("no Execution restored the Agent session, but %d delivered events and %d downloads",
+					len(delivered), env.SolidTrace.Downloads())
+			}
+			if !strings.Contains(run.Reason, "restore the Agent session") {
+				t.Errorf("the failed Run's reason is %q, want the failed restore", run.Reason)
+			}
+		})
+	}
+}

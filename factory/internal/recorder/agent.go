@@ -247,6 +247,14 @@ func (r *Recorder) DownloadsNotReady(n int) {
 	r.notReady = n
 }
 
+// DownloadsFail makes the next n downloads get 500, as EventStore
+// answers when it cannot read the Agent session.
+func (r *Recorder) DownloadsFail(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failing = n
+}
+
 // Downloads counts the downloads that got an archive.
 func (r *Recorder) Downloads() int {
 	r.mu.Lock()
@@ -289,6 +297,10 @@ func (r *Recorder) serveDownload(w http.ResponseWriter, child *ChildToken, sessi
 		return
 	case len(files) == 0:
 		answerJSON(w, http.StatusNotFound, map[string]string{"error": "The server has no Agent session " + session + "."})
+		return
+	case r.failing > 0:
+		r.failing--
+		answerJSON(w, http.StatusInternalServerError, map[string]string{"error": "cannot read the Agent session"})
 		return
 	case r.notReady > 0:
 		r.notReady--

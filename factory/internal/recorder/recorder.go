@@ -67,6 +67,8 @@ type Recorder struct {
 	// downloads counts the downloads that got an archive.
 	notReady  int
 	downloads int
+	// failing is how many more downloads get a 500.
+	failing int
 	// flagged are the paths whose download has flags, by Agent session.
 	flagged map[string]map[string]string
 }
