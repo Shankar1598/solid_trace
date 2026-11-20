@@ -88,6 +88,40 @@ func stop(ctx context.Context, args []string, env Env) int {
 	return 0
 }
 
+// takeOver takes over a running Run, and prints the machine and the
+// command that attaches the person.
+func takeOver(ctx context.Context, args []string, env Env) int {
+	flags := flag.NewFlagSet("take-over", flag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
+	positional, ok := parseInterspersed(flags, args)
+	if !ok {
+		return 2
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(env.Stderr, "solidtrace take-over: give one RUN_ID")
+		return 2
+	}
+	client, err := env.dispatcher(*dispatcherURL)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace take-over: %v\n", err)
+		return 1
+	}
+	run, err := client.TakeOver(ctx, positional[0])
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace take-over: %v\n", err)
+		return 1
+	}
+	var e dispatcherapi.Execution
+	if n := len(run.Executions); n > 0 {
+		e = run.Executions[n-1]
+	}
+	fmt.Fprintf(env.Stdout, "Run %s is taken over. Its Agent session continues in a terminal on %s.\n", run.ID, e.VM)
+	fmt.Fprintf(env.Stdout, "Attach with:\n  %s\n", e.Attach)
+	fmt.Fprintf(env.Stdout, "The terminal is ready when the Run page shows the take-over Execution as running.\n%s\n", run.URL)
+	return 0
+}
+
 // message sends a message to a Run.
 func message(ctx context.Context, args []string, env Env) int {
 	flags := flag.NewFlagSet("message", flag.ContinueOnError)

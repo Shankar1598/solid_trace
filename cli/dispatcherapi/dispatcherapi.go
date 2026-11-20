@@ -31,6 +31,23 @@ const (
 	// StateStopped is a Run that a person, or the Dispatcher's backstop,
 	// stopped. A message continues it.
 	StateStopped = "stopped"
+	// StateTakenOver is a Run that a person took over: its Execution is
+	// in the interactive form, where a person works at a terminal.
+	StateTakenOver = "taken_over"
+)
+
+// ReasonTakeOverNoReport is the reason of a Run that waits on a person
+// because its take-over ended with no report.
+const ReasonTakeOverNoReport = "take-over ended with no report"
+
+// Execution forms (Execution.Form, Task.Form).
+const (
+	// FormHeadless is the headless form (claude -p with stream-json): the
+	// form of each Execution that is not a take-over.
+	FormHeadless = "headless"
+	// FormInteractive is the interactive form of a take-over: the harness
+	// in a terminal where a person attaches.
+	FormInteractive = "interactive"
 )
 
 // The outcomes of a Run's PR (Run.PROutcome). A PR that the forge closed
@@ -182,6 +199,16 @@ type Execution struct {
 	// BackgroundTasksKilled is the count of the agent's background tasks
 	// that still ran at the end, and that the end killed.
 	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
+	// Form is FormHeadless or FormInteractive (a take-over).
+	Form string `json:"form,omitempty"`
+	// VM is the machine that the Execution runs on, as its wrapper names
+	// it, and Attach the command that attaches a person to a take-over on
+	// it (the wrapper's Take-over setting).
+	VM     string `json:"vm,omitempty"`
+	Attach string `json:"attach,omitempty"`
+	// TakenOverBy is the person who took the Run over, for an Execution
+	// in the interactive form.
+	TakenOverBy *Person `json:"taken_over_by,omitempty"`
 }
 
 // Report outcomes.
@@ -324,6 +351,25 @@ type Task struct {
 	// wrapper writes each one after the prompt. An Execution that
 	// continues the Agent session for them has no prompt.
 	Messages []Message `json:"messages,omitempty"`
+	// Form is the Execution's form: FormInteractive for a take-over, else
+	// headless. An interactive Execution has no prompt and no messages:
+	// the person types in the terminal.
+	Form string `json:"form,omitempty"`
+}
+
+// TaskRequest is the body of the wrapper's task call: the machine that
+// the Execution runs on, and the command that attaches a person to a
+// take-over there.
+type TaskRequest struct {
+	VM     string `json:"vm,omitempty"`
+	Attach string `json:"attach,omitempty"`
+}
+
+// EndAnswer is the Dispatcher's answer to an end call. TakeOver is the id
+// of the take-over Execution that follows in the same allocation: the
+// wrapper starts it at once, on the same machine.
+type EndAnswer struct {
+	TakeOver string `json:"take_over,omitempty"`
 }
 
 // Check is one named check command of the factory file.
@@ -372,6 +418,10 @@ const (
 	CommandStop = "stop"
 	// CommandMessage: write Message to the harness's stdin.
 	CommandMessage = "message"
+	// CommandTakeOver: a person took the Run over. End the headless
+	// Execution with the reason EndTakenOver; the end call's answer names
+	// the take-over Execution.
+	CommandTakeOver = "take_over"
 )
 
 // Command is one command to the wrapper of an Execution.
@@ -496,6 +546,12 @@ const (
 	EndStopped = "stopped"
 	// EndTimeout: a limit passed; Error says which.
 	EndTimeout = "timeout"
+	// EndTakenOver: a person took the Run over. The take-over Execution
+	// follows on the same machine.
+	EndTakenOver = "taken over"
+	// EndSessionEnded: the interactive Agent session of a take-over
+	// ended (the person left the harness).
+	EndSessionEnded = "the interactive Agent session ended"
 )
 
 // ExecutionEnd is the body of the wrapper's end call.
@@ -894,6 +950,16 @@ func (c *Client) List(ctx context.Context) ([]Run, error) {
 func (c *Client) Stop(ctx context.Context, id string) (Run, error) {
 	var run Run
 	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/stop", nil, &run)
+	return run, err
+}
+
+// TakeOver takes over a running Run: its Execution ends, and a new
+// Execution in the interactive form starts on the same machine. The
+// answer's last Execution is the take-over Execution, with its VM and the
+// command to attach.
+func (c *Client) TakeOver(ctx context.Context, id string) (Run, error) {
+	var run Run
+	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/take-over", nil, &run)
 	return run, err
 }
 

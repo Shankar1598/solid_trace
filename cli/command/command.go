@@ -86,7 +86,15 @@ Usage:
       Run gets it when its current tool call ends, in the same turn, or
       in a new turn; there is no interrupt. A queued Run's agent gets it
       after the prompt. A message that the agent did not get goes to a
-      new Execution.
+      new Execution. A taken-over Run keeps the message; when the
+      take-over ends, a new Execution gets it.
+  solidtrace take-over [--dispatcher URL] RUN_ID
+      Take over a running Run: its agent is interrupted, and the same
+      Agent session continues in a terminal on the same machine. It
+      prints the machine and the command that attaches you (for example
+      in the Herdr app). When you leave the Agent session, a report that
+      you made in it sets the Run's state; with no report, the Run waits
+      on a person.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID
@@ -203,6 +211,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return stop(ctx, args[1:], env)
 	case "message":
 		return message(ctx, args[1:], env)
+	case "take-over":
+		return takeOver(ctx, args[1:], env)
 	case "projects":
 		return projects(ctx, args[1:], env)
 	case "connections":
