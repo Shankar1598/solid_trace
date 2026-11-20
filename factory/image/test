@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# The test of the agent VM image recipe (README.md). In one command it builds the
+# wrapper and the agent CLI, runs the recipe in a clean Debian container, checks what
+# the recipe made, and deletes the container. Exit 0 when each check passes.
+#
+#   factory/image/test
+#   TEST_ONLY='<regex>' factory/image/test   only the checks whose names match
+#
+# The recipe runs here with a run user and an access group that are not the defaults,
+# so that each name in the sudoers rule comes from the recipe's settings. The local
+# factory stack's smoke check (factory/local/smoke) checks the default names, on a
+# container that the same recipe made. It needs Docker, Go and the internet (apt, and
+# the downloads of Claude Code and hc). The downloads stay in the Docker volume
+# factory-image-test-downloads; FACTORY_IMAGE_TEST_CLEAN=1 deletes it at the end.
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+recipe="$here/agent-vm.sh"
+# The recipe's base image: the one that the local stack's Dockerfile names.
+base="$(awk 'toupper($1) == "FROM" { print $2; exit }' "$repo/factory/local/agent-machine/Dockerfile")"
+pinned() { sed -n "s/^$1=//p" "$recipe"; }
+container="factory-image-test-$$"
+cache=factory-image-test-downloads
+version=v0.0.0-image-test
+
+work="$(mktemp -d)"
+cleanup() {
+  docker rm -f "$container" >/dev/null 2>&1
+  [ "${FACTORY_IMAGE_TEST_CLEAN:-}" != 1 ] || docker volume rm "$cache" >/dev/null 2>&1
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+passed=0
+failed=0
+check() {
+  local name="$1" out status
+  shift
+  [[ -z ${TEST_ONLY:-} || $name =~ $TEST_ONLY ]] || return 0
+  out="$(set -e; "$@" 2>&1)"
+  status=$?
+  if [ "$status" = 0 ]; then
+    echo "PASS  $name"
+    passed=$((passed + 1))
+  else
+    echo "FAIL  $name"
+    printf '%s\n' "$out" | tail -n 15 | sed 's/^/        /'
+    failed=$((failed + 1))
+  fi
+}
+want() { echo "want: $*" >&2; return 1; }
+
+# Runs a command in the container as a user.
+as() { local user="$1"; shift; docker exec -i -u "$user" -w / "$container" "$@"; }
+
+# The settings of this test's run of the recipe.
+settings=(-e FACTORY_RUN_USER=runner -e FACTORY_ACCESS_GROUP=eng-team
+  -e FACTORY_PROXY_URL=http://10.100.0.3:3128 -e FACTORY_DISPATCHER_HOST=10.100.0.3
+  -e FACTORY_BIN_DIR=/bins -e FACTORY_DOWNLOAD_CACHE=/var/cache/factory-image)
+# Runs the recipe (a copy of it, with $1 as its path in the container) with the settings
+# and the extra options in "${@:2}", as root.
+run_recipe() {
+  local path="$1"
+  shift
+  docker exec -i -u root "${settings[@]}" "$@" "$container" "$path"
+}
+# Expects the recipe to refuse, with a message that has $1, and to change nothing.
+refused() {
+  local message="$1" out
+  shift
+  if out="$("$@" 2>&1)"; then
+    want "the recipe to refuse ($message), but it ran: $(tail -n 3 <<<"$out")"
+  fi
+  grep -q -F -- "$message" <<<"$out" || want "the message '$message', got: $(tail -n 5 <<<"$out")"
+  as root sh -c '! ls /etc/sudoers.d/factory-take-over /usr/local/bin/factory-wrapper /etc/factory 2>/dev/null' ||
+    want "no change after a refusal"
+  ! as root getent passwd runner >/dev/null || want "no run user after a refusal"
+}
+
+echo "test: building the wrapper and the agent CLI ($version)"
+if ! "$here/build" "$work/bin" "$version" >/dev/null; then
+  echo "FAIL  the wrapper and the agent CLI did not build"
+  exit 1
+fi
+docker run -d --name "$container" -m 1g --cpus 2 \
+  -v "$here:/recipe:ro" -v "$work/bin:/bins:ro" -v "$work:/work:ro" -v "$cache:/var/cache/factory-image" \
+  --entrypoint sleep "$base" infinity >/dev/null || { echo "FAIL  no clean Debian container"; exit 1; }
+
+# --- The recipe refuses bad settings, and changes nothing -------------------------------
+
+recipe_refuses_bad_settings() {
+  refused "must run as root" docker exec -i -u nobody "${settings[@]}" "$container" /recipe/agent-vm.sh
+  refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e FACTORY_RUN_USER=root
+  refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e 'FACTORY_RUN_USER=runner ALL=(ALL) NOPASSWD: ALL'
+  refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e FACTORY_RUN_USER=
+  refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e 'FACTORY_ACCESS_GROUP=eng,ALL'
+  refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e FACTORY_ACCESS_GROUP=sudo
+  refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e FACTORY_ACCESS_GROUP=runner
+  refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e FACTORY_ACCESS_GROUP=docker
+  refused "FACTORY_PROXY_URL" run_recipe /recipe/agent-vm.sh -e FACTORY_PROXY_URL=
+  refused "FACTORY_PROXY_URL" run_recipe /recipe/agent-vm.sh -e "FACTORY_PROXY_URL=http://10.100.0.3:3128
+LD_PRELOAD=/tmp/x.so"
+  refused "FACTORY_PROXY_URL" run_recipe /recipe/agent-vm.sh -e 'FACTORY_PROXY_URL=http://user:secret@10.100.0.3:3128'
+  refused "FACTORY_DISPATCHER_HOST" run_recipe /recipe/agent-vm.sh -e FACTORY_DISPATCHER_HOST=
+  refused "FACTORY_DISPATCHER_HOST" run_recipe /recipe/agent-vm.sh -e 'FACTORY_DISPATCHER_HOST=a b'
+  refused "FACTORY_BIN_DIR" run_recipe /recipe/agent-vm.sh -e FACTORY_BIN_DIR=/nowhere
+  refused "no phase" docker exec -i -u root "${settings[@]}" "$container" /recipe/agent-vm.sh other
+}
+
+# A download whose SHA-256 is not the pinned one is not installed. The run stops there.
+recipe_refuses_a_download_with_another_sha256() {
+  local out
+  sed 's/^HC_SHA256=.*/HC_SHA256=0000000000000000000000000000000000000000000000000000000000000000/' "$recipe" >"$work/agent-vm-bad-sha.sh"
+  chmod 755 "$work/agent-vm-bad-sha.sh"
+  as root sh -c 'cp /work/agent-vm-bad-sha.sh /recipe-bad-sha.sh && mkdir -p /recipe-bad && cp -r /recipe/files /recipe-bad/ && mv /recipe-bad-sha.sh /recipe-bad/agent-vm.sh'
+  if out="$(run_recipe /recipe-bad/agent-vm.sh 2>&1)"; then
+    want "the recipe to stop on hc's SHA-256, but it ran"
+  fi
+  grep -q "SHA-256" <<<"$out" || want "a message about the SHA-256, got: $(tail -n 5 <<<"$out")"
+  as root sh -c '! ls /usr/local/bin/herdr-core /usr/local/bin/hc 2>/dev/null' || want "no hc after a bad SHA-256"
+  ! as root sh -c 'ls /var/cache/factory-image | grep -q herdr' || want "no bad download left in the cache"
+  as root rm -rf /recipe-bad
+}
+
+check "the recipe refuses bad settings, and changes nothing" recipe_refuses_bad_settings
+check "the recipe does not install a download whose SHA-256 is not the pinned one" recipe_refuses_a_download_with_another_sha256
+
+# The run of the recipe. A second run changes nothing and does not fail.
+echo "test: running the recipe"
+if ! run_recipe /recipe/agent-vm.sh >"$work/run1.log" 2>&1; then
+  echo "FAIL  the recipe did not run"
+  tail -n 20 "$work/run1.log" | sed 's/^/        /'
+  exit 1
+fi
+
+recipe_runs_a_second_time() {
+  local before after
+  before="$(as root sh -c 'getent passwd runner; getent group docker eng-team; sha256sum /etc/sudoers.d/factory-take-over /etc/factory/* /etc/environment')"
+  run_recipe /recipe/agent-vm.sh >/dev/null 2>&1 || want "a second run of the recipe"
+  after="$(as root sh -c 'getent passwd runner; getent group docker eng-team; sha256sum /etc/sudoers.d/factory-take-over /etc/factory/* /etc/environment')"
+  [ "$before" = "$after" ] || want "the same files and users after a second run: $(diff <(echo "$before") <(echo "$after"))"
+}
+check "a second run of the recipe changes nothing" recipe_runs_a_second_time
+
+# --- Each part at its pinned version -----------------------------------------------------
+
+each_part_is_at_its_pinned_version() {
+  local got
+  got="$(as runner claude --version)"
+  [ "$got" = "$(pinned CLAUDE_CODE_VERSION) (Claude Code)" ] || want "Claude Code $(pinned CLAUDE_CODE_VERSION), got: $got"
+  got="$(as runner hc --version)"
+  [ "$got" = "hc $(pinned HC_VERSION)" ] || want "hc $(pinned HC_VERSION), got: $got"
+  got="$(as runner factory-wrapper version)"
+  [ "$got" = "$version" ] || want "the wrapper $version, got: $got"
+  got="$(as runner solidtrace --version)"
+  [[ $got == *" $version" ]] || want "the agent CLI $version, got: $got"
+  # Where the Nomad Runner's job starts the wrapper (dispatcher.DefaultWrapperCommand).
+  as root test -x /usr/local/bin/factory-wrapper || want "the wrapper at /usr/local/bin/factory-wrapper"
+}
+
+parts_are_roots_and_the_run_user_cannot_change_them() {
+  local path owner
+  for path in /usr/local/bin/claude /usr/local/bin/herdr-core /usr/local/bin/factory-wrapper /usr/local/bin/solidtrace \
+    /etc/claude-code /etc/claude-code/managed-settings.json /etc/factory /etc/factory/claude.json /etc/factory/proxy.env \
+    /etc/factory/image-recipe /etc/sudoers.d/factory-take-over /etc/nomad.d/factory.hcl \
+    /etc/systemd/system/docker.service.d/factory-proxy.conf /etc/systemd/system/nomad.service.d/factory-proxy.conf; do
+    owner="$(as root stat -c '%U:%G' "$path")" || want "$path"
+    [ "$owner" = root:root ] || want "root:root for $path, got: $owner"
+    ! as runner test -w "$path" || want "$path not writable by the run user"
+  done
+  [ "$(as root stat -c %a /etc/sudoers.d/factory-take-over)" = 440 ] || want "mode 440 for the sudoers rule"
+  [ "$(as root stat -c '%a %U' /var/lib/factory/executions)" = "711 root" ] || want "the Executions directory 711 root"
+  [ "$(as root cat /etc/factory/image-recipe)" = "$(sha256sum <"$recipe" | cut -d' ' -f1)" ] || want "the recipe's SHA-256 in /etc/factory/image-recipe"
+}
+
+check "each part is at its pinned version: Claude Code, hc, the wrapper and the agent CLI" each_part_is_at_its_pinned_version
+check "root owns each part, and the run user cannot change one" parts_are_roots_and_the_run_user_cannot_change_them
+
+# --- The run user and the sudoers rule ---------------------------------------------------
+
+run_user_is_not_root_and_is_in_the_docker_group() {
+  local groups
+  [ "$(as root id -u runner)" != 0 ] || want "the run user is not root"
+  groups=" $(as root id -nG runner) "
+  [[ $groups == *" docker "* ]] || want "the run user in the docker group, got:$groups"
+  [[ $groups != *" eng-team "* && $groups != *" sudo "* ]] || want "the run user not in the access or sudo group, got:$groups"
+  [[ "$(as root getent shadow runner | cut -d: -f2)" =~ ^[*!] ]] || want "no password for the run user"
+  as root getent group eng-team >/dev/null || want "the access group"
+  [ -z "$(as root getent group eng-team | cut -d: -f4)" ] || want "no member of the access group"
+  ! as root getent passwd agent >/dev/null || want "no user agent (the run user is runner here)"
+}
+
+access_group_member_has_exactly_one_rule() {
+  local rules
+  as root visudo -c >/dev/null || want "visudo accepts the sudoers files"
+  # A person of the Google group: OS Login gives the access group on a VM.
+  as root sh -c 'getent passwd person >/dev/null || useradd --create-home --groups eng-team person'
+  rules="$(as person sudo -n -l | sed -n '/may run the following commands/,$p' | sed 1d | sed 's/^ *//' | grep -v '^$')"
+  [ "$rules" = "(runner) NOPASSWD: /usr/local/bin/hc connect" ] || want "one rule, got: $rules"
+  [ "$(as root ls /etc/sudoers.d | tr '\n' ' ')" = "README factory-take-over " ] || want "only the take-over rule in /etc/sudoers.d"
+}
+
+# Runs sudo as a user and expects sudo itself to refuse (the command never starts).
+sudo_refused() {
+  local user="$1" out
+  shift
+  if out="$(as "$user" sudo -n "$@" </dev/null 2>&1)"; then
+    want "sudo $* as $user to be refused, but it ran: $out"
+  fi
+  grep -q -E '^sudo: |is not in the sudoers file|is not allowed to execute' <<<"$out" || want "sudo to refuse sudo $* as $user, got: $out"
+  ! grep -q RAN <<<"$out" || want "the command did not run"
+}
+
+take_over_rule_refuses_everything_else() {
+  sudo_refused person -u runner hc ls
+  sudo_refused person -u runner /usr/local/bin/hc connect extra
+  sudo_refused person -u runner /bin/sh -c 'echo RAN'
+  sudo_refused person -u runner factory-wrapper version
+  sudo_refused person -u root /usr/local/bin/hc connect
+  sudo_refused person -u person /usr/local/bin/hc connect
+  sudo_refused person -E -u runner hc connect
+  sudo_refused person -i
+  sudo_refused runner -u runner hc connect
+  sudo_refused runner /bin/sh -c 'echo RAN'
+  sudo_refused nobody -u runner hc connect
+  # The rule names the access group of the settings only.
+  as root sh -c 'getent passwd other >/dev/null || useradd --create-home --groups docker other'
+  sudo_refused other -u runner hc connect
+}
+
+check "the run user is not root, is in the docker group and has no password" run_user_is_not_root_and_is_in_the_docker_group
+check "'sudo -l' for a member of the access group shows one rule: hc connect as the run user, no password" access_group_member_has_exactly_one_rule
+check "sudo refuses each other command, user and option" take_over_rule_refuses_everything_else
+
+# --- Claude Code's first-run dialogs ------------------------------------------------------
+
+dialogs_are_accepted_in_roots_files() {
+  local settings_file=/etc/claude-code/managed-settings.json
+  as root grep -q '"skipDangerousModePermissionPrompt": true' "$settings_file" || want "no bypass-mode warning in the managed settings"
+  as root grep -q '"DISABLE_AUTOUPDATER": "1"' "$settings_file" || want "no auto-updater in the managed settings"
+  as root grep -q '"hasCompletedOnboarding": true' /etc/factory/claude.json || want "the onboarding done in the template"
+}
+check "the managed settings and the template of .claude.json accept the first-run dialogs" dialogs_are_accepted_in_roots_files
+
+# --- The proxy settings and git ------------------------------------------------------------
+
+proxy_settings_apply_to_tools_and_the_docker_daemon() {
+  local want_env got line
+  want_env="HTTPS_PROXY=http://10.100.0.3:3128
+HTTP_PROXY=http://10.100.0.3:3128
+https_proxy=http://10.100.0.3:3128
+http_proxy=http://10.100.0.3:3128
+NO_PROXY=localhost,127.0.0.1,169.254.169.254,metadata.google.internal,10.100.0.3
+no_proxy=localhost,127.0.0.1,169.254.169.254,metadata.google.internal,10.100.0.3"
+  got="$(as root cat /etc/factory/proxy.env | grep -v '^#')"
+  [ "$got" = "$want_env" ] || want "the proxy settings in /etc/factory/proxy.env, got: $got"
+  # A login (ssh, su) reads /etc/environment through PAM.
+  got="$(as root su -l runner -c env)"
+  while IFS= read -r line; do
+    grep -q -x -F -- "$line" <<<"$got" || want "$line in a login of the run user"
+  done <<<"$want_env"
+  # The Docker daemon and the Nomad client (and so its tasks: the wrapper and the
+  # harness) get the same file from systemd.
+  for unit in docker nomad; do
+    got="$(as root cat "/etc/systemd/system/$unit.service.d/factory-proxy.conf" | grep -v '^#')"
+    [ "$got" = "$(printf '[Service]\nEnvironmentFile=/etc/factory/proxy.env')" ] || want "the proxy file for $unit.service, got: $got"
+  done
+}
+
+git_has_no_credential_helper_and_uses_https() {
+  local got
+  ! as root git config --system --get-all credential.helper || want "no credential helper in the system's git configuration"
+  got="$(as runner git ls-remote --get-url git@github.com:example/repo.git)"
+  [ "$got" = https://github.com/example/repo.git ] || want "git over ssh rewritten to HTTPS, got: $got"
+  got="$(as runner git ls-remote --get-url ssh://git@bitbucket.org/example/repo.git)"
+  [ "$got" = https://bitbucket.org/example/repo.git ] || want "git over ssh rewritten to HTTPS for Bitbucket, got: $got"
+}
+
+nomad_client_settings_are_in_place() {
+  local got
+  got="$(as root grep -v '^ *#' /etc/nomad.d/factory.hcl | tr -s ' \n' ' ')"
+  [[ $got == *'max_kill_timeout = "120s"'* ]] || want "max_kill_timeout 120s, got: $got"
+  [[ $got == *'plugin "raw_exec" { config { enabled = true } }'* ]] || want "raw_exec on, got: $got"
+}
+
+check "the proxy settings apply to a login, to the Docker daemon and to the Nomad client" proxy_settings_apply_to_tools_and_the_docker_daemon
+check "git has no credential helper of the system, and git over ssh goes over HTTPS" git_has_no_credential_helper_and_uses_https
+check "the Nomad client's settings for the Runner's job are in place" nomad_client_settings_are_in_place
+
+echo
+echo "$passed passed, $failed failed"
+[ "$failed" = 0 ]
