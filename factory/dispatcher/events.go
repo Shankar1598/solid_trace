@@ -160,6 +160,9 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	if err := queueWriteBack(tx, at, runID, kind, details); err != nil {
 		return err
 	}
+	if err := queueIssueComment(tx, at, runID, kind, details); err != nil {
+		return err
+	}
 	return addToOutbox(tx, event)
 }
 

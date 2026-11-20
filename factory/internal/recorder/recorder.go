@@ -61,6 +61,8 @@ type Recorder struct {
 
 	refuseChildren int
 	refuseScopes   map[string]int
+	refuseComments int
+	comments       []IssueComment
 	children       []*ChildToken
 	uploads        []Upload
 	files          map[string]map[string]*storedFile
@@ -192,6 +194,10 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.URL.Path == ChildTokensPath || strings.HasPrefix(req.URL.Path, ChildTokensPath+"/") {
 		r.serveChildTokens(w, req, call)
+		return
+	}
+	if req.URL.Path == IssueCommentsPath {
+		r.serveIssueComments(w, call)
 		return
 	}
 	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {
