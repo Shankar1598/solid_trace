@@ -55,7 +55,8 @@ const eventStop = "stop"
 const actorDispatcher = "dispatcher"
 
 // stoppable are the states that a stop changes to stopped.
-var stoppable = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson}
+var stoppable = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson,
+	dispatcherapi.StateTakenOver}
 
 // actor is who caused an intervention.
 type actor struct{ kind, id, name string }
@@ -76,7 +77,7 @@ func (e *notStoppable) Error() string {
 		return "the Run is closed (its PR is merged or declined, or it had no activity for 30 days): " +
 			"it keeps its state " + e.state + "; start a new Run"
 	}
-	return "the Run is " + e.state + ": only a queued, running or waiting Run can be stopped"
+	return "the Run is " + e.state + ": only a queued, running, taken-over or waiting Run can be stopped"
 }
 
 // signal wakes each waiting commands call when a command is added.

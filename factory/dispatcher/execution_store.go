@@ -21,7 +21,12 @@ type storedExecution struct {
 	state                                string
 	// account is the subscription account that the Execution got.
 	account string
+	// form is "" (headless) or dispatcherapi.FormInteractive (a
+	// take-over).
+	form string
 }
+
+func (e storedExecution) interactive() bool { return e.form == dispatcherapi.FormInteractive }
 
 // queuedRuns are the ids of the queued Runs that are not closed and
 // whose PR has no outcome, with no Execution that has not ended, oldest
@@ -123,9 +128,9 @@ func (s *store) runCheckout(runID string) (checkoutOfRun, error) {
 // execution reads one Execution.
 func (s *store) execution(id string) (storedExecution, error) {
 	var e storedExecution
-	err := s.db.QueryRow(`SELECT e.id, e.run_id, r.organization_id, r.project_id, e.workload, e.state, e.account
+	err := s.db.QueryRow(`SELECT e.id, e.run_id, r.organization_id, r.project_id, e.workload, e.state, e.account, e.form
 		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
-		Scan(&e.id, &e.runID, &e.organizationID, &e.projectID, &e.workload, &e.state, &e.account)
+		Scan(&e.id, &e.runID, &e.organizationID, &e.projectID, &e.workload, &e.state, &e.account, &e.form)
 	if errors.Is(err, sql.ErrNoRows) {
 		return e, errNotFound
 	}
@@ -148,6 +153,18 @@ type startedRun struct {
 	// messages are the Run's kept messages that the Execution's task
 	// gives.
 	messages []dispatcherapi.Message
+	// form is the Execution's form ("" is headless).
+	form string
+}
+
+// setPlace keeps the machine of an Execution that has not ended, and the
+// command that attaches a person to a take-over there, as the wrapper's
+// task call gives them. An empty value changes nothing.
+func (s *store) setPlace(id string, place dispatcherapi.TaskRequest) error {
+	_, err := s.db.Exec(`UPDATE executions SET vm = CASE WHEN ? != '' THEN ? ELSE vm END,
+		attach = CASE WHEN ? != '' THEN ? ELSE attach END WHERE id = ? AND state != ?`,
+		place.VM, place.VM, place.Attach, place.Attach, id, dispatcherapi.ExecutionEnded)
+	return err
 }
 
 // startExecution marks a dispatched Execution running and its Run
@@ -162,10 +179,12 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 		return run, err
 	}
 	defer tx.Rollback()
-	var runID, state string
-	if err := tx.QueryRow(`SELECT run_id, state FROM executions WHERE id = ?`, id).Scan(&runID, &state); err != nil {
+	var runID, state, takenOverByID, takenOverByName string
+	if err := tx.QueryRow(`SELECT run_id, state, form, taken_over_by_id, taken_over_by_name FROM executions WHERE id = ?`,
+		id).Scan(&runID, &state, &run.form, &takenOverByID, &takenOverByName); err != nil {
 		return run, err
 	}
+	interactive := run.form == dispatcherapi.FormInteractive
 	switch state {
 	case dispatcherapi.ExecutionEnded:
 		return run, errEnded
@@ -174,8 +193,9 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 			dispatcherapi.ExecutionRunning, at.UnixMicro(), int64(limits.Total()/time.Second), id); err != nil {
 			return run, err
 		}
-		if _, err := tx.Exec(`UPDATE runs SET state = ? WHERE id = ? AND state = ?`,
-			dispatcherapi.StateRunning, runID, dispatcherapi.StateQueued); err != nil {
+		// A take-over Execution's Run is taken over already.
+		if _, err := tx.Exec(`UPDATE runs SET state = ? WHERE id = ? AND state = ? AND NOT ?`,
+			dispatcherapi.StateRunning, runID, dispatcherapi.StateQueued, interactive); err != nil {
 			return run, err
 		}
 		if _, err := tx.Exec(`UPDATE runs SET session_id = ? WHERE id = ? AND session_id = ''`,
@@ -197,7 +217,12 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
 	run.limits.IdleSeconds = limits.IdleSeconds
-	if run.messages, err = takeKeptMessages(tx, runID, id, state == dispatcherapi.ExecutionDispatched); err != nil {
+	// A take-over Execution gets no prompt and no message: the person
+	// types in the terminal, and the Run keeps its messages until the
+	// take-over ends.
+	if interactive {
+		run.prompt, run.resume = "", true
+	} else if run.messages, err = takeKeptMessages(tx, runID, id, state == dispatcherapi.ExecutionDispatched); err != nil {
 		return run, err
 	}
 	// An Execution that continues the Agent session for its messages
@@ -206,7 +231,17 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 		run.prompt = ""
 	}
 	if state == dispatcherapi.ExecutionDispatched {
-		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
+		details := map[string]any{"execution.id": id}
+		if interactive {
+			// Each person message of the take-over Execution is from the
+			// person who took the Run over.
+			details = actor{kind: actorPerson, id: takenOverByID, name: takenOverByName}.details()
+			details["execution.id"] = id
+		}
+		if err := addPlace(tx, id, details); err != nil {
+			return run, err
+		}
+		if err := recordEvent(tx, at, runID, eventExecutionStarted, details); err != nil {
 			return run, err
 		}
 	}
@@ -258,12 +293,12 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		return err
 	}
 	defer tx.Rollback()
-	var runID, state, checks string
+	var runID, state, checks, form string
 	var prID int
 	var report dispatcherapi.Report
-	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks, r.pr_id
+	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks, r.pr_id, e.form
 		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
-		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &prID)
+		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &prID, &form)
 	if err != nil {
 		return err
 	}
@@ -274,17 +309,28 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 	if report.Outcome == "" {
 		last = nil
 	}
+	// The Run's state that the end changes: running for a headless
+	// Execution, taken over for a take-over Execution. A Run in another
+	// state (a stop, or a take-over of a headless Execution) keeps it.
+	from := dispatcherapi.StateRunning
 	runState, reason, question, summary := outcome(last, end)
+	if form == dispatcherapi.FormInteractive {
+		from = dispatcherapi.StateTakenOver
+		runState, reason, question, summary = takeOverOutcome(last, end)
+	}
 	returned, err := settleMessages(tx, runID, id, end.Messages, at)
 	if err != nil {
 		return err
 	}
-	again, err := continueForMessages(tx, runID, id, runState, returned, at)
+	again, err := continueForMessages(tx, runID, id, from, runState, returned, at)
 	if err != nil {
 		return err
 	}
 	if again {
 		runState, reason, question, summary = dispatcherapi.StateQueued, reasonSentAgain, "", ""
+		if form == dispatcherapi.FormInteractive {
+			reason = reasonMessagesAfterTakeOver
+		}
 	}
 	var delivered sql.NullInt64
 	if end.TaskDeliveredAt != nil {
@@ -313,10 +359,13 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		}
 	}
 	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ?, flags = ? WHERE id = ? AND state = ?`,
-		runState, reason, question, summary, flags, runID, dispatcherapi.StateRunning); err != nil {
+		runState, reason, question, summary, flags, runID, from); err != nil {
 		return err
 	}
 	details := map[string]any{"execution.id": id, "execution.reason": endReason}
+	if err := addPlace(tx, id, details); err != nil {
+		return err
+	}
 	if end.ExitCode != nil {
 		details["execution.exit_code"] = *end.ExitCode
 	}
@@ -357,20 +406,38 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 	if err != nil {
 		return false, err
 	}
-	again, err := continueForMessages(tx, runID, id, dispatcherapi.StateFailed, returned, at)
-	if err != nil {
+	var form string
+	if err := tx.QueryRow(`SELECT form FROM executions WHERE id = ?`, id).Scan(&form); err != nil {
 		return false, err
 	}
-	runState, runReason := dispatcherapi.StateFailed, reason
-	if again {
-		runState, runReason = dispatcherapi.StateQueued, reasonSentAgain
-	}
-	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
-		AND state IN (?, ?)`, runState, runReason, runID, dispatcherapi.StateQueued,
-		dispatcherapi.StateRunning); err != nil {
-		return false, err
+	if form == dispatcherapi.FormInteractive {
+		// A take-over that ends with no end call (the machine went, or
+		// the wrapper failed) does not start again by itself: the Run
+		// waits on a person, with the reason (V8).
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
+			AND state = ?`, dispatcherapi.StateWaitingOnPerson, "the take-over ended: "+reason, runID,
+			dispatcherapi.StateTakenOver); err != nil {
+			return false, err
+		}
+	} else {
+		again, err := continueForMessages(tx, runID, id, dispatcherapi.StateRunning, dispatcherapi.StateFailed, returned, at)
+		if err != nil {
+			return false, err
+		}
+		runState, runReason := dispatcherapi.StateFailed, reason
+		if again {
+			runState, runReason = dispatcherapi.StateQueued, reasonSentAgain
+		}
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
+			AND state IN (?, ?)`, runState, runReason, runID, dispatcherapi.StateQueued,
+			dispatcherapi.StateRunning); err != nil {
+			return false, err
+		}
 	}
 	details := map[string]any{"execution.id": id, "execution.reason": reason}
+	if err := addPlace(tx, id, details); err != nil {
+		return false, err
+	}
 	if exitCode != nil {
 		details["execution.exit_code"] = *exitCode
 	}
@@ -411,7 +478,8 @@ func (s *store) requeueExecution(id, reason string, at time.Time) (bool, error) 
 // Executions the same dispatch time: rowid keeps the order in which they were made.
 func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 	rows, err := s.db.Query(`SELECT id, state, dispatched_at, started_at, ended_at, task_delivered_at, end_reason,
-		exit_code, background_tasks_killed, account FROM executions WHERE run_id = ? ORDER BY dispatched_at, rowid`, runID)
+		exit_code, background_tasks_killed, account, form, vm, attach, taken_over_by_id, taken_over_by_name
+		FROM executions WHERE run_id = ? ORDER BY dispatched_at, rowid`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -421,9 +489,16 @@ func (s *store) executionsOf(runID string) ([]dispatcherapi.Execution, error) {
 		var e dispatcherapi.Execution
 		var dispatched int64
 		var started, ended, delivered, exit sql.NullInt64
+		var byID, byName string
 		if err := rows.Scan(&e.ID, &e.State, &dispatched, &started, &ended, &delivered, &e.EndReason, &exit,
-			&e.BackgroundTasksKilled, &e.Account); err != nil {
+			&e.BackgroundTasksKilled, &e.Account, &e.Form, &e.VM, &e.Attach, &byID, &byName); err != nil {
 			return nil, err
+		}
+		if e.Form == "" {
+			e.Form = dispatcherapi.FormHeadless
+		}
+		if e.Form == dispatcherapi.FormInteractive {
+			e.TakenOverBy = &dispatcherapi.Person{Kind: actorPerson, ID: byID, Name: byName}
 		}
 		e.DispatchedAt = time.UnixMicro(dispatched).UTC()
 		e.StartedAt, e.EndedAt, e.TaskDeliveredAt = timeOf(started), timeOf(ended), timeOf(delivered)

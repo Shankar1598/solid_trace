@@ -40,8 +40,10 @@ const maxSends = 2
 const reasonSentAgain = "a message was not delivered: a new Execution gets it"
 
 // messageStates are the states of a Run that take a message now. Ticket
-// 59 adds the states that a message continues.
-var messageStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning}
+// 59 adds the states that a message continues. A taken-over Run keeps a
+// message in its events, and does not type it into the terminal: when
+// the take-over ends, the message queues the Run.
+var messageStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateTakenOver}
 
 // continuedStates are the states that a kept message, which was not
 // delivered, changes to queued at the end of an Execution.
@@ -58,7 +60,7 @@ func (e *notMessageable) Error() string {
 		return "the Run is closed (its PR is merged or declined, or it had no activity for 30 days): " +
 			"a message cannot continue it; start a new Run"
 	}
-	return "the Run is " + e.state + ": only a queued or running Run takes a message now"
+	return "the Run is " + e.state + ": only a queued, running or taken-over Run takes a message now"
 }
 
 // sendMessage is a person's message to a Run.
@@ -124,8 +126,9 @@ func (s *store) acceptMessage(organizationID, runID string, by actor, text strin
 		return accepted, &notMessageable{state: state}
 	}
 	var live string
-	err = tx.QueryRow(`SELECT id FROM executions WHERE run_id = ? AND state = ? AND end_agreed = 0`, runID,
-		dispatcherapi.ExecutionRunning).Scan(&live)
+	// A taken-over Run keeps the message: no Execution gets it now.
+	err = tx.QueryRow(`SELECT id FROM executions WHERE run_id = ? AND state = ? AND end_agreed = 0 AND form = ''
+		AND ? != ?`, runID, dispatcherapi.ExecutionRunning, state, dispatcherapi.StateTakenOver).Scan(&live)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return accepted, err
 	}
@@ -295,19 +298,20 @@ func settleMessages(tx *sql.Tx, runID, executionID string, states []dispatcherap
 }
 
 // continueForMessages decides, in the end's transaction, if the Run's
-// kept messages queue it for a new Execution: the Run is still running
-// (a stop wins), its new state is done, failed or waiting on a person, it
-// is not closed, its PR has no outcome, and a kept message went to fewer
-// than maxSends Executions. Then it gives the sent-again event of each
-// message of returned (of the Execution that ended) that goes again.
-func continueForMessages(tx *sql.Tx, runID, executionID, state string, returned []string, at time.Time) (bool, error) {
+// kept messages queue it for a new Execution: the Run is still in the
+// state from (running, or taken over for a take-over Execution; a stop
+// wins), its new state is done, failed or waiting on a person, it is not
+// closed, its PR has no outcome, and a kept message went to fewer than
+// maxSends Executions. Then it gives the sent-again event of each message
+// of returned (of the Execution that ended) that goes again.
+func continueForMessages(tx *sql.Tx, runID, executionID, from, state string, returned []string, at time.Time) (bool, error) {
 	if !slices.Contains(continuedStates, state) {
 		return false, nil
 	}
 	var due bool
 	err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM messages m JOIN runs r ON r.id = m.run_id WHERE m.run_id = ?
 		AND m.execution_id = '' AND m.delivered_at IS NULL AND m.sends < ? AND r.closed_at IS NULL
-		AND r.pr_outcome = '' AND r.state = ?)`, runID, maxSends, dispatcherapi.StateRunning).Scan(&due)
+		AND r.pr_outcome = '' AND r.state = ?)`, runID, maxSends, from).Scan(&due)
 	if err != nil || !due {
 		return false, err
 	}

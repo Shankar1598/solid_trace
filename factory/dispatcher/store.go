@@ -349,6 +349,19 @@ var migrations = []string{
 	CREATE INDEX messages_by_execution ON messages (execution_id, seq);
 	ALTER TABLE commands ADD COLUMN message_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE executions ADD COLUMN end_agreed INTEGER NOT NULL DEFAULT 0;`,
+	// The take-over (ticket 61). form is '' (headless) or 'interactive'.
+	// vm and attach are what the wrapper's task call gave: the machine,
+	// and the command that attaches a person to a take-over there.
+	// taken_over_* is the person who took the Run over, and after the
+	// headless Execution that the take-over Execution follows in the same
+	// allocation (same workload).
+	`ALTER TABLE executions ADD COLUMN form TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN vm TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN attach TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN taken_over_by_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN taken_over_by_name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN after_execution TEXT NOT NULL DEFAULT '';
+	CREATE INDEX executions_by_workload ON executions (workload, state);`,
 }
 
 // store is the Dispatcher's SQLite database.
