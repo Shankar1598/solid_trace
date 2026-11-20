@@ -162,9 +162,10 @@ func newExecution(ctx context.Context, cfg config, c *client, task dispatcherapi
 	boundary killBoundary, runUser runUser) *execution {
 	e := &execution{cfg: cfg, client: c, task: task, log: log, boundary: boundary, runUser: runUser,
 		needsPerson: make(chan struct{}, 1), interrupts: make(chan struct{}, 1), uploads: newUploads(cfg, c, task, log), inbox: newInbox(),
-		clock: realClock{}, saver: noSaver{},
+		clock: realClock{},
 		results: make(chan struct{}, 1), followed: make(chan struct{}), finished: make(chan struct{}),
 		preempted: make(chan struct{})}
+	e.saver = newWIPSaver(e)
 	e.marked, e.mark = context.WithCancel(ctx)
 	e.preemptEnd = errNotSent
 	return e

@@ -344,6 +344,14 @@ type Task struct {
 	// SaveExclude are more patterns (gitignore syntax) that a
 	// work-in-progress save leaves out.
 	SaveExclude []string `json:"save_exclude,omitempty"`
+	// WIPRef is the Run's work-in-progress ref, from the Dispatcher's
+	// Forge: refs/agent-wip/<run id>, or refs/heads/agent-wip/<run id>
+	// for a forge that refuses refs outside refs/heads ("" is the first).
+	// The work-in-progress save and the push before the end push to it.
+	WIPRef string `json:"wip_ref,omitempty"`
+	// CheckpointSeconds is the interval of the checkpoint, the
+	// work-in-progress save during the Execution (0: no checkpoint).
+	CheckpointSeconds int64 `json:"checkpoint_seconds"`
 	// Messages are the Run's messages that no Execution delivered: the
 	// wrapper writes each one after the prompt. An Execution that
 	// resumes the Agent session (Resume, and the restore found it) for

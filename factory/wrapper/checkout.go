@@ -214,8 +214,8 @@ func gitValue(s string) string {
 // branch's tip to the clone URL of the task.
 //
 // When the push fails twice (a person pushed to the branch, or the forge
-// did not answer), the commits go to refs/agent-wip/<run id>, which
-// cannot conflict. The text that push gives then goes on the end call.
+// did not answer), the commits go to the Run's work-in-progress ref
+// (e.wipRef), which cannot conflict. The text that push gives then goes on the end call.
 func (e *execution) push(environ []string) string {
 	// A pr call that pushes now ends first.
 	e.prMu.Lock()
@@ -249,7 +249,10 @@ func (e *execution) push(environ []string) string {
 	if err == nil {
 		return ""
 	}
-	wip := "refs/agent-wip/" + e.task.RunID
+	wip, werr := e.wipRef()
+	if werr != nil {
+		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v), and its commits cannot go to a work-in-progress ref: %v", err, werr))
+	}
 	if werr := run("push", "--quiet", "--no-verify", "--force", "--", e.task.CloneURL, tip+":"+wip); werr != nil {
 		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v), and the save of its commits to %s failed too (%v)", err, wip, werr))
 	}
@@ -280,8 +283,9 @@ func (e *execution) pushForPR(ctx context.Context, environ []string) error {
 }
 
 // pushRepository makes the wrapper's bare repository for a push, which
-// borrows the checkout's objects. run runs git in it, and done removes it.
-func (e *execution) pushRepository(ctx context.Context, environ []string) (run func(args ...string) error, done func(), err error) {
+// borrows the objects of these object folders (none: the checkout's). run
+// runs git in it, and done removes it.
+func (e *execution) pushRepository(ctx context.Context, environ []string, objects ...string) (run func(args ...string) error, done func(), err error) {
 	dir, err := os.MkdirTemp(e.cfg.dir, "push-")
 	if err != nil {
 		return nil, nil, err
@@ -306,7 +310,10 @@ func (e *execution) pushRepository(ctx context.Context, environ []string) (run f
 		done()
 		return nil, nil, err
 	}
-	alternates := filepath.Join(e.checkout, ".git", "objects") + "\n"
+	if len(objects) == 0 {
+		objects = []string{filepath.Join(e.checkout, ".git", "objects")}
+	}
+	alternates := strings.Join(objects, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "objects", "info", "alternates"), []byte(alternates), 0o600); err != nil {
 		done()
 		return nil, nil, err
@@ -346,7 +353,22 @@ func readBranch(gitDir, branch string) (string, error) {
 	if info, err := os.Lstat(gitDir); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("the checkout has no .git folder")
 	}
-	ref := "refs/heads/" + branch
+	id, err := readRef(gitDir, "refs/heads/"+branch)
+	if errors.Is(err, errNoRef) {
+		return "", fmt.Errorf("the checkout has no Run's branch %s", branch)
+	}
+	if err != nil {
+		return "", fmt.Errorf("the Run's branch %s: %w", branch, err)
+	}
+	return id, nil
+}
+
+// errNoRef is a ref that a git directory does not have.
+var errNoRef = errors.New("no such ref")
+
+// readRef gives the commit of a ref (such as refs/heads/main) in a git
+// directory, from its loose ref or its packed-refs line. It runs no git.
+func readRef(gitDir, ref string) (string, error) {
 	if info, err := os.Lstat(filepath.Join(gitDir, ref)); err == nil && info.Mode().IsRegular() {
 		b, err := os.ReadFile(filepath.Join(gitDir, ref))
 		if err != nil {
@@ -355,7 +377,7 @@ func readBranch(gitDir, branch string) (string, error) {
 		if id := strings.TrimSpace(string(b)); objectID(id) {
 			return id, nil
 		}
-		return "", fmt.Errorf("the Run's branch %s is not a commit id", branch)
+		return "", fmt.Errorf("%s is not a commit id", ref)
 	}
 	if b, err := os.ReadFile(filepath.Join(gitDir, "packed-refs")); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
@@ -364,7 +386,33 @@ func readBranch(gitDir, branch string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("the checkout has no Run's branch %s", branch)
+	return "", errNoRef
+}
+
+// readHead gives the commit of HEAD in a git directory: the commit of the
+// branch that it names, or its own commit id when it is detached.
+func readHead(gitDir string) (string, error) {
+	path := filepath.Join(gitDir, "HEAD")
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s has no HEAD file", gitDir)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSpace(string(b))
+	if objectID(head) {
+		return head, nil
+	}
+	ref, ok := strings.CutPrefix(head, "ref: ")
+	if !ok || !strings.HasPrefix(ref, "refs/heads/") || !plainParts(strings.Split(ref, "/")) {
+		return "", fmt.Errorf("the HEAD of %s is not a branch or a commit", gitDir)
+	}
+	id, err := readRef(gitDir, ref)
+	if errors.Is(err, errNoRef) {
+		return "", fmt.Errorf("the branch %s of %s has no commit", strings.TrimPrefix(ref, "refs/heads/"), gitDir)
+	}
+	return id, err
 }
 
 // objectID tells if s is a SHA-1 or SHA-256 object id.
