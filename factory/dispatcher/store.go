@@ -278,6 +278,77 @@ var migrations = []string{
 	CREATE INDEX runs_wip_delete_due ON runs (closed_at) WHERE wip_delete_due = 1;`,
 	// A Notion connection's notion_database is the id of its database.
 	`ALTER TABLE connections ADD COLUMN notion_database TEXT NOT NULL DEFAULT '';`,
+	// The write-back (ticket 73). A connection's working_status,
+	// review_status and waiting_status are its tracker settings ('' is the
+	// kind's default). ticket_writes is the outbox of the write-back to
+	// the tickets of tracker Runs: each row is one step, with the status
+	// to set ('' is none: working, review or waiting, whose names the
+	// sender reads from the connection's settings at the send) and
+	// whether it posts the step's comment. text is the summary, the
+	// question or the reason of the step. status_set and sent_at record
+	// what the sender did; a row that the sender gave up has sent_at and
+	// gave_up 1.
+	`ALTER TABLE connections ADD COLUMN working_status TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN review_status TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN waiting_status TEXT NOT NULL DEFAULT '';
+	CREATE TABLE ticket_writes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		execution_id TEXT NOT NULL,
+		connection_id TEXT NOT NULL,
+		ticket_id TEXT NOT NULL,
+		step TEXT NOT NULL,
+		status TEXT NOT NULL,
+		comment INTEGER NOT NULL,
+		text TEXT NOT NULL,
+		pr_url TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		status_set INTEGER NOT NULL DEFAULT 0,
+		failures INTEGER NOT NULL DEFAULT 0,
+		sent_at INTEGER,
+		gave_up INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX ticket_writes_pending ON ticket_writes (id) WHERE sent_at IS NULL;
+	CREATE INDEX ticket_writes_by_run ON ticket_writes (run_id, step);`,
+	// accounts is the pool of subscription accounts (the Credential
+	// source). A token is sealed with the purpose "account <name>".
+	// limited_until is the reset time of an account at its usage limit.
+	// An Execution's account is the name of the account that it got.
+	`CREATE TABLE accounts (
+		name TEXT PRIMARY KEY,
+		token BLOB NOT NULL,
+		added_at INTEGER NOT NULL,
+		limited_until INTEGER
+	);
+	ALTER TABLE executions ADD COLUMN account TEXT NOT NULL DEFAULT '';
+	CREATE INDEX executions_by_account ON executions (account, state);`,
+	// messages are the messages to Runs. id is the uuid that the wrapper
+	// writes; execution_id is the Execution that has the message now (''
+	// is none: the Run keeps it for its next Execution), with in_task 1
+	// when that Execution's task call gave it. sends counts the
+	// Executions that got it. A message command (commands.message_id)
+	// gives a message to a running Execution. end_agreed is 1 after the
+	// wrapper's compare-and-end call agreed: the Execution gets no more
+	// messages.
+	`CREATE TABLE messages (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT,
+		id TEXT NOT NULL UNIQUE,
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		text TEXT NOT NULL,
+		actor_kind TEXT NOT NULL,
+		actor_id TEXT NOT NULL,
+		actor_name TEXT NOT NULL,
+		accepted_at INTEGER NOT NULL,
+		execution_id TEXT NOT NULL DEFAULT '',
+		in_task INTEGER NOT NULL DEFAULT 0,
+		sends INTEGER NOT NULL DEFAULT 0,
+		written_at INTEGER,
+		delivered_at INTEGER
+	);
+	CREATE INDEX messages_by_run ON messages (run_id, seq);
+	CREATE INDEX messages_by_execution ON messages (execution_id, seq);
+	ALTER TABLE commands ADD COLUMN message_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE executions ADD COLUMN end_agreed INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -287,6 +358,9 @@ type store struct {
 	// sendWake wakes the event sender after a commit that can hold run
 	// events.
 	sendWake chan struct{}
+	// writeBackWake wakes the write-back loop after a commit that can hold
+	// write-back steps.
+	writeBackWake chan struct{}
 }
 
 var errNotFound = errors.New("not found")
@@ -310,7 +384,7 @@ func openStore(path string, key []byte) (*store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &store{db: db, sealer: s, sendWake: make(chan struct{}, 1)}, nil
+	return &store{db: db, sealer: s, sendWake: make(chan struct{}, 1), writeBackWake: make(chan struct{}, 1)}, nil
 }
 
 func migrate(db *sql.DB) error {

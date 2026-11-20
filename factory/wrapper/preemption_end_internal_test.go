@@ -49,7 +49,7 @@ func executionWithDispatcher(t *testing.T, boundary killBoundary) (*execution, *
 		t.Fatal(err)
 	}
 	cfg := config{dispatcherURL: server.URL, execution: "ex-1", identityFile: identity, docker: "/no/docker"}
-	return newExecution(context.Background(), cfg, newClient(cfg), dispatcherapi.Task{}, io.Discard, boundary), d
+	return newExecution(context.Background(), cfg, newClient(cfg), dispatcherapi.Task{}, io.Discard, boundary, runUser{}), d
 }
 
 // A save that leaves out more files than the end call keeps: the end call

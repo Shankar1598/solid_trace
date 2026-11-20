@@ -37,6 +37,9 @@ type Options struct {
 	// Runner starts the Executions of queued Runs. With none, a Run stays
 	// queued (a Dispatcher with no Runner configured).
 	Runner Runner
+	// DispatchEvery is how often the dispatch loop looks for queued Runs
+	// when nothing wakes it (dispatchEvery when 0).
+	DispatchEvery time.Duration
 	// EventRetry is the longest wait of the event sender between two
 	// tries to send the outbox to SolidTrace (maxEventRetry when 0).
 	EventRetry time.Duration
@@ -115,8 +118,10 @@ type Dispatcher struct {
 	// closing closes when Serve or Close starts to stop.
 	closing     chan struct{}
 	closingOnce sync.Once
-	stop        context.CancelFunc
-	loops       sync.WaitGroup
+	// dispatchEvery is Options.DispatchEvery.
+	dispatchEvery time.Duration
+	stop          context.CancelFunc
+	loops         sync.WaitGroup
 }
 
 // Open checks config and opens the database (it makes it at first use).
@@ -132,6 +137,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	}
 	if options.Log == nil {
 		options.Log = slog.Default()
+	}
+	if options.DispatchEvery <= 0 {
+		options.DispatchEvery = dispatchEvery
 	}
 	if options.Version == "" {
 		options.Version = "dev"
@@ -174,7 +182,10 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		closeChecked:    options.CloseChecked,
 		closing:         make(chan struct{}),
 		backstopEvery:   cmp.Or(options.BackstopEvery, backstopEvery),
+		dispatchEvery:   options.DispatchEvery,
 	}
+	// The Bitbucket forge connections send the PR outcome webhooks.
+	d.kinds[dispatcherapi.ForgeBitbucket] = bitbucketWebhooks{d}
 	for _, kind := range options.WebhookKinds {
 		d.kinds[kind.Kind()] = kind
 	}
@@ -190,6 +201,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs", d.person(d.listRuns))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs/{id}", d.person(d.getRun))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/stop", d.person(d.stopRun))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/messages", d.person(d.sendMessage))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects", d.person(d.listSettings))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.getSettings))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.admin(d.saveSettings)))
@@ -219,6 +231,8 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/preempting", d.wrapper(d.preempting))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/commands", d.wrapper(d.commands))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/message", d.wrapper(d.messageEvent))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/compare-end", d.wrapper(d.compareEnd))
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "no such path: "+r.Method+" "+r.URL.Path)
@@ -228,8 +242,9 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	d.refreshAllowlist()
 	ctx, stop := context.WithCancel(context.Background())
 	d.stop = stop
-	d.loops.Add(5)
+	d.loops.Add(6)
 	go func() { defer d.loops.Done(); d.sendLoop(ctx) }()
+	go func() { defer d.loops.Done(); d.writeBackLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.scheduleLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.closeLoop(ctx) }()
 	go func() { defer d.loops.Done(); d.reconcileLoop(ctx) }()

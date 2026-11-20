@@ -120,7 +120,8 @@ When the Dispatcher does not answer, or SolidTrace no longer accepts the Dispatc
 
 A ticket of a tracker connection (Notion, Linear) that a person sets to the ready status starts a Run. The Run's prompt is the ticket's title and body, its page links to the ticket, and its actor is the tracker user who set the status.
 
-- **The tracker settings** of a connection: the ready status (default `Ready for agent`) and the routing field (the kind's default, such as the Notion select property `Project`). An Admin saves them with `PUT /api/v1/connections/NAME/tracker` and `{"ready_status": "...", "routing_field": "..."}`; an empty value is the default. `GET /api/v1/connections` shows them.
+- **The tracker settings** of a connection: the ready status (default `Ready for agent`), the routing field (the kind's default, such as the Notion select property `Project`), and the three statuses of the write-back: `working_status` (default `Agent working`), `review_status` (default `In review`) and `waiting_status` (default `Waiting on you`). An Admin saves them with `PUT /api/v1/connections/NAME/tracker` and `{"ready_status": "...", "routing_field": "...", "working_status": "...", "review_status": "...", "waiting_status": "..."}`; an empty value is the default. A save is refused (400) when a write-back status is the same as the ready status. `GET /api/v1/connections` shows them.
+- **The write-back:** the Dispatcher tells the ticket what its Run does. When the first Execution starts, it sets the working status and posts a comment with the link to the Run. When the PR opens, it sets the review status; when that Execution ends, it posts one comment with the link to the PR, the link to the Run, the summary and the pass/fail list of the checks (`no Evidence` when no check passed). When the Run needs a person, fails, or is done with no PR, it sets the waiting status and posts a comment with the question, the reason or the summary. A stop changes no status, and there are no progress comments. A tracker that does not answer does not stop the Run: the Dispatcher keeps each step and sends it again, in order, for up to 24 hours. At the first failure of a step, and when it gives up a step, it writes a warning Log.
 - **Routes** are part of a Project's Factory settings: each is a tracker connection and a match value. A ticket goes to the Project whose route has the value of the ticket's routing field. The route with an empty match value is the connection's default: it takes each ticket that no other route matches. Two Projects cannot have the same pair: the save answers 409 and names the Project that has it. An Admin saves them in `routes` of `PUT /api/v1/projects/SLUG/settings`; a save with no `routes` keeps them. Each member reads them.
 - **No route:** a ready ticket that no route matches starts no Run. It gets one comment that names the routing field and the values that the routes match, and the Dispatcher writes a warning Log. A new edit of the ticket gets the comment and the warning again; the same edit gets none.
 - A ready ticket starts at most one Run for each edit, and no Run while it has an Active Run.
@@ -167,6 +168,16 @@ A tracker or a forge tells the Dispatcher of a change with a webhook. The Dispat
 A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the raw body before it reads the body, and answers 401 when it is not valid. It refuses a body over 1 MiB (413) and more than 120 webhooks a minute from one connection (429). A delivery id that it got in the last 7 days does nothing. A valid webhook gets 200 at once, and the Dispatcher then reads the change from the service's API. It also reads each connection when it starts, and again at each backstop interval (5 minutes for most kinds), so a change is found also when no webhook comes.
 
 `solidtrace connections list` shows the time of each connection's last webhook. When a backstop finds a change that no webhook announced since the previous backstop, the Dispatcher writes a warning Log with the Organization, the connection and the time of the last webhook, so that a Monitor can find a connection whose webhooks stopped. A connection with no webhook secret gets no webhooks, so its backstop does not warn.
+
+### Bitbucket's webhook: the PR outcome
+
+A Bitbucket connection's webhook gives the outcome of a Run's PR at once. Without it, the Dispatcher checks the PRs of the Runs that are not closed every 5 minutes, and that check stays as the backstop.
+
+1. In each repository that a Project names, open **Repository settings → Webhooks → Add webhook**. Paste the Bitbucket connection's webhook URL (`solidtrace connections list`), and set a secret.
+2. Select the **Pull request: Merged** and **Pull request: Declined** triggers.
+3. Save the same secret: `solidtrace connections webhook-secret NAME < secret-file`.
+
+The Dispatcher checks `X-Hub-Signature` (`sha256=<hex>` of the raw body) and dedupes on `X-Request-UUID`. Bitbucket's webhooks carry no time, so the signature is the only check. `pullrequest:fulfilled` and `pullrequest:rejected` make the Dispatcher read the PR's state from Bitbucket: a merged PR gives the PR outcome merged, a declined PR gives declined, and the Run closes (a Run with an Execution queued or live closes when its Execution ends). Each other event, such as a push to a Run's work-in-progress ref, gets 200 and does nothing.
 
 ## Start Runs on a schedule
 
@@ -246,3 +257,28 @@ The Run page shows one Run from its run events:
 - Links to the Run's Agent sessions, and the CLI commands to message the Run, take it over or stop it.
 
 **Stop** ends a Run that goes wrong. It shows only when Settings → Instance has the Dispatcher's URL, and only on a Run that can stop (queued, running, taken over, or waiting on a person or an account limit). Console sends the stop to the Dispatcher as you, with a factory token that lasts 5 minutes. The page shows the state that the Dispatcher gives at once; the stop event shows when it arrives from the Dispatcher.
+
+## Try the factory with mock data
+
+To see the factory work with no Claude account, no forge and no Nomad, run the demo on the dev box, with the dev stack up (`bin/dev`):
+
+```bash
+bin/factory-demo up
+```
+
+The command starts the real Dispatcher and the real wrapper, with fakes for the agent (a scripted Claude Code), the forge and the machines. It connects them to your running Console and EventStore, then starts six Runs. It prints the Console links to open: the **Runs** list and the Project's **Factory** section. Sign in as `admin@solidtrace.local` (the default; give another Admin with `--admin`).
+
+The six Runs:
+
+- Done, with a PR, two checks that passed and one Evidence file.
+- Done, with no Evidence (a check failed).
+- Needs a person, with a question.
+- Failed (the agent's harness exited in the middle of a turn).
+- Stopped by the demo while it runs.
+- A Run that works until you press its **Stop** button on the Run page.
+
+Each Run has its Agent session, which opens from the Run page.
+
+The demo changes these settings: it turns on Agent sessions when they are off (with a captured repository, `factory-demo.example/demo/*`), sets Settings → Instance's Console URL and Dispatcher URL, and makes two API tokens (the Dispatcher's and an Admin's). Press Ctrl-C, or run `bin/factory-demo down` in another terminal, to stop the Dispatcher and the wrappers and to put back the URLs and delete the tokens. A Run that still works is stopped first. The Runs and their Agent sessions stay in SolidTrace, so you can look at them after the demo. A second `bin/factory-demo up` adds six new Runs. If a demo died with no clean-up, the next `up` or `down` puts its settings back.
+
+Options (after `up` or `down`): `--console-url` (default `http://localhost:4001`), `--ingest-url` (`http://localhost:4000`), `--org`, `--project` and `--admin`. The demo starts no Console and no EventStore.

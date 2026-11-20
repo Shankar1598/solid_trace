@@ -299,3 +299,14 @@ func TestTheWatchStartsAgainFromZeroWhenNomadsIndexGoesBack(t *testing.T) {
 		t.Errorf("the watch asked from the indexes %v, want %v", got, want)
 	}
 }
+
+// The wrapper's directory is under the image recipe's directory of the
+// Executions, not the task's directory in Nomad's data_dir, which the run
+// user cannot reach (the wrapper refuses it).
+func TestTheJobGivesTheWrapperADirectoryOutsideNomadsDataDir(t *testing.T) {
+	_, r := newFakeNomad(t)
+	env := r.job(r.cfg.Kinds[0]).TaskGroups[0].Tasks[0].Env
+	if got, want := env["WRAPPER_DIR"], DefaultExecutionsDir+"/${NOMAD_META_"+MetaExecution+"}"; got != want {
+		t.Errorf("WRAPPER_DIR is %q, want %q", got, want)
+	}
+}

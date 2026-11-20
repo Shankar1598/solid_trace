@@ -213,7 +213,9 @@ func (e *execution) endPreempted(ctx context.Context, p dispatcherapi.Preemption
 		p.Problems = append(p.Problems, fmt.Sprintf("the save left out %d more files", len(p.Skipped)-maxSkipped))
 		p.Skipped = p.Skipped[:maxSkipped]
 	}
-	end := dispatcherapi.ExecutionEnd{Reason: p.Reason, Preemption: &p}
+	// The messages that the harness did not deliver go back to the
+	// Dispatcher, which sends them again in a new Execution.
+	end := dispatcherapi.ExecutionEnd{Reason: p.Reason, Preemption: &p, Messages: e.messageStates()}
 	select {
 	case <-e.followed:
 		end.ExitCode, end.TaskDeliveredAt = e.followEnd.ExitCode, e.followEnd.TaskDeliveredAt

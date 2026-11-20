@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+# The factory demo: the real Dispatcher and wrapper with mock data (a fake
+# Claude Code, Forge and Runner) against your running dev stack. It starts
+# six Runs of different outcomes; open the Console pages that it prints.
+#
+#   bin/factory-demo up     start the demo; Ctrl-C stops it and puts back the settings
+#   bin/factory-demo down   stop a demo that runs elsewhere, and put back its settings
+#
+# Options (after up or down): --console-url (http://localhost:4001),
+# --ingest-url (http://localhost:4000), --org, --project, --admin.
+# Start the dev stack first (bin/dev). See docs/agent-sessions.md.
+set -e
+cd "$(dirname "$0")/.."
+case "$1" in
+  up | down) ;;
+  *) echo "usage: bin/factory-demo up|down [options]" >&2; exit 2 ;;
+esac
+command=$1
+shift
+mkdir -p console/tmp
+(cd factory && mise exec -- go build -o ../console/tmp/factory-demo ./internal/flowstack)
+exec console/tmp/factory-demo demo "$command" --console-dir "$(pwd)/console" "$@"

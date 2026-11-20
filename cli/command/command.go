@@ -81,6 +81,12 @@ Usage:
       Stop a Run that is queued, running or waiting on a person. The Run
       is stopped at once; its agent is interrupted and its Execution
       ends. A message continues a stopped Run.
+  solidtrace message [--dispatcher URL] RUN_ID MESSAGE
+      Send MESSAGE to a queued or running Run. The agent of a running
+      Run gets it when its current tool call ends, in the same turn, or
+      in a new turn; there is no interrupt. A queued Run's agent gets it
+      after the prompt. A message that the agent did not get goes to a
+      new Execution.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID
@@ -195,6 +201,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return runs(ctx, args[1:], env)
 	case "stop":
 		return stop(ctx, args[1:], env)
+	case "message":
+		return message(ctx, args[1:], env)
 	case "projects":
 		return projects(ctx, args[1:], env)
 	case "connections":

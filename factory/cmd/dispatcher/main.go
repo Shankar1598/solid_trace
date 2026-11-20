@@ -1,7 +1,8 @@
 // Command dispatcher is the Dispatcher: one binary with SQLite, on the
 // server VM beside the Nomad server. It reads the operator configuration
 // at start, from the file that -config (or DISPATCHER_CONFIG) names and
-// from the environment, and serves the private listener.
+// from the environment, and serves the private listener. 'dispatcher
+// accounts' adds, lists and removes the subscription accounts.
 package main
 
 import (
@@ -30,7 +31,17 @@ var Version = "dev"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.Getenv, os.Stderr))
+	os.Exit(command(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr))
+}
+
+// command is 'dispatcher accounts ...', the operator command for the pool
+// of subscription accounts, or else the Dispatcher itself (run).
+func command(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader,
+	stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "accounts" {
+		return dispatcher.AccountsCommand(args[1:], getenv, time.Now, stdin, stdout, stderr)
+	}
+	return run(ctx, args, getenv, stderr)
 }
 
 // run starts the Dispatcher and serves until ctx ends. It returns the exit

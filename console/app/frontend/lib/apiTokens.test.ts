@@ -36,12 +36,12 @@ describe('tokenFields', () => {
 })
 
 describe('dispatcherFields', () => {
-  const choice = { scopes: ['run_events:write', 'issues:comment', 'tokens:create'], organizations: [] }
+  const choice = { scopes: ['run_events:write', 'issues:comment', 'tokens:create', 'mcp:read'], organizations: [] }
   const now = new Date('2026-11-14T12:00:00Z')
 
   it("sends the Dispatcher's fixed scopes, the Organization and the expiry", () => {
     expect(dispatcherFields(choice, '3', '90', now)).toEqual({
-      name: 'Dispatcher', scopes: ['run_events:write', 'issues:comment', 'tokens:create'], organization_id: 3,
+      name: 'Dispatcher', scopes: ['run_events:write', 'issues:comment', 'tokens:create', 'mcp:read'], organization_id: 3,
       expires_at: '2027-02-12T12:00:00.000Z',
     })
     expect(dispatcherFields(choice, '3', 'never', now).expires_at).toBeUndefined()

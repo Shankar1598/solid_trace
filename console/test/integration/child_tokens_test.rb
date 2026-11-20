@@ -10,7 +10,7 @@ require "test_helper"
 class ChildTokensTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
 
-  DISPATCHER_SCOPES = [ "run_events:write", "issues:comment", "tokens:create" ].freeze
+  DISPATCHER_SCOPES = [ "run_events:write", "issues:comment", "tokens:create", "mcp:read" ].freeze
   SESSION_A = "0f8a5c1e-1b2c-4d3e-8f90-123456789abc"
   SESSION_B = "7d1e5a90-2c4b-4f7a-8e61-5b3c9d0a2e17"
 
@@ -58,7 +58,7 @@ class ChildTokensTest < ActionDispatch::IntegrationTest
 
     [ { scopes: [ "tokens:create" ] }, { scopes: DISPATCHER_SCOPES + [ "factory" ] },
       { scopes: DISPATCHER_SCOPES + [ "sessions:write" ], agent_session_ids: [ SESSION_A ] },
-      { scopes: DISPATCHER_SCOPES + [ "mcp:read" ], project_id: @shop.id } ].each do |fields|
+      { scopes: DISPATCHER_SCOPES, project_id: @shop.id } ].each do |fields|
       refused_on_page(organization_id: @acme.id, **fields)
       assert_match "tokens:create", errors.values.flatten.join, fields.inspect
     end

@@ -9,11 +9,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +48,9 @@ const (
 func MainIfAsked() {
 	switch filepath.Base(os.Args[0]) {
 	case wrapperName:
+		if len(os.Args) > 1 && os.Args[1] == wrapper.StopHookCommand {
+			os.Exit(wrapper.StopHook(os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+		}
 		os.Exit(wrapper.Main(context.Background(), os.Getenv, os.Environ(), os.Stderr))
 	case harnessName:
 		os.Exit(fakeharness.Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
@@ -84,11 +90,21 @@ func Executions(e *Env) {
 		}
 		e.t.Skipf("the wrapper's kill boundary is not available here, so this test skips (run it as root or in a delegated cgroup v2): %v", err)
 	}
-	r, err := newRunner(e)
+	runUser, err := testRunUser()
+	if err != nil {
+		if os.Getenv(killboundary.EnvRequired) != "" {
+			e.t.Fatalf("%v, and %s is set", err, killboundary.EnvRequired)
+		}
+		e.t.Skipf("%v, so this test skips", err)
+	}
+	r, err := newRunner(e, runUser)
 	if err != nil {
 		e.t.Fatalf("start the fake Runner: %v", err)
 	}
 	e.Runner = r
+	// The operator command needs the database that the Dispatcher makes
+	// at its first start.
+	e.afterStart = append(e.afterStart, func() { e.AddAccount(DefaultAccount, DefaultAccountToken) })
 	// The wrappers' limits read the environment's clock.
 	e.Clock.mu.Lock()
 	e.Clock.machines, e.Clock.beforeMove = r.clockFile(), r.renewIdentities
@@ -101,8 +117,38 @@ func Executions(e *Env) {
 // Executions, Project gives each Project a repository on the fake Forge
 // and a connection.
 func WithRunner(runner dispatcher.Runner) Option {
-	return func(e *Env) { e.runner = runner }
+	return func(e *Env) {
+		e.runner = runner
+		// Each Execution needs a free account in the pool.
+		e.afterStart = append(e.afterStart, func() { e.AddAccount(DefaultAccount, DefaultAccountToken) })
+	}
 }
+
+// EnvRunUser names the run user of the wrappers when the tests run as root,
+// as the wrapper runs on an agent machine (the local factory stack runs
+// them so, with the run user agent). As another user, the tests run the
+// wrappers with that user as the run user, and no user changes.
+const EnvRunUser = "FACTORYTEST_RUN_USER"
+
+// testRunUser is the run user of the wrappers.
+func testRunUser() (*user.User, error) {
+	if os.Geteuid() != 0 {
+		return user.Current()
+	}
+	name := os.Getenv(EnvRunUser)
+	if name == "" {
+		return nil, fmt.Errorf("the tests run as root and %s names no run user", EnvRunUser)
+	}
+	return user.Lookup(name)
+}
+
+// DefaultAccount is the subscription account that the Executions option
+// adds to the pool, with the token DefaultAccountToken. A test that needs
+// other accounts adds them, or removes this one.
+const (
+	DefaultAccount      = "pool-1"
+	DefaultAccountToken = "sk-ant-oat01-factorytest-pool-1"
+)
 
 // Runner is the fake Runner as the Dispatcher sees it: it starts each
 // Execution's wrapper with the fakerunner, and signs each wrapper's
@@ -125,10 +171,43 @@ type Runner struct {
 	executions []string
 	// kinds are the machine kinds that the Dispatcher asked for, by
 	// Execution.
-	kinds    map[string]string
-	harness  string
-	broken   bool
-	noDocker bool
+	kinds     map[string]string
+	harness   string
+	runUser   *user.User
+	broken    bool
+	noDocker  bool
+	pathFirst string
+	before    func(execution string)
+	// keepSessions gives each Execution the same Claude Code directory.
+	keepSessions bool
+}
+
+// KeepAgentSessions gives the next Executions one Claude Code directory
+// that stays after each Execution, so that a later Execution resumes the
+// Run's Agent session, as the restore of the Agent session directory
+// (ticket 59) will do on any machine.
+func (r *Runner) KeepAgentSessions() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.keepSessions = true
+}
+
+// BeforeDispatch makes the Runner call f with the id of the next
+// Execution that it starts, before it starts the Execution's wrapper: the
+// Execution is dispatched and has no task call yet.
+func (r *Runner) BeforeDispatch(f func(execution string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.before = f
+}
+
+// PathFirst puts dir first in the PATH of the next Executions' wrappers,
+// before the test binary's programs: a test puts a program there that
+// records how the wrapper runs it, such as git.
+func (r *Runner) PathFirst(dir string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pathFirst = dir
 }
 
 // BreakWrapper makes the next Execution's wrapper start with no Dispatcher
@@ -189,7 +268,7 @@ func (r *Runner) UseHarness(program string) {
 // keyID is the kid of the fake Runner's key.
 const keyID = "fake-runner-key"
 
-func newRunner(e *Env) (*Runner, error) {
+func newRunner(e *Env, runUser *user.User) (*Runner, error) {
 	// A short directory: a Unix socket path has at most 107 bytes.
 	dir, err := os.MkdirTemp("", "factorytest-")
 	if err != nil {
@@ -200,8 +279,13 @@ func newRunner(e *Env) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Runner{env: e, dir: dir, bin: filepath.Join(dir, "bin")}
+	r := &Runner{env: e, dir: dir, bin: filepath.Join(dir, "bin"), runUser: runUser}
 	if err := os.MkdirAll(r.bin, 0o755); err != nil {
+		return nil, err
+	}
+	// As root, the run user reaches the programs, the scripts and the
+	// Executions' directories, and cannot change them.
+	if err := os.Chmod(dir, 0o711); err != nil {
 		return nil, err
 	}
 	for _, name := range []string{wrapperName, harnessName, solidtraceName, dockerName} {
@@ -234,6 +318,9 @@ func newRunner(e *Env) (*Runner, error) {
 	}
 	r.Metadata = fakemetadata.New()
 	e.t.Cleanup(r.Metadata.Close)
+	if err := r.forRunUser(filepath.Join(dir, "docker"), filepath.Join(dir, "agent-config")); err != nil {
+		return nil, err
+	}
 	// After the fakerunner's Close (cleanups run last first): a lost
 	// machine's wrapper leaves its child cgroup, which a real lost machine
 	// takes with it.
@@ -252,6 +339,10 @@ func (r *Runner) Agent(lines ...string) {
 		_, err = f.WriteString(strings.Join(lines, "\n") + "\n")
 		f.Close()
 	}
+	if err == nil {
+		// The harness runs as the run user.
+		err = os.Chmod(f.Name(), 0o644)
+	}
 	if err != nil {
 		r.env.t.Fatal(err)
 	}
@@ -265,6 +356,13 @@ func Workload(execution string) string { return "fake-runner:" + execution }
 
 // Dispatch starts the Execution's wrapper with a workload identity JWT.
 func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (string, error) {
+	r.mu.Lock()
+	before := r.before
+	r.before = nil
+	r.mu.Unlock()
+	if before != nil {
+		before(x.Execution)
+	}
 	workload := Workload(x.Execution)
 	identity := filepath.Join(r.dir, "identity-"+x.Execution+".jwt")
 	if err := os.WriteFile(identity, []byte(r.Identity(workload)), 0o600); err != nil {
@@ -282,9 +380,17 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	}
 	r.kinds[x.Execution] = x.MachineKind
 	program := r.harness
+	path := r.bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	if r.pathFirst != "" {
+		path = r.pathFirst + string(os.PathListSeparator) + path
+	}
 	broken := r.broken
 	r.broken = false
 	docker := filepath.Join(r.bin, dockerName)
+	claudeConfig := ""
+	if r.keepSessions {
+		claudeConfig = filepath.Join(r.dir, "claude")
+	}
 	if r.noDocker {
 		docker = filepath.Join(r.dir, "no-docker", dockerName)
 	}
@@ -297,6 +403,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		wrapper.EnvExecution + "=" + x.Execution,
 		wrapper.EnvIdentityFile + "=" + identity,
 		wrapper.EnvHarness + "=" + program,
+		wrapper.EnvRunUser + "=" + r.runUser.Username,
 		// Never the dev box's real Docker: the end kills each container.
 		wrapper.EnvDocker + "=" + docker,
 		fakedocker.EnvDir + "=" + r.Docker.Dir(),
@@ -307,7 +414,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		wrapper.EnvHome + "=" + r.Home(x.Execution),
 		wrapper.EnvCache + "=" + r.Cache(),
 		harness,
-		"PATH=" + r.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + path,
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),
@@ -315,9 +422,13 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// notice.
 		wrapper.EnvMachineNotice + "=gce",
 		wrapper.EnvMetadataURL + "=" + r.Metadata.URL(x.Execution),
-		wrapper.EnvClockFile + "=" + r.clockFile(),
 		// The wrapper gives the harness its own Claude Code directories.
-		"CLAUDE_CONFIG_DIR=", "CLAUDE_CODE_PROJECT_DIR_NAME=",
+		"CLAUDE_CONFIG_DIR=" + claudeConfig, "CLAUDE_CODE_PROJECT_DIR_NAME=",
+	}
+	// The wrappers' limits read the environment's clock, unless it is the
+	// wall clock.
+	if !r.env.Clock.real {
+		env = append(env, wrapper.EnvClockFile+"="+r.clockFile())
 	}
 	if r.env.Proxy != nil {
 		env = append(env, "HTTP_PROXY="+r.env.Proxy.URL(), "NO_PROXY=", "no_proxy=")
@@ -339,6 +450,35 @@ func (r *Runner) Signal(execution string, sig os.Signal) {
 	if err := r.Fake.Signal(execution, sig); err != nil {
 		r.env.t.Fatal(err)
 	}
+}
+
+// RunUser is the run user of the wrappers (see EnvRunUser).
+func (r *Runner) RunUser() *user.User { return r.runUser }
+
+// forRunUser gives each directory under each of dirs (made when it is not
+// there) to the run user, when the tests run as root: the agent's fake
+// Docker and solidtrace CLI write there.
+func (r *Runner) forRunUser(dirs ...string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	uid, _ := strconv.Atoi(r.runUser.Uid)
+	gid, _ := strconv.Atoi(r.runUser.Gid)
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return err
+			}
+			return os.Chown(path, uid, gid)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenewIdentity writes a new workload identity JWT for the Execution, at

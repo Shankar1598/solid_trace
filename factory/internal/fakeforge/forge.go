@@ -96,6 +96,8 @@ type Forge struct {
 	holdNext *hang
 	// refusedGit are the repositories whose git requests get 401.
 	refusedGit map[string]bool
+	// apiCalls counts the REST API calls.
+	apiCalls int
 }
 
 type hang struct {

@@ -88,6 +88,37 @@ func stop(ctx context.Context, args []string, env Env) int {
 	return 0
 }
 
+// message sends a message to a Run.
+func message(ctx context.Context, args []string, env Env) int {
+	flags := flag.NewFlagSet("message", flag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
+	positional, ok := parseInterspersed(flags, args)
+	if !ok {
+		return 2
+	}
+	var text string
+	if len(positional) > 1 {
+		text = strings.TrimSpace(strings.Join(positional[1:], " "))
+	}
+	if text == "" {
+		fmt.Fprintln(env.Stderr, "solidtrace message: give a RUN_ID and the message")
+		return 2
+	}
+	client, err := env.dispatcher(*dispatcherURL)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace message: %v\n", err)
+		return 1
+	}
+	accepted, err := client.Message(ctx, positional[0], text)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace message: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(env.Stdout, "Message %s is accepted for Run %s.\n", accepted.ID, accepted.RunID)
+	return 0
+}
+
 // runs is 'runs list' and 'runs get <id>'.
 func runs(ctx context.Context, args []string, env Env) int {
 	if len(args) == 0 || (args[0] != "list" && args[0] != "get") {

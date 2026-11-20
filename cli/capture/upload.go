@@ -41,7 +41,10 @@ type upload struct {
 	in   Input
 	repo Repository
 	// root is the Claude project directory: the paths are relative to it.
-	root   string
+	root string
+	// dir is the project directory of a Run's upload: each read goes
+	// through it (RunUpload.Dir).
+	dir    *os.Root
 	server map[string]agentapi.AgentSessionFile
 	// settledBefore: a file that did not change since then is sent whole
 	// (the sweep). Zero in a hook's call.
@@ -101,7 +104,11 @@ func (u *upload) run(ctx context.Context) error {
 // project directory, in a fixed order.
 func (u *upload) paths() ([]string, error) {
 	paths := []string{}
-	if info, err := os.Lstat(filepath.Join(u.root, u.in.SessionID+".jsonl")); err == nil && info.Mode().IsRegular() {
+	lstat := func(name string) (fs.FileInfo, error) { return os.Lstat(filepath.Join(u.root, name)) }
+	if u.dir != nil {
+		lstat = u.dir.Lstat
+	}
+	if info, err := lstat(u.in.SessionID + ".jsonl"); err == nil && info.Mode().IsRegular() {
 		paths = append(paths, u.in.SessionID+".jsonl")
 	}
 	dirs := []string{u.in.SessionID}
@@ -110,7 +117,7 @@ func (u *upload) paths() ([]string, error) {
 	}
 	for _, dir := range dirs {
 		var err error
-		if paths, err = u.walk(paths, filepath.Join(u.root, dir)); err != nil {
+		if paths, err = u.walk(paths, dir); err != nil {
 			return nil, err
 		}
 	}
@@ -118,22 +125,31 @@ func (u *upload) paths() ([]string, error) {
 	return paths, nil
 }
 
-// walk adds each regular file under dir, relative to the project
-// directory. A dir that is not there adds nothing.
+// walk adds each regular file under dir, a directory of the project
+// directory, relative to the project directory. A dir that is not there
+// adds nothing. A Run's upload walks through u.dir, so that no link takes
+// the walk out of the project directory.
 func (u *upload) walk(paths []string, dir string) ([]string, error) {
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	walk, rel := filepath.WalkDir, func(p string) (string, error) { return filepath.Rel(u.root, p) }
+	if u.dir != nil {
+		walk = func(root string, fn fs.WalkDirFunc) error { return fs.WalkDir(u.dir.FS(), root, fn) }
+		rel = func(p string) (string, error) { return p, nil }
+	} else {
+		dir = filepath.Join(u.root, dir)
+	}
+	err := walk(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if p == dir && errors.Is(err, fs.ErrNotExist) {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
 			return err
 		}
 		if d.Type().IsRegular() {
-			rel, err := filepath.Rel(u.root, p)
+			r, err := rel(p)
 			if err != nil {
 				return err
 			}
-			paths = append(paths, filepath.ToSlash(rel))
+			paths = append(paths, filepath.ToSlash(r))
 		}
 		return nil
 	})
@@ -287,12 +303,7 @@ func (u *upload) open(path string) (*os.File, error) {
 	if u.forRun == nil {
 		return os.Open(filepath.Join(u.root, filepath.FromSlash(path)))
 	}
-	root, err := os.OpenRoot(u.root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	f, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := u.dir.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

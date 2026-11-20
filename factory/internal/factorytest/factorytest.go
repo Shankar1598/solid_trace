@@ -52,17 +52,26 @@ type Clock struct {
 	// time: the Runner renews the workload identities, as Nomad does
 	// before they expire.
 	beforeMove func(next time.Time)
+	// real makes the clock the wall clock (RealClock).
+	real bool
 }
 
 // Now is the clock's time.
 func (c *Clock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.real {
+		return time.Now()
+	}
 	return c.now
 }
 
-// Advance moves the clock by d, on the agent machines too.
+// Advance moves the clock by d, on the agent machines too. A RealClock
+// does not move.
 func (c *Clock) Advance(d time.Duration) {
+	if c.real {
+		panic("factorytest: a RealClock does not move")
+	}
 	c.moving.Lock()
 	defer c.moving.Unlock()
 	c.mu.Lock()
@@ -122,6 +131,8 @@ type Env struct {
 	Notion *fakenotion.Notion
 	// runner is a Runner that is not the fake (WithRunner).
 	runner dispatcher.Runner
+	// http is the Dispatcher's client for SolidTrace (nil is its default).
+	http *http.Client
 
 	current atomic.Pointer[dispatcher.Dispatcher]
 	server  *httptest.Server
@@ -132,6 +143,9 @@ type Env struct {
 	// projects counts the Projects that Project made, for their ids.
 	projects int64
 	admin    *Person
+	// afterStart are the steps of the options that need the started
+	// Dispatcher, such as its database.
+	afterStart []func()
 	// checked is the clock time of the schedule loop's last pass.
 	checked atomic.Pointer[time.Time]
 	// closeChecked is the clock time of the close loop's last pass.
@@ -430,18 +444,24 @@ func New(t testing.TB, options ...Option) *Env {
 	}
 	e.start()
 	t.Cleanup(func() { e.current.Load().Close() })
+	for _, step := range e.afterStart {
+		step()
+	}
 	return e
 }
 
 func (e *Env) start() {
 	e.t.Helper()
+	// The dispatch loop looks at the queue often, so that a Run that
+	// waits for a free account starts soon after the clock passes a reset
+	// time or the operator adds an account.
 	options := dispatcher.Options{Now: e.Clock.Now, Version: e.Version,
-		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry,
+		Log: slog.New(slog.NewTextHandler(&e.logs, nil)), EventRetry: eventRetry, DispatchEvery: 50 * time.Millisecond,
 		WebhookKinds: []dispatcher.WebhookKind{e.Source.WebhookKind(), e.Source.OtherWebhookKind()}, ReconcileTick: reconcileTick,
 		ScheduleEvery: scheduleEvery, ScheduleChecked: func(at time.Time) { e.checked.Store(&at) },
 		BackstopEvery: backstopEvery,
 		CloseEvery:    scheduleEvery, CloseChecked: func(at time.Time) { e.closeChecked.Store(&at) },
-		Trackers: []dispatcher.Tracker{e.Tracker.Tracker()}}
+		Trackers: []dispatcher.Tracker{e.Tracker.Tracker()}, HTTP: e.http}
 	switch {
 	case e.Runner != nil:
 		options.Runner = e.Runner
@@ -457,6 +477,44 @@ func (e *Env) start() {
 
 // URL is the Dispatcher's private listener.
 func (e *Env) URL() string { return e.server.URL }
+
+// Operator runs the operator command 'dispatcher accounts args...' on the
+// Dispatcher's database, with stdin, as an operator does on the server VM.
+func (e *Env) Operator(stdin string, args ...string) Result {
+	var stdout, stderr bytes.Buffer
+	values := map[string]string{dispatcher.EnvDatabase: e.Config.Database,
+		dispatcher.EnvEncryptionKey: e.Config.EncryptionKey}
+	code := dispatcher.AccountsCommand(args, func(name string) string { return values[name] }, e.Clock.Now,
+		strings.NewReader(stdin), &stdout, &stderr)
+	return Result{Stdout: stdout.String(), Stderr: stderr.String(), Code: code}
+}
+
+// AddAccount adds a subscription account to the pool with the operator
+// command.
+func (e *Env) AddAccount(name, token string) {
+	e.t.Helper()
+	if got := e.Operator(token+"\n", "add", name); got.Code != 0 {
+		e.t.Fatalf("add the account %s: exit %d\n%s%s", name, got.Code, got.Stdout, got.Stderr)
+	}
+}
+
+// RemoveAccount takes an account out of the pool with the operator
+// command.
+func (e *Env) RemoveAccount(name string) {
+	e.t.Helper()
+	if got := e.Operator("", "remove", name); got.Code != 0 {
+		e.t.Fatalf("remove the account %s: exit %d\n%s%s", name, got.Code, got.Stdout, got.Stderr)
+	}
+}
+
+// MarkAtLimit marks an account at its usage limit until the reset time,
+// as the Credential source does when a result reports the usage limit.
+func (e *Env) MarkAtLimit(name string, until time.Time) {
+	e.t.Helper()
+	if err := e.current.Load().MarkAtLimit(name, until); err != nil {
+		e.t.Fatal(err)
+	}
+}
 
 // WebhookListenerURL is the Dispatcher's webhook listener (the address
 // that Caddy sends /webhooks/* to).
@@ -623,4 +681,33 @@ func (e *Env) APIAs(userAgent, token, method, path string, body any) Answer {
 	defer resp.Body.Close()
 	answer, _ := io.ReadAll(resp.Body)
 	return Answer{resp.StatusCode, resp.Header, answer}
+}
+
+// RealClock makes the environment's clock the wall clock, for a
+// Dispatcher that calls the real SolidTrace (AtSolidTrace): SolidTrace
+// checks the expiry of the tokens with its own clock. The clock does not
+// move, and the wrappers' limits use the wall clock too.
+func RealClock(e *Env) {
+	e.Clock.mu.Lock()
+	defer e.Clock.mu.Unlock()
+	e.Clock.real = true
+}
+
+// AtSolidTrace gives the Dispatcher a real SolidTrace in place of the
+// recorder: Console at consoleURL (the token checks, the child tokens and
+// the MCP server), EventStore's ingest at ingestURL (the run events and
+// the wrappers' uploads), and token, the Dispatcher's own API token there.
+// The recorder still runs, but the Dispatcher does not call it. Seam 5
+// (the flow stack) uses it, with RealClock.
+func AtSolidTrace(consoleURL, ingestURL, token string) Option {
+	return func(e *Env) {
+		e.Config.SolidTraceURL = consoleURL
+		e.Config.SolidTraceIngestURL = ingestURL
+		e.Config.SolidTraceToken = token
+	}
+}
+
+// WithHTTP gives the Dispatcher client for its calls to SolidTrace.
+func WithHTTP(client *http.Client) Option {
+	return func(e *Env) { e.http = client }
 }

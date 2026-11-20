@@ -55,6 +55,10 @@ type Delivery struct {
 	// Entity is the entity to reconcile, such as a ticket or a PR ("" is
 	// the whole connection).
 	Entity string
+	// Ignored is true for a delivery that needs no reconcile step, such
+	// as a push to a work-in-progress ref. The Dispatcher keeps its id
+	// and time, and queues nothing.
+	Ignored bool
 }
 
 // WebhookSource is one connection of a WebhookKind.
@@ -159,6 +163,9 @@ func (d *Dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d.serverError(w, "keep the webhook", err)
 		return
+	}
+	if delivery.Ignored {
+		fresh = false
 	}
 	if fresh {
 		d.reconciles.add(reconcileJob{source: source.ID, entity: delivery.Entity, announced: true}, now)

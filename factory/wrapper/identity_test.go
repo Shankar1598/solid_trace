@@ -14,6 +14,7 @@ import (
 	"github.com/solidtrace/cli/agentsocket"
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
+	"github.com/solidtrace/factory/wrapper"
 )
 
 // twoRunningRuns starts two Runs whose agents wait at a gate, and gives
@@ -72,7 +73,7 @@ func TestTheTaskCallNeedsTheWorkloadIdentityOfItsExecution(t *testing.T) {
 		"a JWT with alg HS256": env.Runner.SignWithAlg("HS256", valid),
 	}
 	for name, token := range refused {
-		for _, verb := range []string{"task", "report", "end", "commands"} {
+		for _, verb := range []string{"task", "report", "end", "commands", "message", "compare-end"} {
 			got := env.API(token, "POST", "/api/v1/executions/"+a+"/"+verb, map[string]string{})
 			if got.Status != http.StatusUnauthorized {
 				t.Errorf("%s call with %s: %d %s", verb, name, got.Status, got.Body)
@@ -148,6 +149,9 @@ func TestCallsOnAnEndedExecutionAreRefused(t *testing.T) {
 		"end":    dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndHarnessExited},
 		// The long poll answers at once, so the wrapper stops asking.
 		"commands": dispatcherapi.CommandsRequest{},
+		"message": dispatcherapi.MessageEvent{ID: "a-message", Event: dispatcherapi.MessageWritten,
+			At: env.Clock.Now()},
+		"compare-end": dispatcherapi.CompareEnd{},
 	} {
 		got := env.API(identity, "POST", "/api/v1/executions/"+execution+"/"+verb, body)
 		if got.Status != http.StatusConflict {
@@ -186,6 +190,11 @@ func TestTheAgentGetsItsOwnSocketAndNoneOfTheWrappersSettings(t *testing.T) {
 	// The Runner's machine gives the wrapper an agent's socket of its own:
 	// the agent must get the socket of its Execution.
 	t.Setenv(agentsocket.Env, "/inherited/agent.sock")
+	// Its Nomad gives it the Runner's names, and its environment can try to
+	// turn the subprocess environment scrub on (it stops each Bash call).
+	t.Setenv("NOMAD_TOKEN", "decoy-runner-token")
+	t.Setenv("NOMAD_SECRETS_DIR", "/decoy/secrets")
+	t.Setenv(wrapper.EnvSubprocessScrub, "1")
 	env, ana := newEnv(t)
 	seen := filepath.Join(t.TempDir(), "env")
 	wait, open := gate(t)
@@ -204,10 +213,13 @@ func TestTheAgentGetsItsOwnSocketAndNoneOfTheWrappersSettings(t *testing.T) {
 		t.Fatal("the agent did not write its environment")
 	}
 
-	var sockets []string
+	var sockets, scrub []string
 	for _, kv := range strings.Split(string(environ), "\n") {
-		if strings.HasPrefix(kv, "WRAPPER_") {
-			t.Errorf("the agent has the wrapper's setting %s", strings.SplitN(kv, "=", 2)[0])
+		if strings.HasPrefix(kv, "WRAPPER_") || strings.HasPrefix(kv, "NOMAD_") {
+			t.Errorf("the agent has the wrapper's or the Runner's setting %s", strings.SplitN(kv, "=", 2)[0])
+		}
+		if value, ok := strings.CutPrefix(kv, wrapper.EnvSubprocessScrub+"="); ok {
+			scrub = append(scrub, value)
 		}
 		if strings.HasPrefix(kv, agentsocket.Env+"=") {
 			sockets = append(sockets, strings.TrimPrefix(kv, agentsocket.Env+"="))
@@ -217,12 +229,17 @@ func TestTheAgentGetsItsOwnSocketAndNoneOfTheWrappersSettings(t *testing.T) {
 	if len(sockets) != 1 || sockets[0] != socket {
 		t.Errorf("the agent's socket is %q, want %q", sockets, socket)
 	}
-	// Only the wrapper's user can send a report, or read the forge token.
+	if len(scrub) != 1 || scrub[0] != "0" {
+		t.Errorf("the subprocess environment scrub is %q, want off (0)", scrub)
+	}
+	// The wrapper's user and the run user's group send a report and read
+	// the forge token; nobody changes the secret files but the wrapper.
 	dir := filepath.Dir(socket)
 	for path, want := range map[string]os.FileMode{
-		socket: 0o600,
-		filepath.Join(dir, "secrets", "forge-token"):    0o600,
-		filepath.Join(dir, "secrets", "git-credential"): 0o700,
+		socket:                        0o660,
+		filepath.Join(dir, "secrets"): 0o750,
+		filepath.Join(dir, "secrets", "forge-token"):    0o440,
+		filepath.Join(dir, "secrets", "git-credential"): 0o550,
 	} {
 		info, err := os.Stat(path)
 		if err != nil {

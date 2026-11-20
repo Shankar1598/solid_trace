@@ -9,9 +9,7 @@ import (
 	"io/fs"
 	"math"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -187,6 +185,7 @@ func (e *execution) runCheck(ctx context.Context, environ []string, c dispatcher
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = gitWait
+	e.runUser.start(cmd)
 	out := &tail{max: 4 * dispatcherapi.MaxCheckOutput}
 	cmd.Stdout, cmd.Stderr = out, out
 	fmt.Fprintf(e.log, "wrapper: a check: %s\n", c.Command)
@@ -255,40 +254,39 @@ func (e *execution) addEvidence(report *dispatcherapi.Report) (commit func(accep
 	report.Checks = slices.Clone(e.checks)
 	e.checksMu.Unlock()
 	report.DeliveredMessages = int(e.delivered.Load())
-	dir := filepath.Join(e.uploads.projectDir, evidenceDir)
-	final := filepath.Join(dir, reportFile)
-	next := filepath.Join(e.uploads.projectDir, nextReportFile)
-	if err := os.WriteFile(next, []byte(reportText(*report)), 0o600); err != nil {
+	// The project directory is the run user's: the wrapper (root) writes
+	// in it only through the directory that it opened before the run
+	// user's first process, so a link of the agent's takes no write out
+	// of it. The run user can read the report.
+	root := e.uploads.dir
+	final := evidenceDir + "/" + reportFile
+	if err := root.WriteFile(nextReportFile, []byte(reportText(*report)), 0o644); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write evidence/report.md:", err)
 	}
-	report.Evidence = evidencePaths(dir, e.log)
+	report.Evidence = evidencePaths(root.FS(), e.log)
 	return func(accepted bool) {
 		if !accepted {
-			os.Remove(next)
+			root.Remove(nextReportFile)
 			return
 		}
-		if err := os.Rename(next, final); err != nil {
+		if err := root.Rename(nextReportFile, final); err != nil {
 			fmt.Fprintln(e.log, "wrapper: write evidence/report.md:", err)
 		}
 	}
 }
 
-// evidencePaths gives the paths of the regular files under dir, as
-// evidence/<path>, sorted, at most MaxEvidence, with evidence/report.md.
+// evidencePaths gives the paths of the regular files under evidence/ of
+// the project directory, as evidence/<path>, sorted, at most MaxEvidence,
+// with evidence/report.md.
 // A link is not Evidence: the upload leaves it out. A path that the
 // Dispatcher refuses (not UTF-8), or that takes more than MaxEvidencePath
 // bytes in JSON, is not Evidence either, and the log tells it.
-func evidencePaths(dir string, log io.Writer) []string {
+func evidencePaths(project fs.FS, log io.Writer) []string {
 	var paths []string
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || !d.Type().IsRegular() {
+	_ = fs.WalkDir(project, evidenceDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() || p == evidenceDir+"/"+reportFile {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil || rel == reportFile {
-			return nil
-		}
-		p := evidenceDir + "/" + filepath.ToSlash(rel)
 		if !utf8.ValidString(p) || jsonLen(p)-2 > dispatcherapi.MaxEvidencePath {
 			fmt.Fprintf(log, "wrapper: %q is not Evidence: a path is UTF-8 text of at most %d bytes in JSON\n",
 				p, dispatcherapi.MaxEvidencePath)

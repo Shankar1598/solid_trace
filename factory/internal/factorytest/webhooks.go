@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/fakesource"
 	"github.com/solidtrace/factory/internal/faketracker"
 )
@@ -108,4 +109,31 @@ func (e *Env) TrackerWebhook(path, secret, delivery, ticket string) Answer {
 	e.t.Helper()
 	header, body := faketracker.Delivery(secret, delivery, ticket)
 	return e.Webhook(path, header, body)
+}
+
+// ForgeWebhooks saves secret as the webhook secret of the forge
+// connection that Project made (ForgeConnection), and returns the path of
+// its webhook URL, /webhooks/bitbucket/<id>.
+func (e *Env) ForgeWebhooks(secret string) string {
+	e.t.Helper()
+	a := e.Admin().API("PUT", "/api/v1/connections/"+ForgeConnection+"/webhook-secret",
+		dispatcherapi.SaveWebhookSecret{Secret: secret})
+	if a.Status != http.StatusOK {
+		e.t.Fatalf("save the webhook secret of %s: %d %s", ForgeConnection, a.Status, a.Body)
+	}
+	var c dispatcherapi.Connection
+	a.JSON(e.t, &c)
+	path, ok := strings.CutPrefix(c.WebhookURL, PublicWebhookURL)
+	if !ok || !strings.HasPrefix(path, "/webhooks/bitbucket/") {
+		e.t.Fatalf("the forge connection has the webhook URL %q, not one under %s/webhooks/bitbucket/",
+			c.WebhookURL, PublicWebhookURL)
+	}
+	return path
+}
+
+// ForgeWebhook sends a Bitbucket webhook of the event to path, with the
+// request UUID, signed with secret.
+func (e *Env) ForgeWebhook(path, secret, requestUUID, event string, body []byte) Answer {
+	e.t.Helper()
+	return e.Webhook(path, fakeforge.Delivery(secret, requestUUID, event, body), body)
 }

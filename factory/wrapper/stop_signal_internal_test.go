@@ -36,7 +36,7 @@ func TestASIGTERMAfterAStopCommandStartsNoPreemptionHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config{dispatcherURL: dispatcher.URL, execution: "e-1", identityFile: identity}
-	e := newExecution(context.Background(), cfg, newClient(cfg), dispatcherapi.Task{}, io.Discard, nil)
+	e := newExecution(context.Background(), cfg, newClient(cfg), dispatcherapi.Task{}, io.Discard, nil, runUser{})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

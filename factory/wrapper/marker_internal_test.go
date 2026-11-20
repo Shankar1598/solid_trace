@@ -16,7 +16,7 @@ import (
 // only the halt's interrupt request does.
 func TestAfterTheMarkerNoMessageIsWrittenToStdinButTheInterruptRequestIs(t *testing.T) {
 	r, w := io.Pipe()
-	e := newExecution(context.Background(), config{}, nil, dispatcherapi.Task{}, io.Discard, nil)
+	e := newExecution(context.Background(), config{}, nil, dispatcherapi.Task{}, io.Discard, nil, runUser{})
 	e.stdin = w
 	lines := make(chan string, 8)
 	go func() {
@@ -27,12 +27,22 @@ func TestAfterTheMarkerNoMessageIsWrittenToStdinButTheInterruptRequestIs(t *test
 		close(lines)
 	}()
 
-	if err := e.writeMessage([]byte(`{"type":"user","n":1}`)); err != nil {
+	if err := e.writeTask([]byte(`{"type":"user","n":1}`)); err != nil {
 		t.Fatalf("a message before the marker: %v", err)
 	}
 	e.setMarker(dispatcherapi.EndPreempted)
-	if err := e.writeMessage([]byte(`{"type":"user","n":2}`)); !errors.Is(err, errMarked) {
+	if err := e.writeTask([]byte(`{"type":"user","n":2}`)); !errors.Is(err, errMarked) {
 		t.Errorf("a message after the marker: %v, want refused", err)
+	}
+	// A person's message after the marker is not written: the end call
+	// gives it back.
+	e.mu.Lock()
+	e.stdin = w
+	e.mu.Unlock()
+	e.openInbox()
+	e.takeMessage(dispatcherapi.Message{ID: "m-1", Text: "and the docs too"}, 1)
+	if states := e.messageStates(); len(states) != 0 {
+		t.Errorf("a person's message after the marker: states %+v, want not written", states)
 	}
 	if err := e.writeStdin(interruptRequest(), nil); err != nil {
 		t.Errorf("the interrupt request after the marker: %v", err)
@@ -56,10 +66,10 @@ func TestAfterTheMarkerNoMessageIsWrittenToStdinButTheInterruptRequestIs(t *test
 // stops the write.
 func TestAStdinWriteThatIsBlockedDoesNotHoldTheMarkerOrTheClose(t *testing.T) {
 	_, w := io.Pipe()
-	e := newExecution(context.Background(), config{}, nil, dispatcherapi.Task{}, io.Discard, nil)
+	e := newExecution(context.Background(), config{}, nil, dispatcherapi.Task{}, io.Discard, nil, runUser{})
 	e.stdin = w
 	written := make(chan error, 1)
-	go func() { written <- e.writeMessage([]byte(`{"type":"user","n":1}`)) }()
+	go func() { written <- e.writeTask([]byte(`{"type":"user","n":1}`)) }()
 	// The write blocks, because no one reads the pipe.
 	select {
 	case err := <-written:
@@ -78,7 +88,7 @@ func TestAStdinWriteThatIsBlockedDoesNotHoldTheMarkerOrTheClose(t *testing.T) {
 		}
 	}
 	returned("the marker", func() { e.setMarker(dispatcherapi.EndPreempted) })
-	if err := e.writeMessage([]byte(`{"type":"user","n":2}`)); !errors.Is(err, errMarked) {
+	if err := e.writeTask([]byte(`{"type":"user","n":2}`)); !errors.Is(err, errMarked) {
 		t.Errorf("a message after the marker: %v, want refused", err)
 	}
 	returned("the close of stdin", e.closeStdin)

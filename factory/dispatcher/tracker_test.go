@@ -411,7 +411,8 @@ func TestTheReadyStatusIsASettingOfTheConnection(t *testing.T) {
 	var c dispatcherapi.Connection
 	a.JSON(t, &c)
 	if a.Status != http.StatusOK || c.Tracker == nil || *c.Tracker != (dispatcherapi.TrackerSettings{ReadyStatus: "Go",
-		RoutingField: faketracker.RoutingField}) {
+		RoutingField: faketracker.RoutingField, WorkingStatus: "Agent working", ReviewStatus: "In review",
+		WaitingStatus: "Waiting on you"}) {
 		t.Fatalf("the save of the tracker settings: %d %s, want Go and the default routing field", a.Status, a.Body)
 	}
 

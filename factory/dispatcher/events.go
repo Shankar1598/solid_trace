@@ -159,6 +159,9 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	event["run.started_by.kind"] = actorKind
 	event["run.started_by.id"] = actorID
 	event["run.started_by.name"] = actorName
+	if err := queueWriteBack(tx, at, runID, kind, details); err != nil {
+		return err
+	}
 	return addToOutbox(tx, event)
 }
 
@@ -171,12 +174,14 @@ func addToOutbox(tx *sql.Tx, log map[string]any) error {
 	return err
 }
 
-// commit commits tx, and wakes the sender: tx can hold run events.
+// commit commits tx, and wakes the sender and the write-back loop: tx can
+// hold run events and write-back steps.
 func (s *store) commit(tx *sql.Tx) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.wakeSender()
+	s.wakeWriteBack()
 	return nil
 }
 

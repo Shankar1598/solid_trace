@@ -35,7 +35,12 @@
 # above Rails' 3, and database.yml's max_connections reads the same
 # RAILS_MAX_THREADS so the pool matches. ConsoleEnvironment::DEFAULT_WEB_THREADS
 # copies the 10 for Settings → Instance.
-threads_count = Rails.env.development? ? 1 : ENV.fetch("RAILS_MAX_THREADS", 10)
+#
+# Development keeps Rails' 3, not 1: the Stop button and the Factory section
+# call the Dispatcher, which checks Console's token with Console's
+# introspection during the same request. One thread would wait on itself
+# until the Dispatcher call times out (the Seam 5 flows, e2e/flows/runs.spec.ts).
+threads_count = Rails.env.development? ? 3 : ENV.fetch("RAILS_MAX_THREADS", 10)
 threads threads_count, threads_count
 
 # Specifies the `port` that Puma will listen on to receive requests; default is 3000.
