@@ -217,6 +217,18 @@ func (r *Runner) Stop(ctx context.Context, id string) error {
 	return nil
 }
 
+// Signal sends sig to the Execution's wrapper only, as the machine's
+// shutdown does before the machine goes. Nothing is killed after it.
+func (r *Runner) Signal(id string, sig os.Signal) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.procs[id]
+	if !ok || p.cmd == nil || p.state.Ended() {
+		return fmt.Errorf("fakerunner: no running Execution %q", id)
+	}
+	return p.cmd.Process.Signal(sig)
+}
+
 // Freeze stops the Execution's wrapper process with SIGSTOP, as a wrapper
 // that hangs: it makes no call and its timers do not fire. The processes
 // that it started go on. Stop and LoseMachine still end it.

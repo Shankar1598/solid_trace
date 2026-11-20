@@ -313,6 +313,11 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		runState, reason, question, summary, flags, runID, dispatcherapi.StateRunning); err != nil {
 		return err
 	}
+	if end.Preemption != nil {
+		if err := recordEvent(tx, at, runID, eventPreemption, preemptionDetails(id, *end.Preemption)); err != nil {
+			return err
+		}
+	}
 	details := map[string]any{"execution.id": id, "execution.reason": endReason}
 	if end.ExitCode != nil {
 		details["execution.exit_code"] = *end.ExitCode
@@ -332,6 +337,54 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 // message queued again: its end leaves the Run queued for the new
 // Execution.
 const ownStateSQL = `(state = ? OR (state = ? AND NOT ?))`
+
+// preemptionDetails are the Attributes of a preemption event (spec V9):
+// the reason, the seconds from the notice to the saved state, what was
+// saved, and the age of the last checkpoint.
+func preemptionDetails(execution string, p dispatcherapi.Preemption) map[string]any {
+	details := map[string]any{
+		"execution.id":                execution,
+		"preemption.reason":           p.Reason,
+		"preemption.notice_at":        p.NoticeAt.UTC().Format(time.RFC3339Nano),
+		"preemption.seconds_to_saved": p.SecondsToSaved,
+		"preemption.seconds_to_end":   p.SecondsToEnd,
+		"preemption.wip_commit":       p.WIPCommit,
+		"preemption.skipped":          nonNil(p.Skipped),
+		"preemption.problems":         nonNil(p.Problems),
+	}
+	if p.TranscriptOffset != nil {
+		details["preemption.transcript_offset"] = *p.TranscriptOffset
+	}
+	if p.CheckpointAgeSeconds != nil {
+		details["preemption.checkpoint_age_seconds"] = *p.CheckpointAgeSeconds
+	}
+	return details
+}
+
+// recordPreempting records the wrapper's preempting call on the running
+// Execution's Run.
+func (s *store) recordPreempting(id string, p dispatcherapi.Preempting, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var runID string
+	err = tx.QueryRow(`SELECT run_id FROM executions WHERE id = ? AND state = ?`, id,
+		dispatcherapi.ExecutionRunning).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errEnded
+	}
+	if err != nil {
+		return err
+	}
+	err = recordEvent(tx, at, runID, eventPreempting, map[string]any{"execution.id": id,
+		"preemption.reason": p.Reason, "preemption.notice_at": p.NoticeAt.UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		return err
+	}
+	return s.commit(tx)
+}
 
 // failExecution ends an Execution that has not ended, with reason, and
 // fails its Run if the Execution sets its state (ownStateSQL). exitCode is the

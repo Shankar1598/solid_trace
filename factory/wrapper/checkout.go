@@ -291,6 +291,12 @@ func (e *execution) pushRepository(ctx context.Context, environ []string) (run f
 	run = func(args ...string) error {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir, cmd.Env = dir, env
+		// When ctx ends (the preempting marker, or pushWait), the push's
+		// process group is killed: git and its remote helper, which holds
+		// the output open. After gitWait the wait stops all the same.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.WaitDelay = gitWait
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git %s: %v: %s", args[0], err, lastLines(string(out), 5))
 		}

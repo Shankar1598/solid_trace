@@ -63,6 +63,17 @@ func (r *Recorder) RefuseChildTokens(status int) {
 	r.refuseChildren = status
 }
 
+// RefusePath makes each later upload of path (as "evidence/notes.txt")
+// get 400, as SolidTrace gives for a path that it refuses.
+func (r *Recorder) RefusePath(path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.refusePaths == nil {
+		r.refusePaths = map[string]bool{}
+	}
+	r.refusePaths[path] = true
+}
+
 // ChildTokens are the child tokens that the Dispatcher made, oldest first.
 func (r *Recorder) ChildTokens() []ChildToken {
 	r.mu.Lock()
@@ -211,6 +222,10 @@ func (r *Recorder) serveAgentSessions(w http.ResponseWriter, req *http.Request, 
 	up := Upload{Session: session, Path: q.Get("path"), Version: uint32(version), Offset: offset, Token: token,
 		RunID: q.Get("run_id"), Project: q.Get("project"), Repository: q.Get("repository"), Folder: q.Get("folder"),
 		Bytes: body}
+	if r.refusePaths[up.Path] {
+		answerJSON(w, http.StatusBadRequest, map[string]string{"error": "the path is refused"})
+		return
+	}
 	if up.RunID == "" || up.Project == "" {
 		answerJSON(w, http.StatusBadRequest, map[string]string{"error": "A token of a Run sends run_id and project."})
 		return
