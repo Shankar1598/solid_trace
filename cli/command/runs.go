@@ -116,6 +116,43 @@ func message(ctx context.Context, args []string, env Env) int {
 		return 1
 	}
 	fmt.Fprintf(env.Stdout, "Message %s is accepted for Run %s.\n", accepted.ID, accepted.RunID)
+	if accepted.Continued {
+		fmt.Fprintln(env.Stdout, "The Run is queued: a new Execution continues its Agent session with the message.")
+	}
+	return 0
+}
+
+// interrupt interrupts the agent of a running Run, with a message or
+// none.
+func interrupt(ctx context.Context, args []string, env Env) int {
+	flags := flag.NewFlagSet("interrupt", flag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
+	positional, ok := parseInterspersed(flags, args)
+	if !ok {
+		return 2
+	}
+	if len(positional) == 0 {
+		fmt.Fprintln(env.Stderr, "solidtrace interrupt: give a RUN_ID, and a message if you have one")
+		return 2
+	}
+	text := strings.TrimSpace(strings.Join(positional[1:], " "))
+	client, err := env.dispatcher(*dispatcherURL)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace interrupt: %v\n", err)
+		return 1
+	}
+	accepted, err := client.Interrupt(ctx, positional[0], text)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace interrupt: %v\n", err)
+		return 1
+	}
+	if accepted.MessageID != "" {
+		fmt.Fprintf(env.Stdout, "Run %s is interrupted. Its agent gets message %s when its turn stops.\n",
+			accepted.RunID, accepted.MessageID)
+		return 0
+	}
+	fmt.Fprintf(env.Stdout, "Run %s is interrupted. Its Execution ends, and the Run waits on a person.\n", accepted.RunID)
 	return 0
 }
 

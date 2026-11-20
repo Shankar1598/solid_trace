@@ -108,6 +108,23 @@ func TestAMessageDuringAToolCallReachesTheAgentWhenTheCallEndsInTheSameTurn(t *t
 	if !(seq(accepted) < seq(written) && seq(written) < seq(delivered)) {
 		t.Errorf("the events are not accepted, written, delivered: %v %v %v", seq(accepted), seq(written), seq(delivered))
 	}
+	// Each event names the message by the wrapper's uuid and the hash of its
+	// text, with the actor, so that the Agent session page can say who said
+	// it.
+	for _, ev := range []map[string]any{accepted, written, delivered} {
+		if ev["message.id"] != mid || ev["message.sha256"] != dispatcherapi.TextSHA256("Use the new API") ||
+			ev["actor.kind"] != "person" || ev["actor.name"] != "ana@example.com" {
+			t.Errorf("the %v event: message %v, hash %v, actor %v %v", ev["event.kind"], ev["message.id"],
+				ev["message.sha256"], ev["actor.kind"], ev["actor.name"])
+		}
+	}
+	// The task is a message of the factory, with the uuid that the
+	// Execution's task has.
+	started := eventsOf(env, id, "execution_started")
+	if len(started) != 1 || started[0]["message.id"] != dispatcherapi.TaskMessageID(onlyExecution(t, run).ID) ||
+		started[0]["message.sha256"] != dispatcherapi.TextSHA256("Fix the cart") {
+		t.Errorf("the started event does not name the task as a message: %v", started)
+	}
 	// The agent got it when the tool call ended, not at the write.
 	if gap := timeAttribute(t, delivered, "message.at").Sub(timeAttribute(t, written, "message.at")); gap < 350*time.Millisecond {
 		t.Errorf("the delivered time is %s after the write: it is not the time of the replay echo", gap)
@@ -183,7 +200,6 @@ func TestTheStopHookRefusesOneTimeForAMessageAfterTheReport(t *testing.T) {
 
 func TestAWrittenMessageWithNoEchoGoesToANewExecutionAfter30Seconds(t *testing.T) {
 	env, ana := newEnv(t)
-	env.Runner.KeepAgentSessions()
 	here, reached := marker(t)
 	wait, open := gate(t)
 	// The harness reads the message and never delivers it.
@@ -252,7 +268,6 @@ func compareEnd(t *testing.T, env *factorytest.Env, execution string, after int6
 
 func TestCompareAndEndGivesALaterMessageAndAfterItsAgreementANewMessageGoesToANewExecution(t *testing.T) {
 	env, ana := newEnv(t)
-	env.Runner.KeepAgentSessions()
 	here, reached := marker(t)
 	wait, open := gate(t)
 	env.Runner.Agent(takeTask, initLine(t), here, wait, readMessage, deliverMidTurn(1),
@@ -332,6 +347,10 @@ func TestTheDispatcherRefusesAMessageItCannotTake(t *testing.T) {
 		waitForEnd)
 	done := start(t, env, ana, "Fix the cart")
 	waitFor(t, env, ana, done, dispatcherapi.StateDone)
+	// The Run is closed: 30 days with no activity.
+	env.Clock.Advance(closeAfter)
+	env.CheckClosedRuns()
+	closedEvent(t, env, done, dispatcherapi.StateDone, "", "no_activity")
 	other := env.PersonIn("Bo", recorder.Organization{ID: 8, Slug: "other", Name: "Other"}, "admin")
 
 	for name, c := range map[string]struct {
@@ -340,7 +359,7 @@ func TestTheDispatcherRefusesAMessageItCannotTake(t *testing.T) {
 		text   string
 		status int
 	}{
-		"a done Run":                 {ana, done, "Also fix the tax", http.StatusConflict},
+		"a Closed Run":               {ana, done, "Also fix the tax", http.StatusConflict},
 		"a Run that does not exist":  {ana, "nosuchrun", "Also fix the tax", http.StatusNotFound},
 		"another Organization's Run": {other, done, "Also fix the tax", http.StatusForbidden},
 		"no text":                    {ana, done, "  \n", http.StatusBadRequest},
@@ -356,10 +375,14 @@ func TestTheDispatcherRefusesAMessageItCannotTake(t *testing.T) {
 			t.Errorf("a refused message is accepted: %v", ev)
 		}
 	}
-	// The CLI gives the Dispatcher's reason.
-	got := ana.CLI("message", "--dispatcher", env.URL(), done, "Also fix the tax")
-	if got.Code == 0 || !strings.Contains(got.Stderr, "the Run is done") {
-		t.Errorf("solidtrace message to a done Run: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	// The CLI gives the Dispatcher's reason, and how to go on. (Ana's
+	// sign-in ended in the 30 days.)
+	got := env.Member("Ben").CLI("message", "--dispatcher", env.URL(), done, "Also fix the tax")
+	if got.Code == 0 || !strings.Contains(got.Stderr, "the Run is closed") || !strings.Contains(got.Stderr, "start a new Run") {
+		t.Errorf("solidtrace message to a Closed Run: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	if run := getRun(t, ana, done); run.State != dispatcherapi.StateDone || len(run.Executions) != 1 {
+		t.Errorf("the refused message changed the Closed Run: %s with %d Executions", run.State, len(run.Executions))
 	}
 }
 

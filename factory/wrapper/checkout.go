@@ -125,6 +125,16 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	if info, err := os.Stat(e.workDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the repository %s has no folder %s, the Project's folder", e.task.Repository, folder)
 	}
+	// After the clone, before the setup command and the harness: the
+	// Agent session directory of the Run, so that a resume works on this
+	// machine.
+	if e.task.Resume {
+		resumed, err := e.uploads.restore(ctx, e.runUser)
+		if err != nil {
+			return fmt.Errorf("restore the Agent session %s: %w", e.task.SessionID, err)
+		}
+		e.resumed = resumed
+	}
 	if e.task.Setup != "" {
 		return e.runSetupCommand(ctx, environ)
 	}
@@ -281,6 +291,12 @@ func (e *execution) pushRepository(ctx context.Context, environ []string) (run f
 	run = func(args ...string) error {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir, cmd.Env = dir, env
+		// When ctx ends (the preempting marker, or pushWait), the push's
+		// process group is killed: git and its remote helper, which holds
+		// the output open. After gitWait the wait stops all the same.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.WaitDelay = gitWait
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git %s: %v: %s", args[0], err, lastLines(string(out), 5))
 		}

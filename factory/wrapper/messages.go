@@ -59,12 +59,18 @@ type inbox struct {
 	// once. Before it, queue holds the messages.
 	open  bool
 	queue []*message
+	// held is true while an interrupt is out: each message waits in queue
+	// for the interrupt's result (interrupt.go). interrupts are the seqs
+	// of the interrupt commands that the wrapper took.
+	held       bool
+	interrupts map[int64]bool
 	// events go to the Dispatcher in order, from one sender.
 	events chan dispatcherapi.MessageEvent
 }
 
 func newInbox() *inbox {
-	return &inbox{byID: map[string]*message{}, events: make(chan dispatcherapi.MessageEvent, 256)}
+	return &inbox{byID: map[string]*message{}, interrupts: map[int64]bool{},
+		events: make(chan dispatcherapi.MessageEvent, 256)}
 }
 
 // takeMessage takes a message of the Dispatcher with the seq of its
@@ -83,7 +89,7 @@ func (e *execution) takeMessage(m dispatcherapi.Message, seq int64) {
 	msg := &message{id: m.ID, text: m.Text}
 	in.byID[m.ID] = msg
 	in.all = append(in.all, msg)
-	if !in.open {
+	if !in.open || in.held {
 		in.queue = append(in.queue, msg)
 		in.mu.Unlock()
 		return
@@ -101,8 +107,11 @@ func (e *execution) openInbox() {
 	e.writing.Lock()
 	in.mu.Lock()
 	in.open = true
-	queue := in.queue
-	in.queue = nil
+	var queue []*message
+	// An interrupt that is out holds the queue until its result.
+	if !in.held {
+		queue, in.queue = in.queue, nil
+	}
 	in.mu.Unlock()
 	for _, msg := range queue {
 		e.writeLocked(msg)
@@ -117,12 +126,13 @@ func (e *execution) writeMessage(msg *message) {
 }
 
 // writeLocked writes msg to stdin; the caller holds writing. After the
-// end started, it writes nothing: the end call gives the message back.
+// end started or after the preempting marker, it writes nothing: the end
+// call gives the message back.
 func (e *execution) writeLocked(msg *message) {
 	e.mu.Lock()
-	stdin, ending := e.stdin, e.ending
+	started, ending := e.stdin != nil, e.ending
 	e.mu.Unlock()
-	if ending || stdin == nil {
+	if ending || !started || e.mayWrite(e.isMarked) != nil {
 		return
 	}
 	line, _ := json.Marshal(map[string]any{"type": "user", "uuid": msg.id, "session_id": "",
@@ -134,7 +144,7 @@ func (e *execution) writeLocked(msg *message) {
 	msg.writtenAt = &now
 	e.inbox.mu.Unlock()
 	e.sendEvent(dispatcherapi.MessageEvent{ID: msg.id, Event: dispatcherapi.MessageWritten, At: now})
-	if _, err := stdin.Write(append(line, '\n')); err != nil {
+	if err := e.writeStdinLocked(line, e.isMarked); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write a message:", err)
 		e.inbox.mu.Lock()
 		if msg.deliveredAt == nil {

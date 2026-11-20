@@ -8,6 +8,8 @@ package dispatcherapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +33,14 @@ const (
 	// StateStopped is a Run that a person, or the Dispatcher's backstop,
 	// stopped. A message continues it.
 	StateStopped = "stopped"
+	// StateWaitingOnAccountLimit is a Run that waits for a free
+	// subscription account (ticket 63 sets it). A message waits on the
+	// Run until it continues.
+	StateWaitingOnAccountLimit = "waiting_on_account_limit"
+	// StateTakenOver is a Run whose Execution a person works in (ticket
+	// 61 sets it). A message waits on the Run, in its events, and is not
+	// typed into the terminal.
+	StateTakenOver = "taken_over"
 )
 
 // The outcomes of a Run's PR (Run.PROutcome). A PR that the forge closed
@@ -57,6 +67,14 @@ const ActorSchedule = "schedule"
 // ActorSender is the kind of a Run's starter that is a sender of the
 // generic webhook.
 const ActorSender = "sender"
+
+// TextSHA256 is the hex SHA-256 of a message's text, which the message
+// events carry (message.sha256): the Agent session page can match a
+// person message to its event by it when the uuid is not in the record.
+func TextSHA256(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
 
 // ActorTracker is the kind of a Run's starter that is a tracker user.
 const ActorTracker = "tracker"
@@ -269,6 +287,12 @@ type Task struct {
 	RunID       string `json:"run_id"`
 	ExecutionID string `json:"execution_id"`
 	Prompt      string `json:"prompt"`
+	// MessageID is the uuid that the wrapper gives the prompt when it
+	// writes it to the harness (see TaskMessageID). The Execution's
+	// started event names it, so that the Agent session page can say that
+	// the factory said the prompt. "" from an older Dispatcher: the
+	// wrapper makes a uuid.
+	MessageID string `json:"message_id,omitempty"`
 	// Repository is host/workspace/name.
 	Repository string `json:"repository"`
 	// CloneURL is the HTTPS URL that git clones from. It holds no token.
@@ -322,7 +346,8 @@ type Task struct {
 	SaveExclude []string `json:"save_exclude,omitempty"`
 	// Messages are the Run's messages that no Execution delivered: the
 	// wrapper writes each one after the prompt. An Execution that
-	// continues the Agent session for them has no prompt.
+	// resumes the Agent session (Resume, and the restore found it) for
+	// them does not write the prompt again.
 	Messages []Message `json:"messages,omitempty"`
 }
 
@@ -372,6 +397,11 @@ const (
 	CommandStop = "stop"
 	// CommandMessage: write Message to the harness's stdin.
 	CommandMessage = "message"
+	// CommandInterrupt: interrupt the agent's turn (the interrupt control
+	// request). With a Message, the wrapper writes it when the turn
+	// stopped, and the Execution continues; with none, the Execution ends
+	// with the reason EndInterrupted.
+	CommandInterrupt = "interrupt"
 )
 
 // Command is one command to the wrapper of an Execution.
@@ -379,8 +409,27 @@ type Command struct {
 	// Seq orders the commands of an Execution.
 	Seq  int64  `json:"seq"`
 	Kind string `json:"kind"`
-	// Message is the message of a CommandMessage.
+	// Message is the message of a CommandMessage, or of a
+	// CommandInterrupt that has one.
 	Message *Message `json:"message,omitempty"`
+}
+
+// Interrupt is the body of an interrupt of a running Run. Text is an
+// optional message: the agent gets it in the same Execution, when its
+// turn stopped. With no text, the Execution ends and the Run waits on a
+// person.
+type Interrupt struct {
+	Text string `json:"text,omitempty"`
+}
+
+// InterruptAccepted is the answer to an interrupt: the Run's live
+// Execution gets it. MessageID is the id of the interrupt's message (""
+// with none).
+type InterruptAccepted struct {
+	RunID       string    `json:"run_id"`
+	ExecutionID string    `json:"execution_id"`
+	MessageID   string    `json:"message_id,omitempty"`
+	AcceptedAt  time.Time `json:"accepted_at"`
 }
 
 // Message is a message to a Run's agent. The wrapper writes it to the
@@ -405,6 +454,21 @@ type MessageAccepted struct {
 	ID         string    `json:"id"`
 	RunID      string    `json:"run_id"`
 	AcceptedAt time.Time `json:"accepted_at"`
+	// Continued is true when the message queued a Run that waited on a
+	// person, was done, failed or stopped: a new Execution continues its
+	// Agent session.
+	Continued bool `json:"continued,omitempty"`
+}
+
+// TaskMessageID is the uuid of the prompt that an Execution's wrapper
+// writes to the harness. It follows from the Execution's id, so that the
+// Dispatcher can name it in the Execution's started event, and a second
+// task call gives the same one.
+func TaskMessageID(executionID string) string {
+	sum := sha256.Sum256([]byte("task/" + executionID))
+	sum[6] = sum[6]&0x0f | 0x50
+	sum[8] = sum[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // The message events that a wrapper sends (MessageEvent.Event).
@@ -492,11 +556,58 @@ const (
 	// EndSetupFailed: the wrapper could not start the harness; Error says
 	// why.
 	EndSetupFailed = "the setup failed"
+	// EndPreempted: the Machine notice said that the machine will be
+	// taken back. The end call has the Preemption.
+	EndPreempted = "preempted"
+	// EndMachineStopped: the wrapper got a SIGTERM or a SIGINT with no stop
+	// command, and the Machine notice did not say that the machine will be
+	// taken back. The end call has the Preemption.
+	EndMachineStopped = "machine stopped"
 	// EndStopped: a stop command came. The Run is stopped already.
 	EndStopped = "stopped"
 	// EndTimeout: a limit passed; Error says which.
 	EndTimeout = "timeout"
+	// EndInterrupted: a person interrupted the agent with no message. The
+	// Run waits on a person.
+	EndInterrupted = "interrupted"
 )
+
+// Preempting is the body of the wrapper's preempting call: the first step
+// of the preemption handler tells the Dispatcher that the machine goes.
+type Preempting struct {
+	// Reason is EndPreempted or EndMachineStopped.
+	Reason   string    `json:"reason"`
+	NoticeAt time.Time `json:"notice_at"`
+}
+
+// Preemption is what the preemption handler saved before the machine
+// went. It goes on the end call of a preempted or machine stopped
+// Execution, and the Dispatcher records it as a run event.
+type Preemption struct {
+	// Reason is EndPreempted or EndMachineStopped.
+	Reason string `json:"reason"`
+	// NoticeAt is when the wrapper got the notice or the signal.
+	NoticeAt time.Time `json:"notice_at"`
+	// SecondsToSaved is the time from the notice to the saved state: the
+	// end of the save and of the last upload.
+	SecondsToSaved float64 `json:"seconds_to_saved"`
+	// SecondsToEnd is the time from the notice to the end call.
+	SecondsToEnd float64 `json:"seconds_to_end"`
+	// WIPCommit is the commit of the work-in-progress save ("" when none
+	// was saved).
+	WIPCommit string `json:"wip_commit,omitempty"`
+	// Skipped are the files that the save left out.
+	Skipped []string `json:"skipped,omitempty"`
+	// TranscriptOffset is how many bytes of the Run's current Agent
+	// session's transcript SolidTrace has after the last upload (nil when
+	// it is not known).
+	TranscriptOffset *uint64 `json:"transcript_offset,omitempty"`
+	// CheckpointAgeSeconds is the age of the last checkpoint at the notice
+	// (nil when the Execution made none).
+	CheckpointAgeSeconds *float64 `json:"checkpoint_age_seconds,omitempty"`
+	// Problems are the steps that failed or passed their time limit.
+	Problems []string `json:"problems,omitempty"`
+}
 
 // ExecutionEnd is the body of the wrapper's end call.
 type ExecutionEnd struct {
@@ -511,6 +622,9 @@ type ExecutionEnd struct {
 	// BackgroundTasksKilled is the count of the agent's background tasks
 	// that still ran at the end, and that the end killed.
 	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
+	// Preemption is what the preemption handler saved, for EndPreempted
+	// and EndMachineStopped.
+	Preemption *Preemption `json:"preemption,omitempty"`
 	// Messages are the Execution's messages that the wrapper wrote, with
 	// the time that the harness delivered each one. Each other message of
 	// the Execution was not written: the Dispatcher sends each message
@@ -897,12 +1011,22 @@ func (c *Client) Stop(ctx context.Context, id string) (Run, error) {
 	return run, err
 }
 
-// Message sends a message to a queued or running Run. A running Run's
-// agent gets it in its current turn, or in a new turn of the same
-// Execution.
+// Message sends a message to a Run. A running Run's agent gets it in its
+// current turn, or in a new turn of the same Execution. A message to a
+// Run that waits on a person, is done, failed or stopped queues the Run
+// (MessageAccepted.Continued).
 func (c *Client) Message(ctx context.Context, id, text string) (MessageAccepted, error) {
 	var accepted MessageAccepted
 	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/messages", SendMessage{Text: text}, &accepted)
+	return accepted, err
+}
+
+// Interrupt interrupts the agent of a running Run. With a text, the agent
+// gets it as a message in the same Execution; with none (""), the
+// Execution ends and the Run waits on a person.
+func (c *Client) Interrupt(ctx context.Context, id, text string) (InterruptAccepted, error) {
+	var accepted InterruptAccepted
+	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/interrupt", Interrupt{Text: text}, &accepted)
 	return accepted, err
 }
 

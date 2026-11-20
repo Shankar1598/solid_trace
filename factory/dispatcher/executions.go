@@ -174,6 +174,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		RunID:         e.runID,
 		ExecutionID:   e.id,
 		Prompt:        run.prompt,
+		MessageID:     dispatcherapi.TaskMessageID(e.id),
 		Repository:    repository,
 		CloneURL:      cloneURL,
 		BaseBranch:    run.baseBranch,
@@ -256,9 +257,15 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
-		dispatcherapi.EndSetupFailed, dispatcherapi.EndStopped, dispatcherapi.EndTimeout:
+		dispatcherapi.EndSetupFailed, dispatcherapi.EndPreempted, dispatcherapi.EndMachineStopped,
+		dispatcherapi.EndStopped, dispatcherapi.EndTimeout, dispatcherapi.EndInterrupted:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
+		return
+	}
+	if p := end.Preemption; p != nil && p.Reason != end.Reason {
+		writeProblem(w, http.StatusBadRequest, "the preemption's reason "+quote(p.Reason)+
+			" is not the end reason "+quote(end.Reason))
 		return
 	}
 	if len(end.Error) > maxReportText {
@@ -278,5 +285,29 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	d.revokeTokens(e.id)
 	// A message that was not delivered can queue the Run again.
 	d.wakeDispatch()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// preempting is the first step of the wrapper's preemption handler: the
+// machine of the Execution goes. The Dispatcher records it at once, so the
+// Run shows it before the end call.
+func (d *Dispatcher) preempting(w http.ResponseWriter, r *http.Request, e storedExecution) {
+	var p dispatcherapi.Preempting
+	if !decode(w, r, &p, "the body must be a JSON object with reason and notice_at") {
+		return
+	}
+	if p.Reason != dispatcherapi.EndPreempted && p.Reason != dispatcherapi.EndMachineStopped {
+		writeProblem(w, http.StatusBadRequest, "the reason must be preempted or machine stopped")
+		return
+	}
+	err := d.store.recordPreempting(e.id, p, d.now())
+	if errors.Is(err, errEnded) {
+		writeProblem(w, http.StatusConflict, "the Execution is not running: "+errEnded.Error()+" or has not started")
+		return
+	}
+	if err != nil {
+		d.serverError(w, "record the preemption", err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

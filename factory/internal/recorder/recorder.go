@@ -63,6 +63,19 @@ type Recorder struct {
 	children       []*ChildToken
 	uploads        []Upload
 	files          map[string]map[string]*storedFile
+	// hangIngest, while it is not nil, holds each agent ingest call until
+	// it is closed.
+	hangIngest chan struct{}
+	// refusePaths are the Agent session paths whose uploads get 400.
+	refusePaths map[string]bool
+	// notReady is how many more downloads get 503 with Retry-After;
+	// downloads counts the downloads that got an archive.
+	notReady  int
+	downloads int
+	// failing is how many more downloads get a 500.
+	failing int
+	// flagged are the paths whose download has flags, by Agent session.
+	flagged map[string]map[string]string
 }
 
 // RunEventsPath is EventStore's route for the Dispatcher's run events.
@@ -138,6 +151,20 @@ func (r *Recorder) EventStoreDown(down bool) {
 	r.eventStoreDown = down
 }
 
+// HangIngest makes each agent ingest call wait with no answer (hang
+// true), as a SolidTrace that does not answer does, or answers again.
+func (r *Recorder) HangIngest(hang bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case hang && r.hangIngest == nil:
+		r.hangIngest = make(chan struct{})
+	case !hang && r.hangIngest != nil:
+		close(r.hangIngest)
+		r.hangIngest = nil
+	}
+}
+
 // RunEvents are the Logs that the run events route accepted, oldest
 // first: the Dispatcher's run events and its warnings. A repeat that the
 // Dispatcher sent again is there two times.
@@ -194,6 +221,17 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {
+		r.mu.Lock()
+		hang := r.hangIngest
+		r.mu.Unlock()
+		if hang != nil {
+			// The call gets no answer while the ingest hangs.
+			select {
+			case <-hang:
+			case <-req.Context().Done():
+				return
+			}
+		}
 		r.serveAgentSessions(w, req, call)
 		return
 	}

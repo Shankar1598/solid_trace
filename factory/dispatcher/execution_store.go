@@ -200,13 +200,18 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	if run.messages, err = takeKeptMessages(tx, runID, id, state == dispatcherapi.ExecutionDispatched); err != nil {
 		return run, err
 	}
-	// An Execution that continues the Agent session for its messages
-	// does not give the task again.
-	if run.resume && len(run.messages) > 0 {
-		run.prompt = ""
-	}
+	// The task always has the prompt: the wrapper writes it only when it
+	// cannot resume the Agent session, or has no message to write.
 	if state == dispatcherapi.ExecutionDispatched {
-		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
+		details := map[string]any{"execution.id": id}
+		if run.prompt != "" {
+			// The task is a message of the factory: its uuid and the hash of
+			// its text let the Agent session page say that the factory said
+			// it. The event's actor stays the person who caused the Execution.
+			details["message.id"] = dispatcherapi.TaskMessageID(id)
+			details["message.sha256"] = dispatcherapi.TextSHA256(run.prompt)
+		}
+		if err := recordEvent(tx, at, runID, eventExecutionStarted, details); err != nil {
 			return run, err
 		}
 	}
@@ -316,6 +321,11 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		runState, reason, question, summary, flags, runID, dispatcherapi.StateRunning); err != nil {
 		return err
 	}
+	if end.Preemption != nil {
+		if err := recordEvent(tx, at, runID, eventPreemption, preemptionDetails(id, *end.Preemption)); err != nil {
+			return err
+		}
+	}
 	details := map[string]any{"execution.id": id, "execution.reason": endReason}
 	if end.ExitCode != nil {
 		details["execution.exit_code"] = *end.ExitCode
@@ -327,8 +337,65 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 	return s.commit(tx)
 }
 
+// ownStateSQL is true for a Run whose state an Execution that ends with
+// no end call sets: a running Run, or a queued Run when the Execution did
+// not start (its wrapper made no task call). Its arguments are
+// StateRunning, StateQueued and the Execution's "started". A started
+// Execution of a queued Run is the Execution of a stopped Run that a
+// message queued again: its end leaves the Run queued for the new
+// Execution.
+const ownStateSQL = `(state = ? OR (state = ? AND NOT ?))`
+
+// preemptionDetails are the Attributes of a preemption event (spec V9):
+// the reason, the seconds from the notice to the saved state, what was
+// saved, and the age of the last checkpoint.
+func preemptionDetails(execution string, p dispatcherapi.Preemption) map[string]any {
+	details := map[string]any{
+		"execution.id":                execution,
+		"preemption.reason":           p.Reason,
+		"preemption.notice_at":        p.NoticeAt.UTC().Format(time.RFC3339Nano),
+		"preemption.seconds_to_saved": p.SecondsToSaved,
+		"preemption.seconds_to_end":   p.SecondsToEnd,
+		"preemption.wip_commit":       p.WIPCommit,
+		"preemption.skipped":          nonNil(p.Skipped),
+		"preemption.problems":         nonNil(p.Problems),
+	}
+	if p.TranscriptOffset != nil {
+		details["preemption.transcript_offset"] = *p.TranscriptOffset
+	}
+	if p.CheckpointAgeSeconds != nil {
+		details["preemption.checkpoint_age_seconds"] = *p.CheckpointAgeSeconds
+	}
+	return details
+}
+
+// recordPreempting records the wrapper's preempting call on the running
+// Execution's Run.
+func (s *store) recordPreempting(id string, p dispatcherapi.Preempting, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var runID string
+	err = tx.QueryRow(`SELECT run_id FROM executions WHERE id = ? AND state = ?`, id,
+		dispatcherapi.ExecutionRunning).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errEnded
+	}
+	if err != nil {
+		return err
+	}
+	err = recordEvent(tx, at, runID, eventPreempting, map[string]any{"execution.id": id,
+		"preemption.reason": p.Reason, "preemption.notice_at": p.NoticeAt.UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		return err
+	}
+	return s.commit(tx)
+}
+
 // failExecution ends an Execution that has not ended, with reason, and
-// fails its Run if the Run is queued or running. exitCode is the
+// fails its Run if the Execution sets its state (ownStateSQL). exitCode is the
 // wrapper's exit code, or nil. It is false when the Execution had ended
 // (or is not known).
 func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (bool, error) {
@@ -338,13 +405,14 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 	}
 	defer tx.Rollback()
 	var runID string
+	var started bool
 	var exit sql.NullInt64
 	if exitCode != nil {
 		exit = sql.NullInt64{Int64: int64(*exitCode), Valid: true}
 	}
 	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ?, exit_code = ? WHERE id = ?
-		AND state != ? RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, exit, id,
-		dispatcherapi.ExecutionEnded).Scan(&runID)
+		AND state != ? RETURNING run_id, started_at IS NOT NULL`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason,
+		exit, id, dispatcherapi.ExecutionEnded).Scan(&runID, &started)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -366,8 +434,8 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 		runState, runReason = dispatcherapi.StateQueued, reasonSentAgain
 	}
 	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
-		AND state IN (?, ?)`, runState, runReason, runID, dispatcherapi.StateQueued,
-		dispatcherapi.StateRunning); err != nil {
+		AND `+ownStateSQL, runState, runReason, runID, dispatcherapi.StateRunning, dispatcherapi.StateQueued,
+		started); err != nil {
 		return false, err
 	}
 	details := map[string]any{"execution.id": id, "execution.reason": reason}
@@ -381,7 +449,8 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 }
 
 // requeueExecution ends an Execution that has not ended, with reason, and
-// puts its Run back in the queue if the Run is queued or running: the
+// puts its Run back in the queue if the Execution sets its state
+// (ownStateSQL): the
 // next dispatch gives the Run a new Execution. It is false when the
 // Execution had ended (or is not known).
 func (s *store) requeueExecution(id, reason string, at time.Time) (bool, error) {
@@ -391,17 +460,19 @@ func (s *store) requeueExecution(id, reason string, at time.Time) (bool, error) 
 	}
 	defer tx.Rollback()
 	var runID string
+	var started bool
 	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ? WHERE id = ? AND state != ?
-		RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, id, dispatcherapi.ExecutionEnded).
-		Scan(&runID)
+		RETURNING run_id, started_at IS NOT NULL`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, id,
+		dispatcherapi.ExecutionEnded).Scan(&runID, &started)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ? WHERE id = ? AND state IN (?, ?)`,
-		dispatcherapi.StateQueued, reason, runID, dispatcherapi.StateQueued, dispatcherapi.StateRunning); err != nil {
+	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ? WHERE id = ? AND `+ownStateSQL,
+		dispatcherapi.StateQueued, reason, runID, dispatcherapi.StateRunning, dispatcherapi.StateQueued,
+		started); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

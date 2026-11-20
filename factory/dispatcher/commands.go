@@ -270,7 +270,7 @@ func (s *store) commandsAfter(executionID string, after int64) ([]dispatcherapi.
 	if err := s.db.QueryRow(`SELECT state FROM executions WHERE id = ?`, executionID).Scan(&state); err != nil {
 		return nil, false, err
 	}
-	list, err := commandsIn(s.db, executionID, after, "")
+	list, err := commandsIn(s.db, executionID, after)
 	return list, state == dispatcherapi.ExecutionEnded, err
 }
 

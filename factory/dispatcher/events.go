@@ -29,6 +29,8 @@ const (
 	eventExecutionStarted = "execution_started"
 	eventExecutionEnded   = "execution_ended"
 	eventReport           = "report"
+	eventPreempting       = "preempting"
+	eventPreemption       = "preemption"
 	eventPROpened         = "pr_opened"
 	eventPROutcome        = "pr_outcome"
 	eventClosed           = "closed"

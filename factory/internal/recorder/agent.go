@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
@@ -60,6 +61,17 @@ func (r *Recorder) RefuseChildTokens(status int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.refuseChildren = status
+}
+
+// RefusePath makes each later upload of path (as "evidence/notes.txt")
+// get 400, as SolidTrace gives for a path that it refuses.
+func (r *Recorder) RefusePath(path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.refusePaths == nil {
+		r.refusePaths = map[string]bool{}
+	}
+	r.refusePaths[path] = true
 }
 
 // ChildTokens are the child tokens that the Dispatcher made, oldest first.
@@ -151,8 +163,8 @@ func (r *Recorder) serveChildTokens(w http.ResponseWriter, req *http.Request, ca
 		"scopes": body.Scopes, "expires_at": body.ExpiresAt}, "secret": child.Secret})
 }
 
-// serveAgentSessions answers the agent ingest API's files call and upload
-// for a live child token that is limited to the Agent session: 401 for any
+// serveAgentSessions answers the agent ingest API's files call, upload
+// and download for a live child token that is limited to the Agent session: 401 for any
 // other token or a revoked one, 403 for an Agent session out of its
 // limits. It keeps the highest version of each path: a higher version
 // starts it again, and the same version takes the bytes at its end.
@@ -175,6 +187,9 @@ func (r *Recorder) serveAgentSessions(w http.ResponseWriter, req *http.Request, 
 		return
 	case !slices.Contains(child.AgentSessionIDs, session):
 		answerJSON(w, http.StatusForbidden, map[string]string{"error": "the token is not for the Agent session " + session})
+		return
+	case rest == "download" && req.Method == http.MethodGet:
+		r.serveDownload(w, child, session)
 		return
 	case rest != "files":
 		answerJSON(w, http.StatusNotFound, map[string]string{"error": "no such path"})
@@ -207,6 +222,10 @@ func (r *Recorder) serveAgentSessions(w http.ResponseWriter, req *http.Request, 
 	up := Upload{Session: session, Path: q.Get("path"), Version: uint32(version), Offset: offset, Token: token,
 		RunID: q.Get("run_id"), Project: q.Get("project"), Repository: q.Get("repository"), Folder: q.Get("folder"),
 		Bytes: body}
+	if r.refusePaths[up.Path] {
+		answerJSON(w, http.StatusBadRequest, map[string]string{"error": "the path is refused"})
+		return
+	}
 	if up.RunID == "" || up.Project == "" {
 		answerJSON(w, http.StatusBadRequest, map[string]string{"error": "A token of a Run sends run_id and project."})
 		return
@@ -232,4 +251,103 @@ func (r *Recorder) serveAgentSessions(w http.ResponseWriter, req *http.Request, 
 	r.uploads = append(r.uploads, up)
 	answerJSON(w, http.StatusOK, map[string]any{"path": up.Path, "version": f.version, "end_offset": len(f.bytes),
 		"stored": stored})
+}
+
+// DownloadsNotReady makes the next n downloads get 503 with Retry-After
+// 1, as EventStore answers before Agent file processing has the last
+// uploads.
+func (r *Recorder) DownloadsNotReady(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.notReady = n
+}
+
+// DownloadsFail makes the next n downloads get 500, as EventStore
+// answers when it cannot read the Agent session.
+func (r *Recorder) DownloadsFail(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failing = n
+}
+
+// Downloads counts the downloads that got an archive.
+func (r *Recorder) Downloads() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.downloads
+}
+
+// Forget drops what the recorder has of an Agent session, as Retention
+// drops it.
+func (r *Recorder) Forget(session string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.files, session)
+}
+
+// FlagFile makes the download mark the path of the Agent session with
+// flags ("partial" or "cut"), as EventStore marks a file whose start
+// Retention dropped or that has missing ranges.
+func (r *Recorder) FlagFile(session, path, flags string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.flagged == nil {
+		r.flagged = map[string]map[string]string{}
+	}
+	if r.flagged[session] == nil {
+		r.flagged[session] = map[string]string{}
+	}
+	r.flagged[session][path] = flags
+}
+
+// serveDownload answers the download of an Agent session as EventStore's
+// DownloadAgentSession does: a tar archive of the highest version of each
+// path, with the SOLIDTRACE PAX records; 403 with no sessions:read, 404
+// for an Agent session with no files. The caller holds mu.
+func (r *Recorder) serveDownload(w http.ResponseWriter, child *ChildToken, session string) {
+	files := r.files[session]
+	switch {
+	case !slices.Contains(child.Scopes, "sessions:read"):
+		answerJSON(w, http.StatusForbidden, map[string]string{"error": "the token has no sessions:read"})
+		return
+	case len(files) == 0:
+		answerJSON(w, http.StatusNotFound, map[string]string{"error": "The server has no Agent session " + session + "."})
+		return
+	case r.failing > 0:
+		r.failing--
+		answerJSON(w, http.StatusInternalServerError, map[string]string{"error": "cannot read the Agent session"})
+		return
+	case r.notReady > 0:
+		r.notReady--
+		w.Header().Set("Retry-After", "1")
+		answerJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not yet ready to download"})
+		return
+	}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	for _, p := range paths {
+		f := files[p]
+		records := map[string]string{"SOLIDTRACE.version": strconv.FormatUint(uint64(f.version), 10),
+			"SOLIDTRACE.start_offset": "0", "SOLIDTRACE.end_offset": strconv.Itoa(len(f.bytes))}
+		if flags := r.flagged[session][p]; flags != "" {
+			records["SOLIDTRACE.flags"] = flags
+		}
+		h := &tar.Header{Typeflag: tar.TypeReg, Name: p, Size: int64(len(f.bytes)), Mode: 0o600,
+			Format: tar.FormatPAX, PAXRecords: records}
+		if tw.WriteHeader(h) != nil {
+			answerJSON(w, http.StatusInternalServerError, map[string]string{"error": "tar"})
+			return
+		}
+		_, _ = tw.Write(f.bytes)
+	}
+	_ = tw.Close()
+	r.downloads++
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(archive.Bytes())
 }

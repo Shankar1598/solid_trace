@@ -66,6 +66,8 @@ type Error struct {
 	// MinimumVersion is the oldest CLI version that the server accepts,
 	// on a 426.
 	MinimumVersion string
+	// RetryAfter is the server's Retry-After, in seconds (0: none).
+	RetryAfter int
 }
 
 func (e *Error) Error() string {
@@ -198,40 +200,94 @@ func (c *Client) call(ctx context.Context, method, path string, body []byte, int
 }
 
 func (c *Client) callWith(ctx context.Context, hc *http.Client, method, path string, body []byte, into any) error {
-	token, err := c.Tokens.Token(ctx)
+	resp, err := c.answer(ctx, hc, method, path, body)
 	if err != nil {
 		return err
-	}
-	resp, err := c.send(ctx, hc, method, path, body, token)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		resp.Body.Close()
-		if token, err = c.Tokens.Refreshed(ctx, token); err != nil {
-			return err
-		}
-		if resp, err = c.send(ctx, hc, method, path, body, token); err != nil {
-			return err
-		}
 	}
 	defer resp.Body.Close()
 	answer, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
-		var problem struct {
-			Error          string `json:"error"`
-			MinimumVersion string `json:"minimum_version"`
-		}
-		_ = json.Unmarshal(answer, &problem)
-		return &Error{Status: resp.StatusCode, Message: problem.Error, MinimumVersion: problem.MinimumVersion}
-	}
 	if err := json.Unmarshal(answer, into); err != nil {
 		return fmt.Errorf("read the answer of %s: %w", path, err)
 	}
 	return nil
+}
+
+// answer sends one request, with one refresh of the token and one more
+// try after a 401, and gives the 200 answer. Any other status is an
+// *Error.
+func (c *Client) answer(ctx context.Context, hc *http.Client, method, path string, body []byte) (*http.Response, error) {
+	token, err := c.Tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.send(ctx, hc, method, path, body, token)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		if token, err = c.Tokens.Refreshed(ctx, token); err != nil {
+			return nil, err
+		}
+		if resp, err = c.send(ctx, hc, method, path, body, token); err != nil {
+			return nil, err
+		}
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp, nil
+	}
+	defer resp.Body.Close()
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var problem struct {
+		Error          string `json:"error"`
+		MinimumVersion string `json:"minimum_version"`
+	}
+	_ = json.Unmarshal(answer, &problem)
+	retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+	return nil, &Error{Status: resp.StatusCode, Message: problem.Error, MinimumVersion: problem.MinimumVersion,
+		RetryAfter: max(retry, 0)}
+}
+
+// Download is the Agent session directory that the server has: a tar
+// archive with the highest version of each path, as the server stored it.
+// The PAX records of each file give its version, offsets and flags.
+type Download struct {
+	// Archive is the tar archive. The caller closes it.
+	Archive io.ReadCloser
+	// Flags are the Agent session's flags (cut, partial, trimmed), as the
+	// server gives them, between commas.
+	Flags string
+}
+
+// The PAX records of a file in a download.
+const (
+	PAXVersion     = "SOLIDTRACE.version"
+	PAXStartOffset = "SOLIDTRACE.start_offset"
+	PAXEndOffset   = "SOLIDTRACE.end_offset"
+	// PAXFlags are "partial" (no start) and "cut" (missing ranges).
+	PAXFlags = "SOLIDTRACE.flags"
+)
+
+// DownloadAgentSession asks for the Agent session directory, for a
+// resume. The token needs sessions:read for the Agent session. A 503 has
+// RetryAfter: the server has the last uploads but cannot give them yet.
+// hc is the client to use (nil: c.HTTP); a download can take longer than
+// the usual limit of one call.
+func (c *Client) DownloadAgentSession(ctx context.Context, hc *http.Client, sessionID string) (Download, error) {
+	if hc == nil {
+		hc = c.HTTP
+	}
+	resp, err := c.answer(ctx, hc, http.MethodGet, "/agent-sessions/"+url.PathEscape(sessionID)+"/download", nil)
+	if err != nil {
+		return Download{}, err
+	}
+	return Download{Archive: resp.Body, Flags: resp.Header.Get("SolidTrace-Agent-Session-Flags")}, nil
 }
 
 func (c *Client) send(ctx context.Context, hc *http.Client, method, path string, body []byte, token string) (*http.Response, error) {

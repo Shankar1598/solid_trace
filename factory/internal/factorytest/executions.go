@@ -26,6 +26,7 @@ import (
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakedocker"
 	"github.com/solidtrace/factory/internal/fakeharness"
+	"github.com/solidtrace/factory/internal/fakemetadata"
 	"github.com/solidtrace/factory/internal/fakerunner"
 	"github.com/solidtrace/factory/internal/killboundary"
 	"github.com/solidtrace/factory/wrapper"
@@ -158,10 +159,12 @@ type Runner struct {
 	Fake *fakerunner.Runner
 	// Docker is the fake Docker of the agent and of the wrapper's end.
 	Docker *fakedocker.Docker
-	dir    string
-	bin    string
-	key    *rsa.PrivateKey
-	jwks   *httptest.Server
+	// Metadata is the Machine notice of each Execution's machine.
+	Metadata *fakemetadata.Server
+	dir      string
+	bin      string
+	key      *rsa.PrivateKey
+	jwks     *httptest.Server
 
 	mu         sync.Mutex
 	scripts    []string
@@ -180,9 +183,10 @@ type Runner struct {
 }
 
 // KeepAgentSessions gives the next Executions one Claude Code directory
-// that stays after each Execution, so that a later Execution resumes the
-// Run's Agent session, as the restore of the Agent session directory
-// (ticket 59) will do on any machine.
+// that stays after each Execution. A later Execution does not need it to
+// resume the Run's Agent session: the wrapper restores the Agent session
+// directory from the recorder's download on each machine. A test uses it
+// only to look at what the harness left in the directory.
 func (r *Runner) KeepAgentSessions() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -313,6 +317,8 @@ func newRunner(e *Env, runUser *user.User) (*Runner, error) {
 	if r.Docker, err = fakedocker.New(filepath.Join(dir, "docker")); err != nil {
 		return nil, err
 	}
+	r.Metadata = fakemetadata.New()
+	e.t.Cleanup(r.Metadata.Close)
 	if err := r.forRunUser(filepath.Join(dir, "docker"), filepath.Join(dir, "agent-config")); err != nil {
 		return nil, err
 	}
@@ -413,6 +419,10 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		// The agent's solidtrace has no sign-in of a person.
 		"SOLIDTRACE_CONFIG_DIR=" + filepath.Join(r.dir, "agent-config"),
 		wrapper.EnvUploadEvery + "=" + UploadEvery.String(),
+		// Each Execution is on a machine of its own, with GCE's Machine
+		// notice.
+		wrapper.EnvMachineNotice + "=gce",
+		wrapper.EnvMetadataURL + "=" + r.Metadata.URL(x.Execution),
 		// The wrapper gives the harness its own Claude Code directories.
 		"CLAUDE_CONFIG_DIR=" + claudeConfig, "CLAUDE_CODE_PROJECT_DIR_NAME=",
 	}
@@ -428,6 +438,19 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		env = env[1:]
 	}
 	return workload, r.Fake.Dispatch(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
+}
+
+// Preempt says on the Machine notice of the Execution's machine that the
+// machine will be taken back.
+func (r *Runner) Preempt(execution string) { r.Metadata.Preempt(execution) }
+
+// Signal sends sig to the Execution's wrapper, as the machine's shutdown
+// does.
+func (r *Runner) Signal(execution string, sig os.Signal) {
+	r.env.t.Helper()
+	if err := r.Fake.Signal(execution, sig); err != nil {
+		r.env.t.Fatal(err)
+	}
 }
 
 // RunUser is the run user of the wrappers (see EnvRunUser).
@@ -545,6 +568,17 @@ func (r *Runner) Cache() string { return filepath.Join(r.dir, "cache") }
 
 // UploadEvery is how often each wrapper uploads during an Execution.
 const UploadEvery = 100 * time.Millisecond
+
+// ProjectDir is the Claude Code project directory of an Execution: the
+// one folder in <home>/.claude/projects ("" when there is not one). The
+// usual end deletes the home; the preemption handler keeps it.
+func (r *Runner) ProjectDir(execution string) string {
+	dirs, _ := filepath.Glob(filepath.Join(r.Home(execution), ".claude", "projects", "*"))
+	if len(dirs) != 1 {
+		return ""
+	}
+	return dirs[0]
+}
 
 // Socket is the path of the agent's socket of an Execution.
 func (r *Runner) Socket(execution string) string {
