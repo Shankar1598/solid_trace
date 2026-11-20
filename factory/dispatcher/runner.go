@@ -290,6 +290,15 @@ func outcome(report *dispatcherapi.Report, end dispatcherapi.ExecutionEnd) (stat
 	if end.Reason == dispatcherapi.EndStopped {
 		return dispatcherapi.StateStopped, dispatcherapi.EndStopped, "", ""
 	}
+	// An interrupt with no message is a person's choice too: the Run
+	// waits on that person, also after a report. The report's summary
+	// stays.
+	if end.Reason == dispatcherapi.EndInterrupted {
+		if report != nil {
+			summary = report.Summary
+		}
+		return dispatcherapi.StateWaitingOnPerson, dispatcherapi.EndInterrupted, "", summary
+	}
 	if report != nil {
 		switch report.Outcome {
 		case dispatcherapi.OutcomeDone:

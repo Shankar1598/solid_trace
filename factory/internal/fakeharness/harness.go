@@ -25,6 +25,11 @@
 //	{"fake":"run","args":["solidtrace","report","--outcome","done"]}
 //	                                       run a program in the working directory, as the agent's
 //	                                       Bash tool does; its output goes to stderr
+//	{"fake":"tool","args":["sleep","300"],"eof_code":7}
+//	                                       the same, as a foreground tool call that the interrupt control
+//	                                       request stops: the Harness kills the program's process group,
+//	                                       as Claude Code stops a tool's processes, and goes on (eof_code
+//	                                       when stdin closes first). A program that exits first goes on too
 //	{"fake":"stop","replies":[[...],[...]]}  end the turn: run the Stop hooks of --settings, as Claude
 //	                                       Code does before the result. Each refusal gives the feedback
 //	                                       event, then the lines of the next reply (the last one again
@@ -64,6 +69,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -234,7 +240,8 @@ func ParseScript(b []byte) ([]map[string]any, error) {
 		}
 		if step, ok := o["fake"]; ok {
 			switch step {
-			case "about", "await_message", "await_interrupt", "busy", "deliver", "sleep", "exit", "run", "stop", "await_eof":
+			case "about", "await_message", "await_interrupt", "busy", "deliver", "sleep", "exit", "run", "tool", "stop",
+				"await_eof":
 			default:
 				return nil, fmt.Errorf("line %d: no step %q", n+1, step)
 			}
@@ -426,6 +433,10 @@ func (h *harness) step(line map[string]any, stderr io.Writer) (code int, exit bo
 		return intOf(line["code"]), true
 	case "run":
 		h.run(line, stderr)
+	case "tool":
+		if !h.tool(line, stderr) {
+			return intOf(line["eof_code"]), true
+		}
 	case "stop":
 		return h.stop(line, stderr)
 	}
@@ -685,6 +696,44 @@ func (h *harness) run(line map[string]any, stderr io.Writer) {
 	cmd.Stdout, cmd.Stderr = stderr, stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(stderr, "fake harness: run %s: %v\n", strings.Join(args, " "), err)
+	}
+}
+
+// tool runs the step's program as a foreground tool call, in a process
+// group of its own, until it exits or the interrupt control request
+// comes. At the interrupt it kills the group and waits for the program.
+// It is false when stdin closed first (the group is killed then too).
+func (h *harness) tool(line map[string]any, stderr io.Writer) bool {
+	raw, _ := line["args"].([]any)
+	var args []string
+	for _, a := range raw {
+		s, _ := a.(string)
+		args = append(args, s)
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "fake harness: a tool step needs args")
+		return true
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = h.cwd
+	cmd.Stdout, cmd.Stderr = stderr, stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(stderr, "fake harness: start %s: %v\n", strings.Join(args, " "), err)
+		return true
+	}
+	exited := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(exited)
+	}()
+	select {
+	case <-exited:
+		return true
+	case _, ok := <-h.interrupts:
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-exited
+		return ok
 	}
 }
 

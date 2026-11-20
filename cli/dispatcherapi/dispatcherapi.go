@@ -31,8 +31,13 @@ const (
 	// StateStopped is a Run that a person, or the Dispatcher's backstop,
 	// stopped. A message continues it.
 	StateStopped = "stopped"
-	// StateTakenOver is a Run that a person took over: its Execution is
-	// in the interactive form, where a person works at a terminal.
+	// StateWaitingOnAccountLimit is a Run that waits for a free
+	// subscription account (ticket 63 sets it). A message waits on the
+	// Run until it continues.
+	StateWaitingOnAccountLimit = "waiting_on_account_limit"
+	// StateTakenOver is a Run whose Execution a person works in (ticket
+	// 61 sets it). A message waits on the Run, in its events, and is not
+	// typed into the terminal.
 	StateTakenOver = "taken_over"
 )
 
@@ -349,7 +354,8 @@ type Task struct {
 	SaveExclude []string `json:"save_exclude,omitempty"`
 	// Messages are the Run's messages that no Execution delivered: the
 	// wrapper writes each one after the prompt. An Execution that
-	// continues the Agent session for them has no prompt.
+	// resumes the Agent session (Resume, and the restore found it) for
+	// them does not write the prompt again.
 	Messages []Message `json:"messages,omitempty"`
 	// Form is the Execution's form: FormInteractive for a take-over, else
 	// headless. An interactive Execution has no prompt and no messages:
@@ -422,6 +428,11 @@ const (
 	// Execution with the reason EndTakenOver; the end call's answer names
 	// the take-over Execution.
 	CommandTakeOver = "take_over"
+	// CommandInterrupt: interrupt the agent's turn (the interrupt control
+	// request). With a Message, the wrapper writes it when the turn
+	// stopped, and the Execution continues; with none, the Execution ends
+	// with the reason EndInterrupted.
+	CommandInterrupt = "interrupt"
 )
 
 // Command is one command to the wrapper of an Execution.
@@ -429,8 +440,27 @@ type Command struct {
 	// Seq orders the commands of an Execution.
 	Seq  int64  `json:"seq"`
 	Kind string `json:"kind"`
-	// Message is the message of a CommandMessage.
+	// Message is the message of a CommandMessage, or of a
+	// CommandInterrupt that has one.
 	Message *Message `json:"message,omitempty"`
+}
+
+// Interrupt is the body of an interrupt of a running Run. Text is an
+// optional message: the agent gets it in the same Execution, when its
+// turn stopped. With no text, the Execution ends and the Run waits on a
+// person.
+type Interrupt struct {
+	Text string `json:"text,omitempty"`
+}
+
+// InterruptAccepted is the answer to an interrupt: the Run's live
+// Execution gets it. MessageID is the id of the interrupt's message (""
+// with none).
+type InterruptAccepted struct {
+	RunID       string    `json:"run_id"`
+	ExecutionID string    `json:"execution_id"`
+	MessageID   string    `json:"message_id,omitempty"`
+	AcceptedAt  time.Time `json:"accepted_at"`
 }
 
 // Message is a message to a Run's agent. The wrapper writes it to the
@@ -455,6 +485,10 @@ type MessageAccepted struct {
 	ID         string    `json:"id"`
 	RunID      string    `json:"run_id"`
 	AcceptedAt time.Time `json:"accepted_at"`
+	// Continued is true when the message queued a Run that waited on a
+	// person, was done, failed or stopped: a new Execution continues its
+	// Agent session.
+	Continued bool `json:"continued,omitempty"`
 }
 
 // The message events that a wrapper sends (MessageEvent.Event).
@@ -552,6 +586,9 @@ const (
 	// EndSessionEnded: the interactive Agent session of a take-over
 	// ended (the person left the harness).
 	EndSessionEnded = "the interactive Agent session ended"
+	// EndInterrupted: a person interrupted the agent with no message. The
+	// Run waits on a person.
+	EndInterrupted = "interrupted"
 )
 
 // ExecutionEnd is the body of the wrapper's end call.
@@ -963,12 +1000,22 @@ func (c *Client) TakeOver(ctx context.Context, id string) (Run, error) {
 	return run, err
 }
 
-// Message sends a message to a queued or running Run. A running Run's
-// agent gets it in its current turn, or in a new turn of the same
-// Execution.
+// Message sends a message to a Run. A running Run's agent gets it in its
+// current turn, or in a new turn of the same Execution. A message to a
+// Run that waits on a person, is done, failed or stopped queues the Run
+// (MessageAccepted.Continued).
 func (c *Client) Message(ctx context.Context, id, text string) (MessageAccepted, error) {
 	var accepted MessageAccepted
 	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/messages", SendMessage{Text: text}, &accepted)
+	return accepted, err
+}
+
+// Interrupt interrupts the agent of a running Run. With a text, the agent
+// gets it as a message in the same Execution; with none (""), the
+// Execution ends and the Run waits on a person.
+func (c *Client) Interrupt(ctx context.Context, id, text string) (InterruptAccepted, error) {
+	var accepted InterruptAccepted
+	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/interrupt", Interrupt{Text: text}, &accepted)
 	return accepted, err
 }
 

@@ -125,6 +125,16 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	if info, err := os.Stat(e.workDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the repository %s has no folder %s, the Project's folder", e.task.Repository, folder)
 	}
+	// After the clone, before the setup command and the harness: the
+	// Agent session directory of the Run, so that a resume works on this
+	// machine.
+	if e.task.Resume {
+		resumed, err := e.uploads.restore(ctx, e.runUser)
+		if err != nil {
+			return fmt.Errorf("restore the Agent session %s: %w", e.task.SessionID, err)
+		}
+		e.resumed = resumed
+	}
 	if e.task.Setup != "" {
 		return e.runSetupCommand(ctx, environ)
 	}

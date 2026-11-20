@@ -82,12 +82,19 @@ Usage:
       is stopped at once; its agent is interrupted and its Execution
       ends. A message continues a stopped Run.
   solidtrace message [--dispatcher URL] RUN_ID MESSAGE
-      Send MESSAGE to a queued or running Run. The agent of a running
-      Run gets it when its current tool call ends, in the same turn, or
-      in a new turn; there is no interrupt. A queued Run's agent gets it
-      after the prompt. A message that the agent did not get goes to a
-      new Execution. A taken-over Run keeps the message; when the
-      take-over ends, a new Execution gets it.
+      Send MESSAGE to a Run. The agent of a running Run gets it when its
+      current tool call ends, in the same turn, or in a new turn; there
+      is no interrupt. A queued Run's agent gets it after the prompt. A
+      Run that waits on a person, is done, failed or stopped is queued:
+      a new Execution continues its Agent session with the message. A
+      Run that waits on an account limit or is taken over keeps it until
+      the Run continues. A Closed Run refuses it. A message that the
+      agent did not get goes to a new Execution.
+  solidtrace interrupt [--dispatcher URL] RUN_ID [MESSAGE]
+      Interrupt the agent of a running Run at once: its current tool call
+      stops. With MESSAGE, the agent gets it in the same Execution when
+      its turn stops, and works on. With no MESSAGE, the Execution ends,
+      and the Run waits on a person; a message continues it.
   solidtrace take-over [--dispatcher URL] RUN_ID
       Take over a running Run: its agent is interrupted, and the same
       Agent session continues in a terminal on the same machine. It
@@ -213,6 +220,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return message(ctx, args[1:], env)
 	case "take-over":
 		return takeOver(ctx, args[1:], env)
+	case "interrupt":
+		return interrupt(ctx, args[1:], env)
 	case "projects":
 		return projects(ctx, args[1:], env)
 	case "connections":

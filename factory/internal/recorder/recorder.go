@@ -63,6 +63,14 @@ type Recorder struct {
 	children       []*ChildToken
 	uploads        []Upload
 	files          map[string]map[string]*storedFile
+	// notReady is how many more downloads get 503 with Retry-After;
+	// downloads counts the downloads that got an archive.
+	notReady  int
+	downloads int
+	// failing is how many more downloads get a 500.
+	failing int
+	// flagged are the paths whose download has flags, by Agent session.
+	flagged map[string]map[string]string
 }
 
 // RunEventsPath is EventStore's route for the Dispatcher's run events.

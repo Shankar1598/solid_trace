@@ -387,6 +387,14 @@ func (f *Forge) RefuseGit(repo string) {
 	f.refusedGit["/git/"+repo+".git/"] = true
 }
 
+// AcceptGit undoes RefuseGit for the repository, as when an Admin fixes
+// the token.
+func (f *Forge) AcceptGit(repo string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.refusedGit, "/git/"+repo+".git/")
+}
+
 func (f *Forge) git(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	var hung *hang

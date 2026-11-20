@@ -225,11 +225,8 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	} else if run.messages, err = takeKeptMessages(tx, runID, id, state == dispatcherapi.ExecutionDispatched); err != nil {
 		return run, err
 	}
-	// An Execution that continues the Agent session for its messages
-	// does not give the task again.
-	if run.resume && len(run.messages) > 0 {
-		run.prompt = ""
-	}
+	// The task always has the prompt: the wrapper writes it only when it
+	// cannot resume the Agent session, or has no message to write.
 	if state == dispatcherapi.ExecutionDispatched {
 		details := map[string]any{"execution.id": id}
 		if interactive {
@@ -376,8 +373,17 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 	return s.commit(tx)
 }
 
+// ownStateSQL is true for a Run whose state an Execution that ends with
+// no end call sets: a running Run, or a queued Run when the Execution did
+// not start (its wrapper made no task call). Its arguments are
+// StateRunning, StateQueued and the Execution's "started". A started
+// Execution of a queued Run is the Execution of a stopped Run that a
+// message queued again: its end leaves the Run queued for the new
+// Execution.
+const ownStateSQL = `(state = ? OR (state = ? AND NOT ?))`
+
 // failExecution ends an Execution that has not ended, with reason, and
-// fails its Run if the Run is queued or running. exitCode is the
+// fails its Run if the Execution sets its state (ownStateSQL). exitCode is the
 // wrapper's exit code, or nil. It is false when the Execution had ended
 // (or is not known).
 func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (bool, error) {
@@ -387,13 +393,14 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 	}
 	defer tx.Rollback()
 	var runID string
+	var started bool
 	var exit sql.NullInt64
 	if exitCode != nil {
 		exit = sql.NullInt64{Int64: int64(*exitCode), Valid: true}
 	}
 	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ?, exit_code = ? WHERE id = ?
-		AND state != ? RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, exit, id,
-		dispatcherapi.ExecutionEnded).Scan(&runID)
+		AND state != ? RETURNING run_id, started_at IS NOT NULL`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason,
+		exit, id, dispatcherapi.ExecutionEnded).Scan(&runID, &started)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -429,8 +436,8 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 			runState, runReason = dispatcherapi.StateQueued, reasonSentAgain
 		}
 		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
-			AND state IN (?, ?)`, runState, runReason, runID, dispatcherapi.StateQueued,
-			dispatcherapi.StateRunning); err != nil {
+			AND `+ownStateSQL, runState, runReason, runID, dispatcherapi.StateRunning, dispatcherapi.StateQueued,
+			started); err != nil {
 			return false, err
 		}
 	}
@@ -448,7 +455,8 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 }
 
 // requeueExecution ends an Execution that has not ended, with reason, and
-// puts its Run back in the queue if the Run is queued or running: the
+// puts its Run back in the queue if the Execution sets its state
+// (ownStateSQL): the
 // next dispatch gives the Run a new Execution. It is false when the
 // Execution had ended (or is not known).
 func (s *store) requeueExecution(id, reason string, at time.Time) (bool, error) {
@@ -458,17 +466,19 @@ func (s *store) requeueExecution(id, reason string, at time.Time) (bool, error) 
 	}
 	defer tx.Rollback()
 	var runID string
+	var started bool
 	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ? WHERE id = ? AND state != ?
-		RETURNING run_id`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, id, dispatcherapi.ExecutionEnded).
-		Scan(&runID)
+		RETURNING run_id, started_at IS NOT NULL`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason, id,
+		dispatcherapi.ExecutionEnded).Scan(&runID, &started)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ? WHERE id = ? AND state IN (?, ?)`,
-		dispatcherapi.StateQueued, reason, runID, dispatcherapi.StateQueued, dispatcherapi.StateRunning); err != nil {
+	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ? WHERE id = ? AND `+ownStateSQL,
+		dispatcherapi.StateQueued, reason, runID, dispatcherapi.StateRunning, dispatcherapi.StateQueued,
+		started); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

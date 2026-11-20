@@ -239,9 +239,10 @@ func (r *Runner) hc() string {
 }
 
 // KeepAgentSessions gives the next Executions one Claude Code directory
-// that stays after each Execution, so that a later Execution resumes the
-// Run's Agent session, as the restore of the Agent session directory
-// (ticket 59) will do on any machine.
+// that stays after each Execution. A later Execution does not need it to
+// resume the Run's Agent session: the wrapper restores the Agent session
+// directory from the recorder's download on each machine. A test uses it
+// only to look at what the harness left in the directory.
 func (r *Runner) KeepAgentSessions() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -10,8 +10,8 @@
 //
 // The checkout is at a fixed path for each repository, on the Run's branch
 // (checkout.go). Each process that it starts runs as the run user
-// (runuser.go). A later ticket adds the restore of the Agent session
-// directory (59).
+// (runuser.go). An Execution that resumes the Run's Agent session
+// restores its directory from SolidTrace first (restore.go).
 package wrapper
 
 import (
@@ -148,8 +148,9 @@ func execute(ctx context.Context, cfg *config, boundary killBoundary, runUser ru
 	}
 	work, cancelWork := context.WithCancel(ctx)
 	defer cancelWork()
-	e := &execution{cfg: *cfg, client: c, task: task, log: stderr, boundary: boundary, runUser: runUser, needsPerson: make(chan struct{}, 1),
-		uploads: newUploads(*cfg, c, task, stderr), cancelWork: cancelWork, inbox: newInbox(), kept: kept}
+	e := &execution{cfg: *cfg, client: c, task: task, log: stderr, boundary: boundary, runUser: runUser,
+		needsPerson: make(chan struct{}, 1), interrupts: make(chan struct{}, 1), uploads: newUploads(*cfg, c, task, stderr),
+		cancelWork: cancelWork, inbox: newInbox(), kept: kept}
 	// The commands and the limits count from the task, and stop at the
 	// end call.
 	watch, stopWatching := context.WithCancel(ctx)
@@ -249,6 +250,9 @@ type execution struct {
 	running  map[checkKey]int
 
 	needsPerson chan struct{}
+	// interrupts tells the follow loop that an interrupt command came
+	// (interrupt.go).
+	interrupts chan struct{}
 	// inbox holds the messages of the Execution (messages.go).
 	inbox   *inbox
 	uploads *uploads
@@ -271,6 +275,9 @@ type execution struct {
 	// startTip is the commit of the Run's branch after the setup: a push
 	// is necessary only when the branch moved.
 	startTip string
+	// resumed is true when the task resumes the Agent session and the
+	// restore put its transcript back: the harness gets --resume.
+	resumed bool
 	// prMu holds one pr call at a time, and the push before the end until
 	// a pr call's push ended. pushedTip is the commit that the last pr
 	// call pushed.
@@ -610,7 +617,7 @@ func (e *execution) headless() []string {
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--replay-user-messages", "--permission-mode", "bypassPermissions", "--disallowedTools", "AskUserQuestion",
 		"--settings", e.cfg.harnessSettings()}
-	if e.task.Resume {
+	if e.resumed {
 		return append(args, "--resume", e.task.SessionID)
 	}
 	return append(args, "--session-id", e.task.SessionID)
@@ -693,10 +700,10 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
 	// The write is not under mu: a harness that does not read its stdin
 	// blocks it, and a stop or a limit must still end the Execution. An
-	// Execution that continues the Agent session for its messages has no
-	// prompt.
+	// Execution that resumes the Agent session for its messages does not
+	// write the prompt again: the first message is the first of them.
 	e.writing.Lock()
-	if _, ending := e.endedEarly(); !ending && (e.task.Prompt != "" || len(e.task.Messages) == 0) {
+	if _, ending := e.endedEarly(); !ending && (!e.resumed || len(e.task.Messages) == 0) {
 		if _, err := e.stdin.Write(append(message, '\n')); err != nil {
 			fmt.Fprintln(e.log, "wrapper: write the task:", err)
 		}
@@ -732,6 +739,9 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	var giveBackAt time.Time
 	var comparing bool
 	compareDone := make(chan compared, 1)
+	// interruptBy is the end of the wait for the result of the wrapper's
+	// interrupt request (zero: no interrupt is out).
+	var interruptBy time.Time
 	tick := time.NewTicker(e.cfg.limitEvery)
 	defer tick.Stop()
 	tryEnd := func() {
@@ -749,9 +759,36 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 		comparing = true
 		go e.compareEnd(context.Background(), seen, compareDone)
 	}
+	// interruptDone is the end of an interrupt's wait (at its result, at
+	// once when no turn runs, or after interruptWait): the messages that
+	// waited are written, and the Execution goes on with them. With none,
+	// the Execution ends with the reason interrupted.
+	interruptDone := func(why string) {
+		interruptBy = time.Time{}
+		if e.releaseHeld() == 0 {
+			e.startEnd(dispatcherapi.EndInterrupted, why)
+			return
+		}
+		// A turn that does not start for the messages ends as at a
+		// result with a message that was not delivered.
+		tryEnd()
+	}
 	for open, exit := true, exited; open; {
 		select {
+		case <-e.interrupts:
+			switch {
+			case pending != "":
+				// The turn ended before the interrupt: no turn stops, and
+				// no result comes.
+				interruptDone("")
+			case interruptBy.IsZero():
+				interruptBy = e.cfg.clock().Add(interruptWait)
+				e.writeInterrupt()
+			}
 		case <-tick.C:
+			if !interruptBy.IsZero() && !e.cfg.clock().Before(interruptBy) {
+				interruptDone(fmt.Sprintf("the harness gave no result in %s after the interrupt", interruptWait))
+			}
 			if !giveBackAt.IsZero() && !e.cfg.clock().Before(giveBackAt) && pending != "" {
 				// No new turn delivered the written messages: the end call
 				// gives them back, and a new Execution gets them.
@@ -774,7 +811,10 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				}
 			default:
 				for _, cmd := range c.answer.Commands {
-					if cmd.Message != nil {
+					switch {
+					case cmd.Kind == dispatcherapi.CommandInterrupt:
+						e.takeInterrupt(cmd)
+					case cmd.Message != nil:
 						e.takeMessage(*cmd.Message, cmd.Seq)
 					}
 				}
@@ -825,6 +865,12 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				pending = dispatcherapi.EndNoReport
 				if reported {
 					pending = dispatcherapi.EndReported
+				}
+				if !interruptBy.IsZero() {
+					// The result of the wrapper's own interrupt
+					// (error_during_execution) is not a failure.
+					interruptDone("")
+					break
 				}
 				tryEnd()
 			}
