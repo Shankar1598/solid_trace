@@ -512,7 +512,10 @@ kill_boundary_cases_pass_as_root_under_raw_exec() {
 # The run-user cases of factory/wrapper (ticket 39), as root in a raw_exec task: the
 # wrapper changes to the run user agent for the harness, its tools and git. The tests
 # start a Dispatcher with SQLite through cgo, so the binary is static.
-run_user_cases_pass_as_root_under_raw_exec() {
+# Builds the wrapper's tests, and copies them to the agent machine, one time for each
+# stack (each check runs in a subshell, so the agent machine keeps the mark).
+copy_wrapper_tests() {
+  docker exec "$machine" test -x /opt/factory-checks/wrapper.test && return 0
   command -v go >/dev/null || skip "no Go here to build the wrapper's tests"
   local bin
   bin="$(mktemp -d)"
@@ -524,6 +527,10 @@ run_user_cases_pass_as_root_under_raw_exec() {
   rm -rf "$bin"
   docker exec "$machine" chown root:root /opt/factory-checks/wrapper.test
   docker exec "$machine" chmod 0755 /opt/factory-checks/wrapper.test
+}
+
+run_user_cases_pass_as_root_under_raw_exec() {
+  copy_wrapper_tests
   run_batch_job "$here/checks/run-user-tests.nomad.hcl" run-user-tests 240
   grep -E '^--- (PASS|SKIP|FAIL)' <<<"$out" | sed 's/^/note: /' >&2 || true
   [ "$status" = complete ] || want "the test task complete, got: $status; output: $(tail -n 30 <<<"$out")"
@@ -534,6 +541,21 @@ run_user_cases_pass_as_root_under_raw_exec() {
     TestTheWrapperAsRootRefusesARunUserThatIsRootOrCanChangeItsDirectory TestTheRunUsersStopHookRefusesAStopWithNoReport; do
     grep -q "^--- PASS: $name" <<<"$out" || want "the case $name ran, got: $(tail -n 30 <<<"$out")"
   done
+}
+
+# Cluster check 6 (ticket 61): the take-over cases of factory/wrapper, as root in a
+# raw_exec task with the run user agent. One case uses the image's real hc: the wrapper's
+# core is in the take-over Execution's cgroup with no SUDO_ variable, and the user
+# engineer reaches it with the printed command's 'sudo -u agent hc connect'.
+take_over_cases_pass_as_root_under_raw_exec() {
+  copy_wrapper_tests
+  run_batch_job "$here/checks/take-over-tests.nomad.hcl" take-over-tests 240
+  grep -E '^--- (PASS|SKIP|FAIL)' <<<"$out" | sed 's/^/note: /' >&2 || true
+  [ "$status" = complete ] || want "the test task complete, got: $status; output: $(tail -n 30 <<<"$out")"
+  grep -q '^PASS$' <<<"$out" || want "PASS from the tests, got: $(tail -n 30 <<<"$out")"
+  ! grep -q -e '--- SKIP' -e '--- FAIL' <<<"$out" || want "no case skipped or failed, got: $(grep -e '--- SKIP' -e '--- FAIL' -A 3 <<<"$out")"
+  grep -q '^--- PASS: TestATakeOverOnTheAgentMachineRunsTheRealHcCoreThatAPersonAttachesTo' <<<"$out" ||
+    want "the real hc case ran, got: $(tail -n 30 <<<"$out")"
 }
 
 # The workload identity in a file (as the Nomad Runner gives it): root's only.
@@ -548,6 +570,7 @@ check "a raw_exec task as root starts the run user in a child cgroup, and cgroup
 check "the kill boundary's cgroup cases pass as root under raw_exec, with the run user's processes" kill_boundary_cases_pass_as_root_under_raw_exec
 check "the wrapper's run-user cases pass as root under raw_exec, with the run user agent" run_user_cases_pass_as_root_under_raw_exec
 check "the run user cannot read a raw_exec task's identity file or reach its directory" the_identity_file_is_roots_only
+check "a take-over as root under raw_exec starts the real hc core as agent in the Execution's cgroup with no SUDO_ variable, and 'sudo -u agent hc connect' reaches it" take_over_cases_pass_as_root_under_raw_exec
 
 # --- The end ---------------------------------------------------------------------------
 

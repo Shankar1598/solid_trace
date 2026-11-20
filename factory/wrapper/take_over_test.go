@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,12 +10,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
+	"github.com/solidtrace/factory/internal/killboundary"
 	"github.com/solidtrace/factory/internal/recorder"
+	"github.com/solidtrace/factory/wrapper"
 )
 
 var takenOverLine = regexp.MustCompile(`(?m)^Run (\S+) is taken over\. Its Agent session continues in a terminal on (\S+)\.\nAttach with:\n  (.+)$`)
@@ -47,6 +51,22 @@ func inToolCallRun(t *testing.T, env *factorytest.Env, p *factorytest.Person) st
 // terminal.
 func takeOverTerminal(t *testing.T, env *factorytest.Env, p *factorytest.Person, id string) (dispatcherapi.Run, string) {
 	t.Helper()
+	run := takeOverRuns(t, env, p, id)
+	// One terminal for each take-over of the test.
+	terminal, err := env.Runner.TakeOver.WaitForTerminal(max(1, len(env.Runner.TakeOver.Terminals())), 30*time.Second)
+	if err == nil {
+		_, err = env.Runner.TakeOver.WaitForScreen(terminal, `"subtype":"init"`, 30*time.Second)
+	}
+	if err != nil {
+		t.Fatalf("%v\nwrapper output:\n%s", err, env.Runner.Fake.Output(run.Executions[0].ID))
+	}
+	return run, terminal
+}
+
+// takeOverRuns waits until the take-over Execution runs, and gives the
+// Run.
+func takeOverRuns(t *testing.T, env *factorytest.Env, p *factorytest.Person, id string) dispatcherapi.Run {
+	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	var run dispatcherapi.Run
 	for {
@@ -63,15 +83,7 @@ func takeOverTerminal(t *testing.T, env *factorytest.Env, p *factorytest.Person,
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// One terminal for each take-over of the test.
-	terminal, err := env.Runner.TakeOver.WaitForTerminal(max(1, len(env.Runner.TakeOver.Terminals())), 30*time.Second)
-	if err == nil {
-		_, err = env.Runner.TakeOver.WaitForScreen(terminal, `"subtype":"init"`, 30*time.Second)
-	}
-	if err != nil {
-		t.Fatalf("%v\nwrapper output:\n%s", err, env.Runner.Fake.Output(run.Executions[0].ID))
-	}
-	return run, terminal
+	return run
 }
 
 // screenInit is the harness's init event on the terminal's screen.
@@ -398,5 +410,142 @@ func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.
 	}
 	if terminals := env.Runner.TakeOver.Terminals(); len(terminals) != 1 || !env.Runner.TakeOver.Finished(terminals[0]) {
 		t.Errorf("the take-over's harness still runs: %v", terminals)
+	}
+}
+
+// connectAsPerson runs the attach command's sudo part as the user
+// engineer (a member of the access group on the local factory stack),
+// sends one request of the hc API, and gives its result.
+func connectAsPerson(t *testing.T, connect, method string, params map[string]any) (json.RawMessage, error) {
+	t.Helper()
+	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	cmd := exec.Command("runuser", "-u", "engineer", "--", "sh", "-c", connect)
+	cmd.Stdin = strings.NewReader(string(request) + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v: %s", connect, err, out)
+	}
+	var reply struct {
+		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
+	}
+	if err := json.NewDecoder(strings.NewReader(string(out))).Decode(&reply); err != nil || reply.Result == nil {
+		return nil, fmt.Errorf("%s %s: %v: %s", connect, method, err, out)
+	}
+	return reply.Result, nil
+}
+
+// Cluster check 6: on the agent machine (the local factory stack), the
+// wrapper starts the real hc core as the run user in the take-over
+// Execution's cgroup, with no SUDO_ variable, and a person attaches with
+// the printed command's 'sudo -u <run user> hc connect' to that core.
+func TestATakeOverOnTheAgentMachineRunsTheRealHcCoreThatAPersonAttachesTo(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.UseRealHC()
+	id := inToolCallRun(t, env, ana)
+	vm, attach := takeOverCLI(t, env, ana, id)
+	runUser := env.Runner.RunUser()
+	connect, ok := strings.CutPrefix(attach, "docker exec -i -u engineer "+vm+" ")
+	if !ok || connect != "sudo -u "+runUser.Username+" hc connect" {
+		t.Fatalf("the attach command is %q", attach)
+	}
+	run := takeOverRuns(t, env, ana, id)
+	takeOver := run.Executions[1]
+
+	// The person finds the take-over's terminal.
+	var terminal string
+	deadline := time.Now().Add(30 * time.Second)
+	for terminal == "" {
+		result, err := connectAsPerson(t, connect, "terminal.list", map[string]any{})
+		var list struct {
+			Terminals []struct {
+				Address string  `json:"address"`
+				Name    *string `json:"name"`
+			} `json:"terminals"`
+		}
+		if err == nil {
+			if json.Unmarshal(result, &list) != nil {
+				json.Unmarshal(result, &list.Terminals)
+			}
+			for _, x := range list.Terminals {
+				if x.Name != nil && *x.Name == "take-over" {
+					terminal = x.Address
+				}
+			}
+		}
+		if terminal == "" && time.Now().After(deadline) {
+			t.Fatalf("no take-over terminal after 30 s: %v %s\n%s", err, result, env.Runner.Fake.Output(run.Executions[0].ID))
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	result, err := connectAsPerson(t, connect, "server.status", map[string]any{})
+	var status struct {
+		PID     int `json:"pid"`
+		Holders []struct {
+			PID int `json:"pid"`
+		} `json:"holders"`
+	}
+	if err != nil || json.Unmarshal(result, &status) != nil || status.PID <= 0 {
+		t.Fatalf("server.status: %v %s", err, result)
+	}
+	boundary, err := killboundary.Reopen(wrapper.CgroupName(takeOver.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pids := []int{status.PID}
+	for _, h := range status.Holders {
+		pids = append(pids, h.PID)
+	}
+	for _, pid := range pids {
+		if in, err := boundary.Holds(pid); err != nil || !in {
+			t.Errorf("the hc process %d is not in the take-over Execution's cgroup (%v)", pid, err)
+		}
+		environ, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, kv := range strings.Split(string(environ), "\x00") {
+			if strings.HasPrefix(kv, "SUDO_") {
+				t.Errorf("the hc process %d has %s", pid, kv)
+			}
+		}
+		var st syscall.Stat_t
+		if err := syscall.Stat(fmt.Sprintf("/proc/%d", pid), &st); err != nil || strconv.Itoa(int(st.Uid)) != runUser.Uid {
+			t.Errorf("the hc process %d runs as the user id %d, want the run user's %s", pid, st.Uid, runUser.Uid)
+		}
+	}
+
+	// The person sees the resumed Agent session, and leaves it.
+	var screen string
+	deadline = time.Now().Add(30 * time.Second)
+	for !strings.Contains(screen, `"subtype":"init"`) {
+		result, err := connectAsPerson(t, connect, "terminal.read", map[string]any{"terminal": terminal})
+		var read struct {
+			Text string `json:"text"`
+		}
+		if err == nil && json.Unmarshal(result, &read) == nil {
+			screen = read.Text
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the take-over's screen has no init event after 30 s: %v %s", err, screen)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if _, err := connectAsPerson(t, connect, "terminal.send", map[string]any{"terminal": terminal, "text": "/exit"}); err != nil {
+		t.Fatal(err)
+	}
+
+	run = waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if run.Reason != dispatcherapi.ReasonTakeOverNoReport {
+		t.Errorf("the reason is %q, want %q", run.Reason, dispatcherapi.ReasonTakeOverNoReport)
+	}
+	if e := run.Executions[1]; e.EndReason != dispatcherapi.EndSessionEnded || e.ExitCode == nil || *e.ExitCode != 0 {
+		t.Errorf("the take-over Execution ended with %q and exit code %v", e.EndReason, e.ExitCode)
+	}
+	for _, pid := range pids {
+		if alive(pid) {
+			t.Errorf("the hc process %d still runs after the end", pid)
+		}
 	}
 }

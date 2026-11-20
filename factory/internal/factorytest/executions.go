@@ -188,6 +188,9 @@ type Runner struct {
 	before    func(execution string)
 	// keepSessions gives each Execution the same Claude Code directory.
 	keepSessions bool
+	// realHC is the real hc of the agent machine, in place of the fake
+	// (UseRealHC).
+	realHC string
 	// inAllocation are the Executions that a wrapper started with no
 	// dispatch (a take-over), for the clean-up of their cgroups.
 	inAllocation []string
@@ -202,6 +205,37 @@ func (r *Runner) InAllocation(execution string) {
 	if !slices.Contains(r.inAllocation, execution) {
 		r.inAllocation = append(r.inAllocation, execution)
 	}
+}
+
+// EnvRealHC names the real hc of the agent machine, for the cases that
+// use it (UseRealHC): the local factory stack sets it.
+const EnvRealHC = "FACTORYTEST_HC"
+
+// UseRealHC makes the next wrappers use the real hc that EnvRealHC names,
+// with the run user's own home as WRAPPER_HOME, as on an agent machine:
+// then a person's 'sudo -u <run user> hc connect' reaches the wrapper's
+// core. With no EnvRealHC, or not as root, the test skips. Only the local
+// factory stack runs it: the dev box's hc core holds a person's
+// terminals.
+func (r *Runner) UseRealHC() string {
+	r.env.t.Helper()
+	program := os.Getenv(EnvRealHC)
+	if program == "" || os.Geteuid() != 0 {
+		r.env.t.Skip("the real hc runs only as root on an agent machine, with " + EnvRealHC)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.realHC = program
+	return program
+}
+
+func (r *Runner) hc() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.realHC != "" {
+		return r.realHC
+	}
+	return filepath.Join(r.bin, hcName)
 }
 
 // KeepAgentSessions gives the next Executions one Claude Code directory
@@ -439,7 +473,7 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		fakedocker.EnvDir + "=" + r.Docker.Dir(),
 		// Never the dev box's real hc: its core holds a person's
 		// terminals.
-		wrapper.EnvHC + "=" + filepath.Join(r.bin, hcName),
+		wrapper.EnvHC + "=" + r.hc(),
 		fakehc.EnvDir + "=" + r.TakeOver.Dir(),
 		wrapper.EnvVM + "=" + VM(x.Execution),
 		wrapper.EnvTakeOverAttach + "=" + TakeOverAttach,
@@ -578,6 +612,12 @@ func (r *Runner) Workspace(execution string) string {
 
 // Home is the run user's home of an Execution (WRAPPER_HOME).
 func (r *Runner) Home(execution string) string {
+	r.mu.Lock()
+	real := r.realHC != ""
+	r.mu.Unlock()
+	if real {
+		return r.runUser.HomeDir
+	}
 	return filepath.Join(r.dir, "machines", execution, "home")
 }
 
