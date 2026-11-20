@@ -108,6 +108,23 @@ func TestAMessageDuringAToolCallReachesTheAgentWhenTheCallEndsInTheSameTurn(t *t
 	if !(seq(accepted) < seq(written) && seq(written) < seq(delivered)) {
 		t.Errorf("the events are not accepted, written, delivered: %v %v %v", seq(accepted), seq(written), seq(delivered))
 	}
+	// Each event names the message by the wrapper's uuid and the hash of its
+	// text, with the actor, so that the Agent session page can say who said
+	// it.
+	for _, ev := range []map[string]any{accepted, written, delivered} {
+		if ev["message.id"] != mid || ev["message.sha256"] != dispatcherapi.TextSHA256("Use the new API") ||
+			ev["actor.kind"] != "person" || ev["actor.name"] != "ana@example.com" {
+			t.Errorf("the %v event: message %v, hash %v, actor %v %v", ev["event.kind"], ev["message.id"],
+				ev["message.sha256"], ev["actor.kind"], ev["actor.name"])
+		}
+	}
+	// The task is a message of the factory, with the uuid that the
+	// Execution's task has.
+	started := eventsOf(env, id, "execution_started")
+	if len(started) != 1 || started[0]["message.id"] != dispatcherapi.TaskMessageID(onlyExecution(t, run).ID) ||
+		started[0]["message.sha256"] != dispatcherapi.TextSHA256("Fix the cart") {
+		t.Errorf("the started event does not name the task as a message: %v", started)
+	}
 	// The agent got it when the tool call ended, not at the write.
 	if gap := timeAttribute(t, delivered, "message.at").Sub(timeAttribute(t, written, "message.at")); gap < 350*time.Millisecond {
 		t.Errorf("the delivered time is %s after the write: it is not the time of the replay echo", gap)

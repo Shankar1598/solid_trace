@@ -174,6 +174,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		RunID:         e.runID,
 		ExecutionID:   e.id,
 		Prompt:        run.prompt,
+		MessageID:     dispatcherapi.TaskMessageID(e.id),
 		Repository:    repository,
 		CloneURL:      cloneURL,
 		BaseBranch:    run.baseBranch,

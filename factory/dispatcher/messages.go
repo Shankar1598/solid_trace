@@ -141,6 +141,7 @@ func (s *store) acceptMessage(organizationID, runID string, by actor, text strin
 	details := by.details()
 	details["message.id"] = accepted.ID
 	details["message.text"] = text
+	details["message.sha256"] = dispatcherapi.TextSHA256(text)
 	if live != "" {
 		if _, err := tx.Exec(`INSERT INTO commands (execution_id, kind, created_at, message_id) VALUES (?, ?, ?, ?)`,
 			live, dispatcherapi.CommandMessage, at.UnixMicro(), accepted.ID); err != nil {
@@ -210,6 +211,22 @@ func (s *store) markMessage(executionID string, ev dispatcherapi.MessageEvent, a
 	return s.commit(tx)
 }
 
+// messageDetails are the Attributes that name a message in an event: its
+// id (the uuid that the wrapper writes), the hash of its text and the
+// person who sent it as the event's actor, so that the Agent session page
+// can say who said it.
+func messageDetails(tx *sql.Tx, id string) (map[string]any, error) {
+	var text, kind, actorID, name string
+	if err := tx.QueryRow(`SELECT text, actor_kind, actor_id, actor_name FROM messages WHERE id = ?`, id).
+		Scan(&text, &kind, &actorID, &name); err != nil {
+		return nil, err
+	}
+	details := actor{kind: kind, id: actorID, name: name}.details()
+	details["message.id"] = id
+	details["message.sha256"] = dispatcherapi.TextSHA256(text)
+	return details, nil
+}
+
 // settleMessage records what the wrapper did with a message of its
 // Execution: the written event and the delivered event, each one time.
 // A delivered message was written. It is false when the Execution has no
@@ -243,8 +260,13 @@ func settleMessage(tx *sql.Tx, runID, executionID string, m dispatcherapi.Messag
 			}
 			continue
 		}
-		if err := recordEvent(tx, at, runID, step.kind, map[string]any{"message.id": m.ID, "execution.id": executionID,
-			"message.at": step.at.UTC().Format(time.RFC3339Nano)}); err != nil {
+		details, err := messageDetails(tx, m.ID)
+		if err != nil {
+			return false, err
+		}
+		details["execution.id"] = executionID
+		details["message.at"] = step.at.UTC().Format(time.RFC3339Nano)
+		if err := recordEvent(tx, at, runID, step.kind, details); err != nil {
 			return false, err
 		}
 	}
@@ -319,8 +341,12 @@ func continueForMessages(tx *sql.Tx, runID, executionID, state string, returned 
 		if sends >= maxSends {
 			continue
 		}
-		if err := recordEvent(tx, at, runID, eventMessageSentAgain, map[string]any{"message.id": id,
-			"execution.id": executionID}); err != nil {
+		details, err := messageDetails(tx, id)
+		if err != nil {
+			return false, err
+		}
+		details["execution.id"] = executionID
+		if err := recordEvent(tx, at, runID, eventMessageSentAgain, details); err != nil {
 			return false, err
 		}
 	}

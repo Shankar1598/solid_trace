@@ -609,7 +609,10 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 // ended (or outputWait passed after the exit), and gives the end call's
 // body.
 func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherapi.ExecutionEnd {
-	taskUUID := newUUID()
+	taskUUID := e.task.MessageID
+	if taskUUID == "" {
+		taskUUID = newUUID()
+	}
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
 		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
 	// The write is not under mu: a harness that does not read its stdin
