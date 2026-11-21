@@ -30,6 +30,8 @@ import (
 //
 // A take_over event with an execution.id and an actor makes that person
 // the author of each person message of that Execution that has no event.
+// The Dispatcher writes it before that Execution's execution_started
+// event, but the join does not use the order.
 
 // Kinds of an author that are not the Dispatcher's actor kinds.
 const (
@@ -94,6 +96,7 @@ func AgentAuthors(events []models.Log, people []AgentTimelineStep) map[string]Ag
 	}
 	var executions []*execution
 	byExecution := map[string]*execution{}
+	takenBy := map[string]AgentAuthor{}
 	var named []*messageEvent
 	byMessage := map[string]*messageEvent{}
 	for _, log := range events {
@@ -108,8 +111,10 @@ func AgentAuthors(events []models.Log, people []AgentTimelineStep) map[string]Ag
 				byExecution[executionID] = x
 			}
 		case runEventTakeOver:
-			if x, ok := byExecution[executionID]; ok && author.Kind != "" {
-				x.takenBy = &author
+			// The Dispatcher writes the take-over before the take-over
+			// Execution's started event.
+			if executionID != "" && author.Kind != "" {
+				takenBy[executionID] = author
 			}
 		}
 		id := s["message.id"]
@@ -137,6 +142,11 @@ func AgentAuthors(events []models.Log, people []AgentTimelineStep) map[string]Ag
 		}
 		if kind == runEventMessageDelivered || kind == runEventExecutionStarted {
 			m.delivered = true
+		}
+	}
+	for _, x := range executions {
+		if author, ok := takenBy[x.id]; ok {
+			x.takenBy = &author
 		}
 	}
 	slices.SortStableFunc(executions, func(a, b *execution) int { return a.started.Compare(b.started) })

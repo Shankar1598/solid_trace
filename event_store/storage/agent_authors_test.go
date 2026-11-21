@@ -42,8 +42,10 @@ func TestAgentAuthors(t *testing.T) {
 		authorsEvent(605, "message_delivered", "x2", "w-1", "Continue", "schedule", "Nightly"),
 		authorsEvent(606, "message_delivered", "x2", "w-2", "Continue", "tracker", "Bo"),
 		authorsEvent(607, "message_written", "x2", "w-3", "Continue", "person", "Cy"),
-		authorsEvent(1190, "execution_started", "x3", "", "", "person", "Ana"),
-		authorsEvent(1191, "take_over", "x3", "", "", "person", "Cy"),
+		// The Dispatcher writes the take-over at the take-over call, before
+		// the take-over Execution starts.
+		authorsEvent(1189, "take_over", "x3", "", "", "person", "Cy"),
+		authorsEvent(1190, "execution_started", "x3", "", "", "person", "Cy"),
 	}
 	task := authorsPerson(0, "t1", "", "Fix the cart total")
 	mid := authorsPerson(10, "q1", "m-mid", "Also check the footer")

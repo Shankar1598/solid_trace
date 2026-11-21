@@ -128,8 +128,10 @@ func TestTheAgentSessionOfARunSaysWhoSaidEachPersonMessage(t *testing.T) {
 	// The uuid of these two is not in the record: Seam 4 found no uuid.
 	e5 := messageRunEvent(run, 5, at.Add(605*time.Second), "message_delivered", x2, "w-1", "Continue", "schedule", "s1", "Nightly")
 	e6 := messageRunEvent(run, 6, at.Add(606*time.Second), "message_delivered", x2, "w-2", "Check the totals", "tracker", "u9", "Bo")
-	e7 := started(7, at.Add(1190*time.Second), x3)
-	e8 := messageRunEvent(run, 8, at.Add(1191*time.Second), "take_over", x3, "", "", "person", "11", "Cy")
+	// The Dispatcher writes the take-over at the take-over call, before
+	// the take-over Execution starts.
+	e7 := messageRunEvent(run, 7, at.Add(1189*time.Second), "take_over", x3, "", "", "person", "11", "Cy")
+	e8 := started(8, at.Add(1190*time.Second), x3)
 	expectStatus(t, sendRunEvents(t, env, o.dispatcherSecret, e1, e2, e3, e4, e5, e6, e7, e8), 200)
 	env.ProcessLogs(t)
 
