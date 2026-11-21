@@ -248,6 +248,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		CheckpointSeconds: int64(d.config.CheckpointInterval / time.Second),
 		Messages:          run.messages,
 		Form:              run.form,
+		Restore:           run.restore,
 	})
 }
 

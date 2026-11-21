@@ -244,7 +244,16 @@ func (d *Dispatcher) watchLoop(ctx context.Context) {
 func (d *Dispatcher) endOnTheRunner(id string, ev RunnerEvent) {
 	_, stopped := d.runnerStopped.LoadAndDelete(id)
 	if ev.Lost {
-		d.endByDispatcher(id, "the machine was lost", nil)
+		ended, err := d.store.loseMachine(id, d.now())
+		if err != nil {
+			d.log.Error("could not end an Execution", "execution", id, "error", err)
+			return
+		}
+		if ended {
+			d.warn("an Execution ended with no end call", "execution.id", id, "execution.reason", reasonMachineLost)
+			d.revokeTokens(id)
+			d.wakeDispatch()
+		}
 		return
 	}
 	code := ev.ExitCode

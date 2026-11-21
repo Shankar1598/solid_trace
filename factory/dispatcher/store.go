@@ -401,6 +401,10 @@ var migrations = []string{
 	// one: at most one for each Execution.
 	`ALTER TABLE executions ADD COLUMN placed_at INTEGER;
 	ALTER TABLE executions ADD COLUMN wait_warned_at INTEGER;`,
+	// The restart after a lost machine (ticket 66). machine_lost is why
+	// the Execution's machine went: preempted, machine stopped or machine
+	// lost ('' is an Execution that ended for another reason).
+	`ALTER TABLE executions ADD COLUMN machine_lost TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.

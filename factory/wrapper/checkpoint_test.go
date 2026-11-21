@@ -48,7 +48,7 @@ var reasonOf = regexp.MustCompile(`^WIP \[skip ci\]: saved by the factory at \d{
 // wipReason checks the WIP commit's message and gives its reason.
 func wipReason(t *testing.T, env *factorytest.Env, commit, run, execution string) string {
 	t.Helper()
-	message := strings.TrimSpace(env.Forge.Git("example/shop", "log", "-1", "--format=%B", commit))
+	message := strings.TrimSpace(env.Forge.Git("example/shop", "log", "-1", "--format=%s", commit))
 	m := reasonOf.FindStringSubmatch(message)
 	if m == nil || m[1] != run || m[2] != execution {
 		t.Fatalf("the WIP commit message %q, want Run %s, Execution %s", message, run, execution)
@@ -102,8 +102,9 @@ func TestTheCheckpointSavesEach5MinutesOnlyWhenTheWorkChanged(t *testing.T) {
 		t.Errorf("work.txt in the third checkpoint: %q", body)
 	}
 
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(execution)
-	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	run := waitForRestart(t, env, ana, id)
 	preemption := eventOf(t, env.WaitForRunEvents(run.ID, 5), "preemption")
 	last, _ := env.Forge.Ref("example/shop", ref)
 	if preemption["preemption.wip_commit"] != last || last == changed {
@@ -142,8 +143,9 @@ func TestACheckpointIntervalOf0SavesNothing(t *testing.T) {
 		t.Errorf("a checkpoint with interval 0 saved: %v", refs)
 	}
 
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(execution)
-	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	waitForRestart(t, env, ana, id)
 	preemption := eventOf(t, env.WaitForRunEvents(id, 5), "preemption")
 	if _, ok := preemption["preemption.checkpoint_age_seconds"]; ok {
 		t.Errorf("a checkpoint age with no checkpoint: %v", preemption["preemption.checkpoint_age_seconds"])
@@ -166,8 +168,9 @@ func TestTheSaveFollowsTheForgesPlaceOfTheWIPRefs(t *testing.T) {
 	id := start(t, env, ana, "Fix the cart")
 	done()
 
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
-	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	waitForRestart(t, env, ana, id)
 
 	refs := env.Forge.Refs("example/shop")
 	saved := refs["refs/heads/agent-wip/"+id]

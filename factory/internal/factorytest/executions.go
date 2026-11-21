@@ -189,6 +189,10 @@ type Runner struct {
 	noDocker  bool
 	pathFirst string
 	before    func(execution string)
+	// held is true while the Runner has no machine (HoldMachines), and
+	// waiting are the wrappers that wait for one.
+	held    bool
+	waiting []fakerunner.Execution
 	// keepSessions gives each Execution the same Claude Code directory.
 	keepSessions bool
 	// realHC is the real hc of the agent machine, in place of the fake
@@ -516,7 +520,49 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	if broken {
 		env = env[1:]
 	}
+	r.mu.Lock()
+	if r.held {
+		r.waiting = append(r.waiting, fakerunner.Execution{ID: x.Execution, Env: env})
+		r.mu.Unlock()
+		return workload, nil
+	}
+	r.mu.Unlock()
 	return workload, r.Fake.Dispatch(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
+}
+
+// HoldMachines makes the Runner have no machine for the next
+// Executions, as when the group cannot get Spot capacity: each dispatch
+// gives its workload, and the wrapper starts only at GiveMachines.
+func (r *Runner) HoldMachines() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.held = true
+}
+
+// GiveMachines starts the wrapper of each Execution that waits for a
+// machine, and of each later one.
+func (r *Runner) GiveMachines() {
+	r.env.t.Helper()
+	r.mu.Lock()
+	waiting := r.waiting
+	r.held, r.waiting = false, nil
+	r.mu.Unlock()
+	for _, x := range waiting {
+		if err := r.Fake.Dispatch(context.Background(), x); err != nil {
+			r.env.t.Fatal(err)
+		}
+	}
+}
+
+// Waiting are the Executions that wait for a machine (HoldMachines).
+func (r *Runner) Waiting() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ids []string
+	for _, x := range r.waiting {
+		ids = append(ids, x.ID)
+	}
+	return ids
 }
 
 // Preempt says on the Machine notice of the Execution's machine that the

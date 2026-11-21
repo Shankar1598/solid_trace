@@ -67,7 +67,14 @@ import (
 //     transcript that SolidTrace has; absent when not known),
 //     preemption.checkpoint_age_seconds (absent with no checkpoint) and
 //     preemption.problems (a list of the steps that failed or passed their
-//     time limit).
+//     time limit). Also preemption.restart (true when the Run is queued
+//     again for a new Execution) and, for a headless Execution,
+//     preemption.lost_in_a_row (the lost machines in a row with this one;
+//     the fourth fails the Run with "machine lost 4 times in a row").
+//   - machine_lost (the machine of an Execution went with no notice, from
+//     the Runner): execution.id, machine_lost.reason ("machine lost"),
+//     machine_lost.restart and, for a headless Execution,
+//     machine_lost.in_a_row, as for a preemption.
 //   - interventions (message_accepted, interrupt, stop, take_over,
 //     account_switched, continue): actor.* is the actor who did it.
 //

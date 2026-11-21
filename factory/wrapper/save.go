@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -116,6 +117,11 @@ func (e *execution) checkpoints(ctx context.Context, start time.Time) {
 }
 
 // wipSaver is the work-in-progress save of an Execution's checkout.
+// errRestoring is the refusal of a save before a restarted Execution's
+// harness starts (execution.restoring).
+var errRestoring = errors.New("the harness of this restarted Execution did not start: the work-in-progress ref " +
+	"keeps the lost Execution's save for the next Execution")
+
 type wipSaver struct {
 	e *execution
 	// mu holds one save at a time: a checkpoint's push never comes after
@@ -154,6 +160,9 @@ func (s *wipSaver) run(ctx context.Context, reason string, checkpoint bool) (sav
 	e := s.e
 	if e.checkout == "" {
 		return savedWork{}, false, errors.New("the setup made no checkout, so there is no work to save")
+	}
+	if e.restoring.Load() {
+		return savedWork{}, false, errRestoring
 	}
 	ref, err := e.wipRef()
 	if err != nil {
@@ -194,7 +203,10 @@ func (s *wipSaver) run(ctx context.Context, reason string, checkpoint bool) (sav
 		}
 	}
 	saveSubs(root)
-	if err := s.commitAndPush(ctx, git, root, message, ref, now); err != nil {
+	skipped = append(root.allSkipped(), skipped...)
+	// The checkout's commit names what the save left out, so that a
+	// restore can say what did not come back.
+	if err := s.commitAndPush(ctx, git, root, message+leftOutText(skipped), ref, now); err != nil {
 		return savedWork{}, false, err
 	}
 	s.last = key
@@ -203,7 +215,6 @@ func (s *wipSaver) run(ctx context.Context, reason string, checkpoint bool) (sav
 		s.at = e.clock.Now()
 		s.atMu.Unlock()
 	}
-	skipped = append(root.allSkipped(), skipped...)
 	return savedWork{Commit: root.commit, Skipped: skipped, parent: root.head}, true, nil
 }
 
@@ -614,6 +625,33 @@ func (s *wipSaver) commitAndPush(ctx context.Context, git gitCommand, r *repoSav
 		return fmt.Errorf("the push to %s failed: %w", ref, err)
 	}
 	return nil
+}
+
+// leftOutHeading starts the part of a WIP commit's message that names
+// the files that the save left out, one on each line.
+const leftOutHeading = "Left out of the save:"
+
+// leftOutText is the part of a WIP commit's message that names the
+// skipped files ("" when there are none): the first maxSkipped names,
+// each name with a control character or a quote at its start in Go's
+// quotes, and the count of the others.
+func leftOutText(skipped []string) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n" + leftOutHeading + "\n")
+	for i, name := range skipped {
+		if i == maxSkipped {
+			fmt.Fprintf(&b, "(and %d more)\n", len(skipped)-maxSkipped)
+			break
+		}
+		if strings.HasPrefix(name, `"`) || strings.ContainsFunc(name, func(r rune) bool { return r < ' ' || r == 0x7f }) {
+			name = strconv.Quote(name)
+		}
+		b.WriteString(name + "\n")
+	}
+	return b.String()
 }
 
 // splitNUL splits git's -z output.

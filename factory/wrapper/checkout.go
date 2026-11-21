@@ -37,6 +37,9 @@ const (
 // writes each file before the run user's first process (the first git
 // call), and after it writes in no folder of the run user's.
 func (e *execution) setup(ctx context.Context, environ []string) error {
+	// A save before the harness starts must not replace the lost
+	// Execution's save (e.restoring).
+	e.restoring.Store(e.task.Restore != nil)
 	repository, err := checkRepository(e.task.Repository)
 	if err != nil {
 		return err
@@ -124,6 +127,11 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 		return fmt.Errorf("find the start of the Run's branch %s: %w", branch, err)
 	}
 	e.startTip = strings.TrimSpace(tip)
+	// After a lost machine, the saved work comes back before the setup
+	// command and the harness (lost_machine.go).
+	if err := e.restoreWork(ctx, environ, pushed); err != nil {
+		return err
+	}
 	e.workDir = filepath.Join(checkout, folder)
 	if info, err := os.Stat(e.workDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the repository %s has no folder %s, the Project's folder", e.task.Repository, folder)
@@ -254,6 +262,9 @@ func (e *execution) push(environ []string, saved string) string {
 	}
 	if err == nil {
 		return ""
+	}
+	if e.restoring.Load() {
+		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v); %v", err, errRestoring))
 	}
 	wip, werr := e.wipRef()
 	if werr == nil && saved == tip {

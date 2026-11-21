@@ -143,7 +143,7 @@ func TestAFailedExecutionIsNotStartedAgain(t *testing.T) {
 	}
 }
 
-func TestAWrapperThatEndsWithNoEndCallFailsTheRun(t *testing.T) {
+func TestAReportWithNoEndCallBeforeTheMachineWentDoesNotMakeTheRunDone(t *testing.T) {
 	env, ana := newEnv(t)
 	// The agent reports done, then the machine goes before the wrapper's
 	// end: the report alone must not make the Run done.
@@ -156,13 +156,14 @@ func TestAWrapperThatEndsWithNoEndCallFailsTheRun(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	env.Runner.HoldMachines()
 	if err := env.Runner.Fake.LoseMachine(run.Executions[0].ID); err != nil {
 		t.Fatal(err)
 	}
 
-	run = waitFor(t, env, ana, id, dispatcherapi.StateFailed)
-	if run.Reason != "the machine was lost" {
-		t.Errorf("reason %q", run.Reason)
+	run = waitForRestart(t, env, ana, id)
+	if state, reason := endedAs(t, env, id, run.Executions[0].ID); state != dispatcherapi.StateQueued || !strings.HasPrefix(reason, dispatcherapi.MachineLost+": ") {
+		t.Errorf("the Run after the lost machine: %s (%s)", state, reason)
 	}
 }
 

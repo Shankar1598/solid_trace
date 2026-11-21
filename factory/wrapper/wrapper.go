@@ -340,12 +340,24 @@ type execution struct {
 	// checkout is the clone ("" before the clone), and workDir the
 	// agent's working directory in it: the Project's folder.
 	checkout, workDir string
-	// startTip is the commit of the Run's branch after the setup: a push
-	// is necessary only when the branch moved.
+	// startTip is the commit of the Run's branch after the clone (the
+	// remote branch, or the base branch for a new one): a push is
+	// necessary only when the branch moved. A restore after a lost
+	// machine can move it to commits that were not pushed.
 	startTip string
 	// resumed is true when the task resumes the Agent session and the
 	// restore put its transcript back: the harness gets --resume.
 	resumed bool
+	// lostNote is the first message's text after a lost machine
+	// (restoreWork): what is back and what is not ("": no lost machine).
+	lostNote string
+	// restoring is true from the start of a restarted Execution's setup
+	// (the task has a Restore) until its harness starts: no save and no
+	// push to the WIP ref replaces the lost Execution's save, which the
+	// WIP ref then keeps for the next Execution. Before the harness, the
+	// checkout has no work of the agent's: a save of a clone, or of a
+	// restore that did not end, would put a wrong save on the forge.
+	restoring atomic.Bool
 	// prMu holds one pr call at a time, and the push before the end until
 	// a pr call's push ended. pushedTip is the commit that the last pr
 	// call pushed.
@@ -822,6 +834,9 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	if err == nil {
 		e.harness, e.stdin = cmd, stdin
 		e.lastOutput.Store(e.cfg.clock().UnixNano())
+		// Under mu: the halt, which reads stdin under mu after the
+		// marker, finds the harness and the save that follows saves.
+		e.restoring.Store(false)
 	}
 	e.mu.Unlock()
 	if err != nil {
@@ -844,14 +859,23 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	if taskUUID == "" {
 		taskUUID = newUUID()
 	}
+	// After a lost machine, the first message says what is back: in
+	// place of the prompt when the Agent session resumes, else after it.
+	text := e.task.Prompt
+	if e.lostNote != "" {
+		text = e.lostNote
+		if !e.resumed {
+			text = e.task.Prompt + "\n\n" + e.lostNote
+		}
+	}
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
-		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": e.task.Prompt}})
+		"parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": text}})
 	// The write is not under mu: a harness that does not read its stdin
 	// blocks it, and a stop, a limit or the preemption handler must still
 	// end the Execution. An Execution that resumes the Agent session for its
 	// messages does not write the prompt again: the first message is the
-	// first of them.
-	if _, ending := e.endedEarly(); !ending && (!e.resumed || len(e.task.Messages) == 0) {
+	// first of them, after the note of a lost machine.
+	if _, ending := e.endedEarly(); !ending && (!e.resumed || len(e.task.Messages) == 0 || e.lostNote != "") {
 		if err := e.writeTask(message); err != nil {
 			fmt.Fprintln(e.log, "wrapper: write the task:", err)
 		}

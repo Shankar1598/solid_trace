@@ -596,6 +596,22 @@ take_over_cases_pass_as_root_under_raw_exec() {
     want "the real hc case ran, got: $(tail -n 30 <<<"$out")"
 }
 
+# The restore and restart cases of factory/wrapper (ticket 66), as root in a raw_exec
+# task with the run user agent: the restore's git runs as agent in the new checkout.
+restart_cases_pass_as_root_under_raw_exec() {
+  copy_wrapper_tests
+  run_batch_job "$here/checks/restart-tests.nomad.hcl" restart-tests 240
+  grep -E '^--- (PASS|SKIP|FAIL)' <<<"$out" | sed 's/^/note: /' >&2 || true
+  [ "$status" = complete ] || want "the test task complete, got: $status; output: $(tail -n 30 <<<"$out")"
+  grep -q '^PASS$' <<<"$out" || want "PASS from the tests, got: $(tail -n 30 <<<"$out")"
+  ! grep -q -e '--- SKIP' -e '--- FAIL' <<<"$out" || want "no case skipped or failed, got: $(grep -e '--- SKIP' -e '--- FAIL' -A 3 <<<"$out")"
+  local name
+  for name in TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork TestAPersonsPushAfterTheSaveWinsOverTheSavedWork \
+    TestALostMachineRestartsTheRunFromTheLastCheckpoint TestTheFourthLostMachineInARowFailsTheRun; do
+    grep -q "^--- PASS: $name" <<<"$out" || want "the case $name ran, got: $(tail -n 30 <<<"$out")"
+  done
+}
+
 # The workload identity in a file (as the Nomad Runner gives it): root's only.
 the_identity_file_is_roots_only() {
   run_batch_job "$here/checks/identity-file-check.nomad.hcl" identity-file-check
@@ -609,6 +625,7 @@ check "the kill boundary's cgroup cases pass as root under raw_exec, with the ru
 check "the wrapper's run-user cases pass as root under raw_exec, with the run user agent" run_user_cases_pass_as_root_under_raw_exec
 check "the run user cannot read a raw_exec task's identity file or reach its directory" the_identity_file_is_roots_only
 check "a take-over as root under raw_exec starts the real hc core as agent in the Execution's cgroup with no SUDO_ variable, and 'sudo -u agent hc connect' reaches it" take_over_cases_pass_as_root_under_raw_exec
+check "the restore and the restart after a lost machine pass as root under raw_exec, with the run user agent" restart_cases_pass_as_root_under_raw_exec
 
 # --- The end ---------------------------------------------------------------------------
 

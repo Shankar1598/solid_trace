@@ -172,6 +172,9 @@ type startedRun struct {
 	form string
 	// cause is the Issue or the Monitor that started the Run, if one did.
 	cause runCause
+	// restore is set when the Run's last machines were lost: the wrapper
+	// restores their work-in-progress save.
+	restore *dispatcherapi.Restore
 }
 
 // setPlace keeps the machine of an Execution that has not ended, and the
@@ -235,6 +238,9 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 		return run, err
 	}
 	if run.cause, err = causeOf(startedBy, attributes); err != nil {
+		return run, err
+	}
+	if run.restore, err = restoreOf(tx, runID, id); err != nil {
 		return run, err
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
@@ -351,10 +357,27 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 	// account at once, or waits on an account limit. A take-over
 	// Execution has its own outcome rules, and no switch.
 	var nextAccount string
-	if form == dispatcherapi.FormInteractive {
+	// A preempted or a stopped machine restarts a headless Execution's
+	// Run, also after a report: the end did not finish (V7). A take-over
+	// does not start again by itself: the Run waits on the person (V8).
+	lost := lostReason(end.Reason)
+	inARow := 0
+	switch {
+	case form == dispatcherapi.FormInteractive:
 		from = dispatcherapi.StateTakenOver
 		runState, reason, question, summary = takeOverOutcome(last, end)
-	} else if runState == dispatcherapi.StateWaitingOnAccountLimit {
+		if lost != "" {
+			runState, reason, question = dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+lost, ""
+		}
+	case lost != "":
+		if runState, reason, inARow, err = restart(tx, runID, id, lost); err != nil {
+			return err
+		}
+		question, summary = "", ""
+		if runState == dispatcherapi.StateQueued {
+			nextAccount = account
+		}
+	case runState == dispatcherapi.StateWaitingOnAccountLimit:
 		if runState, reason, nextAccount, err = s.atUsageLimit(tx, account, at); err != nil {
 			return err
 		}
@@ -363,9 +386,14 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 	if err != nil {
 		return err
 	}
-	again, err := continueForMessages(tx, runID, id, from, runState, returned, at)
-	if err != nil {
-		return err
+	// Messages do not queue a Run whose machine went: a restart delivers
+	// them, and neither a take-over nor a Run that lost too many machines
+	// starts again by itself.
+	again := false
+	if lost == "" {
+		if again, err = continueForMessages(tx, runID, id, from, runState, returned, at); err != nil {
+			return err
+		}
 	}
 	if again {
 		runState, reason, question, summary = dispatcherapi.StateQueued, reasonSentAgain, "", ""
@@ -390,6 +418,11 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		endReason, exit, delivered, max(end.BackgroundTasksKilled, 0), id); err != nil {
 		return err
 	}
+	if lost != "" {
+		if err := markLost(tx, id, lost); err != nil {
+			return err
+		}
+	}
 	var flags string
 	if runState == dispatcherapi.StateDone {
 		if err := unmarshalList(checks, &report.Checks); err != nil {
@@ -410,14 +443,25 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		return err
 	}
 	// A stop before the end wins: the Run is not running, and does not
-	// switch.
-	if n, err := res.RowsAffected(); err != nil {
+	// switch or restart.
+	changed, err := res.RowsAffected()
+	if err != nil {
 		return err
-	} else if n == 0 {
+	}
+	if changed == 0 {
 		nextAccount = ""
 	}
-	if end.Preemption != nil {
-		if err := recordEvent(tx, at, runID, eventPreemption, preemptionDetails(id, *end.Preemption)); err != nil {
+	if end.Preemption != nil || lost != "" {
+		p := dispatcherapi.Preemption{Reason: end.Reason}
+		if end.Preemption != nil {
+			p = *end.Preemption
+		}
+		details := preemptionDetails(id, p)
+		if form != dispatcherapi.FormInteractive {
+			details["preemption.lost_in_a_row"] = inARow
+		}
+		details["preemption.restart"] = changed > 0 && runState == dispatcherapi.StateQueued
+		if err := recordEvent(tx, at, runID, eventPreemption, details); err != nil {
 			return err
 		}
 	}
@@ -432,7 +476,8 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 	if err := recordEvent(tx, at, runID, eventExecutionEnded, details); err != nil {
 		return err
 	}
-	if nextAccount != "" {
+	// A restart stays on its account: that is no switch.
+	if nextAccount != "" && nextAccount != account {
 		switched := actor{kind: actorDispatcher, name: "Dispatcher"}.details()
 		switched["account.old"], switched["account.new"] = account, nextAccount
 		if err := recordEvent(tx, at, runID, eventAccountSwitched, switched); err != nil {
@@ -499,11 +544,33 @@ func (s *store) recordPreempting(id string, p dispatcherapi.Preempting, at time.
 	return s.commit(tx)
 }
 
+// reasonTakeOverEnded starts the reason of a Run whose take-over ended
+// with no end call, or with its machine: it waits on a person (V8).
+const reasonTakeOverEnded = "the take-over ended: "
+
+// reasonMachineLost is the end reason of an Execution whose machine went
+// with no notice (the Runner's lost event).
+const reasonMachineLost = "the machine was lost"
+
 // failExecution ends an Execution that has not ended, with reason, and
 // fails its Run if the Execution sets its state (ownStateSQL). exitCode is the
 // wrapper's exit code, or nil. It is false when the Execution had ended
 // (or is not known).
 func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (bool, error) {
+	return s.endWithNoCall(id, reason, exitCode, "", at)
+}
+
+// loseMachine ends an Execution whose machine went with no notice, and
+// restarts its Run if the Execution sets its state (V7): the Run is queued
+// again, or fails after too many lost machines in a row. A take-over's
+// Run waits on a person. It is false when the Execution had ended.
+func (s *store) loseMachine(id string, at time.Time) (bool, error) {
+	return s.endWithNoCall(id, reasonMachineLost, nil, dispatcherapi.MachineLost, at)
+}
+
+// endWithNoCall ends an Execution that has not ended and had no end call.
+// lost is "" or dispatcherapi.MachineLost.
+func (s *store) endWithNoCall(id, reason string, exitCode *int, lost string, at time.Time) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
@@ -515,9 +582,9 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 	if exitCode != nil {
 		exit = sql.NullInt64{Int64: int64(*exitCode), Valid: true}
 	}
-	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ?, exit_code = ? WHERE id = ?
-		AND state != ? RETURNING run_id, started_at IS NOT NULL`, dispatcherapi.ExecutionEnded, at.UnixMicro(), reason,
-		exit, id, dispatcherapi.ExecutionEnded).Scan(&runID, &started)
+	err = tx.QueryRow(`UPDATE executions SET state = ?, ended_at = ?, end_reason = ?, exit_code = ?, machine_lost = ?
+		WHERE id = ? AND state != ? RETURNING run_id, started_at IS NOT NULL`, dispatcherapi.ExecutionEnded,
+		at.UnixMicro(), reason, exit, lost, id, dispatcherapi.ExecutionEnded).Scan(&runID, &started)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -530,31 +597,59 @@ func (s *store) failExecution(id, reason string, exitCode *int, at time.Time) (b
 	if err != nil {
 		return false, err
 	}
-	var form string
-	if err := tx.QueryRow(`SELECT form FROM executions WHERE id = ?`, id).Scan(&form); err != nil {
+	var form, account string
+	if err := tx.QueryRow(`SELECT form, account FROM executions WHERE id = ?`, id).Scan(&form, &account); err != nil {
 		return false, err
 	}
+	var restarted bool
+	inARow := 0
 	if form == dispatcherapi.FormInteractive {
 		// A take-over that ends with no end call (the machine went, or
 		// the wrapper failed) does not start again by itself: the Run
 		// waits on a person, with the reason (V8).
 		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
-			AND state = ?`, dispatcherapi.StateWaitingOnPerson, "the take-over ended: "+reason, runID,
+			AND state = ?`, dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+reason, runID,
 			dispatcherapi.StateTakenOver); err != nil {
 			return false, err
 		}
 	} else {
-		again, err := continueForMessages(tx, runID, id, dispatcherapi.StateRunning, dispatcherapi.StateFailed, returned, at)
+		runState, runReason, nextAccount := dispatcherapi.StateFailed, reason, ""
+		if lost != "" {
+			if runState, runReason, inARow, err = restart(tx, runID, id, lost); err != nil {
+				return false, err
+			}
+			if runState == dispatcherapi.StateQueued {
+				nextAccount = account
+			}
+		} else {
+			again, err := continueForMessages(tx, runID, id, dispatcherapi.StateRunning, dispatcherapi.StateFailed,
+				returned, at)
+			if err != nil {
+				return false, err
+			}
+			if again {
+				runState, runReason = dispatcherapi.StateQueued, reasonSentAgain
+			}
+		}
+		res, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '',
+			next_account = CASE WHEN ? != '' THEN ? ELSE next_account END WHERE id = ? AND `+ownStateSQL,
+			runState, runReason, nextAccount, nextAccount, runID, dispatcherapi.StateRunning, dispatcherapi.StateQueued,
+			started)
 		if err != nil {
 			return false, err
 		}
-		runState, runReason := dispatcherapi.StateFailed, reason
-		if again {
-			runState, runReason = dispatcherapi.StateQueued, reasonSentAgain
+		changed, err := res.RowsAffected()
+		if err != nil {
+			return false, err
 		}
-		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
-			AND `+ownStateSQL, runState, runReason, runID, dispatcherapi.StateRunning, dispatcherapi.StateQueued,
-			started); err != nil {
+		restarted = changed > 0 && lost != "" && runState == dispatcherapi.StateQueued
+	}
+	if lost != "" {
+		details := map[string]any{"execution.id": id, "machine_lost.reason": lost, "machine_lost.restart": restarted}
+		if form != dispatcherapi.FormInteractive {
+			details["machine_lost.in_a_row"] = inARow
+		}
+		if err := recordEvent(tx, at, runID, eventMachineLost, details); err != nil {
 			return false, err
 		}
 	}

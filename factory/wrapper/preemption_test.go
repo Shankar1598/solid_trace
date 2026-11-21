@@ -72,7 +72,7 @@ func awaitEvent(t *testing.T, env *factorytest.Env, run, kind string) map[string
 // preemption event says so.
 func checkSaved(t *testing.T, env *factorytest.Env, run dispatcherapi.Run, reason string) map[string]any {
 	t.Helper()
-	execution := onlyExecution(t, run)
+	execution := run.Executions[0]
 	if execution.EndReason != reason {
 		t.Errorf("end reason %q, want %q", execution.EndReason, reason)
 	}
@@ -118,11 +118,12 @@ func TestANoticeOnTheMachineSavesTheWorkAndEndsTheExecutionAsPreempted(t *testin
 	working()
 	execution := getRun(t, ana, id).Executions[0].ID
 
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(execution)
 
-	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
-	if run.Reason != dispatcherapi.EndPreempted {
-		t.Errorf("the Run's reason %q", run.Reason)
+	run := waitForRestart(t, env, ana, id)
+	if state, reason := endedAs(t, env, id, run.Executions[0].ID); state != dispatcherapi.StateQueued || !strings.HasPrefix(reason, dispatcherapi.EndPreempted+": ") {
+		t.Errorf("the Run after the preemption: %s (%s)", state, reason)
 	}
 	preemption := checkSaved(t, env, run, dispatcherapi.EndPreempted)
 	if problems, _ := preemption["preemption.problems"].([]any); len(problems) != 0 {
@@ -148,9 +149,10 @@ func TestASIGTERMWithNoStopCommandEndsTheExecutionAsMachineStopped(t *testing.T)
 			id := start(t, env, ana, "Fix the cart")
 			working()
 
+			env.Runner.HoldMachines()
 			env.Runner.Signal(getRun(t, ana, id).Executions[0].ID, sig)
 
-			run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+			run := waitForRestart(t, env, ana, id)
 			checkSaved(t, env, run, dispatcherapi.EndMachineStopped)
 		})
 	}
@@ -166,10 +168,11 @@ func TestWithA0SecondNoticeTheSameStepsRunOnceAndTheReasonIsPreempted(t *testing
 	working()
 	execution := getRun(t, ana, id).Executions[0].ID
 
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(execution)
 	env.Runner.Signal(execution, syscall.SIGTERM)
 
-	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	run := waitForRestart(t, env, ana, id)
 	checkSaved(t, env, run, dispatcherapi.EndPreempted)
 	got := kinds(env.RunEvents(id))
 	for _, kind := range []string{"preempting", "preemption", "execution_ended"} {
@@ -202,12 +205,13 @@ func TestAReportAfterTheNoticeIsRefusedAndTheHaltStopsAnAgentThatIgnoresTheInter
 	execution := getRun(t, ana, id).Executions[0].ID
 
 	began := time.Now()
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(execution)
 	awaitEvent(t, env, id, "preempting")
 	open()
 
-	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
-	if run.Reason != dispatcherapi.EndPreempted || onlyExecution(t, run).EndReason != dispatcherapi.EndPreempted {
+	run := waitForRestart(t, env, ana, id)
+	if run.Executions[0].EndReason != dispatcherapi.EndPreempted {
 		t.Errorf("the Run is %s (%s): a report after the notice counted", run.State, run.Reason)
 	}
 	if took := time.Since(began); took > 15*time.Second {
@@ -234,12 +238,13 @@ func TestALastUploadThatHangsStopsAtItsLimitAndTheExecutionStillEnds(t *testing.
 	t.Cleanup(func() { env.SolidTrace.HangIngest(false) })
 
 	began := time.Now()
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(execution)
 
-	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	run := waitForRestart(t, env, ana, id)
 	took := time.Since(began)
-	if onlyExecution(t, run).EndReason != dispatcherapi.EndPreempted {
-		t.Errorf("end reason %q", onlyExecution(t, run).EndReason)
+	if run.Executions[0].EndReason != dispatcherapi.EndPreempted {
+		t.Errorf("end reason %q", run.Executions[0].EndReason)
 	}
 	if took < 10*time.Second || took > 20*time.Second {
 		t.Errorf("the Execution ended %s after the notice, want after the last upload's 10 s limit", took)
@@ -262,11 +267,12 @@ func TestAnEvidenceFileThatTheLastUploadDidNotSendIsAProblem(t *testing.T) {
 	working()
 	execution := getRun(t, ana, id).Executions[0].ID
 
+	env.Runner.HoldMachines()
 	env.Runner.Preempt(execution)
 
-	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
-	if onlyExecution(t, run).EndReason != dispatcherapi.EndPreempted {
-		t.Errorf("end reason %q", onlyExecution(t, run).EndReason)
+	run := waitForRestart(t, env, ana, id)
+	if run.Executions[0].EndReason != dispatcherapi.EndPreempted {
+		t.Errorf("end reason %q", run.Executions[0].EndReason)
 	}
 	preemption := eventOf(t, env.WaitForRunEvents(id, 5), "preemption")
 	problems, _ := preemption["preemption.problems"].([]any)
