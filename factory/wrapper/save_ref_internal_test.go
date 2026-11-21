@@ -2,6 +2,8 @@ package wrapper
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,9 +90,58 @@ func TestTheCheckpointPushesOnlyWhenTheWorkChanged(t *testing.T) {
 		t.Errorf("a checkpoint with no change moved the ref to %s", got)
 	}
 
+	// The agent's git command holds the index lock: the checkpoint does
+	// not need it, and leaves it.
+	lock := filepath.Join(e.checkout, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, e.checkout, map[string]string{"app.txt": "three\n"})
+	locked := checkpoint(true)
+	if _, err := os.Stat(lock); err != nil || wip() != locked.Commit {
+		t.Fatalf("the checkpoint with the agent's index lock: %v, remote %s, save %s", err, wip(), locked.Commit)
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	first = locked
+
 	commitFiles(t, e.checkout, nil, "The agent commits the same tree")
 	second := checkpoint(true)
 	if got := wip(); got != second.Commit || got == first.Commit {
 		t.Errorf("a checkpoint after a commit: remote %s, save %s", got, second.Commit)
+	}
+}
+
+// A push that fails is an error of the save, and the next checkpoint
+// saves the same work again.
+func TestACheckpointThatCouldNotPushSavesAgainAtTheNextCheckpoint(t *testing.T) {
+	e, remote := savingExecution(t, nil, nil)
+	hook := filepath.Join(remote, "hooks", "pre-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho the forge is down >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, e.checkout, map[string]string{"work.txt": "work\n"})
+
+	if _, pushed, err := e.saver.checkpoint(context.Background()); pushed || err == nil ||
+		!strings.Contains(err.Error(), "the forge is down") {
+		t.Errorf("a checkpoint whose push fails: pushed %v, %v", pushed, err)
+	}
+	if !e.saver.lastCheckpoint().IsZero() {
+		t.Errorf("a checkpoint that did not push is the last checkpoint")
+	}
+	if _, err := e.saver.save(context.Background(), dispatcherapi.EndPreempted); err == nil {
+		t.Errorf("a preemption save whose push fails gives no error")
+	}
+
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	saved, pushed, err := e.saver.checkpoint(context.Background())
+	if err != nil || !pushed {
+		t.Fatalf("the next checkpoint: pushed %v, %v", pushed, err)
+	}
+	if got := gitRun(t, "--git-dir", remote, "rev-parse", "refs/agent-wip/"+saveRunID); got != saved.Commit {
+		t.Errorf("the remote's WIP ref %s, the save %s", got, saved.Commit)
 	}
 }

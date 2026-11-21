@@ -16,7 +16,7 @@ import (
 func TestTheTaskNamesTheRunsRepositoryAndFolderAfterTheSettingsChange(t *testing.T) {
 	w := newAdminWorld(t)
 	d, now := w.d, w.clock()
-	run := storedRun{Run: dispatcherapi.Run{ID: "r-1", Organization: "example", Project: "shop", Prompt: "Fix the cart",
+	run := storedRun{Run: dispatcherapi.Run{ID: "r1", Organization: "example", Project: "shop", Prompt: "Fix the cart",
 		State: dispatcherapi.StateQueued, CreatedAt: now}, organizationID: "7", projectID: "42",
 		repository: "bitbucket.org/example/mono", folder: "apps/shop", baseBranch: "develop"}
 	if err := d.store.insertRun(run); err != nil {

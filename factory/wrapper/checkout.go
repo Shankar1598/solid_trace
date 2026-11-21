@@ -215,7 +215,8 @@ func gitValue(s string) string {
 //
 // When the push fails twice (a person pushed to the branch, or the forge
 // did not answer), the commits go to the Run's work-in-progress ref
-// (e.wipRef), which cannot conflict. The text that push gives then goes on the end call.
+// (e.wipRef), which cannot conflict. The text that push gives then goes
+// on the end call.
 func (e *execution) push(environ []string) string {
 	// A pr call that pushes now ends first.
 	e.prMu.Lock()
