@@ -346,17 +346,11 @@ func TestStopDuringTheTakeOverEndsTheInteractiveExecutionAndGivesStopped(t *test
 	}
 }
 
-func TestATakeOverIsRefusedForARunThatIsNotRunning(t *testing.T) {
+// The refusals of a take-over of a Run with no live Execution are in
+// take_over_idle_test.go.
+func TestATakeOverIsRefusedForNoRunForAnotherOrganizationAndForATakenOverRun(t *testing.T) {
 	env, ana := newEnv(t)
 	ben := env.Member("Ben")
-	env.Runner.Agent(takeTask, initLine(t), done("Fixed."), reply, result, waitForEnd)
-	done := start(t, env, ana, "Fix the cart")
-	waitFor(t, env, ana, done, dispatcherapi.StateDone)
-
-	got := ana.CLI("take-over", "--dispatcher", env.URL(), done)
-	if got.Code != 1 || !strings.Contains(got.Stderr, "only a running Run can be taken over") {
-		t.Errorf("a take-over of a done Run: exit %d: %s", got.Code, got.Stderr)
-	}
 	if got := ana.CLI("take-over", "--dispatcher", env.URL(), "no-such-run"); got.Code != 1 || !strings.Contains(got.Stderr, "no Run") {
 		t.Errorf("a take-over of no Run: exit %d: %s", got.Code, got.Stderr)
 	}
@@ -370,7 +364,7 @@ func TestATakeOverIsRefusedForARunThatIsNotRunning(t *testing.T) {
 		t.Errorf("the refused take-over from another Organization changed the Run: %s %+v", run.State, run.Executions)
 	}
 	takeOverCLI(t, env, ana, running)
-	got = ben.CLI("take-over", "--dispatcher", env.URL(), running)
+	got := ben.CLI("take-over", "--dispatcher", env.URL(), running)
 	if got.Code != 1 || !strings.Contains(got.Stderr, "taken over already, by ana@example.com") {
 		t.Errorf("a second take-over: exit %d: %s", got.Code, got.Stderr)
 	}
