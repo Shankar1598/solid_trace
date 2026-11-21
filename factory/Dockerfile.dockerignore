@@ -1,0 +1,8 @@
+# The Dispatcher's build context is the repository root (Dockerfile). Send only the two
+# Go modules that it builds.
+*
+!cli
+!factory
+**/.git
+cli/dist
+factory/local/agent-machine/bin

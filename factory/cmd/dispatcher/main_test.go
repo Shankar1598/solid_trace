@@ -138,6 +138,16 @@ func TestTheDispatcherRefusesToStartWithAnotherKeyThanTheDatabaseHas(t *testing.
 	}
 }
 
+func TestTheVersionCommandPrintsTheReleaseAndStartsNothing(t *testing.T) {
+	defer func(v string) { Version = v }(Version)
+	Version = "v0.23.0"
+	var stdout, stderr bytes.Buffer
+	code := command(context.Background(), []string{"version"}, env(nil), strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || stdout.String() != "v0.23.0\n" || stderr.Len() != 0 {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
+}
+
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")

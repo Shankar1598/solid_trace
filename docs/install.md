@@ -18,6 +18,8 @@ It pulls a release's images from GitHub's registry (`ghcr.io/shankar1598/solid-t
 
 ClickHouse gets half the machine's memory (`max_server_memory_usage`), set by `deploy/install`.
 
+The Factory (coding agents that work on your own machines) is not part of this install. It runs on a server VM of its own, never on this VM: see [the Factory's operator guide](factory.md).
+
 ## HTTPS
 
 With HTTPS, Caddy ([`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile)) gets a Let's Encrypt certificate for the machine's public IP or domain: Console is on `https://<host>`, ingest on `https://<host>:4443`. Ports 80, 443 and 4443 must be open to the internet, and 3000 and 4000 closed; setup prints the GCP firewall and static-IP commands. An IP's certificate lasts 160 hours, and Caddy renews it ([ADR 0010](adr/0010-caddy-terminates-tls.md)).

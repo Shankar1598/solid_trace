@@ -202,6 +202,8 @@ test('only an Admin edits the Factory section; a member sees it read-only', asyn
   const memberPage = await signedInPage(browser, MEMBER)
   await memberPage.goto(`/${ORG}/runs`)
   await signIn(memberPage, member(), origin)
+  // With the Dispatcher URL set, the sidebar has the Runs page.
+  await expect(page.getByRole('link', { name: 'Runs', exact: true })).toBeVisible()
 
   // The Admin saves the forge connection and first settings with the CLI.
   const dispatcher = ['--dispatcher', stack.dispatcher_url]

@@ -40,7 +40,8 @@ export function Sidebar({ className }: SidebarProps) {
     { label: 'Dashboards', href: `/${current_org.slug}/dashboards`, icon: LayoutDashboard, active: section === 'dashboards' },
     { label: 'Monitors', href: `/${current_org.slug}/monitors`, icon: BellRing, active: section === 'monitors' },
     { label: 'Agent sessions', href: `/${current_org.slug}/agent_sessions`, icon: Bot, active: section === 'agent_sessions' },
-    { label: 'Runs', href: `/${current_org.slug}/runs`, icon: Workflow, active: section === 'runs' },
+    // The Runs page is the Factory's: with no Dispatcher URL, an install shows no part of the Factory.
+    ...(props.factory_on ? [{ label: 'Runs', href: `/${current_org.slug}/runs`, icon: Workflow, active: section === 'runs' }] : []),
     { label: 'Projects', href: `/${current_org.slug}/projects`, icon: GitMerge, active: section === 'projects' },
     { label: 'Settings', href: `/${current_org.slug}/settings/organization`, icon: Settings, active: section === 'settings' },
   ]

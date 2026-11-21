@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# The test of the Dispatcher's image (factory/Dockerfile). In one command it builds the
+# image as the release job does, runs it, checks it, and deletes its container, volume
+# and image. Exit 0 when each check passes.
+#
+#   factory/test-dispatcher-image
+#   TEST_ONLY='<regex>' factory/test-dispatcher-image   only the checks whose names match
+#
+# It needs Docker and the internet (the Go modules and Debian's packages). The container
+# uses the host's network, as the reference configuration does (factory/reference), and
+# listens on 127.0.0.2, a loopback address that stands for the server VM's private address.
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/.." && pwd)"
+tag="factory-dispatcher-test:$$"
+container="factory-dispatcher-test-$$"
+volume="factory-dispatcher-test-$$"
+version=v0.0.0-image-test
+port=$((20000 + RANDOM % 20000))
+private=127.0.0.2
+key="$(head -c 32 /dev/urandom | base64)"
+
+cleanup() {
+  docker rm -f "$container" "$container-squid" >/dev/null 2>&1
+  docker volume rm "$volume" "$volume-squid" >/dev/null 2>&1
+  docker rmi "$tag" >/dev/null 2>&1
+}
+trap cleanup EXIT
+
+passed=0
+failed=0
+check() {
+  local name="$1" out status
+  shift
+  [[ -z ${TEST_ONLY:-} || $name =~ $TEST_ONLY ]] || return 0
+  out="$("$@" 2>&1)"
+  status=$?
+  if [ $status -eq 0 ]; then
+    passed=$((passed + 1))
+    printf 'ok    %s\n' "$name"
+  else
+    failed=$((failed + 1))
+    printf 'FAIL  %s\n%s\n' "$name" "$out" | sed 's/^/      /;1s/^      //'
+  fi
+}
+run() { docker run --rm --memory 256m "$@"; }
+
+# Each setting of the Dispatcher that this test gives it (docs/factory.md).
+settings=(
+  -e DISPATCHER_SOLIDTRACE_URL=https://console.example.com
+  -e DISPATCHER_SOLIDTRACE_TOKEN=stk_image_test
+  -e "DISPATCHER_ENCRYPTION_KEY=$key"
+  -e "DISPATCHER_LISTEN=$private:$port"
+)
+
+echo "building $tag (the release job's build)"
+if ! docker build -q -f "$repo/factory/Dockerfile" --build-arg "SOLIDTRACE_VERSION=$version" -t "$tag" "$repo" >/dev/null; then
+  echo "FAIL  the image does not build" >&2
+  exit 1
+fi
+
+check "the release is in the binary" bash -c \
+  "[ \"\$(docker run --rm --memory 256m '$tag' version)\" = '$version' ]"
+check "it runs as a user that is not root" bash -c \
+  "[ \"\$(docker run --rm --memory 256m --entrypoint id '$tag' -u)\" = 10001 ]"
+check "git and sh are in the image" bash -c \
+  "docker run --rm --memory 256m --entrypoint sh '$tag' -c 'git --version && sh -c true'"
+check "with no configuration it starts nothing and names each absent value" bash -c "
+  out=\$(docker run --rm --memory 256m '$tag' 2>&1); status=\$?
+  [ \$status -eq 1 ] && for n in DISPATCHER_SOLIDTRACE_URL DISPATCHER_SOLIDTRACE_TOKEN DISPATCHER_ENCRYPTION_KEY; do
+    case \$out in *\$n*) ;; *) echo \"the error does not name \$n: \$out\"; exit 1 ;; esac
+  done"
+
+if docker run -d --name "$container" --memory 256m --network host -v "$volume:/var/lib/dispatcher" \
+  "${settings[@]}" "$tag" >/dev/null; then
+  for _ in $(seq 50); do
+    curl -s -o /dev/null "http://$private:$port/api/v1/runs" && break
+    sleep 0.2
+  done
+  check "the API answers on the configured private address and wants a token" bash -c \
+    "[ \"\$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://$private:$port/api/v1/runs)\" = 401 ]"
+  check "the API does not answer on another address of the machine" bash -c \
+    "! curl -s -o /dev/null --max-time 3 http://127.0.0.1:$port/api/v1/runs"
+  check "the operator commands work in the running container (the database is in the volume)" \
+    docker exec "$container" dispatcher accounts list
+  check "the database file is in the volume, owned by the dispatcher user" bash -c \
+    "docker exec '$container' sh -c 'test \"\$(stat -c %u /var/lib/dispatcher/dispatcher.sqlite3)\" = 10001'"
+  check "a stop ends it at once with exit 0" bash -c \
+    "docker stop -t 10 '$container' >/dev/null && [ \"\$(docker inspect -f '{{.State.ExitCode}}' '$container')\" = 0 ]"
+else
+  failed=$((failed + 1))
+  echo "FAIL  the container does not start"
+fi
+
+# Squid's allowlist: with the reference configuration's default list, the Dispatcher writes
+# the list that Squid reads (the reference docker-compose.yml mounts the same two places).
+docker volume create "$volume-squid" >/dev/null
+docker run --rm --user 0 --entrypoint chown -v "$volume-squid:/etc/squid/factory" "$tag" 10001 /etc/squid/factory
+docker run -d --name "$container-squid" --memory 256m --network host \
+  -v "$volume-squid:/etc/squid/factory" \
+  -v "$repo/factory/reference/squid/allowlist.txt:/etc/solid-trace-factory/default-allowlist.txt:ro" \
+  -e "DISPATCHER_LISTEN=$private:$((port + 1))" -e DISPATCHER_SQUID_ALLOWLIST=/etc/squid/factory/allowlist.txt \
+  -e DISPATCHER_DEFAULT_ALLOWLIST=/etc/solid-trace-factory/default-allowlist.txt -e DISPATCHER_SQUID_RELOAD=true \
+  -e DISPATCHER_SOLIDTRACE_URL=https://console.example.com -e DISPATCHER_SOLIDTRACE_TOKEN=stk_image_test \
+  -e "DISPATCHER_ENCRYPTION_KEY=$key" "$tag" >/dev/null
+sleep 3
+list() { docker run --rm --entrypoint cat -v "$volume-squid:/etc/squid/factory" "$tag" /etc/squid/factory/allowlist.txt; }
+check "the Dispatcher writes Squid's allowlist: the default list and SolidTrace's host" bash -c \
+  "$(declare -f list); tag='$tag'; volume='$volume'; list | grep -qx 'api.anthropic.com' && list | grep -qx 'console.example.com'"
+docker rm -f "$container-squid" >/dev/null 2>&1
+docker volume rm "$volume-squid" >/dev/null 2>&1
+
+printf '\n%d passed, %d failed\n' "$passed" "$failed"
+[ "$failed" -eq 0 ]

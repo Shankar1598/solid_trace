@@ -35,6 +35,15 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      factory/image/test
      ```
 
+     The Dispatcher's image (`factory/Dockerfile`) has a test of its own: it builds the image as the release job does, runs it with the host's network, and checks its version, its user, its private listener (it answers on the configured address only), its operator commands, its database volume and the Squid allowlist that it writes from the reference configuration's default list. The factory's release files (the wrapper, the agent CLI and the image recipe, as archives with their sums) have a test too. Both need Docker or Go, the internet for the image, and no other stack. The image test takes about 3 minutes (more for the first build). Run them when the image, the recipe or the release job changes, and before a release. The release job itself is tried with a test release (below):
+
+     ```bash
+     factory/test-dispatcher-image
+     factory/image/test-release-files
+     ```
+
+     A test release proves the release job's factory parts: run the workflow "Release images and the agent CLI" by hand (`workflow_dispatch`) for the tag of a draft or pre-release, with "images" set. Its `build` job pushes the Dispatcher's image for amd64 and arm64 (`solid-trace-dispatcher`), and its `factory` job adds `factory-bin-linux-amd64.tar.gz`, `factory-image-recipe.tar.gz` and `factory-SHA256SUMS` to the release.
+
      The Harness contract checks (Seam 4, `factory/internal/harnesscontract`) are skipped there. They run the real Claude Code with Haiku, under your own Claude login, and save the streams that they record in `fakeharness/streams/`. Run them only when the pinned Claude Code version (`fakeharness.Version`) changes: change that constant first, then run the checks from `factory/` and commit the new streams. They take about 2 minutes and cost about 2 US cents:
 
      ```bash

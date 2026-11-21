@@ -1,0 +1,35 @@
+name: solid-trace-factory
+
+# The Dispatcher on the server VM, beside the Nomad server (docs/factory.md). This file is
+# not part of deploy/: a SolidTrace install does not run the factory. Nomad, Squid and Caddy
+# run on the VM itself, from their own packages.
+#
+#   cd /opt/solid-trace-factory
+#   SOLIDTRACE_VERSION=v0.23.0 docker compose up -d
+#
+# The Dispatcher's settings are in dispatcher.env (dispatcher.env.example). The image is the
+# release's: SOLIDTRACE_VERSION is the release's tag, such as v0.23.0, or latest.
+services:
+  dispatcher:
+    image: ghcr.io/shankar1598/solid-trace-dispatcher:${SOLIDTRACE_VERSION:-latest}
+    # The Dispatcher listens on the VM's private address (DISPATCHER_LISTEN) and on the
+    # loopback address for Caddy (DISPATCHER_WEBHOOK_LISTEN), so it uses the host's network.
+    network_mode: host
+    env_file: /etc/solid-trace-factory/dispatcher.env
+    volumes:
+      # The SQLite database, owned by the image's user (uid 10001).
+      - dispatcher-data:/var/lib/dispatcher
+      # Squid's allowlist: the Dispatcher writes it, Squid reads it.
+      - /etc/squid/factory:/etc/squid/factory
+      # The default allowlist (allowlist.txt of factory/reference/squid, edited).
+      - /etc/solid-trace-factory/default-allowlist.txt:/etc/solid-trace-factory/default-allowlist.txt:ro
+    restart: unless-stopped
+    mem_limit: 1g
+    logging:
+      driver: local
+      options:
+        max-size: 50m
+        max-file: "5"
+
+volumes:
+  dispatcher-data:

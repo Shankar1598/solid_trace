@@ -61,11 +61,16 @@ test('the palette lists Projects\' Logs, pages and actions, and the sidebar open
   const errors = watchErrors(page)
   await page.goto(`/${ORG}/issues`)
 
+  // The Runs page is the Factory's: with no Dispatcher URL, the sidebar and the palette have none.
+  await expect(page.getByRole('link', { name: 'Issues', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Runs', exact: true })).toHaveCount(0)
+
   await page.getByRole('button', { name: /^Search…/ }).click()
   await expect(palette(page)).toBeVisible()
   for (const name of ['Issues', 'Projects', 'Settings', 'Toggle theme', 'Copy link', 'Show shortcuts']) {
     await expect(palette(page).getByRole('option', { name: new RegExp(`^${name}`) }).first()).toBeVisible()
   }
+  await expect(palette(page).getByRole('option', { name: /^Runs/ })).toHaveCount(0)
 
   // An action: the theme flips.
   const dark = () => page.evaluate(() => document.documentElement.classList.contains('dark'))

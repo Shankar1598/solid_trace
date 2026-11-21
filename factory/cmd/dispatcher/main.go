@@ -2,7 +2,8 @@
 // server VM beside the Nomad server. It reads the operator configuration
 // at start, from the file that -config (or DISPATCHER_CONFIG) names and
 // from the environment, and serves the private listener. 'dispatcher
-// accounts' adds, lists and removes the subscription accounts.
+// accounts' adds, lists and removes the subscription accounts. 'dispatcher
+// version' prints the release.
 package main
 
 import (
@@ -35,9 +36,14 @@ func main() {
 }
 
 // command is 'dispatcher accounts ...', the operator command for the pool
-// of subscription accounts, or else the Dispatcher itself (run).
+// of subscription accounts, 'dispatcher version', or else the Dispatcher
+// itself (run).
 func command(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader,
 	stdout, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "version" {
+		fmt.Fprintln(stdout, Version)
+		return 0
+	}
 	if len(args) > 0 && args[0] == "accounts" {
 		return dispatcher.AccountsCommand(args[1:], getenv, time.Now, stdin, stdout, stderr)
 	}

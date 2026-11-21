@@ -1,0 +1,11 @@
+# Reloads Squid when the Dispatcher changes its allowlist (docs/factory.md). The Dispatcher
+# writes the file from its container, and its reload command is "true": this unit starts
+# squid-allowlist.service, which does the reload as root, in the way that Squid needs.
+[Unit]
+Description=Watch the factory's Squid allowlist
+
+[Path]
+PathChanged=/etc/squid/factory/allowlist.txt
+
+[Install]
+WantedBy=multi-user.target
