@@ -117,8 +117,9 @@ func switchAccount(ctx context.Context, args []string, env Env) int {
 	return 0
 }
 
-// takeOver takes over a running Run, and prints the machine and the
-// command that attaches the person.
+// takeOver takes over a Run. For a running Run it prints the machine and
+// the command that attaches the person. A Run with no live Execution is
+// queued: its Run page shows them when the take-over Execution runs.
 func takeOver(ctx context.Context, args []string, env Env) int {
 	flags := flag.NewFlagSet("take-over", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
@@ -140,6 +141,13 @@ func takeOver(ctx context.Context, args []string, env Env) int {
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace take-over: %v\n", err)
 		return 1
+	}
+	if run.State == dispatcherapi.StateQueued {
+		fmt.Fprintf(env.Stdout, "Run %s is queued for the take-over: a new Execution continues its Agent session in a "+
+			"terminal.\n", run.ID)
+		fmt.Fprintf(env.Stdout, "When the take-over Execution runs, the Run page shows its machine and the command "+
+			"that attaches you.\n%s\n", run.URL)
+		return 0
 	}
 	var e dispatcherapi.Execution
 	if n := len(run.Executions); n > 0 {

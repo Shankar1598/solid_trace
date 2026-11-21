@@ -102,12 +102,16 @@ Usage:
       its turn stops, and works on. With no MESSAGE, the Execution ends,
       and the Run waits on a person; a message continues it.
   solidtrace take-over [--dispatcher URL] RUN_ID
-      Take over a running Run: its agent is interrupted, and the same
+      Take over a Run. A running Run: its agent is interrupted, and the same
       Agent session continues in a terminal on the same machine. It
       prints the machine and the command that attaches you (for example
       in the Herdr app). When you leave the Agent session, a report that
       you made in it sets the Run's state; with no report, the Run waits
-      on a person.
+      on a person. A Run that waits on a person, is done, failed or
+      stopped is queued: a new Execution continues its Agent session in a
+      terminal on a new machine, and the Run page shows the machine and
+      the command that attaches you. A Run that waits on an account
+      limit refuses it, with the reset time.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID

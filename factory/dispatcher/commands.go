@@ -175,8 +175,9 @@ func (s *store) stopRun(organizationID, runID string, by actor, reason string, a
 // wrapper has not taken its task) ends at once with the reason stopped.
 func stopInTx(tx *sql.Tx, runID string, by actor, reason string, run bool, at time.Time) error {
 	if run {
-		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?`,
-			dispatcherapi.StateStopped, reason, runID); err != nil {
+		// A stop also ends a take-over that queued the Run.
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '', take_over_by_id = '',
+			take_over_by_name = '' WHERE id = ?`, dispatcherapi.StateStopped, reason, runID); err != nil {
 			return err
 		}
 		if err := recordEvent(tx, at, runID, eventStop, by.details()); err != nil {

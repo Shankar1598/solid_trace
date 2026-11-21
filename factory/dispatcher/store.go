@@ -415,6 +415,12 @@ var migrations = []string{
 		first_at INTEGER NOT NULL,
 		PRIMARY KEY (run_id, name)
 	) WITHOUT ROWID;`,
+	// The take-over of a Run with no live Execution (ticket 62):
+	// take_over_by_* is the person whose take-over queued the Run ('' is
+	// none). The Run's next Execution is then in the interactive form,
+	// and its start clears them.
+	`ALTER TABLE runs ADD COLUMN take_over_by_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN take_over_by_name TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.

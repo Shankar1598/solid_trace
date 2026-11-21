@@ -1155,10 +1155,12 @@ func (c *Client) Stop(ctx context.Context, id string) (Run, error) {
 	return run, err
 }
 
-// TakeOver takes over a running Run: its Execution ends, and a new
-// Execution in the interactive form starts on the same machine. The
-// answer's last Execution is the take-over Execution, with its VM and the
-// command to attach.
+// TakeOver takes over a Run. A running Run's Execution ends, and a new
+// Execution in the interactive form starts on the same machine. A Run
+// that waits on a person, is done, failed or stopped is queued (Run.State)
+// for a new Execution in the interactive form on a new machine. For a
+// running Run, the answer's last Execution is the take-over Execution,
+// with its VM and the command to attach.
 func (c *Client) TakeOver(ctx context.Context, id string) (Run, error) {
 	var run Run
 	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/take-over", nil, &run)
