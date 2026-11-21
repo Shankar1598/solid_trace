@@ -395,6 +395,10 @@ var migrations = []string{
 	ALTER TABLE executions ADD COLUMN taken_over_by_name TEXT NOT NULL DEFAULT '';
 	ALTER TABLE executions ADD COLUMN after_execution TEXT NOT NULL DEFAULT '';
 	CREATE INDEX executions_by_workload ON executions (workload, state);`,
+	// The restart after a lost machine (ticket 66). machine_lost is why
+	// the Execution's machine went: preempted, machine stopped or machine
+	// lost ('' is an Execution that ended for another reason).
+	`ALTER TABLE executions ADD COLUMN machine_lost TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.

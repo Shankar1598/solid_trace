@@ -124,6 +124,11 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 		return fmt.Errorf("find the start of the Run's branch %s: %w", branch, err)
 	}
 	e.startTip = strings.TrimSpace(tip)
+	// After a lost machine, the saved work comes back before the setup
+	// command and the harness (lost_machine.go).
+	if err := e.restoreWork(ctx, environ, pushed); err != nil {
+		return err
+	}
 	e.workDir = filepath.Join(checkout, folder)
 	if info, err := os.Stat(e.workDir); err != nil || !info.IsDir() {
 		return fmt.Errorf("the repository %s has no folder %s, the Project's folder", e.task.Repository, folder)

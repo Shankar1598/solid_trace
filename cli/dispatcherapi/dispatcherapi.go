@@ -49,6 +49,19 @@ const (
 // because its take-over ended with no report.
 const ReasonTakeOverNoReport = "take-over ended with no report"
 
+// MachineLost is the reason of a lost machine that the Runner reports:
+// the machine went with no notice to the wrapper. With EndPreempted and
+// EndMachineStopped, it restarts the Run (the spec's V7).
+const MachineLost = "machine lost"
+
+// MaxLostInARow is how many lost machines in a row restart a Run. The
+// next one fails it with ReasonLostTooOften.
+const MaxLostInARow = 3
+
+// ReasonLostTooOften is the reason of a Run that failed because its
+// machine was lost MaxLostInARow+1 times in a row.
+const ReasonLostTooOften = "machine lost 4 times in a row"
+
 // Execution forms (Execution.Form, Task.Form).
 const (
 	// FormHeadless is the headless form (claude -p with stream-json): the
@@ -398,6 +411,25 @@ type Task struct {
 	// headless. An interactive Execution has no prompt and no messages:
 	// the person types in the terminal.
 	Form string `json:"form,omitempty"`
+	// Restore is set when the machine of the Run's last Execution was
+	// lost: the wrapper restores the work-in-progress save into the new
+	// checkout (nil: no restore).
+	Restore *Restore `json:"restore,omitempty"`
+}
+
+// Restore tells a new Execution that the machine of the Run's last
+// Execution was lost (the spec's V6).
+type Restore struct {
+	// Reason is EndPreempted, EndMachineStopped or MachineLost: why the
+	// last machine went.
+	Reason string `json:"reason"`
+	// LostAt is when the last Execution ended.
+	LostAt time.Time `json:"lost_at"`
+	// Executions are the lost Executions, newest first, after the last
+	// Execution that ended for another reason. The wrapper restores a
+	// work-in-progress save only when one of them made it: a save of an
+	// older Execution is not the Run's last work.
+	Executions []string `json:"executions"`
 }
 
 // TaskRequest is the body of the wrapper's task call: the machine that
