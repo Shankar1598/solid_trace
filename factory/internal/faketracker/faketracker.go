@@ -46,8 +46,12 @@ type Body struct {
 	Ticket string `json:"ticket"`
 }
 
-// User is a tracker user.
-type User struct{ ID, Name string }
+// User is a tracker user. A Bot is a bot or an integration of the
+// tracker: its comments cannot steer a Run.
+type User struct {
+	ID, Name string
+	Bot      bool
+}
 
 // Ticket is one ticket of a connection.
 type Ticket struct {
@@ -63,11 +67,28 @@ type ticket struct {
 	Ticket
 	edit     int
 	statusBy User
+	// said are the comments on the ticket, oldest first: the users'
+	// comments and the Dispatcher's own.
+	said []*said
+}
+
+// said is a comment on a ticket.
+type said struct {
+	id, text string
+	edits    int
+	by       User
+	at       time.Time
+	// own is a comment that the Dispatcher posted.
+	own bool
 }
 
 // Tracker is the fake tracker's API, for all its connections together.
 type Tracker struct {
+	// Now is the clock of the comments' times (time.Now when nil).
+	Now func() time.Time
+
 	mu       sync.Mutex
+	saids    int
 	tickets  map[string]map[string]*ticket
 	comments map[string][]Comment
 	// refused are the tickets (connection/id) whose comments fail.
@@ -165,6 +186,44 @@ func (t *Tracker) Comments(connection string) []Comment {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return slices.Clone(t.comments[connection])
+}
+
+func (t *Tracker) now() time.Time {
+	if t.Now != nil {
+		return t.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// AddComment adds a comment of the user on a ticket of the connection,
+// and gives its id. A comment is not an edit of the ticket.
+func (t *Tracker) AddComment(connection, ticketID, text string, by User) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	tk := t.tickets[connection][ticketID]
+	if tk == nil {
+		panic("faketracker: no ticket " + ticketID + " in " + connection)
+	}
+	t.saids++
+	c := &said{id: "c-" + strconv.Itoa(t.saids), text: text, by: by, at: t.now()}
+	tk.said = append(tk.said, c)
+	return c.id
+}
+
+// EditComment changes the text of the comment with id.
+func (t *Tracker) EditComment(connection, id, text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, tk := range t.tickets[connection] {
+		for _, c := range tk.said {
+			if c.id == id {
+				c.text = text
+				c.edits++
+				return
+			}
+		}
+	}
+	panic("faketracker: no comment " + id + " in " + connection)
 }
 
 // TicketURL is the URL of a ticket.
@@ -274,7 +333,37 @@ func (k kind) Comment(_ context.Context, c dispatcher.TrackerConnection, id, bod
 		return errors.New("faketracker: the token of " + c.Name + " cannot comment")
 	}
 	k.t.comments[c.Name] = append(k.t.comments[c.Name], Comment{Ticket: id, Body: body})
+	k.t.saids++
+	tk := k.t.tickets[c.Name][id]
+	tk.said = append(tk.said, &said{id: "c-" + strconv.Itoa(k.t.saids), text: body, at: k.t.now(), own: true})
 	return nil
+}
+
+// Comments gives each comment on the ticket. Only a user who is not a
+// bot is an insider: the Dispatcher's own comments are not.
+func (k kind) Comments(_ context.Context, c dispatcher.TrackerConnection, id string) ([]dispatcher.TicketComment, error) {
+	if err := token(c); err != nil {
+		return nil, err
+	}
+	k.t.mu.Lock()
+	defer k.t.mu.Unlock()
+	tk := k.t.tickets[c.Name][id]
+	if tk == nil {
+		return nil, dispatcher.ErrNoTicket
+	}
+	list := make([]dispatcher.TicketComment, 0, len(tk.said))
+	for _, s := range tk.said {
+		comment := dispatcher.TicketComment{ID: s.id, Edit: strconv.Itoa(s.edits), Text: s.text, CreatedAt: s.at,
+			By: dispatcher.TrackerUser{ID: s.by.ID, Name: s.by.Name}, Insider: !s.own && !s.by.Bot}
+		switch {
+		case s.own:
+			comment.Refusal = "the connection's own identity wrote it"
+		case s.by.Bot:
+			comment.Refusal = "a bot wrote it"
+		}
+		list = append(list, comment)
+	}
+	return list, nil
 }
 
 func (tk *ticket) public(connection string) dispatcher.Ticket {

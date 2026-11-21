@@ -340,6 +340,10 @@ _Avoid_: attach, hijack
 A **Project**'s trigger in the **Dispatcher** that starts a **Run** with its prompt at each fire time of its five-field cron expression, in its time zone. A member makes it, and can pause and continue it. A fire time while its last Run is an **Active Run** starts no Run.
 _Avoid_: cron job, timer, scheduled task
 
+**Trigger word**:
+The word at the start of a comment that makes the comment a message to a **Run**: `/agent`, unless the operator sets another. A comment on the Run's tracker ticket or PR that starts with it continues the Run. It is not a mention. Only a person whom the team let in can steer a Run so: never the **Dispatcher**'s own identity, a bot, an integration or an outsider.
+_Avoid_: command, mention, slash command
+
 ## Relationships
 
 - An **EventStore** accepts an **Event** through **Event ingest**

@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -135,6 +136,55 @@ func (l *linearTracker) Comment(ctx context.Context, c TrackerConnection, id, bo
 	return l.with(ctx, c.WebhookSource, func(credentials linearCredentials) error {
 		return l.api.Comment(ctx, credentials.AccessToken, id, body)
 	})
+}
+
+// Comments lists the comments on an issue of the connection's team. Only
+// a Linear user who is not an app is an insider: a member, or a guest
+// whom the team invited. The app's own user (the connection's identity),
+// another app, a bot actor (an integration) and an external user are
+// not.
+func (l *linearTracker) Comments(ctx context.Context, c TrackerConnection, id string) ([]TicketComment, error) {
+	var comments []linear.Comment
+	var team, issueTeam, self string
+	err := l.with(ctx, c.WebhookSource, func(credentials linearCredentials) (err error) {
+		team, self = credentials.Team.ID, credentials.App.ID
+		issueTeam, comments, err = l.api.Comments(ctx, credentials.AccessToken, id)
+		return err
+	})
+	if errors.Is(err, linear.ErrNotFound) || (err == nil && issueTeam != team) {
+		return nil, ErrNoTicket
+	}
+	if err != nil {
+		return nil, err
+	}
+	list := make([]TicketComment, 0, len(comments))
+	for _, lc := range comments {
+		comment := TicketComment{ID: lc.ID, Text: lc.Body, CreatedAt: lc.CreatedAt}
+		if !lc.EditedAt.IsZero() {
+			comment.Edit = lc.EditedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if lc.User != nil {
+			comment.By = TrackerUser{ID: lc.User.ID, Name: lc.User.Name}
+		}
+		switch {
+		case lc.External != "":
+			comment.By.Name = cmp.Or(comment.By.Name, lc.External)
+			comment.Refusal = "an external user wrote it"
+		case lc.Bot != "":
+			comment.By.Name = cmp.Or(comment.By.Name, lc.Bot)
+			comment.Refusal = "a bot or an integration wrote it"
+		case lc.User == nil:
+			comment.Refusal = "Linear gives no author"
+		case self != "" && lc.User.ID == self:
+			comment.Refusal = "the connection's own identity wrote it"
+		case lc.User.App:
+			comment.Refusal = "an app wrote it"
+		default:
+			comment.Insider = true
+		}
+		list = append(list, comment)
+	}
+	return list, nil
 }
 
 // linearTicket is the ticket of an issue. Its routing value is the name

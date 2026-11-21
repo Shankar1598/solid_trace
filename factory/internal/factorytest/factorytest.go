@@ -402,6 +402,7 @@ func New(t testing.TB, options ...Option) *Env {
 	e.Linear = fakelinear.New(t, e.Clock.Now)
 	t.Cleanup(e.SolidTrace.Close)
 	e.Notion.Now = e.Clock.Now
+	e.Tracker.Now = e.Clock.Now
 	// The Dispatcher's own token: an Admin made it. Revoke it for an Admin
 	// who left the Organization.
 	e.SolidTrace.Token(DispatcherToken, recorder.Answer{

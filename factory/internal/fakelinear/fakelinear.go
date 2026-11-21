@@ -38,7 +38,7 @@ const TokenLife = 24 * time.Hour
 // App is the app's own user; Installer is the person who approves the
 // install.
 var (
-	App       = User{ID: "app-user-1", Name: "SolidTrace Factory"}
+	App       = User{ID: "app-user-1", Name: "SolidTrace Factory", App: true}
 	Installer = User{ID: "user-ana", Name: "Ana"}
 )
 
@@ -52,8 +52,19 @@ type Team struct{ ID, Key, Name string }
 // Statuses are the statuses of each team.
 var Statuses = []string{"Backlog", "Ready for agent", "Agent working", "In review", "Waiting on you", "Done"}
 
-// User is a Linear user.
-type User struct{ ID, Name string }
+// User is a Linear user. Guest is a guest of the workspace; App is an
+// app's own user.
+type User struct {
+	ID, Name   string
+	Guest, App bool
+}
+
+// By is the author of a comment: a User, or else a bot actor (an
+// integration) or an external user, by name.
+type By struct {
+	User          *User
+	Bot, External string
+}
 
 // Label is a label of an issue; Group is the name of its label group ("" is
 // none).
@@ -70,6 +81,16 @@ type Issue struct {
 type Comment struct {
 	Issue, Body string
 	Author      User
+}
+
+// comment is a comment on an issue: a token's, or one that AddComment
+// added.
+type comment struct {
+	id, issue, body string
+	by              By
+	created, edited time.Time
+	// posted is a comment that a token posted.
+	posted bool
 }
 
 type statusChange struct {
@@ -118,7 +139,7 @@ type Linear struct {
 	teams    []Team
 	issues   map[string]*issue
 	order    []string
-	comments []Comment
+	comments []*comment
 }
 
 // New starts the fake with the clock now. The test's cleanup stops it.
@@ -382,7 +403,73 @@ func (l *Linear) Status(id string) (string, User) {
 func (l *Linear) Comments() []Comment {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return slices.Clone(l.comments)
+	var list []Comment
+	for _, c := range l.comments {
+		if c.posted {
+			list = append(list, Comment{Issue: c.issue, Body: c.body, Author: *c.by.User})
+		}
+	}
+	return list
+}
+
+// AddComment adds a comment on the issue, and gives its id. A comment
+// changes the issue's updatedAt.
+func (l *Linear) AddComment(issueID, body string, by By) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	i := l.issues[issueID]
+	if i == nil {
+		panic("fakelinear: no issue " + issueID)
+	}
+	return l.addComment(i, body, by, false)
+}
+
+func (l *Linear) addComment(i *issue, body string, by By, posted bool) string {
+	now := l.now().UTC()
+	c := &comment{id: "comment-" + random(), issue: i.ID, body: body, by: by, created: now, posted: posted}
+	l.comments = append(l.comments, c)
+	i.updated = now
+	return c.id
+}
+
+// EditComment changes the text of a comment.
+func (l *Linear) EditComment(id, body string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, c := range l.comments {
+		if c.id == id {
+			last := c.edited
+			if last.IsZero() {
+				last = c.created
+			}
+			edited := l.now().UTC()
+			if !edited.After(last) {
+				edited = last.Add(time.Millisecond)
+			}
+			c.body, c.edited = body, edited
+			return
+		}
+	}
+	panic("fakelinear: no comment " + id)
+}
+
+func (c *comment) json() map[string]any {
+	var user, bot, external any
+	if u := c.by.User; u != nil {
+		user = map[string]any{"id": u.ID, "name": u.Name, "guest": u.Guest, "app": u.App}
+	}
+	if c.by.Bot != "" {
+		bot = map[string]string{"id": "bot-" + c.by.Bot, "name": c.by.Bot}
+	}
+	if c.by.External != "" {
+		external = map[string]string{"id": "ext-" + c.by.External, "name": c.by.External}
+	}
+	var edited any
+	if !c.edited.IsZero() {
+		edited = c.edited.Format(time.RFC3339Nano)
+	}
+	return map[string]any{"id": c.id, "body": c.body, "createdAt": c.created.Format(time.RFC3339Nano),
+		"editedAt": edited, "user": user, "botActor": bot, "externalUser": external}
 }
 
 // Webhook is a webhook of the type (Issue, Comment) about the issue at the
@@ -531,10 +618,23 @@ func (l *Linear) graphQL(w http.ResponseWriter, r *http.Request) {
 			graphQLError(w, err.Error())
 			return
 		}
-		l.comments = append(l.comments, Comment{Issue: i.ID, Body: str("body"), Author: actor})
 		// A comment changes the issue's updatedAt too.
-		i.updated = l.now().UTC()
+		l.addComment(i, str("body"), By{User: &actor}, true)
 		data = map[string]any{"commentCreate": map[string]bool{"success": true}}
+	case "TicketComments":
+		i, err := find()
+		if err != nil {
+			graphQLError(w, err.Error())
+			return
+		}
+		nodes := []map[string]any{}
+		for _, c := range l.comments {
+			if c.issue == i.ID {
+				nodes = append(nodes, c.json())
+			}
+		}
+		data = map[string]any{"issue": map[string]any{"team": map[string]string{"id": l.team(i.Team).ID},
+			"comments": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""}}}}
 	default:
 		graphQLError(w, "the fake has no operation "+req.OperationName)
 		return
