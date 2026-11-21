@@ -1,12 +1,12 @@
-import { test, expect, type Browser, type Page } from '@playwright/test'
-import { execFileSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
-import { createInterface } from 'node:readline'
+import { test, expect } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { ADMIN, MEMBER, ORG, PROJECT } from '../support/data'
+import { MEMBER, ORG, PROJECT } from '../support/data'
 import { fakeAnthropicKey } from '../support/agentTranscripts'
 import { watchErrors } from '../support/screens'
+import { factoryFlow, filesIn, signedInPage } from '../support/factoryFlow'
 
 // Seam 5: the real Dispatcher and the real wrapper against this stack's
 // Console, EventStore and ClickHouse. The flow builds the factory's flow
@@ -25,171 +25,28 @@ import { watchErrors } from '../support/screens'
 // Agent session, its download for a resume is equal byte for byte to the
 // redacted upload, and it stops working after the Execution.
 
-const RUN = Date.now().toString(36)
 const ENTRY = 'flows.example/flowteam/*'
 const INGEST_URL = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
+const flow = factoryFlow('runs', ENTRY)
+const RUN = flow.run
 const REPOSITORY = `bitbucket.org/example/${PROJECT}`
 const PROMPT = `Fix the cart total ${RUN}`
 
-const consoleDir = resolve(__dirname, '../..')
-const work = join(consoleDir, 'tmp', `e2e-runs-${RUN}`)
-const cli = join(work, 'solidtrace')
-const flowstackBin = join(work, 'flowstack')
-
-const rails = (code: string) => execFileSync('mise', ['exec', '--', 'bin/rails', 'runner', code], {
-  cwd: consoleDir, stdio: 'pipe', timeout: 120_000,
-}).toString().trim()
-
-type Machine = { config: string; env: NodeJS.ProcessEnv }
-
-function machine(name: string): Machine {
-  const config = join(work, name, 'solidtrace')
-  mkdirSync(config, { recursive: true })
-  return { config, env: { ...process.env, SOLIDTRACE_CONFIG_DIR: config, DISPLAY: '', WAYLAND_DISPLAY: '' } }
-}
-
-/** Runs the person's CLI; the flow checks the exit code itself. */
-function solidtrace(m: Machine, args: string[], input = '') {
-  const r = spawnSync(cli, args, { env: m.env, input, timeout: 60_000 })
-  return { code: r.status, out: r.stdout.toString(), err: r.stderr.toString() }
-}
-
-/** `solidtrace login --device`: the flow types the CLI's code on the device page and approves. */
-async function signIn(page: Page, m: Machine, origin: string) {
-  const child = spawn(cli, ['login', '--device', '--ingest-url', INGEST_URL, origin], { env: m.env, stdio: ['ignore', 'pipe', 'pipe'] })
-  let out = ''
-  let err = ''
-  child.stdout.on('data', d => { out += d })
-  child.stderr.on('data', d => { err += d })
-  const exited = new Promise<number | null>(done => child.on('exit', code => done(code)))
-  try {
-    await expect.poll(() => out, { message: 'the CLI shows a code', timeout: 15_000 }).toMatch(/type this code:\s+\S+/)
-    const [, deviceUrl, code] = out.match(/open (\S+) and type this code:\s+(\S+)/)!
-    await page.goto(deviceUrl)
-    await page.getByLabel('Code').fill(code)
-    await page.getByRole('button', { name: 'Continue' }).click()
-    await page.getByRole('button', { name: 'Approve' }).click()
-    await expect(page.getByRole('status')).toBeVisible()
-    expect(await exited, `login's output:\n${out}\n${err}`).toBe(0)
-  } finally {
-    child.kill()
-  }
-}
-
-async function signedInPage(browser: Browser, user: { email: string; password: string }): Promise<Page> {
-  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } })
-  const page = await context.newPage()
-  await page.goto('/login')
-  await page.fill('input[type=email]', user.email)
-  await page.fill('input[type=password]', user.password)
-  await page.click('button[type=submit]')
-  await page.waitForURL(url => !url.pathname.startsWith('/login'))
-  return page
-}
-
-/** Each regular file under dir, by its path in dir. */
-function filesIn(dir: string): Record<string, Buffer> {
-  const files: Record<string, Buffer> = {}
-  const walk = (d: string) => {
-    for (const name of readdirSync(d)) {
-      const path = join(d, name)
-      if (statSync(path).isDirectory()) walk(path)
-      else files[relative(dir, path)] = readFileSync(path)
-    }
-  }
-  if (existsSync(dir)) walk(dir)
-  return files
-}
-
-/** The flow stack: its Dispatcher's URL, its control API and the fake Forge's token. */
-type Stack = { dispatcher_url: string; control_url: string; forge_token: string }
-
-let stack: Stack
-let flowstack: ChildProcessWithoutNullStreams | undefined
-let flowstackLog = ''
-let dispatcherTokenId = 0
-/** The dev box's settings before the flow changes them; unset until beforeAll reads them. */
-let oldSettings: { console_url: string; dispatcher_url: string } | undefined
-const admin = () => machine('admin')
-const member = () => machine('member')
-
-async function control(method: string, path: string, body?: unknown) {
-  const resp = await fetch(stack.control_url + path, {
-    method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  expect(resp.ok, `${method} ${path}: ${resp.status} ${await resp.clone().text()}`).toBe(true)
-  return resp.status === 204 ? undefined : resp.json()
-}
+const { work, solidtrace, signIn, control } = flow
+const admin = () => flow.machine('admin')
+const member = () => flow.machine('member')
+const stack = () => flow.stack()
+const flowstackLog = () => flow.log()
 
 test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(async ({ baseURL }) => {
   test.setTimeout(420_000)
-  // Read the dev box's settings first, before any step that can fail, so
-  // that afterAll always puts back the real values and never clears them.
-  oldSettings = JSON.parse(rails(`
-    settings = InstanceSetting.current
-    print({ console_url: settings.console_url.to_s, dispatcher_url: settings.dispatcher_url.to_s }.to_json)
-  `))
-  rmSync(work, { recursive: true, force: true })
-  mkdirSync(work, { recursive: true })
-  execFileSync('mise', ['exec', '--', 'go', 'build', '-o', cli, './cmd/solidtrace'], {
-    cwd: resolve(consoleDir, '../cli'), stdio: 'pipe', timeout: 180_000, env: { ...process.env, CGO_ENABLED: '0' },
-  })
-  execFileSync('mise', ['exec', '--', 'go', 'build', '-o', flowstackBin, './internal/flowstack'], {
-    cwd: resolve(consoleDir, '../factory'), stdio: 'pipe', timeout: 240_000,
-  })
-
-  // Agent sessions on, with a captured entry (the CLI's sign-in reads the
-  // list), and the Dispatcher's own token, made by the Admin.
-  const origin = new URL(baseURL!).origin
-  const made = JSON.parse(rails(`
-    InstanceSetting.current.update!(console_url: ${JSON.stringify(origin)})
-    org = Organization.find_by!(slug: ${JSON.stringify(ORG)})
-    admin = User.find_by!(email: ${JSON.stringify(ADMIN.email)})
-    project = org.agent_project
-    result = if project
-      AgentSessionsSettings.save(project: project, user: admin, entries: project.captured_repositories | [${JSON.stringify(ENTRY)}], confirmed: true)
-    else
-      AgentSessionsSettings.turn_on(organization: org, user: admin, entries: [${JSON.stringify(ENTRY)}], confirmed: true)
-    end
-    raise result.errors.inspect unless result.done?
-    token, secret = ApiToken.issue!(user: admin, name: "Flow Dispatcher ${RUN}", scopes: Oauth::Scopes::DISPATCHER, organization_id: org.id)
-    print({ id: token.id, secret: secret }.to_json)
-  `))
-  dispatcherTokenId = made.id
-
-  flowstack = spawn(flowstackBin, [], {
-    cwd: work,
-    env: { ...process.env, FLOWSTACK_CONSOLE_URL: origin, FLOWSTACK_INGEST_URL: INGEST_URL, DISPATCHER_SOLIDTRACE_TOKEN: made.secret },
-  })
-  flowstack.stderr.on('data', d => { flowstackLog += d })
-  const exited = new Promise<never>((_, fail) => flowstack!.on('exit', code => fail(new Error(`flowstack exited ${code}:\n${flowstackLog}`))))
-  const line = new Promise<string>(done => createInterface({ input: flowstack!.stdout }).once('line', done))
-  stack = JSON.parse(await Promise.race([line, exited]))
-
-  rails(`InstanceSetting.current.update!(dispatcher_url: ${JSON.stringify(stack.dispatcher_url)})`)
-  await control('POST', '/repos', { name: `example/${PROJECT}` })
+  await flow.start(baseURL!)
 })
 
 test.afterAll(async () => {
-  if (flowstack && flowstack.exitCode === null) {
-    const gone = new Promise(done => flowstack!.on('exit', done))
-    flowstack.stdin.end()
-    await Promise.race([gone, new Promise(done => setTimeout(done, 20_000))])
-    flowstack.kill('SIGKILL')
-  }
-  // The Dispatcher's log, to read after a failure.
-  writeFileSync(join(consoleDir, 'tmp', 'e2e-runs-flowstack.log'), flowstackLog)
-  // Put back only what beforeAll read: a failed read changed nothing.
-  const restore: string[] = []
-  if (oldSettings) {
-    const value = (v: string) => (v ? JSON.stringify(v) : 'nil')
-    restore.push(`InstanceSetting.current.update!(console_url: ${value(oldSettings.console_url)}, dispatcher_url: ${value(oldSettings.dispatcher_url)})`)
-  }
-  if (dispatcherTokenId) restore.push(`ApiToken.where(id: ${dispatcherTokenId}).destroy_all`)
-  if (restore.length) rails(restore.join('\n'))
-  rmSync(work, { recursive: true, force: true })
+  await flow.stop()
 })
 
 test('only an Admin edits the Factory section; a member sees it read-only', async ({ page, browser, baseURL }) => {
@@ -206,8 +63,8 @@ test('only an Admin edits the Factory section; a member sees it read-only', asyn
   await expect(page.getByRole('link', { name: 'Runs', exact: true })).toBeVisible()
 
   // The Admin saves the forge connection and first settings with the CLI.
-  const dispatcher = ['--dispatcher', stack.dispatcher_url]
-  let r = solidtrace(admin(), ['connections', 'set', 'forge', '--kind', 'bitbucket', ...dispatcher], stack.forge_token)
+  const dispatcher = ['--dispatcher', stack().dispatcher_url]
+  let r = solidtrace(admin(), ['connections', 'set', 'forge', '--kind', 'bitbucket', ...dispatcher], stack().forge_token)
   expect(r.code, r.out + r.err).toBe(0)
   r = solidtrace(admin(), ['projects', 'set', PROJECT, '--repository', `bitbucket.org/example/old-${RUN}`, '--connection', 'forge', ...dispatcher])
   expect(r.code, r.out + r.err).toBe(0)
@@ -270,8 +127,8 @@ test('a member starts a Run with the CLI, sees its events, and stops it; the Exe
   })
 
   // The member starts the Run with the CLI.
-  const started = solidtrace(member(), ['start', '--project', PROJECT, '--dispatcher', stack.dispatcher_url, PROMPT])
-  expect(started.code, started.out + started.err + flowstackLog).toBe(0)
+  const started = solidtrace(member(), ['start', '--project', PROJECT, '--dispatcher', stack().dispatcher_url, PROMPT])
+  expect(started.code, started.out + started.err + flowstackLog()).toBe(0)
   const runId = started.out.match(/^Run (\S+) is queued\.$/m)![1]
   // Its link is the Run page in Console.
   expect(started.out).toContain(`${new URL(baseURL!).origin}/${ORG}/runs/${runId}`)
@@ -282,7 +139,7 @@ test('a member starts a Run with the CLI, sees its events, and stops it; the Exe
     await expect.poll(async () => {
       tokens = (await control('GET', '/child-tokens')).child_tokens
       return tokens.length
-    }, { message: `the Dispatcher makes the Execution's token\n${flowstackLog}`, timeout: 60_000 }).toBeGreaterThan(0)
+    }, { message: `the Dispatcher makes the Execution's token\n${flowstackLog()}`, timeout: 60_000 }).toBeGreaterThan(0)
     return tokens[tokens.length - 1]
   })()
   expect(token.scopes.sort()).toEqual(['sessions:read', 'sessions:write'])
