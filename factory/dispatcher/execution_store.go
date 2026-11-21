@@ -91,6 +91,13 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 		id, runID, dispatcherapi.ExecutionDispatched, at.UnixMicro(), account); err != nil {
 		return false, err
 	}
+	// The last run event of a Run that waits for a VM must carry the
+	// reason: the Console pages read it from the run events.
+	details := actor{kind: actorDispatcher, name: "Dispatcher"}.details()
+	details["execution.id"] = id
+	if err := recordEvent(tx, at, runID, eventQueued, details); err != nil {
+		return false, err
+	}
 	return true, tx.Commit()
 }
 

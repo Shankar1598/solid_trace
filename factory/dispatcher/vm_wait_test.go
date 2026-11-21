@@ -150,3 +150,15 @@ func TestTheWarningLogComesOnceAlsoWhenTheDispatcherStartsAgain(t *testing.T) {
 		t.Errorf("%d warnings after a restart, want one: %v", len(got), got)
 	}
 }
+
+func TestTheRunEventOfADispatchedExecutionCarriesTheReasonForTheWait(t *testing.T) {
+	env, _, id, _ := vmWaitEnv(t)
+
+	events := env.WaitForRunEvents(id, 3)
+	last := events[len(events)-1]
+
+	reason, _ := last["run.reason"].(string)
+	if last["run.state"] != dispatcherapi.StateQueued || !strings.Contains(reason, "waiting for a VM") {
+		t.Errorf("the last run event has state %v and reason %q, want queued with a reason that says waiting for a VM", last["run.state"], reason)
+	}
+}
