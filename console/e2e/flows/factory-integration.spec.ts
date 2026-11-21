@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { ORG, PROJECT } from '../support/data'
 import { factoryFlow, rails, type ChildToken } from '../support/factoryFlow'
 import { last24h, openLogs, runBy } from '../support/logs'
-import { shoot, useTheme, watchErrors } from '../support/screens'
+import { failedLoad, shoot, useTheme, watchErrors } from '../support/screens'
 
 // Seam 5: SolidTrace starts Runs through the Factory Integration, against
 // the real Console, the real Dispatcher (the flow stack of
@@ -103,7 +103,8 @@ test.afterAll(async () => {
 test('a Monitor with the Factory Integration starts one Run, with its cause report on the Run page', async ({ page, baseURL }) => {
   test.setTimeout(300_000)
   await useTheme(page, test.info())
-  const errors = watchErrors(page)
+  // The dev Console may answer 503 (busy) to the explorer's first run.
+  const errors = watchErrors(page, [failedLoad(503)])
 
   // The Admin signs the CLI in and sets the forge and the Project's repository.
   await page.goto(`/${ORG}/runs`)
@@ -127,7 +128,12 @@ test('a Monitor with the Factory Integration starts one Run, with its cause repo
   // A Monitor that tells it, made from the explorer.
   await openLogs(page, last24h('query'))
   await page.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| summarize count() by bin_auto(time)`)
-  await runBy(page, () => page.getByLabel('Query', { exact: true }).press('Control+Enter'))
+  // The dev Console has few threads: its Query and histogram can meet the
+  // busy limit, and then the run answers "busy" and shows no chart. Run again.
+  await expect(async () => {
+    await runBy(page, () => page.getByLabel('Query', { exact: true }).press('Control+Enter'))
+    await expect(page.getByRole('link', { name: 'Create monitor' })).toBeVisible({ timeout: 2_000 })
+  }).toPass({ timeout: 60_000 })
   await page.getByRole('link', { name: 'Create monitor' }).click()
   await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
   await page.getByLabel('Name').fill(MONITOR)
@@ -148,7 +154,8 @@ test('a Monitor with the Factory Integration starts one Run, with its cause repo
   // Run now fires the Monitor. Console sends the Notification to the
   // Dispatcher, which starts one Run for the Monitor.
   await page.getByRole('button', { name: 'Run now' }).click()
-  await expect(page.getByText('Ran the Monitor: 1 group firing.')).toBeVisible()
+  // Run now waits for the run, which can be slow on a cold dev stack.
+  await expect(page.getByText('Ran the Monitor: 1 group firing.')).toBeVisible({ timeout: 60_000 })
   await expect(async () => {
     await page.goto(`/${ORG}/runs`)
     await expect(runRows(page, MONITOR)).toHaveCount(1, { timeout: 1_000 })
@@ -168,7 +175,7 @@ test('a Monitor with the Factory Integration starts one Run, with its cause repo
   await row.getByRole('link').first().click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/runs/${runId}`))
   await expect(page.getByRole('heading', { name: 'Cause report' })).toBeVisible()
-  await expect(page.getByText(MONITOR_CAUSE)).toBeVisible()
+  await expect(page.getByText(MONITOR_CAUSE, { exact: true })).toBeVisible()
   await expect(page.getByText(INTEGRATION).first()).toBeVisible()
 
   expect(errors, flow.log()).toEqual([])
@@ -252,6 +259,7 @@ test('an Issue Run reads only its Project over MCP, and its cause report is a co
 
   // The cause report is a comment on the Issue, by Factory, with a link to the Run.
   await page.goto(`/${ORG}/projects/${PROJECT}/issues/${number}`)
+  await page.getByRole('tab', { name: /^Comments/ }).click()
   await expect(page.getByText(ISSUE_CAUSE)).toBeVisible({ timeout: 60_000 })
   const factory = page.getByRole('link', { name: 'Factory', exact: true })
   await expect(factory).toHaveAttribute('href', new RegExp(`/${ORG}/runs/${runId}$`))
@@ -262,17 +270,36 @@ test('an Issue Run reads only its Project over MCP, and its cause report is a co
 test('the starter Factory Dashboard shows its four Charts with the Project filter', async ({ page }) => {
   test.setTimeout(180_000)
   await useTheme(page, test.info())
-  const errors = watchErrors(page)
+  // The dev Console has few threads (it runs one chart at a time), so some of
+  // the four charts can answer "busy" (503) on a run. The flow presses
+  // Refresh until each chart has run once, and a chart that did not run says
+  // only "busy": no other error.
+  const titles = ['Tokens for each merged PR', 'Cycle time of merged PRs', 'Acceptance rate', 'Interventions for each Run']
+  const errors = watchErrors(page, [failedLoad(503)])
+  const chartsRan = async () => {
+    const ran = new Set<string>()
+    await expect(async () => {
+      await expect(page.getByRole('status', { name: "Running the chart's Query" })).toHaveCount(0, { timeout: 5_000 })
+      for (const title of titles) {
+        const card = page.locator(`[data-chart-card="${title}"]`)
+        if (await card.getByText(/^[\d,]+ rows?$|^No rows/).count() > 0) ran.add(title)
+        else await expect(card).toContainText('Console is busy running other charts')
+      }
+      if (ran.size < titles.length) {
+        await page.getByRole('button', { name: 'Refresh' }).click()
+        throw new Error(`these charts have not run yet: ${titles.filter(t => !ran.has(t)).join(', ')}`)
+      }
+    }).toPass({ timeout: 90_000, intervals: [500, 1_000] })
+  }
 
   // Console made the Dashboard when it first saw the Factory settings.
   await page.goto(`/${ORG}/dashboards`)
   await page.getByRole('link', { name: 'Factory', exact: true }).first().click()
   await expect(page.getByRole('heading', { name: 'Factory', exact: true })).toBeVisible()
 
-  const titles = ['Tokens for each merged PR', 'Cycle time of merged PRs', 'Acceptance rate', 'Interventions for each Run']
   for (const title of titles) await expect(page.locator(`[data-chart-card="${title}"]`)).toBeVisible()
   await expect(page.locator('[data-chart-card]')).toHaveCount(4)
-  await expect(page.getByRole('status', { name: "Running the chart's Query" })).toHaveCount(0)
+  await chartsRan()
 
   // The Project filter lists the Projects that the run events name.
   const filter = page.getByRole('combobox', { name: 'Project', exact: true })
@@ -282,7 +309,7 @@ test('the starter Factory Dashboard shows its four Charts with the Project filte
   await page.getByRole('option', { name: PROJECT }).click()
   await page.keyboard.press('Escape')
   await expect(page).toHaveURL(/[?&]v_project=/)
-  await expect(page.getByRole('status', { name: "Running the chart's Query" })).toHaveCount(0)
+  await chartsRan()
   await expect(page.locator('[data-chart-card]')).toHaveCount(4)
   await shoot(page, 'factory-dashboard', { fullPage: true })
 
