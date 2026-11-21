@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -159,6 +160,12 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		writeProblem(w, http.StatusConflict, err.Error())
 		return
 	}
+	wipRef, err := (&forge.Bitbucket{GitURL: gitURL, WIPRefs: d.config.WIPRefs}).WIPRef(e.runID)
+	if err != nil {
+		d.endByDispatcher(e.id, err.Error(), nil)
+		writeProblem(w, http.StatusConflict, err.Error())
+		return
+	}
 	uploads, err := d.sessionToken(r.Context(), e, run.startedAt)
 	if errors.Is(err, errEnded) {
 		writeProblem(w, http.StatusConflict, errEnded.Error())
@@ -171,30 +178,32 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		return
 	}
 	writeJSON(w, http.StatusOK, dispatcherapi.Task{
-		RunID:         e.runID,
-		ExecutionID:   e.id,
-		Prompt:        run.prompt,
-		MessageID:     dispatcherapi.TaskMessageID(e.id),
-		Repository:    repository,
-		CloneURL:      cloneURL,
-		BaseBranch:    run.baseBranch,
-		Branch:        dispatcherapi.RunBranch(e.runID),
-		GitURL:        gitURL,
-		Project:       run.project,
-		Folder:        run.folder,
-		ForgeUsername: forge.BitbucketTokenUser,
-		ForgeToken:    token,
-		AccountToken:  accountToken,
-		SessionID:     run.sessionID,
-		Resume:        run.resume,
-		IngestURL:     d.config.ingestURL(),
-		Limits:        run.limits,
-		Uploads:       uploads,
-		FactoryFile:   file.Path,
-		Setup:         file.Setup,
-		Checks:        file.Checks,
-		SaveExclude:   file.SaveExclude,
-		Messages:      run.messages,
+		RunID:             e.runID,
+		ExecutionID:       e.id,
+		Prompt:            run.prompt,
+		MessageID:         dispatcherapi.TaskMessageID(e.id),
+		Repository:        repository,
+		CloneURL:          cloneURL,
+		BaseBranch:        run.baseBranch,
+		Branch:            dispatcherapi.RunBranch(e.runID),
+		GitURL:            gitURL,
+		Project:           run.project,
+		Folder:            run.folder,
+		ForgeUsername:     forge.BitbucketTokenUser,
+		ForgeToken:        token,
+		AccountToken:      accountToken,
+		SessionID:         run.sessionID,
+		Resume:            run.resume,
+		IngestURL:         d.config.ingestURL(),
+		Limits:            run.limits,
+		Uploads:           uploads,
+		FactoryFile:       file.Path,
+		Setup:             file.Setup,
+		Checks:            file.Checks,
+		SaveExclude:       file.SaveExclude,
+		WIPRef:            wipRef,
+		CheckpointSeconds: int64(d.config.CheckpointInterval / time.Second),
+		Messages:          run.messages,
 	})
 }
 

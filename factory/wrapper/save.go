@@ -71,6 +71,50 @@ func (e *execution) wipRef() (string, error) {
 	}
 }
 
+// checkpoints runs the checkpoint each interval of the task, on
+// cfg.clock from start, until ctx ends. A checkpoint saves only when the
+// work changed since the last save. On standard VMs too: a machine can
+// go with no notice.
+func (e *execution) checkpoints(ctx context.Context, start time.Time) {
+	every := time.Duration(e.task.CheckpointSeconds) * time.Second
+	if every <= 0 {
+		fmt.Fprintln(e.log, "wrapper: the checkpoint is off")
+		return
+	}
+	check := e.cfg.limitEvery
+	if check <= 0 {
+		check = limitEvery
+	}
+	tick := time.NewTicker(check)
+	defer tick.Stop()
+	next := start.Add(every)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		if e.cfg.clock().Before(next) {
+			continue
+		}
+		call, cancel := context.WithTimeout(ctx, checkpointWait)
+		saved, pushed, err := e.saver.checkpoint(call)
+		cancel()
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err != nil:
+			fmt.Fprintln(e.log, "wrapper: the checkpoint:", err)
+		case pushed:
+			fmt.Fprintf(e.log, "wrapper: the checkpoint saved the work in %s (%d files left out)\n", saved.Commit,
+				len(saved.Skipped))
+		default:
+			fmt.Fprintln(e.log, "wrapper: the checkpoint: no change since the last save")
+		}
+		next = e.cfg.clock().Add(every)
+	}
+}
+
 // wipSaver is the work-in-progress save of an Execution's checkout.
 type wipSaver struct {
 	e *execution

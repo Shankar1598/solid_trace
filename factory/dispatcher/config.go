@@ -107,9 +107,17 @@ type Config struct {
 	// schedule, checked at save (DefaultScheduleMinInterval when 0).
 	ScheduleMinInterval time.Duration
 
+	// CheckpointInterval is how often the wrapper saves the work in
+	// progress during an Execution, when it changed (0: never). readConfig
+	// gives DefaultCheckpointInterval when the operator sets none.
+	CheckpointInterval time.Duration
+
 	// scheduleMinIntervalProblem is why EnvScheduleMinInterval could not
 	// be read.
 	scheduleMinIntervalProblem string
+	// checkpointIntervalProblem is why EnvCheckpointInterval could not be
+	// read.
+	checkpointIntervalProblem string
 	// machineKindsProblem is why EnvMachineKinds could not be read.
 	machineKindsProblem string
 	// limitProblems are the sender limits that could not be read.
@@ -217,7 +225,14 @@ const (
 	EnvSquidReload        = "DISPATCHER_SQUID_RELOAD"
 	// EnvScheduleMinInterval is a Go duration, such as 1h or 30m.
 	EnvScheduleMinInterval = "DISPATCHER_SCHEDULE_MIN_INTERVAL"
+	// EnvCheckpointInterval is a Go duration, such as 5m; 0 turns the
+	// checkpoint off.
+	EnvCheckpointInterval = "DISPATCHER_CHECKPOINT_INTERVAL"
 )
+
+// DefaultCheckpointInterval is the interval of the checkpoint when the
+// operator sets none.
+const DefaultCheckpointInterval = 5 * time.Minute
 
 // EnvSenderStartsPerMinute and EnvSenderActiveRuns are the limits of each
 // sender of the generic webhook.
@@ -311,6 +326,15 @@ func readConfig(path string, getenv func(string) string) (Config, error) {
 		}
 		c.ScheduleMinInterval = d
 	}
+	c.CheckpointInterval = DefaultCheckpointInterval
+	if v := value(EnvCheckpointInterval); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 || d%time.Second != 0 {
+			c.checkpointIntervalProblem = EnvCheckpointInterval + " (how often the wrapper saves the work in " +
+				"progress; 0 is never) must be a duration in whole seconds such as 5m, not " + fmt.Sprintf("%q", v)
+		}
+		c.CheckpointInterval = d
+	}
 	if c.WrapperCommand == "" {
 		c.WrapperCommand = DefaultWrapperCommand
 	}
@@ -360,6 +384,9 @@ func (c Config) Check() error {
 	}
 	if c.scheduleMinIntervalProblem != "" {
 		problems = append(problems, c.scheduleMinIntervalProblem)
+	}
+	if c.checkpointIntervalProblem != "" {
+		problems = append(problems, c.checkpointIntervalProblem)
 	}
 	if c.SquidAllowlist != "" && c.DefaultAllowlist == "" {
 		problems = append(problems, EnvDefaultAllowlist+" (the default allowlist, such as the reference "+

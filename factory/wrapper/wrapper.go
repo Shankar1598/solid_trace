@@ -434,7 +434,12 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
 	e.uploads.start()
+	// The checkpoint runs while the harness runs, and stops at the
+	// preempting marker: the preemption handler then saves.
+	checkpointing, stopCheckpoints := context.WithCancel(e.marked)
+	go e.checkpoints(checkpointing, e.cfg.clock())
 	end := e.runHarness(environ)
+	stopCheckpoints()
 	// The last bytes go before the end call: the end step revokes the
 	// Execution's token. After the preempting marker, the preemption
 	// handler sends them, so this upload stops at once. A stop command or
