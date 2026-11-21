@@ -18,8 +18,9 @@ import (
 // comment steers a Run: the kind of the tracker says who that is (a
 // member or an invited guest; never the connection's own identity, a
 // bot, an integration, an external user, or a page that the public can
-// see). The reconcile step of a ticket reads its comments when the
-// ticket has a Run that is not Closed; the step of the whole connection
+// see). The comments go to the ticket's newest Run, and to no Run when
+// that Run is Closed. The reconcile step of a ticket reads its comments
+// when the ticket's newest Run is not Closed; the step of the whole connection
 // (the poll and the backstop) reads the comments of each such ticket. A
 // comment goes to a Run one time, and again after an edit.
 
@@ -40,16 +41,19 @@ type commentRun struct {
 	createdAt          time.Time
 }
 
-// commentRun is the newest Run of the connection's ticket that is not
-// Closed. It is false when the ticket has none.
+// commentRun is the newest Run of the connection's ticket. It is false
+// when the ticket has no Run, or when its newest Run is Closed: a
+// Closed Run does not continue, and an older Run of the ticket is not
+// for the comments.
 func (s *store) commentRun(connectionID, ticketID string) (commentRun, bool, error) {
 	var r commentRun
 	var created int64
-	err := s.db.QueryRow(`SELECT id, organization_id, created_at FROM runs WHERE ticket_connection_id = ?
-		AND ticket_id = ? AND closed_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1`, connectionID, ticketID).
-		Scan(&r.id, &r.organizationID, &created)
-	if errors.Is(err, sql.ErrNoRows) {
-		return r, false, nil
+	var closed bool
+	err := s.db.QueryRow(`SELECT id, organization_id, created_at, closed_at IS NOT NULL FROM runs
+		WHERE ticket_connection_id = ? AND ticket_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+		connectionID, ticketID).Scan(&r.id, &r.organizationID, &created, &closed)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && closed) {
+		return commentRun{}, false, nil
 	}
 	r.createdAt = time.UnixMicro(created)
 	return r, err == nil, err
