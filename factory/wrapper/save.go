@@ -625,8 +625,8 @@ const leftOutHeading = "Left out of the save:"
 
 // leftOutText is the part of a WIP commit's message that names the
 // skipped files ("" when there are none): the first maxSkipped names,
-// each name with a control character in Go's quotes, and the count of the
-// others.
+// each name with a control character or a quote at its start in Go's
+// quotes, and the count of the others.
 func leftOutText(skipped []string) string {
 	if len(skipped) == 0 {
 		return ""
@@ -638,7 +638,7 @@ func leftOutText(skipped []string) string {
 			fmt.Fprintf(&b, "(and %d more)\n", len(skipped)-maxSkipped)
 			break
 		}
-		if strings.ContainsFunc(name, func(r rune) bool { return r < ' ' || r == 0x7f }) {
+		if strings.HasPrefix(name, `"`) || strings.ContainsFunc(name, func(r rune) bool { return r < ' ' || r == 0x7f }) {
 			name = strconv.Quote(name)
 		}
 		b.WriteString(name + "\n")

@@ -130,18 +130,16 @@ func (e *execution) findSave(ctx context.Context, environ []string, ref string, 
 		return nil, err
 	}
 	header, message, _ := strings.Cut(raw, "\n\n")
+	// A save has one parent: the HEAD at the save.
 	save := &foundSave{}
+	var parents []string
 	for _, line := range strings.Split(header, "\n") {
 		if p, ok := strings.CutPrefix(line, "parent "); ok {
-			if save.parent != "" {
-				save.parent = ""
-				break
-			}
-			save.parent = p
+			parents = append(parents, p)
 		}
-		if id, ok := strings.CutPrefix(line, "tree "); ok && !objectID(id) {
-			return nil, fmt.Errorf("the save's tree %q is not an object id", id)
-		}
+	}
+	if len(parents) == 1 {
+		save.parent = parents[0]
 	}
 	subject, body, _ := strings.Cut(message, "\n")
 	m := wipSubject.FindStringSubmatch(subject)
@@ -255,4 +253,3 @@ func short(id string) string {
 	}
 	return id
 }
-

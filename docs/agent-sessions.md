@@ -318,6 +318,24 @@ A submodule with changes saves to the same ref name in its own repository. A sub
 
 For a forge that refuses refs outside `refs/heads`, the operator sets `DISPATCHER_WIP_REFS=refs/heads/agent-wip`: the saves then go to `refs/heads/agent-wip/<run id>`. The Dispatcher deletes the ref when the Run closes.
 
+The save message also names the files that the save left out, below its first line.
+
+### The restart after a lost machine
+
+When the machine of a headless Execution is preempted, stops, or goes with no notice, the Dispatcher queues the Run again, and a new Execution continues it on a new machine, on the same subscription account when that account is free. It does this at most 3 times in a row. The fourth lost machine in a row fails the Run with "machine lost 4 times in a row". An Execution that ends for another reason starts the count again. The time that the Run waits in the queue for a machine is not part of the new Execution's limits. Each lost machine is a run event: `preemption` when the wrapper got the notice or the signal, `machine_lost` when the machine went with no notice.
+
+The new Execution restores the last save of the lost Execution before the agent starts:
+
+- The Run's branch is at the commit that was HEAD at the save, so commits that were not pushed come back, and the push at the end pushes them. The working tree is equal to the save, and the changes are not staged. No WIP commit is in the branch's history.
+- If a person pushed to the Run's branch after the save, the person's push wins: there is no restore, and the Execution starts from the branch. The save is then the ref `refs/factory/saved-work` in the checkout, and the agent takes what it still needs from it.
+- The restore uses only a save of the lost Executions. A save of an Execution that ended for another reason is old work, and does not come back.
+- If the restore cannot fetch the save, the setup fails and the Run fails, with the save still on the forge. A message continues the Run, and that Execution restores the save.
+- Submodules are as the clone gives them: their saved changes stay in their own repositories' WIP refs.
+
+The first message of the new Execution says when the machine went, what is back, the files that the save left out, that containers, background processes, caches and ignored files are gone, and that the last tool call possibly did not finish.
+
+A take-over does not restart by itself: when its machine is preempted or stops, the Run waits on a person with the reason "the take-over ended: preempted" (or "machine stopped"), also when messages are kept. The next Execution restores the save in the same way.
+
 ## Try the factory with mock data
 
 To see the factory work with no Claude account, no forge and no Nomad, run the demo on the dev box, with the dev stack up (`bin/dev`):
