@@ -479,6 +479,9 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 	env := []string{
 		wrapper.EnvDispatcherURL + "=" + r.env.URL(),
 		wrapper.EnvExecution + "=" + x.Execution,
+		// Not the working directory, which the run user cannot reach (the
+		// fake Runner's task directory), as on an agent machine.
+		wrapper.EnvDir + "=" + filepath.Join(r.dir, "executions", x.Execution),
 		wrapper.EnvIdentityFile + "=" + identity,
 		wrapper.EnvHarness + "=" + program,
 		wrapper.EnvRunUser + "=" + r.runUser.Username,

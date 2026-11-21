@@ -505,6 +505,12 @@ const gitWait = 2 * time.Second
 func (e *execution) git(ctx context.Context, environ []string, dir string, args ...string) (string, int, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	if dir == "" {
+		// Not the wrapper's working directory: on an agent machine it is
+		// Nomad's task directory, which the run user cannot reach, and
+		// git stops when it cannot stat it. The save's git runs there too.
+		cmd.Dir = "/"
+	}
 	// When ctx ends (a stop or a limit), the command's process group is
 	// killed: git and its remote helper, which holds the output open.
 	// After gitWait the wait stops all the same.

@@ -54,8 +54,9 @@ type Options struct {
 	Command []string
 	// Env is the base environment of each wrapper (default os.Environ()).
 	Env []string
-	// Dir is where each Execution gets its own working directory and its
-	// output file (default a temp directory that Close removes).
+	// Dir is where each Execution gets its own directory <Dir>/<id> with
+	// its output file, and its working directory <Dir>/<id>/alloc/task
+	// (default a temp directory that Close removes).
 	Dir string
 	// KillTimeout is the time from SIGTERM to SIGKILL on Stop (default 5 s).
 	KillTimeout time.Duration
@@ -132,8 +133,16 @@ func (r *Runner) Dispatch(ctx context.Context, e Execution) error {
 	if err != nil {
 		return r.failStart(e.ID, p, err)
 	}
+	// The working directory is the task's own, in a directory that only
+	// the wrapper's user (root on an agent machine) reaches, as Nomad's
+	// task directory <data_dir>/alloc/<id>/<task> is: the run user cannot
+	// even stat it.
+	task := filepath.Join(dir, "alloc", "task")
+	if err := os.MkdirAll(task, 0o700); err != nil {
+		return r.failStart(e.ID, p, err)
+	}
 	cmd := exec.Command(r.opts.Command[0], r.opts.Command[1:]...)
-	cmd.Dir = dir
+	cmd.Dir = task
 	cmd.Env = append(append(append([]string{}, r.opts.Env...), e.Env...), MarkEnv+"="+p.mark)
 	cmd.Stdout, cmd.Stderr = out, out
 	// A process group of its own, and the mark, so that a kill takes each

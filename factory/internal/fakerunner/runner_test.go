@@ -169,7 +169,7 @@ func childPID(t *testing.T, dir string) int {
 	t.Helper()
 	var pid int
 	for deadline := time.Now().Add(10 * time.Second); pid == 0 && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		b, _ := os.ReadFile(filepath.Join(dir, "ex1", "child.pid"))
+		b, _ := os.ReadFile(filepath.Join(dir, "ex1", "alloc", "task", "child.pid"))
 		pid, _ = strconv.Atoi(string(b))
 	}
 	if pid == 0 {
