@@ -126,12 +126,13 @@ func (e *execution) writeMessage(msg *message) {
 }
 
 // writeLocked writes msg to stdin; the caller holds writing. After the
-// end started, it writes nothing: the end call gives the message back.
+// end started or after the preempting marker, it writes nothing: the end
+// call gives the message back.
 func (e *execution) writeLocked(msg *message) {
 	e.mu.Lock()
-	stdin, ending := e.stdin, e.ending
+	started, ending := e.stdin != nil, e.ending
 	e.mu.Unlock()
-	if ending || stdin == nil {
+	if ending || !started || e.mayWrite(e.isMarked) != nil {
 		return
 	}
 	line, _ := json.Marshal(map[string]any{"type": "user", "uuid": msg.id, "session_id": "",
@@ -143,7 +144,7 @@ func (e *execution) writeLocked(msg *message) {
 	msg.writtenAt = &now
 	e.inbox.mu.Unlock()
 	e.sendEvent(dispatcherapi.MessageEvent{ID: msg.id, Event: dispatcherapi.MessageWritten, At: now})
-	if _, err := stdin.Write(append(line, '\n')); err != nil {
+	if err := e.writeStdinLocked(line, e.isMarked); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write a message:", err)
 		e.inbox.mu.Lock()
 		if msg.deliveredAt == nil {

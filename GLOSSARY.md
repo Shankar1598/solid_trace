@@ -328,6 +328,10 @@ _Avoid_: webhook client, integration (alone)
 What a **Run** shows to prove its work: the checks that the factory's tool ran, with their results and the end of their output, and the files that the agent attached.
 _Avoid_: proof, test results (alone)
 
+**Cause report**:
+What a **Run** that an **Issue** or a **Monitor** started found: the cause of the problem, and the Logs, the code and the steps that prove it. The agent sends it with its done report. Such a Run opens a PR only when a check proves the fix; with no PR, its cause report is its result. The **Dispatcher** posts an Issue Run's cause report on the Issue as a comment by "Factory".
+_Avoid_: root cause analysis, RCA, diagnosis
+
 **Take-over**:
 A person's move from steering a **Run** by messages to working in its **Agent session** at a terminal. It continues the same Agent session in a new **Execution**.
 _Avoid_: attach, hijack

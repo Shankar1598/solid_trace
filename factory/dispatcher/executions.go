@@ -170,10 +170,29 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		writeProblem(w, http.StatusBadGateway, "the Dispatcher could not make the Execution's token at SolidTrace")
 		return
 	}
+	prompt := run.prompt
+	var mcp *dispatcherapi.MCPToken
+	if run.cause.any() {
+		if prompt != "" {
+			prompt = run.cause.withStandingTask(prompt)
+		}
+		mcp, err = d.mcpToken(r.Context(), e, run.startedAt)
+		if errors.Is(err, errEnded) {
+			writeProblem(w, http.StatusConflict, errEnded.Error())
+			return
+		}
+		if err != nil {
+			d.log.Error("could not make a Run's MCP token", "execution", e.id, "error", err)
+			d.endByDispatcher(e.id, "the Dispatcher could not make the Run's MCP token at SolidTrace", nil)
+			writeProblem(w, http.StatusBadGateway, "the Dispatcher could not make the Run's MCP token at SolidTrace")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, dispatcherapi.Task{
 		RunID:         e.runID,
 		ExecutionID:   e.id,
-		Prompt:        run.prompt,
+		Prompt:        prompt,
+		MessageID:     dispatcherapi.TaskMessageID(e.id),
 		Repository:    repository,
 		CloneURL:      cloneURL,
 		BaseBranch:    run.baseBranch,
@@ -189,6 +208,7 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		IngestURL:     d.config.ingestURL(),
 		Limits:        run.limits,
 		Uploads:       uploads,
+		MCP:           mcp,
 		FactoryFile:   file.Path,
 		Setup:         file.Setup,
 		Checks:        file.Checks,
@@ -206,9 +226,20 @@ func (d *Dispatcher) report(w http.ResponseWriter, r *http.Request, e storedExec
 	}
 	report.Summary = strings.TrimSpace(report.Summary)
 	report.Question = strings.TrimSpace(report.Question)
+	report.CauseReport = strings.TrimSpace(report.CauseReport)
 	problem := checkReport(report)
 	if problem == "" {
 		problem = checkEvidence(report)
+	}
+	if problem == "" && report.CauseReport != "" {
+		cause, err := d.store.runCause(e.runID)
+		if err != nil {
+			d.serverError(w, "read the Run", err)
+			return
+		}
+		if !cause.any() {
+			problem = "only a Run that an Issue or a Monitor started has a cause report"
+		}
 	}
 	if problem != "" {
 		writeProblem(w, http.StatusBadRequest, problem)
@@ -234,8 +265,12 @@ func checkReport(r dispatcherapi.Report) string {
 		return "the outcome must be done, needs_a_person or failed"
 	case len(r.Summary) > maxReportText || len(r.Question) > maxReportText:
 		return "a summary or a question can have at most 64 KiB; put the full text in evidence/"
-	case !utf8.ValidString(r.Summary) || !utf8.ValidString(r.Question):
-		return "a summary and a question must be UTF-8 text"
+	case len(r.CauseReport) > maxReportText:
+		return "a cause report can have at most 64 KiB; put the full text in evidence/"
+	case !utf8.ValidString(r.Summary) || !utf8.ValidString(r.Question) || !utf8.ValidString(r.CauseReport):
+		return "a summary, a question and a cause report must be UTF-8 text"
+	case r.CauseReport != "" && r.Outcome != dispatcherapi.OutcomeDone:
+		return "only a report of done has a cause report"
 	case r.Outcome == dispatcherapi.OutcomeNeedsAPerson && r.Question == "":
 		return "a report of needs a person needs a question"
 	case r.Outcome != dispatcherapi.OutcomeNeedsAPerson && r.Question != "":
@@ -256,9 +291,15 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
-		dispatcherapi.EndSetupFailed, dispatcherapi.EndStopped, dispatcherapi.EndTimeout, dispatcherapi.EndInterrupted:
+		dispatcherapi.EndSetupFailed, dispatcherapi.EndPreempted, dispatcherapi.EndMachineStopped,
+		dispatcherapi.EndStopped, dispatcherapi.EndTimeout, dispatcherapi.EndInterrupted:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
+		return
+	}
+	if p := end.Preemption; p != nil && p.Reason != end.Reason {
+		writeProblem(w, http.StatusBadRequest, "the preemption's reason "+quote(p.Reason)+
+			" is not the end reason "+quote(end.Reason))
 		return
 	}
 	if len(end.Error) > maxReportText {
@@ -278,5 +319,29 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	d.revokeTokens(e.id)
 	// A message that was not delivered can queue the Run again.
 	d.wakeDispatch()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// preempting is the first step of the wrapper's preemption handler: the
+// machine of the Execution goes. The Dispatcher records it at once, so the
+// Run shows it before the end call.
+func (d *Dispatcher) preempting(w http.ResponseWriter, r *http.Request, e storedExecution) {
+	var p dispatcherapi.Preempting
+	if !decode(w, r, &p, "the body must be a JSON object with reason and notice_at") {
+		return
+	}
+	if p.Reason != dispatcherapi.EndPreempted && p.Reason != dispatcherapi.EndMachineStopped {
+		writeProblem(w, http.StatusBadRequest, "the reason must be preempted or machine stopped")
+		return
+	}
+	err := d.store.recordPreempting(e.id, p, d.now())
+	if errors.Is(err, errEnded) {
+		writeProblem(w, http.StatusConflict, "the Execution is not running: "+errEnded.Error()+" or has not started")
+		return
+	}
+	if err != nil {
+		d.serverError(w, "record the preemption", err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

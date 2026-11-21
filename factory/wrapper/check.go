@@ -31,11 +31,20 @@ const nextReportFile = ".report.md.next"
 // check is the agent's check call: the wrapper runs the factory file's
 // checks, or the agent's command, and records each. The next report
 // sends the records. A check runs in the Execution's kill boundary, and
-// stops when the agent's call goes (the end kills the agent).
+// stops when the agent's call goes (the end kills the agent) or at the
+// preempting marker.
 func (e *execution) check(w http.ResponseWriter, r *http.Request, environ []string) {
 	var run dispatcherapi.CheckRun
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&run); err != nil {
 		writeProblem(w, http.StatusBadRequest, "the body must be a JSON object with command")
+		return
+	}
+	// The preempting marker stops a running check at once.
+	ctx, stop := context.WithCancel(r.Context())
+	defer stop()
+	defer context.AfterFunc(e.marked, stop)()
+	if e.isMarked() {
+		writeProblem(w, http.StatusConflict, errMarked.Error()+": a check now does not count")
 		return
 	}
 	e.mu.Lock()
@@ -66,10 +75,14 @@ func (e *execution) check(w http.ResponseWriter, r *http.Request, environ []stri
 			writeProblem(w, http.StatusConflict, problem)
 			return
 		}
-		result := e.runCheck(r.Context(), environ, c)
-		if r.Context().Err() != nil {
-			// The agent went: the check did not end, so it is no record.
+		result := e.runCheck(ctx, environ, c)
+		if ctx.Err() != nil {
+			// The agent went, or the marker stopped the check: the check
+			// did not end, so it is no record.
 			e.record(key, nil)
+			if e.isMarked() {
+				writeProblem(w, http.StatusConflict, errMarked.Error()+": the check stopped")
+			}
 			return
 		}
 		e.record(key, &result)
@@ -245,7 +258,7 @@ func (e *execution) addEvidence(report *dispatcherapi.Report) (commit func(accep
 	// in it only through the directory that it opened before the run
 	// user's first process, so a link of the agent's takes no write out
 	// of it. The run user can read the report.
-	root := e.uploads.dir
+	root := e.uploads.root()
 	final := evidenceDir + "/" + reportFile
 	if err := root.WriteFile(nextReportFile, []byte(reportText(*report)), 0o644); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write evidence/report.md:", err)
@@ -301,6 +314,9 @@ func reportText(r dispatcherapi.Report) string {
 	}
 	if r.Question != "" {
 		fmt.Fprintf(&b, "## Question\n\n%s\n\n", r.Question)
+	}
+	if r.CauseReport != "" {
+		fmt.Fprintf(&b, "## Cause report\n\n%s\n\n", r.CauseReport)
 	}
 	b.WriteString("## Checks\n\n")
 	if len(r.Checks) == 0 {

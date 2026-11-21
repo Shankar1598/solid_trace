@@ -60,9 +60,17 @@ type Recorder struct {
 	eventStoreDown bool
 
 	refuseChildren int
+	refuseScopes   map[string]int
+	refuseComments int
+	comments       []IssueComment
 	children       []*ChildToken
 	uploads        []Upload
 	files          map[string]map[string]*storedFile
+	// hangIngest, while it is not nil, holds each agent ingest call until
+	// it is closed.
+	hangIngest chan struct{}
+	// refusePaths are the Agent session paths whose uploads get 400.
+	refusePaths map[string]bool
 	// notReady is how many more downloads get 503 with Retry-After;
 	// downloads counts the downloads that got an archive.
 	notReady  int
@@ -86,7 +94,7 @@ type Project struct {
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
 	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{},
-		files: map[string]map[string]*storedFile{}}
+		files: map[string]map[string]*storedFile{}, refuseScopes: map[string]int{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
@@ -146,6 +154,20 @@ func (r *Recorder) EventStoreDown(down bool) {
 	r.eventStoreDown = down
 }
 
+// HangIngest makes each agent ingest call wait with no answer (hang
+// true), as a SolidTrace that does not answer does, or answers again.
+func (r *Recorder) HangIngest(hang bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case hang && r.hangIngest == nil:
+		r.hangIngest = make(chan struct{})
+	case !hang && r.hangIngest != nil:
+		close(r.hangIngest)
+		r.hangIngest = nil
+	}
+}
+
 // RunEvents are the Logs that the run events route accepted, oldest
 // first: the Dispatcher's run events and its warnings. A repeat that the
 // Dispatcher sent again is there two times.
@@ -201,7 +223,22 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 		r.serveChildTokens(w, req, call)
 		return
 	}
+	if req.URL.Path == IssueCommentsPath {
+		r.serveIssueComments(w, call)
+		return
+	}
 	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {
+		r.mu.Lock()
+		hang := r.hangIngest
+		r.mu.Unlock()
+		if hang != nil {
+			// The call gets no answer while the ingest hangs.
+			select {
+			case <-hang:
+			case <-req.Context().Done():
+				return
+			}
+		}
 		r.serveAgentSessions(w, req, call)
 		return
 	}

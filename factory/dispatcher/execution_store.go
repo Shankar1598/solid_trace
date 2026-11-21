@@ -148,6 +148,8 @@ type startedRun struct {
 	// messages are the Run's kept messages that the Execution's task
 	// gives.
 	messages []dispatcherapi.Message
+	// cause is the Issue or the Monitor that started the Run, if one did.
+	cause runCause
 }
 
 // startExecution marks a dispatched Execution running and its Run
@@ -188,11 +190,16 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 		}
 	}
 	var started int64
+	var startedBy, attributes string
 	err = tx.QueryRow(`SELECT prompt, session_id, project, repository, folder, base_branch, EXISTS (SELECT 1 FROM executions e WHERE e.run_id = r.id
 		AND e.id != ? AND e.started_at IS NOT NULL), (SELECT started_at FROM executions WHERE id = ?),
-		(SELECT total_limit FROM executions WHERE id = ?) FROM runs r WHERE id = ?`, id, id, id, runID).
-		Scan(&run.prompt, &run.sessionID, &run.project, &run.repository, &run.folder, &run.baseBranch, &run.resume, &started, &run.limits.TotalSeconds)
+		(SELECT total_limit FROM executions WHERE id = ?), started_by_kind, attributes FROM runs r WHERE id = ?`, id, id, id, runID).
+		Scan(&run.prompt, &run.sessionID, &run.project, &run.repository, &run.folder, &run.baseBranch, &run.resume, &started,
+			&run.limits.TotalSeconds, &startedBy, &attributes)
 	if err != nil {
+		return run, err
+	}
+	if run.cause, err = causeOf(startedBy, attributes); err != nil {
 		return run, err
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
@@ -203,7 +210,15 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	// The task always has the prompt: the wrapper writes it only when it
 	// cannot resume the Agent session, or has no message to write.
 	if state == dispatcherapi.ExecutionDispatched {
-		if err := recordEvent(tx, at, runID, eventExecutionStarted, map[string]any{"execution.id": id}); err != nil {
+		details := map[string]any{"execution.id": id}
+		if run.prompt != "" {
+			// The task is a message of the factory: its uuid and the hash of
+			// its text let the Agent session page say that the factory said
+			// it. The event's actor stays the person who caused the Execution.
+			details["message.id"] = dispatcherapi.TaskMessageID(id)
+			details["message.sha256"] = dispatcherapi.TextSHA256(run.prompt)
+		}
+		if err := recordEvent(tx, at, runID, eventExecutionStarted, details); err != nil {
 			return run, err
 		}
 	}
@@ -228,8 +243,9 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 		return err
 	}
 	err = tx.QueryRow(`UPDATE executions SET report_outcome = ?, report_summary = ?, report_question = ?,
-		report_checks = ?, report_evidence = ?, report_delivered = ? WHERE id = ? AND state = ? RETURNING run_id`,
-		report.Outcome, report.Summary, report.Question, checks, evidence, report.DeliveredMessages, id,
+		report_checks = ?, report_evidence = ?, report_delivered = ?, report_cause = ? WHERE id = ? AND state = ?
+		RETURNING run_id`,
+		report.Outcome, report.Summary, report.Question, checks, evidence, report.DeliveredMessages, report.CauseReport, id,
 		dispatcherapi.ExecutionRunning).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errEnded
@@ -240,7 +256,7 @@ func (s *store) saveReport(id string, report dispatcherapi.Report, at time.Time)
 	err = recordEvent(tx, at, runID, eventReport, map[string]any{"execution.id": id,
 		"report.outcome": report.Outcome, "report.summary": report.Summary, "report.question": report.Question,
 		"report.checks": nonNil(report.Checks), "report.evidence": nonNil(report.Evidence),
-		"report.delivered_messages": report.DeliveredMessages})
+		"report.delivered_messages": report.DeliveredMessages, "report.cause_report": report.CauseReport})
 	if err != nil {
 		return err
 	}
@@ -255,12 +271,13 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		return err
 	}
 	defer tx.Rollback()
-	var runID, state, checks string
+	var runID, state, checks, startedBy, attributes string
 	var prID int
 	var report dispatcherapi.Report
-	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks, r.pr_id
-		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
-		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &prID)
+	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks,
+		report_cause, r.pr_id, r.started_by_kind, r.attributes FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
+		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &report.CauseReport, &prID,
+			&startedBy, &attributes)
 	if err != nil {
 		return err
 	}
@@ -305,13 +322,22 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		if err := unmarshalList(checks, &report.Checks); err != nil {
 			return err
 		}
-		if flags, err = jsonList(doneFlags(report.Checks, prID)); err != nil {
+		cause, err := causeOf(startedBy, attributes)
+		if err != nil {
+			return err
+		}
+		if flags, err = jsonList(cause.doneFlags(report, prID)); err != nil {
 			return err
 		}
 	}
 	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ?, flags = ? WHERE id = ? AND state = ?`,
 		runState, reason, question, summary, flags, runID, dispatcherapi.StateRunning); err != nil {
 		return err
+	}
+	if end.Preemption != nil {
+		if err := recordEvent(tx, at, runID, eventPreemption, preemptionDetails(id, *end.Preemption)); err != nil {
+			return err
+		}
 	}
 	details := map[string]any{"execution.id": id, "execution.reason": endReason}
 	if end.ExitCode != nil {
@@ -332,6 +358,54 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 // message queued again: its end leaves the Run queued for the new
 // Execution.
 const ownStateSQL = `(state = ? OR (state = ? AND NOT ?))`
+
+// preemptionDetails are the Attributes of a preemption event (spec V9):
+// the reason, the seconds from the notice to the saved state, what was
+// saved, and the age of the last checkpoint.
+func preemptionDetails(execution string, p dispatcherapi.Preemption) map[string]any {
+	details := map[string]any{
+		"execution.id":                execution,
+		"preemption.reason":           p.Reason,
+		"preemption.notice_at":        p.NoticeAt.UTC().Format(time.RFC3339Nano),
+		"preemption.seconds_to_saved": p.SecondsToSaved,
+		"preemption.seconds_to_end":   p.SecondsToEnd,
+		"preemption.wip_commit":       p.WIPCommit,
+		"preemption.skipped":          nonNil(p.Skipped),
+		"preemption.problems":         nonNil(p.Problems),
+	}
+	if p.TranscriptOffset != nil {
+		details["preemption.transcript_offset"] = *p.TranscriptOffset
+	}
+	if p.CheckpointAgeSeconds != nil {
+		details["preemption.checkpoint_age_seconds"] = *p.CheckpointAgeSeconds
+	}
+	return details
+}
+
+// recordPreempting records the wrapper's preempting call on the running
+// Execution's Run.
+func (s *store) recordPreempting(id string, p dispatcherapi.Preempting, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var runID string
+	err = tx.QueryRow(`SELECT run_id FROM executions WHERE id = ? AND state = ?`, id,
+		dispatcherapi.ExecutionRunning).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errEnded
+	}
+	if err != nil {
+		return err
+	}
+	err = recordEvent(tx, at, runID, eventPreempting, map[string]any{"execution.id": id,
+		"preemption.reason": p.Reason, "preemption.notice_at": p.NoticeAt.UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		return err
+	}
+	return s.commit(tx)
+}
 
 // failExecution ends an Execution that has not ended, with reason, and
 // fails its Run if the Execution sets its state (ownStateSQL). exitCode is the

@@ -29,8 +29,11 @@ type ChildToken struct {
 	Scopes          []string
 	ExpiresAt       time.Time
 	AgentSessionIDs []string
-	Secret          string
-	Revoked         bool
+	// ProjectID is the token's Project limit, as the Dispatcher sent it
+	// ("" is none).
+	ProjectID string
+	Secret    string
+	Revoked   bool
 }
 
 // Upload is one upload to the agent ingest API.
@@ -61,6 +64,29 @@ func (r *Recorder) RefuseChildTokens(status int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.refuseChildren = status
+}
+
+// RefusePath makes each later upload of path (as "evidence/notes.txt")
+// get 400, as SolidTrace gives for a path that it refuses.
+func (r *Recorder) RefusePath(path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.refusePaths == nil {
+		r.refusePaths = map[string]bool{}
+	}
+	r.refusePaths[path] = true
+}
+
+// RefuseChildTokensWith makes each later make of a child token with scope
+// get status (0 accepts again). Other child tokens are made.
+func (r *Recorder) RefuseChildTokensWith(scope string, status int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if status == 0 {
+		delete(r.refuseScopes, scope)
+		return
+	}
+	r.refuseScopes[scope] = status
 }
 
 // ChildTokens are the child tokens that the Dispatcher made, oldest first.
@@ -132,6 +158,7 @@ func (r *Recorder) serveChildTokens(w http.ResponseWriter, req *http.Request, ca
 		Scopes          []string `json:"scopes"`
 		ExpiresAt       string   `json:"expires_at"`
 		AgentSessionIDs []string `json:"agent_session_ids"`
+		ProjectID       string   `json:"project_id"`
 	}
 	expires, err := time.Time{}, json.Unmarshal(call.Body, &body)
 	if err == nil {
@@ -141,9 +168,15 @@ func (r *Recorder) serveChildTokens(w http.ResponseWriter, req *http.Request, ca
 		answerJSON(w, http.StatusUnprocessableEntity, map[string]any{"errors": map[string][]string{"base": {err.Error()}}})
 		return
 	}
+	for _, scope := range body.Scopes {
+		if status := r.refuseScopes[scope]; status != 0 {
+			answerJSON(w, status, map[string]any{"errors": map[string][]string{"scopes": {"refused by the test"}}})
+			return
+		}
+	}
 	n := len(r.children) + 1
 	child := &ChildToken{ID: strconv.Itoa(n), Name: body.Name, Scopes: body.Scopes, ExpiresAt: expires,
-		AgentSessionIDs: body.AgentSessionIDs, Secret: fmt.Sprintf("stk_child_%d", n)}
+		AgentSessionIDs: body.AgentSessionIDs, ProjectID: body.ProjectID, Secret: fmt.Sprintf("stk_child_%d", n)}
 	r.children = append(r.children, child)
 	parent := r.answers[r.CallerToken]
 	r.answers[child.Secret] = Answer{Sub: parent.Sub, Username: parent.Username, Scope: strings.Join(body.Scopes, " "),
@@ -211,6 +244,10 @@ func (r *Recorder) serveAgentSessions(w http.ResponseWriter, req *http.Request, 
 	up := Upload{Session: session, Path: q.Get("path"), Version: uint32(version), Offset: offset, Token: token,
 		RunID: q.Get("run_id"), Project: q.Get("project"), Repository: q.Get("repository"), Folder: q.Get("folder"),
 		Bytes: body}
+	if r.refusePaths[up.Path] {
+		answerJSON(w, http.StatusBadRequest, map[string]string{"error": "the path is refused"})
+		return
+	}
 	if up.RunID == "" || up.Project == "" {
 		answerJSON(w, http.StatusBadRequest, map[string]string{"error": "A token of a Run sends run_id and project."})
 		return

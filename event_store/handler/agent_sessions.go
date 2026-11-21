@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -18,6 +19,9 @@ type AgentSessionReader interface {
 	AgentSessionTotals(ctx context.Context, projectID uint32, sessionIDs ...uuid.UUID) ([]storage.AgentSessionTotals, error)
 	AgentSessionTimeline(ctx context.Context, projectID uint32, session storage.AgentSessionTotals, page storage.AgentTimelinePage) ([]storage.AgentTimelineStep, error)
 	AgentSubagentCalls(ctx context.Context, projectID uint32, session storage.AgentSessionTotals) (map[string]string, error)
+	// RunEvents are the events of one Run in run.seq order. The Agent session
+	// of a Run reads them, for the author of each person message.
+	RunEvents(ctx context.Context, projectID uint32, runID string) ([]models.Log, error)
 	ReadAgentRawLine(ctx context.Context, projectID uint32, sessionID uuid.UUID, path string, version uint32, offset uint64) (storage.AgentRawLine, bool, error)
 }
 

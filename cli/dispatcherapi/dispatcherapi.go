@@ -8,6 +8,8 @@ package dispatcherapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,6 +68,14 @@ const ActorSchedule = "schedule"
 // generic webhook.
 const ActorSender = "sender"
 
+// TextSHA256 is the hex SHA-256 of a message's text, which the message
+// events carry (message.sha256): the Agent session page can match a
+// person message to its event by it when the uuid is not in the record.
+func TextSHA256(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
 // ActorTracker is the kind of a Run's starter that is a tracker user.
 const ActorTracker = "tracker"
 
@@ -105,7 +115,7 @@ type Run struct {
 	// ("" when the Run has no PR).
 	PRURL string `json:"pr_url,omitempty"`
 	// Flags are the flags of a done Run: FlagNoEvidence, FlagNoPR, in
-	// this order (none for another state).
+	// this order, or FlagCauseReport alone (none for another state).
 	Flags []string `json:"flags,omitempty"`
 	// PROutcome is PRMerged or PRDeclined when the Run's PR is closed (""
 	// while it is open, or when the Run has no PR).
@@ -123,6 +133,10 @@ const (
 	FlagNoEvidence = "no Evidence"
 	// FlagNoPR: the Run pushed no branch, or has no open PR.
 	FlagNoPR = "No PR"
+	// FlagCauseReport: an Issue or a Monitor Run that is done with a
+	// cause report and no PR. Its standing task opens a PR only when a
+	// check proves the fix, so it has neither of the other flags.
+	FlagCauseReport = "Cause report"
 )
 
 // The markers of the Evidence block in a PR's description. After each
@@ -207,6 +221,9 @@ type Report struct {
 	Summary string `json:"summary"`
 	// Question is what the agent asks a person (needs a person only).
 	Question string `json:"question,omitempty"`
+	// CauseReport is the cause that an Issue or a Monitor Run found (done
+	// only): what causes the problem, and what proves it.
+	CauseReport string `json:"cause_report,omitempty"`
 	// Checks, Evidence and DeliveredMessages are the wrapper's: it drops
 	// what the agent sends in them. Checks are the checks that the
 	// wrapper ran in this Execution (the last result of each command).
@@ -277,6 +294,12 @@ type Task struct {
 	RunID       string `json:"run_id"`
 	ExecutionID string `json:"execution_id"`
 	Prompt      string `json:"prompt"`
+	// MessageID is the uuid that the wrapper gives the prompt when it
+	// writes it to the harness (see TaskMessageID). The Execution's
+	// started event names it, so that the Agent session page can say that
+	// the factory said the prompt. "" from an older Dispatcher: the
+	// wrapper makes a uuid.
+	MessageID string `json:"message_id,omitempty"`
 	// Repository is host/workspace/name.
 	Repository string `json:"repository"`
 	// CloneURL is the HTTPS URL that git clones from. It holds no token.
@@ -312,6 +335,10 @@ type Task struct {
 	IngestURL string `json:"ingest_url"`
 	// Uploads is the Execution's child token. Only the wrapper keeps it.
 	Uploads SessionToken `json:"uploads"`
+	// MCP is the MCP token of an Issue or a Monitor Run (nil for another
+	// Run). The wrapper writes it to a file of the secrets directory, which
+	// the run user reads.
+	MCP *MCPToken `json:"mcp,omitempty"`
 	// Limits are the Execution's time limits: the factory file's, or the
 	// defaults.
 	Limits Limits `json:"limits"`
@@ -444,6 +471,17 @@ type MessageAccepted struct {
 	Continued bool `json:"continued,omitempty"`
 }
 
+// TaskMessageID is the uuid of the prompt that an Execution's wrapper
+// writes to the harness. It follows from the Execution's id, so that the
+// Dispatcher can name it in the Execution's started event, and a second
+// task call gives the same one.
+func TaskMessageID(executionID string) string {
+	sum := sha256.Sum256([]byte("task/" + executionID))
+	sum[6] = sum[6]&0x0f | 0x50
+	sum[8] = sum[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
+}
+
 // The message events that a wrapper sends (MessageEvent.Event).
 const (
 	MessageWritten   = "written"
@@ -509,6 +547,23 @@ type SessionToken struct {
 	SessionID       string   `json:"session_id"`
 }
 
+// MCPToken is an Issue or a Monitor Run's child token with mcp:read for
+// the Run's Project only, made for one Execution, and the URL of
+// SolidTrace's MCP server.
+type MCPToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	URL       string    `json:"url"`
+}
+
+// EnvMCPTokenFile is the name of the variable in the harness's
+// environment that names the file of the Run's MCP token (MCPToken).
+// EnvMCPURL names the MCP server's URL.
+const (
+	EnvMCPTokenFile = "SOLIDTRACE_MCP_TOKEN_FILE"
+	EnvMCPURL       = "SOLIDTRACE_MCP_URL"
+)
+
 // TokenRequest is the body of the wrapper's token call. A new Agent
 // session id (a /clear, or a second Claude Code process) is added to the
 // Run first, and the Run's current Agent session stays; with none, the call
@@ -529,6 +584,13 @@ const (
 	// EndSetupFailed: the wrapper could not start the harness; Error says
 	// why.
 	EndSetupFailed = "the setup failed"
+	// EndPreempted: the Machine notice said that the machine will be
+	// taken back. The end call has the Preemption.
+	EndPreempted = "preempted"
+	// EndMachineStopped: the wrapper got a SIGTERM or a SIGINT with no stop
+	// command, and the Machine notice did not say that the machine will be
+	// taken back. The end call has the Preemption.
+	EndMachineStopped = "machine stopped"
 	// EndStopped: a stop command came. The Run is stopped already.
 	EndStopped = "stopped"
 	// EndTimeout: a limit passed; Error says which.
@@ -537,6 +599,43 @@ const (
 	// Run waits on a person.
 	EndInterrupted = "interrupted"
 )
+
+// Preempting is the body of the wrapper's preempting call: the first step
+// of the preemption handler tells the Dispatcher that the machine goes.
+type Preempting struct {
+	// Reason is EndPreempted or EndMachineStopped.
+	Reason   string    `json:"reason"`
+	NoticeAt time.Time `json:"notice_at"`
+}
+
+// Preemption is what the preemption handler saved before the machine
+// went. It goes on the end call of a preempted or machine stopped
+// Execution, and the Dispatcher records it as a run event.
+type Preemption struct {
+	// Reason is EndPreempted or EndMachineStopped.
+	Reason string `json:"reason"`
+	// NoticeAt is when the wrapper got the notice or the signal.
+	NoticeAt time.Time `json:"notice_at"`
+	// SecondsToSaved is the time from the notice to the saved state: the
+	// end of the save and of the last upload.
+	SecondsToSaved float64 `json:"seconds_to_saved"`
+	// SecondsToEnd is the time from the notice to the end call.
+	SecondsToEnd float64 `json:"seconds_to_end"`
+	// WIPCommit is the commit of the work-in-progress save ("" when none
+	// was saved).
+	WIPCommit string `json:"wip_commit,omitempty"`
+	// Skipped are the files that the save left out.
+	Skipped []string `json:"skipped,omitempty"`
+	// TranscriptOffset is how many bytes of the Run's current Agent
+	// session's transcript SolidTrace has after the last upload (nil when
+	// it is not known).
+	TranscriptOffset *uint64 `json:"transcript_offset,omitempty"`
+	// CheckpointAgeSeconds is the age of the last checkpoint at the notice
+	// (nil when the Execution made none).
+	CheckpointAgeSeconds *float64 `json:"checkpoint_age_seconds,omitempty"`
+	// Problems are the steps that failed or passed their time limit.
+	Problems []string `json:"problems,omitempty"`
+}
 
 // ExecutionEnd is the body of the wrapper's end call.
 type ExecutionEnd struct {
@@ -551,6 +650,9 @@ type ExecutionEnd struct {
 	// BackgroundTasksKilled is the count of the agent's background tasks
 	// that still ran at the end, and that the end killed.
 	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
+	// Preemption is what the preemption handler saved, for EndPreempted
+	// and EndMachineStopped.
+	Preemption *Preemption `json:"preemption,omitempty"`
 	// Messages are the Execution's messages that the wrapper wrote, with
 	// the time that the harness delivered each one. Each other message of
 	// the Execution was not written: the Dispatcher sends each message

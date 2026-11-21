@@ -62,11 +62,7 @@ func setupExecution(t *testing.T, cfg config, log *bytes.Buffer, task dispatcher
 		t.Fatal(err)
 	}
 	e := &execution{cfg: cfg, log: log, task: task, boundary: startBoundary{}, uploads: &uploads{projectDir: cfg.projectDir()}}
-	t.Cleanup(func() {
-		if e.uploads.dir != nil {
-			e.uploads.dir.Close()
-		}
-	})
+	t.Cleanup(e.uploads.close)
 	return e
 }
 

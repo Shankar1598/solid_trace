@@ -230,6 +230,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/pr", d.wrapper(d.pr))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/token", d.wrapper(d.token))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/end", d.wrapper(d.end))
+		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/preempting", d.wrapper(d.preempting))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/commands", d.wrapper(d.commands))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/message", d.wrapper(d.messageEvent))
 		mux.HandleFunc("POST "+dispatcherapi.Path+"/executions/{id}/compare-end", d.wrapper(d.compareEnd))
