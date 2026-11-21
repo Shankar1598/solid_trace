@@ -94,6 +94,7 @@ func (d *Dispatcher) wakeDispatch() {
 }
 
 func (d *Dispatcher) dispatchQueued(ctx context.Context) {
+	d.warnLongVMWaits()
 	// A Run that waits on an account limit continues when an account is
 	// free again (at a reset time, or an account that the operator added).
 	if _, err := d.store.continueWaitingRuns(d.now()); err != nil {
@@ -217,6 +218,9 @@ func (d *Dispatcher) watchLoop(ctx context.Context) {
 		}
 		seen += len(events)
 		for _, ev := range events {
+			if err := d.store.markPlaced(ev.Execution, d.now()); err != nil {
+				d.log.Error("could not keep that an Execution has a machine", "execution", ev.Execution, "error", err)
+			}
 			if !ev.Ended {
 				d.log.Info("an Execution changed state on the Runner", "execution", ev.Execution, "state", ev.State)
 				continue

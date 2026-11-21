@@ -382,6 +382,12 @@ var migrations = []string{
 	// usage limit, or a person's) chose for the Run's next Execution (''
 	// is none). The next Execution clears it.
 	`ALTER TABLE runs ADD COLUMN next_account TEXT NOT NULL DEFAULT '';`,
+	// placed_at is when the Runner first said that the Execution has a
+	// machine (Nomad placed it). wait_warned_at is when the Dispatcher
+	// wrote the warning Log for an Execution that waited too long for
+	// one: at most one for each Execution.
+	`ALTER TABLE executions ADD COLUMN placed_at INTEGER;
+	ALTER TABLE executions ADD COLUMN wait_warned_at INTEGER;`,
 }
 
 // store is the Dispatcher's SQLite database.

@@ -74,6 +74,11 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	if account == "" {
 		return false, tx.Commit()
 	}
+	// The Run is queued until its wrapper takes the task (startExecution
+	// clears this). With no VM free, it stays so, and the page says why.
+	if _, err := tx.Exec(`UPDATE runs SET reason = ? WHERE id = ?`, reasonWaitingForVM, runID); err != nil {
+		return false, err
+	}
 	if _, err := tx.Exec(`UPDATE runs SET next_account = '' WHERE id = ?`, runID); err != nil {
 		return false, err
 	}
@@ -179,7 +184,7 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 			dispatcherapi.ExecutionRunning, at.UnixMicro(), int64(limits.Total()/time.Second), id); err != nil {
 			return run, err
 		}
-		if _, err := tx.Exec(`UPDATE runs SET state = ? WHERE id = ? AND state = ?`,
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = '' WHERE id = ? AND state = ?`,
 			dispatcherapi.StateRunning, runID, dispatcherapi.StateQueued); err != nil {
 			return run, err
 		}
