@@ -98,7 +98,7 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	if err := recordEvent(tx, at, runID, eventQueued, details); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	return true, s.commit(tx)
 }
 
 func ignoreNoRows(err error) error {
