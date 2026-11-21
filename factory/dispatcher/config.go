@@ -96,6 +96,11 @@ type Config struct {
 	WrapperURL string
 	// WrapperCommand is the path of the wrapper on an agent machine.
 	WrapperCommand string
+	// TakeOverAttach is the Take-over setting: the template of the
+	// command that a person runs to attach to a taken-over Run's
+	// terminal, with {vm} (the agent machine's name) and {run_user}. ""
+	// is the wrapper's default, ssh to the machine.
+	TakeOverAttach string
 
 	// SquidAllowlist is the allowlist file that Squid reads: the
 	// Dispatcher writes it, and runs SquidReload when it changes ("" is
@@ -230,9 +235,12 @@ const (
 	EnvDefaultMachineKind = "DISPATCHER_DEFAULT_MACHINE_KIND"
 	EnvWrapperURL         = "DISPATCHER_WRAPPER_URL"
 	EnvWrapperCommand     = "DISPATCHER_WRAPPER_COMMAND"
-	EnvSquidAllowlist     = "DISPATCHER_SQUID_ALLOWLIST"
-	EnvDefaultAllowlist   = "DISPATCHER_DEFAULT_ALLOWLIST"
-	EnvSquidReload        = "DISPATCHER_SQUID_RELOAD"
+	// EnvTakeOverAttach is the Take-over setting, such as
+	// "docker exec -i -u engineer factory-local-{vm} sudo -u {run_user} hc connect".
+	EnvTakeOverAttach   = "DISPATCHER_TAKE_OVER_ATTACH"
+	EnvSquidAllowlist   = "DISPATCHER_SQUID_ALLOWLIST"
+	EnvDefaultAllowlist = "DISPATCHER_DEFAULT_ALLOWLIST"
+	EnvSquidReload      = "DISPATCHER_SQUID_RELOAD"
 	// EnvScheduleMinInterval is a Go duration, such as 1h or 30m.
 	EnvScheduleMinInterval = "DISPATCHER_SCHEDULE_MIN_INTERVAL"
 	// EnvCheckpointInterval is a Go duration, such as 5m; 0 turns the
@@ -338,6 +346,7 @@ func readConfig(path string, getenv func(string) string) (Config, error) {
 		DefaultMachineKind: value(EnvDefaultMachineKind),
 		WrapperURL:         strings.TrimRight(value(EnvWrapperURL), "/"),
 		WrapperCommand:     value(EnvWrapperCommand),
+		TakeOverAttach:     value(EnvTakeOverAttach),
 		SquidAllowlist:     value(EnvSquidAllowlist),
 		DefaultAllowlist:   value(EnvDefaultAllowlist),
 		SquidReload:        value(EnvSquidReload),
@@ -497,6 +506,9 @@ func (c Config) nomadProblems() []string {
 		problems = append(problems, EnvWrapperURL+" (the private listener's URL as an agent machine reaches it) is not set")
 	} else if u, err := url.Parse(c.WrapperURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		problems = append(problems, EnvWrapperURL+" must be an http:// or https:// URL, not "+fmt.Sprintf("%q", c.WrapperURL))
+	}
+	if strings.ContainsAny(c.TakeOverAttach, "\n\x00") {
+		problems = append(problems, EnvTakeOverAttach+" must be one line")
 	}
 	if !strings.HasPrefix(c.WrapperCommand, "/") {
 		problems = append(problems, EnvWrapperCommand+" must be an absolute path, not "+fmt.Sprintf("%q", c.WrapperCommand))

@@ -220,7 +220,7 @@ func (e *execution) endPreempted(ctx context.Context, p dispatcherapi.Preemption
 		end.BackgroundTasksKilled = e.backgroundTasks
 	}
 	e.mu.Unlock()
-	err := e.client.end(ctx, end)
+	_, err := e.client.end(ctx, end)
 	if err != nil {
 		fmt.Fprintln(e.log, "wrapper: the end call after the preemption:", err)
 	}

@@ -5,7 +5,8 @@
 # last event shows it (the state with its reason, the trigger and actor, the
 # Project, repository, folder, base branch and PR), its Executions, its
 # events and interventions, the last report with its checks and Evidence
-# files (evidence/report.md in full), its Agent sessions, and the CLI
+# files (evidence/report.md in full), its Agent sessions, the take-over
+# (its VM and attach command) while the Run is taken over, and the CLI
 # commands to message, take over or stop it. Made here once, so that the
 # page and the MCP server's get_run cannot drift.
 #
@@ -56,7 +57,7 @@ class RunView
       event_store: event_store, run: run, project: run_project, executions: executions, events: events,
       interventions: events.select { |e| e[:intervention] }, report: report_h(paths),
       agent_sessions: agent_session_ids.map { |s| { id: s, path: paths.call(:agent_session, s) } },
-      commands: commands,
+      take_over: take_over, commands: commands,
     }
   end
 
@@ -85,8 +86,21 @@ class RunView
     end
   end
 
+  # While the Run is taken over, the take-over from its last take_over
+  # event: the VM, the command that attaches to the terminal there, and the
+  # person who took over. Else nil.
+  def take_over
+    return nil unless run["state"] == "taken_over"
+
+    a = raw_events.reverse.find { |log| log.dig("attributes", "event.kind") == "take_over" }&.dig("attributes")
+    return nil unless a
+
+    { vm: a["execution.vm"].presence, attach: a["execution.attach"].presence, by: actor(a) }
+  end
+
   # Each Execution, from its execution_started and execution_ended events:
-  # its start, end, reason, exit code, account, VM and duration. An
+  # its start, end, reason, exit code, account, VM, form (headless, or
+  # interactive for a take-over, with its attach command) and duration. An
   # Execution that has not ended has no end and no duration.
   def executions
     by_id = {}
@@ -96,9 +110,11 @@ class RunView
       next unless %w[execution_started execution_ended].include?(kind) && a["execution.id"].present?
 
       e = by_id[a["execution.id"]] ||= { id: a["execution.id"], start: nil, end: nil, reason: nil, exit_code: nil,
-                                         account: nil, vm: nil, duration_seconds: nil }
+                                         account: nil, vm: nil, form: "headless", attach: nil, duration_seconds: nil }
       e[:account] = a["execution.account"].presence || e[:account]
       e[:vm] = a["execution.vm"].presence || e[:vm]
+      e[:form] = a["execution.form"].presence || e[:form]
+      e[:attach] = a["execution.attach"].presence || e[:attach]
       if kind == "execution_started"
         e[:start] = log["time"]
       else

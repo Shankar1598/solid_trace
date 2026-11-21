@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
@@ -139,9 +140,19 @@ func TestTheEndDeletesTheWorkspaceTheRunUsersHomeAndTheSecretsAndKeepsTheCaches(
 	// The secrets folder (WRAPPER_DIR/secrets, beside the agent's socket)
 	// holds the forge token and the credential helper.
 	secrets := filepath.Join(filepath.Dir(env.Runner.Socket(execution)), "secrets")
+	// The wrapper deletes them after its end call: the end call's answer
+	// can be a take-over, which uses the workspace and the home.
+	deadline := time.Now().Add(10 * time.Second)
 	for _, dir := range []string{env.Runner.Workspace(execution), env.Runner.Home(execution), secrets} {
-		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Errorf("%s is there after the end (%v)", dir, err)
+		for ; ; time.Sleep(20 * time.Millisecond) {
+			_, err := os.Stat(dir)
+			if os.IsNotExist(err) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("%s is there 10 s after the end (%v)", dir, err)
+				break
+			}
 		}
 	}
 	if b, err := os.ReadFile(filepath.Join(env.Runner.Cache(), "gems", "rack")); err != nil || string(b) != "kept\n" {

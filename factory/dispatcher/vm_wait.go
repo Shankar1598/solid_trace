@@ -43,9 +43,11 @@ func (d *Dispatcher) warnLongVMWaits() {
 type vmWait struct{ run, execution string }
 
 // longVMWaits are the Executions that the Runner holds with no machine,
-// that were dispatched at or before cutoff, and that have no warning yet.
+// that were dispatched at or before cutoff, and that have no warning yet. A take-over
+// Execution (form interactive) runs in the allocation of the Execution before it: it waits for
+// no VM.
 func (s *store) longVMWaits(cutoff time.Time) ([]vmWait, error) {
-	rows, err := s.db.Query(`SELECT run_id, id FROM executions WHERE state = ? AND placed_at IS NULL
+	rows, err := s.db.Query(`SELECT run_id, id FROM executions WHERE state = ? AND form = '' AND placed_at IS NULL
 		AND wait_warned_at IS NULL AND dispatched_at <= ? ORDER BY dispatched_at, id`,
 		dispatcherapi.ExecutionDispatched, cutoff.UnixMicro())
 	if err != nil {

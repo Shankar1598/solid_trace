@@ -1,7 +1,9 @@
 package dispatcher
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -94,6 +96,21 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		writeProblem(w, http.StatusConflict, errEnded.Error())
 		return
 	}
+	// The body names the machine and the command to attach to a
+	// take-over there. A wrapper from before the take-over sends {}.
+	var place dispatcherapi.TaskRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&place); err != nil && !errors.Is(err, io.EOF) {
+		writeProblem(w, http.StatusBadRequest, "the body must be a JSON object with vm and attach")
+		return
+	}
+	if problem := checkPlace(place); problem != "" {
+		writeProblem(w, http.StatusBadRequest, problem)
+		return
+	}
+	if err := d.store.setPlace(e.id, place); err != nil {
+		d.serverError(w, "keep the Execution's machine", err)
+		return
+	}
 	settings, err := d.store.settings(e.organizationID, e.projectID)
 	if errors.Is(err, errNotFound) {
 		d.endByDispatcher(e.id, "the Project has no Factory settings", nil)
@@ -117,6 +134,13 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		// not lost: it goes back in the queue, and its next Execution gets
 		// a free account.
 		why := "the account " + e.account + " is no longer in the pool"
+		if e.interactive() {
+			// A take-over is on its machine, not in the queue: the Run
+			// waits on a person.
+			d.endByDispatcher(e.id, why, nil)
+			writeProblem(w, http.StatusConflict, why)
+			return
+		}
 		if _, err := d.store.requeueExecution(e.id, why, d.now()); err != nil {
 			d.serverError(w, "put the Run back in the queue", err)
 			return
@@ -223,7 +247,23 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		WIPRef:            wipRef,
 		CheckpointSeconds: int64(d.config.CheckpointInterval / time.Second),
 		Messages:          run.messages,
+		Form:              run.form,
 	})
+}
+
+// maxPlace is the longest machine name or attach command that a task
+// call keeps.
+const maxPlace = 1024
+
+// checkPlace refuses a machine name or an attach command that the Run
+// page cannot show as one line of text.
+func checkPlace(p dispatcherapi.TaskRequest) string {
+	for _, v := range []string{p.VM, p.Attach} {
+		if len(v) > maxPlace || !utf8.ValidString(v) || strings.ContainsAny(v, "\n\r\x00") {
+			return "vm and attach must be one line of UTF-8 text of at most 1 KiB"
+		}
+	}
+	return ""
 }
 
 // report keeps the agent's report as the Execution's last valid report. A
@@ -301,7 +341,8 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
 		dispatcherapi.EndSetupFailed, dispatcherapi.EndPreempted, dispatcherapi.EndMachineStopped,
-		dispatcherapi.EndStopped, dispatcherapi.EndTimeout, dispatcherapi.EndInterrupted, dispatcherapi.EndUsageLimit:
+		dispatcherapi.EndStopped, dispatcherapi.EndTimeout, dispatcherapi.EndInterrupted, dispatcherapi.EndUsageLimit,
+		dispatcherapi.EndTakenOver, dispatcherapi.EndSessionEnded:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
 		return
@@ -327,6 +368,12 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	err := d.store.endExecution(e.id, end, d.now())
 	if errors.Is(err, errEnded) {
+		// The wrapper sends its end call again when it got no answer: the
+		// take-over that follows is the answer again.
+		if next, err := d.store.takeOverAfter(e.id); err == nil && next != "" {
+			writeJSON(w, http.StatusOK, dispatcherapi.EndAnswer{TakeOver: next})
+			return
+		}
 		writeProblem(w, http.StatusConflict, "the Execution is not running: "+errEnded.Error()+" or has not started")
 		return
 	}
@@ -339,7 +386,18 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	d.revokeTokens(e.id)
 	// A message that was not delivered can queue the Run again.
 	d.wakeDispatch()
-	w.WriteHeader(http.StatusNoContent)
+	// A take-over that follows this Execution starts in the same
+	// allocation: the answer names it.
+	next, err := d.store.takeOverAfter(e.id)
+	if err != nil {
+		d.serverError(w, "find the take-over Execution", err)
+		return
+	}
+	if next == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, dispatcherapi.EndAnswer{TakeOver: next})
 }
 
 // preempting is the first step of the wrapper's preemption handler: the
