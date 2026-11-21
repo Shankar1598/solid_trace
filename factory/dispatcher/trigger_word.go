@@ -8,9 +8,8 @@ import (
 	"github.com/solidtrace/cli/dispatcherapi"
 )
 
-// The trigger word of the comments that continue a Run. Ticket 76 adds
-// the same two functions in ticket_comments.go: when both are in one
-// branch, keep one copy.
+// The trigger word of the comments that continue a Run: PR comments and
+// ticket comments use these two functions.
 
 // triggers is true when text starts with the word: the word alone, or
 // the word and then a space.

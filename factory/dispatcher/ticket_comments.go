@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
@@ -23,17 +20,6 @@ import (
 // when the ticket's newest Run is not Closed; the step of the whole connection
 // (the poll and the backstop) reads the comments of each such ticket. A
 // comment goes to a Run one time, and again after an edit.
-
-// triggers is true when text starts with the word: the word alone, or
-// the word and then a space.
-func triggers(text, word string) bool {
-	rest, ok := strings.CutPrefix(strings.TrimSpace(text), word)
-	if !ok {
-		return false
-	}
-	next, _ := utf8.DecodeRuneInString(rest)
-	return rest == "" || unicode.IsSpace(next)
-}
 
 // commentRun is the Run that a ticket's comments go to.
 type commentRun struct {
@@ -78,10 +64,6 @@ func (s *store) commentTickets(connectionID string) ([]string, error) {
 	}
 	return ids, rows.Err()
 }
-
-// errCommentRead is a trigger comment whose edit the Dispatcher read
-// before.
-var errCommentRead = errors.New("the comment was read before")
 
 // acceptTicketComment keeps the edit of a trigger comment as read, and,
 // for an insider's comment, accepts it as a message to the Run, in one
@@ -181,18 +163,4 @@ func (s *ticketStep) comments(ctx context.Context, ticketID string) (bool, error
 		acted = true
 	}
 	return acted, nil
-}
-
-// messageText is a comment's text as a message: at most
-// dispatcherapi.MaxMessage bytes, cut at a whole rune.
-func messageText(text string) string {
-	text = strings.TrimSpace(text)
-	if len(text) <= dispatcherapi.MaxMessage {
-		return text
-	}
-	cut := dispatcherapi.MaxMessage
-	for cut > 0 && !utf8.RuneStart(text[cut]) {
-		cut--
-	}
-	return text[:cut]
 }
