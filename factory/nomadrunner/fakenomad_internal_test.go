@@ -319,6 +319,10 @@ func TestTheJobGivesTheWrapperItsMachineAndTheTakeOverSetting(t *testing.T) {
 	if got := env["WRAPPER_VM"]; got != "${node.unique.name}" {
 		t.Errorf("WRAPPER_VM is %q, want the node's name", got)
 	}
+	// The end's container step is only for an agent machine.
+	if got := env["WRAPPER_DOCKER"]; got != "docker" {
+		t.Errorf("WRAPPER_DOCKER is %q, want docker", got)
+	}
 	if got, ok := env["WRAPPER_TAKE_OVER_ATTACH"]; ok {
 		t.Errorf("with no Take-over setting the job sets WRAPPER_TAKE_OVER_ATTACH=%q", got)
 	}

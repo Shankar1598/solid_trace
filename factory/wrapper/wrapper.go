@@ -470,6 +470,10 @@ func (e *execution) killAll() {
 // Execution's cgroup, in Docker's own. With no docker program, the step
 // is skipped.
 func (e *execution) stopContainers() {
+	if e.cfg.docker == "" {
+		fmt.Fprintf(e.log, "wrapper: no Docker program (%s is not set), so the end skips the container step\n", EnvDocker)
+		return
+	}
 	docker, err := exec.LookPath(e.cfg.docker)
 	if err != nil {
 		fmt.Fprintf(e.log, "wrapper: no Docker (%s), so the end skips the container step\n", e.cfg.docker)

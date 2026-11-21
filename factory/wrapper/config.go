@@ -33,8 +33,11 @@ const (
 	EnvDir = "WRAPPER_DIR"
 	// EnvHarness is the harness program (default claude).
 	EnvHarness = "WRAPPER_HARNESS"
-	// EnvDocker is the docker program of the end's container step
-	// (default docker). When it is not there, the step is skipped.
+	// EnvDocker is the docker program of the end's container step, which
+	// kills each running container of the machine. Only an agent machine
+	// sets it (the Nomad Runner's job sets docker). With no value, or a
+	// program that is not there, the step is skipped: a wrapper on another
+	// machine, such as a test on a dev box, never kills its containers.
 	EnvDocker = "WRAPPER_DOCKER"
 	// EnvWorkspace is the folder of the checkouts (default /workspace). A
 	// repository's checkout is <workspace>/<host>/<workspace>/<name> on
@@ -247,9 +250,6 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if c.harness == "" {
 		c.harness = "claude"
-	}
-	if c.docker == "" {
-		c.docker = "docker"
 	}
 	if c.claudeConfig == "" {
 		c.claudeConfig = filepath.Join(c.home, ".claude")

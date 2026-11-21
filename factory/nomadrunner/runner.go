@@ -288,6 +288,10 @@ func (r *Runner) job(kind dispatcher.MachineKind) *api.Job {
 		"WRAPPER_DIR":            path.Join(r.cfg.ExecutionsDir, "${NOMAD_META_"+MetaExecution+"}"),
 		// The machine of a take-over, for its attach command.
 		"WRAPPER_VM": "${node.unique.name}",
+		// The end's container step: only on an agent machine, whose
+		// containers are the Run's. With no Docker there (the local
+		// stack), the wrapper skips the step.
+		"WRAPPER_DOCKER": "docker",
 	}
 	if r.cfg.TakeOverAttach != "" {
 		task.Env["WRAPPER_TAKE_OVER_ATTACH"] = r.cfg.TakeOverAttach
