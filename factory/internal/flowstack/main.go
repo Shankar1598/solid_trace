@@ -19,7 +19,8 @@
 //	POST /repos {"name": "workspace/name"}  a repository on the fake Forge
 //	POST /agent {"lines": [...]}            the harness script of the next Execution
 //	GET  /executions                        the Executions that the Runner started
-//	GET  /child-tokens                      each child token that Console made
+//	GET  /child-tokens                      each child token that Console made, with its scopes,
+//	                                        Agent sessions and Project limit
 //
 // "flowstack demo up" and "flowstack demo down" are the factory demo
 // (bin/factory-demo, demo.go): the same Dispatcher for a person's dev
@@ -38,6 +39,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"testing"
@@ -131,7 +133,10 @@ type childToken struct {
 	Secret          string   `json:"secret"`
 	Scopes          []string `json:"scopes"`
 	AgentSessionIDs []string `json:"agent_session_ids"`
-	ExpiresAt       string   `json:"expires_at"`
+	// ProjectID is the Project limit of an mcp:read token (an Issue or a
+	// Monitor Run's), and "" for a token with none.
+	ProjectID string `json:"project_id"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 // childTokens is the Dispatcher's transport to SolidTrace. It keeps each
@@ -171,6 +176,7 @@ func (c *childTokens) RoundTrip(req *http.Request) (*http.Response, error) {
 	var request struct {
 		Scopes          []string `json:"scopes"`
 		AgentSessionIDs []string `json:"agent_session_ids"`
+		ProjectID       any      `json:"project_id"`
 		ExpiresAt       string   `json:"expires_at"`
 	}
 	var made struct {
@@ -183,9 +189,22 @@ func (c *childTokens) RoundTrip(req *http.Request) (*http.Response, error) {
 	json.Unmarshal(answer, &made)
 	c.mu.Lock()
 	c.tokens = append(c.tokens, childToken{ID: made.APIToken.ID, Secret: made.Secret, Scopes: request.Scopes,
-		AgentSessionIDs: request.AgentSessionIDs, ExpiresAt: request.ExpiresAt})
+		AgentSessionIDs: request.AgentSessionIDs, ProjectID: projectID(request.ProjectID), ExpiresAt: request.ExpiresAt})
 	c.mu.Unlock()
 	return resp, nil
+}
+
+// projectID is a Project limit as text: Console's ids are numbers, and the
+// request may send one as a number or as a string. Nothing gives "".
+func projectID(v any) string {
+	switch id := v.(type) {
+	case nil:
+		return ""
+	case float64:
+		return strconv.FormatFloat(id, 'f', -1, 64)
+	default:
+		return fmt.Sprint(id)
+	}
 }
 
 func (c *childTokens) list() []childToken {
