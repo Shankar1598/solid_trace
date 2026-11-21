@@ -351,6 +351,13 @@ type execution struct {
 	// lostNote is the first message's text after a lost machine
 	// (restoreWork): what is back and what is not ("": no lost machine).
 	lostNote string
+	// restoring is true from the start of a restarted Execution's setup
+	// (the task has a Restore) until its harness starts: no save and no
+	// push to the WIP ref replaces the lost Execution's save, which the
+	// WIP ref then keeps for the next Execution. Before the harness, the
+	// checkout has no work of the agent's: a save of a clone, or of a
+	// restore that did not end, would put a wrong save on the forge.
+	restoring atomic.Bool
 	// prMu holds one pr call at a time, and the push before the end until
 	// a pr call's push ended. pushedTip is the commit that the last pr
 	// call pushed.
@@ -827,6 +834,9 @@ func (e *execution) runHarness(environ []string) dispatcherapi.ExecutionEnd {
 	if err == nil {
 		e.harness, e.stdin = cmd, stdin
 		e.lastOutput.Store(e.cfg.clock().UnixNano())
+		// Under mu: the halt, which reads stdin under mu after the
+		// marker, finds the harness and the save that follows saves.
+		e.restoring.Store(false)
 	}
 	e.mu.Unlock()
 	if err != nil {

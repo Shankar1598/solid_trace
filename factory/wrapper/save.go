@@ -117,6 +117,11 @@ func (e *execution) checkpoints(ctx context.Context, start time.Time) {
 }
 
 // wipSaver is the work-in-progress save of an Execution's checkout.
+// errRestoring is the refusal of a save before a restarted Execution's
+// harness starts (execution.restoring).
+var errRestoring = errors.New("the harness of this restarted Execution did not start: the work-in-progress ref " +
+	"keeps the lost Execution's save for the next Execution")
+
 type wipSaver struct {
 	e *execution
 	// mu holds one save at a time: a checkpoint's push never comes after
@@ -155,6 +160,9 @@ func (s *wipSaver) run(ctx context.Context, reason string, checkpoint bool) (sav
 	e := s.e
 	if e.checkout == "" {
 		return savedWork{}, false, errors.New("the setup made no checkout, so there is no work to save")
+	}
+	if e.restoring.Load() {
+		return savedWork{}, false, errRestoring
 	}
 	ref, err := e.wipRef()
 	if err != nil {

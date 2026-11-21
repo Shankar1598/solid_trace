@@ -499,6 +499,113 @@ func TestARestoreThatCannotFetchTheSaveFailsTheSetupAndALaterExecutionRestores(t
 	}
 }
 
+// A restarted Execution that is preempted during its restore saves
+// nothing: the WIP ref keeps the lost Execution's save, and the next
+// Execution restores it.
+func TestAPreemptionDuringTheRestoreKeepsTheLostExecutionsSave(t *testing.T) {
+	env, ana := newEnv(t)
+	step, stepped := agentShell(t, env, "echo saved >work.txt")
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	// The second Execution is preempted in its restore's fetch.
+	env.Runner.Agent(takeTask)
+	look, seen := lookStep(t, env, "work.txt")
+	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	stepped()
+	dir := env.Runner.SharedDir("slow-fetch")
+	fetching, gate := filepath.Join(dir, "fetching"), filepath.Join(dir, "gate")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = fetch ] && [ ! -e " + gate + " ]; then touch " + fetching +
+		"; while [ ! -e " + gate + " ]; do sleep 0.05; done; fi\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.PathFirst(dir)
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	second := runningExecution(t, ana, id, 2)
+	waitUntil(t, "the restore's fetch", func() bool {
+		_, err := os.Stat(fetching)
+		return err == nil
+	})
+	ref := "refs/agent-wip/" + id
+	saved, _ := env.Forge.Ref("example/shop", ref)
+	env.Runner.HoldMachines()
+
+	env.Runner.Preempt(second)
+
+	waitForRestart(t, env, ana, id)
+	if now, _ := env.Forge.Ref("example/shop", ref); now != saved {
+		t.Errorf("%s moved from %s to %s: %s", ref, saved, now,
+			env.Forge.Git("example/shop", "log", "-1", "--format=%s", now))
+	}
+	if err := os.WriteFile(gate, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.PathFirst("")
+	env.Runner.GiveMachines()
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if got := seen("file-work.txt"); got != "saved\n" {
+		t.Errorf("work.txt after the third Execution's restore: %q, want the first Execution's save", got)
+	}
+}
+
+// After a person's push, the save is not in the new checkout: a
+// preemption during the setup command, before the agent saw where the
+// save is, does not replace it on the forge.
+func TestAPreemptionDuringTheSetupCommandAfterAPersonsPushKeepsTheSave(t *testing.T) {
+	env, ana := newEnv(t)
+	dir := env.Runner.SharedDir("setup-gate")
+	armed, inSetup, gate := filepath.Join(dir, "armed"), filepath.Join(dir, "in-setup"), filepath.Join(dir, "gate")
+	env.Forge.Push("example/shop", "main", map[string]string{factoryFile(""): "setup = \"echo setup >setup.txt; if [ -e " +
+		armed + " ]; then touch " + inSetup + "; while [ ! -e " + gate + " ]; do sleep 0.05; done; fi\"\n"},
+		"A factory file")
+	change, changed := changeStep(t, env)
+	env.Runner.Agent(interruptedTurn(t, change)...)
+	// The second Execution is preempted in its setup command.
+	env.Runner.Agent(takeTask)
+	look, seen := lookStep(t, env)
+	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	changed()
+	if err := os.WriteFile(armed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.HoldMachines()
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	waitForRestart(t, env, ana, id)
+	ref := "refs/agent-wip/" + id
+	wip, _ := env.Forge.Ref("example/shop", ref)
+	env.Forge.Push("example/shop", "agent/"+id, map[string]string{"person.txt": "mine\n"}, "A person's fix")
+	env.Runner.GiveMachines()
+	second := runningExecution(t, ana, id, 2)
+	waitUntil(t, "the second Execution's setup command", func() bool {
+		_, err := os.Stat(inSetup)
+		return err == nil
+	})
+	env.Runner.HoldMachines()
+
+	env.Runner.Preempt(second)
+
+	waitForRestart(t, env, ana, id)
+	if now, _ := env.Forge.Ref("example/shop", ref); now != wip {
+		t.Errorf("%s moved from %s to %s: %s", ref, wip, now,
+			env.Forge.Git("example/shop", "log", "-1", "--format=%s", now))
+	}
+	if err := os.WriteFile(gate, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.GiveMachines()
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if saved := strings.TrimSpace(seen("saved")); saved != wip {
+		t.Errorf("the third Execution's refs/factory/saved-work is %q, want the first Execution's save %s", saved, wip)
+	}
+}
+
 // A restart takes another free account when the Run's account is at its
 // usage limit, and that is no account switch.
 func TestARestartTakesAnotherAccountWhenItsAccountIsNotFree(t *testing.T) {

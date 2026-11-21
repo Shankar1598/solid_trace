@@ -331,6 +331,7 @@ The new Execution restores the last save of the lost Execution before the agent 
 - The restore uses only a save of the lost Executions. A save of an Execution that ended for another reason is old work, and does not come back.
 - If the restore cannot fetch the save, the setup fails and the Run fails, with the save still on the forge. A message continues the Run, and that Execution restores the save.
 - Submodules are as the clone gives them: their saved changes stay in their own repositories' WIP refs.
+- Until the agent starts, the new Execution makes no save. If its machine also goes during the setup, the WIP ref keeps the lost Execution's save, and the next Execution restores it.
 
 The first message of the new Execution says when the machine went, what is back, the files that the save left out, that containers, background processes, caches and ignored files are gone, and that the last tool call possibly did not finish.
 
