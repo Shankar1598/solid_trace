@@ -16,13 +16,13 @@ func TestARunIsNotClosedWhileItsExecutionRuns(t *testing.T) {
 	if err := d.store.savePROutcome("r-1", dispatcherapi.PRMerged, now); err != nil {
 		t.Fatal(err)
 	}
-	if closed, err := d.store.closeRun("r-1", closePRMerged, now); closed || err != nil {
+	if closed, err := d.store.closeRun("r-1", closePRMerged, now, nil); closed || err != nil {
 		t.Fatalf("the close of a Run with a running Execution: %v %v, want not closed", closed, err)
 	}
 	if err := d.store.endExecution("e-1", dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndHarnessExited}, now); err != nil {
 		t.Fatal(err)
 	}
-	if closed, err := d.store.closeRun("r-1", closePRMerged, now); !closed || err != nil {
+	if closed, err := d.store.closeRun("r-1", closePRMerged, now, nil); !closed || err != nil {
 		t.Fatalf("the close after the end of the Execution: %v %v, want closed", closed, err)
 	}
 }
@@ -62,7 +62,7 @@ func TestAClosedQueuedRunGetsNoExecution(t *testing.T) {
 	if ids, err := d.store.queuedRuns(); err != nil || !slices.Contains(ids, "r-1") {
 		t.Fatalf("the queued Runs are %v (%v), want r-1 in them", ids, err)
 	}
-	if closed, err := d.store.closeRun("r-1", closeNoActivity, now); !closed || err != nil {
+	if closed, err := d.store.closeRun("r-1", closeNoActivity, now, nil); !closed || err != nil {
 		t.Fatalf("the close of the queued Run: %v %v, want closed", closed, err)
 	}
 	if ok, err := d.store.addExecution("r-1", "e-1", now); ok || err != nil {

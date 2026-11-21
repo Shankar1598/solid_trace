@@ -373,3 +373,95 @@ func (r *Recorder) serveDownload(w http.ResponseWriter, child *ChildToken, sessi
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(archive.Bytes())
 }
+
+// SessionTotalsPath is the agent ingest API's totals call.
+const SessionTotalsPath = "/api/agent/v1/agent-session-totals"
+
+// SessionTotals are the totals of one Agent session, as its agent_sessions
+// rows sum them. CostUSD nil is "no cost".
+type SessionTotals struct {
+	Input, Output, CacheRead, CacheWrite uint64
+	CostUSD                              *float64
+}
+
+// SetSessionTotals makes the totals call give totals for the Agent
+// session.
+func (r *Recorder) SetSessionTotals(session string, totals SessionTotals) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.totals[session] = totals
+}
+
+// TotalsNotComplete makes the totals call say that its totals are not
+// complete, as EventStore says before the parse has caught up.
+func (r *Recorder) TotalsNotComplete(notComplete bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.totalsNotComplete = notComplete
+}
+
+// FailTotals makes each later totals call get status (0 answers again).
+func (r *Recorder) FailTotals(status int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failTotals = status
+}
+
+// serveSessionTotals answers the totals call as EventStore's
+// AgentSessionTotals does: for a live child token with sessions:read, the
+// sum of the totals of the Agent sessions of agent_session_ids, each of
+// which must be in the token's list (else 403).
+func (r *Recorder) serveSessionTotals(w http.ResponseWriter, req *http.Request, call Call) {
+	token, _ := strings.CutPrefix(call.Authorization, "Bearer ")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var child *ChildToken
+	for _, c := range r.children {
+		if _, active := r.answers[c.Secret]; c.Secret == token && !c.Revoked && active {
+			child = c
+		}
+	}
+	switch {
+	case child == nil:
+		answerJSON(w, http.StatusUnauthorized, map[string]string{"error": "the token is unknown or revoked"})
+		return
+	case !slices.Contains(child.Scopes, "sessions:read"):
+		answerJSON(w, http.StatusForbidden, map[string]string{"error": "the token has no sessions:read"})
+		return
+	case r.failTotals != 0:
+		answerJSON(w, r.failTotals, map[string]string{"error": "refused by the test"})
+		return
+	}
+	text := req.URL.Query().Get("agent_session_ids")
+	if text == "" {
+		answerJSON(w, http.StatusBadRequest, map[string]string{"error": "Send agent_session_ids."})
+		return
+	}
+	var sessions, noCost int
+	var input, output, cacheRead, cacheWrite uint64
+	var cost *float64
+	for _, id := range strings.Split(text, ",") {
+		if !slices.Contains(child.AgentSessionIDs, id) {
+			answerJSON(w, http.StatusForbidden, map[string]string{"error": "the token is not for the Agent session " + id})
+			return
+		}
+		t, ok := r.totals[id]
+		if !ok {
+			continue
+		}
+		sessions++
+		input, output, cacheRead, cacheWrite = input+t.Input, output+t.Output, cacheRead+t.CacheRead, cacheWrite+t.CacheWrite
+		if t.CostUSD == nil {
+			noCost++
+			continue
+		}
+		sum := *t.CostUSD
+		if cost != nil {
+			sum += *cost
+		}
+		cost = &sum
+	}
+	answerJSON(w, http.StatusOK, map[string]any{"agent_sessions": sessions, "input_tokens": input,
+		"output_tokens": output, "cache_read_tokens": cacheRead, "cache_write_tokens": cacheWrite, "cost_usd": cost,
+		"no_cost": noCost, "complete": !r.totalsNotComplete})
+}

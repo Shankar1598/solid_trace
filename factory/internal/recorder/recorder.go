@@ -79,6 +79,11 @@ type Recorder struct {
 	failing int
 	// flagged are the paths whose download has flags, by Agent session.
 	flagged map[string]map[string]string
+	// totals are the totals call's totals, by Agent session;
+	// totalsNotComplete and failTotals change its answer.
+	totals            map[string]SessionTotals
+	totalsNotComplete bool
+	failTotals        int
 }
 
 // RunEventsPath is EventStore's route for the Dispatcher's run events.
@@ -94,7 +99,7 @@ type Project struct {
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
 	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{},
-		files: map[string]map[string]*storedFile{}, refuseScopes: map[string]int{}}
+		files: map[string]map[string]*storedFile{}, refuseScopes: map[string]int{}, totals: map[string]SessionTotals{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
@@ -225,6 +230,10 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.URL.Path == IssueCommentsPath {
 		r.serveIssueComments(w, call)
+		return
+	}
+	if req.Method == http.MethodGet && req.URL.Path == SessionTotalsPath {
+		r.serveSessionTotals(w, req, call)
 		return
 	}
 	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {
