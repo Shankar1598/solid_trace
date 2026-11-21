@@ -307,7 +307,7 @@ func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.Exe
 	}
 	// Before the end: each commit that is not pushed. After the
 	// Execution: no workspace and no home of the run user.
-	if failed := e.push(environ); failed != "" {
+	if failed := e.push(environ, ""); failed != "" {
 		if end.Error != "" {
 			end.Error += "; "
 		}

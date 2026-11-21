@@ -204,7 +204,7 @@ func (s *wipSaver) run(ctx context.Context, reason string, checkpoint bool) (sav
 		s.atMu.Unlock()
 	}
 	skipped = append(root.allSkipped(), skipped...)
-	return savedWork{Commit: root.commit, Skipped: skipped}, true, nil
+	return savedWork{Commit: root.commit, Skipped: skipped, parent: root.head}, true, nil
 }
 
 // repoSave is the save of one repository: the checkout or a submodule.

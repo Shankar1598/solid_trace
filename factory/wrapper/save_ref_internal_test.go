@@ -145,3 +145,34 @@ func TestACheckpointThatCouldNotPushSavesAgainAtTheNextCheckpoint(t *testing.T) 
 		t.Errorf("the remote's WIP ref %s, the save %s", got, saved.Commit)
 	}
 }
+
+// A person pushed to the Run's branch, then the machine goes: the push of
+// the branch fails, and the WIP ref keeps the save, which has the commits
+// that are not pushed and the changes that are not committed.
+func TestAPersonsPushBeforeAPreemptionLeavesTheSaveInTheWIPRef(t *testing.T) {
+	e, remote := savingExecution(t, map[string]string{"app.txt": "one\n"}, nil)
+	commitFiles(t, e.checkout, map[string]string{"committed.txt": "not pushed\n"}, "A commit that is not pushed")
+	writeFiles(t, e.checkout, map[string]string{"app.txt": "not committed\n"})
+
+	person := filepath.Join(t.TempDir(), "person")
+	gitRun(t, "clone", "-q", "-b", "main", remote, person)
+	commitFiles(t, person, map[string]string{"person.txt": "a person\n"}, "A person's commit")
+	gitRun(t, "-C", person, "push", "-q", "origin", "HEAD:refs/heads/"+e.task.Branch)
+
+	saved, err := e.save(context.Background(), dispatcherapi.EndPreempted)
+	if err == nil || !strings.Contains(err.Error(), "the push of the Run's branch before the end failed") {
+		t.Errorf("the save after a person's push: %v", err)
+	}
+	ref := "refs/agent-wip/" + saveRunID
+	if got := gitRun(t, "--git-dir", remote, "rev-parse", ref); saved.Commit == "" || got != saved.Commit {
+		t.Fatalf("the remote's WIP ref is %s, the save gives %q", got, saved.Commit)
+	}
+	for path, want := range map[string]string{"app.txt": "not committed", "committed.txt": "not pushed"} {
+		if got := gitRun(t, "--git-dir", remote, "show", ref+":"+path); got != want {
+			t.Errorf("%s in the WIP ref: %q, want %q", path, got, want)
+		}
+	}
+	if got := gitRun(t, "--git-dir", remote, "show", "refs/heads/"+e.task.Branch+":person.txt"); got != "a person" {
+		t.Errorf("the person's push is not on the branch: %q", got)
+	}
+}
