@@ -78,11 +78,11 @@ func TestWithNoDockerProgramSetTheEndRunsNoDocker(t *testing.T) {
 	if code := wrapper.Main(ctx, func(name string) string { return values[name] }, os.Environ(), &stderr); code != 0 {
 		t.Fatalf("the wrapper exits %d: %s", code, stderr.String())
 	}
-	<-ends
+	end := <-ends
 	if b, err := os.ReadFile(ran); err == nil {
 		t.Errorf("the wrapper ran docker with no WRAPPER_DOCKER: %s", b)
 	}
-	if !strings.Contains(stderr.String(), "skips the container step") {
-		t.Errorf("the wrapper did not say that it skipped the container step:\n%s", stderr.String())
+	if !strings.HasPrefix(end.ContainerStep, "skipped: no Docker program") {
+		t.Errorf("the end call's container step is %q, want skipped:\n%s", end.ContainerStep, stderr.String())
 	}
 }

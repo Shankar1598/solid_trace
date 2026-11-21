@@ -750,6 +750,10 @@ type ExecutionEnd struct {
 	// BackgroundTasksKilled is the count of the agent's background tasks
 	// that still ran at the end, and that the end killed.
 	BackgroundTasksKilled int `json:"background_tasks_killed,omitempty"`
+	// ContainerStep is what the end's container step did: "skipped" with
+	// the cause (no Docker program on the machine), "no container ran",
+	// "killed N containers", or "failed" with the cause.
+	ContainerStep string `json:"container_step,omitempty"`
 	// Preemption is what the preemption handler saved, for EndPreempted
 	// and EndMachineStopped.
 	Preemption *Preemption `json:"preemption,omitempty"`

@@ -10,7 +10,9 @@
 #   - each event: run.base_branch, when the Run has one
 #   - execution_started: execution.id, execution.account, execution.vm
 #   - execution_ended: execution.id, execution.reason, execution.exit_code,
-#     execution.account, execution.vm
+#     execution.account, execution.vm, execution.container_step (what the
+#     end's container step did, such as "skipped: no Docker (docker) on the
+#     machine")
 #   - report: execution.id, report.outcome, report.summary,
 #     report.question, report.checks (an array of {command, exit_status,
 #     time, output_tail}) and report.evidence (an array of paths under

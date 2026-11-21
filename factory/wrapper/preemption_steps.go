@@ -219,6 +219,7 @@ func (e *execution) endPreempted(ctx context.Context, p dispatcherapi.Preemption
 	if e.populatedAtKill {
 		end.BackgroundTasksKilled = e.backgroundTasks
 	}
+	end.ContainerStep = e.containerStep
 	e.mu.Unlock()
 	_, err := e.client.end(ctx, end)
 	if err != nil {

@@ -209,6 +209,10 @@ func TestTheEndStopsEachRunningContainer(t *testing.T) {
 	if killed := env.Runner.Docker.Killed(); len(killed) != 2 {
 		t.Errorf("the end killed containers %v, want the agent's 2", killed)
 	}
+	// The end event says what the container step did.
+	if got := awaitEvent(t, env, id, "execution_ended")["execution.container_step"]; got != "killed 2 containers" {
+		t.Errorf("the end event's container step is %v, want killed 2 containers", got)
+	}
 }
 
 func TestWithNoDockerTheContainerStepIsSkipped(t *testing.T) {
@@ -223,6 +227,11 @@ func TestWithNoDockerTheContainerStepIsSkipped(t *testing.T) {
 	out := env.Runner.Fake.Output(onlyExecution(t, run).ID)
 	if !strings.Contains(out, "no Docker") {
 		t.Errorf("the wrapper did not say that it skipped the container step:\n%s", out)
+	}
+	// The end event says so too (the local factory stack has no Docker).
+	got, _ := awaitEvent(t, env, id, "execution_ended")["execution.container_step"].(string)
+	if !strings.HasPrefix(got, "skipped: no Docker") {
+		t.Errorf("the end event's container step is %q, want skipped", got)
 	}
 }
 

@@ -276,6 +276,8 @@ type execution struct {
 	// tells if a process was in the cgroup when the end killed it.
 	backgroundTasks int
 	populatedAtKill bool
+	// containerStep is what the end's container step did, for the end call.
+	containerStep string
 	// cancelWork stops the setup (the clone) when the end starts before
 	// the harness.
 	cancelWork context.CancelFunc
@@ -407,6 +409,7 @@ func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.Exe
 	if e.populatedAtKill {
 		end.BackgroundTasksKilled = e.backgroundTasks
 	}
+	end.ContainerStep = e.containerStep
 	e.mu.Unlock()
 	return end
 }
@@ -470,14 +473,22 @@ func (e *execution) killAll() {
 // Execution's cgroup, in Docker's own. With no docker program, the step
 // is skipped.
 func (e *execution) stopContainers() {
+	step := e.containers()
+	fmt.Fprintf(e.log, "wrapper: the end's container step: %s\n", step)
+	e.mu.Lock()
+	e.containerStep = step
+	e.mu.Unlock()
+}
+
+// containers kills each running container of the machine, and says what
+// it did.
+func (e *execution) containers() string {
 	if e.cfg.docker == "" {
-		fmt.Fprintf(e.log, "wrapper: no Docker program (%s is not set), so the end skips the container step\n", EnvDocker)
-		return
+		return "skipped: no Docker program (" + EnvDocker + " is not set)"
 	}
 	docker, err := exec.LookPath(e.cfg.docker)
 	if err != nil {
-		fmt.Fprintf(e.log, "wrapper: no Docker (%s), so the end skips the container step\n", e.cfg.docker)
-		return
+		return "skipped: no Docker (" + e.cfg.docker + ") on the machine"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), dockerWait)
 	defer cancel()
@@ -494,16 +505,16 @@ func (e *execution) stopContainers() {
 	}
 	out, err := run("ps", "--quiet")
 	if err != nil {
-		fmt.Fprintf(e.log, "wrapper: the end's container step: docker ps: %v: %s\n", err, lastLines(out, 5))
-		return
+		return fmt.Sprintf("failed: docker ps: %v: %s", err, lastLines(out, 5))
 	}
 	ids := strings.Fields(out)
 	if len(ids) == 0 {
-		return
+		return "no container ran"
 	}
 	if out, err := run(append([]string{"kill"}, ids...)...); err != nil {
-		fmt.Fprintf(e.log, "wrapper: the end's container step: docker kill: %v: %s\n", err, lastLines(out, 5))
+		return fmt.Sprintf("failed: docker kill: %v: %s", err, lastLines(out, 5))
 	}
+	return fmt.Sprintf("killed %d containers", len(ids))
 }
 
 // work sets up and runs the harness, and gives the end call's body.

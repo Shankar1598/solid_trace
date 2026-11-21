@@ -487,6 +487,9 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		details["execution.exit_code"] = *end.ExitCode
 	}
 	details["execution.background_tasks_killed"] = max(end.BackgroundTasksKilled, 0)
+	if end.ContainerStep != "" {
+		details["execution.container_step"] = end.ContainerStep
+	}
 	if err := recordEvent(tx, at, runID, eventExecutionEnded, details); err != nil {
 		return err
 	}
