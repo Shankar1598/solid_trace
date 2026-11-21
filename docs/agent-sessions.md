@@ -287,6 +287,24 @@ The Run page shows one Run from its run events:
 
 **Stop** ends a Run that goes wrong. It shows only when Settings → Instance has the Dispatcher's URL, and only on a Run that can stop (queued, running, taken over, or waiting on a person or an account limit). Console sends the stop to the Dispatcher as you, with a factory token that lasts 5 minutes. The page shows the state that the Dispatcher gives at once; the stop event shows when it arrives from the Dispatcher.
 
+### The work-in-progress save
+
+An agent machine can go during an Execution: a Spot VM that the cloud takes back, or a machine that stops. So the wrapper saves the work in the checkout to the Run's work-in-progress ref, `refs/agent-wip/<run id>`:
+
+- **The checkpoint:** every 5 minutes, only when the work changed since the last save. It runs on standard VMs too. The operator changes the interval with `DISPATCHER_CHECKPOINT_INTERVAL` (a duration, such as `10m`); `0` turns the checkpoint off.
+- **The preemption save:** when the machine goes with a notice, after the agent stops.
+
+A save is a commit of the working tree, with the Run's HEAD as its parent, and the message "WIP [skip ci]: saved by the factory at <UTC time>, Run <id>, Execution <id>, reason <checkpoint|preempted|machine stopped>. Not reviewed." Commits that are not pushed go with it: when the push of the Run's branch fails at a preemption (for example, a person pushed to the branch), the WIP ref keeps the save. The save does not change the agent's index, HEAD or branch, and it does not run the hooks or the programs of the checkout's git configuration.
+
+A save leaves out these files, and the preemption event names them:
+
+- the files that `.gitignore` or `.git/info/exclude` excludes, and the factory file's `save_exclude` patterns;
+- each untracked file over 5 MiB, and each untracked file after the first 50 MiB of untracked files.
+
+A submodule with changes saves to the same ref name in its own repository. A submodule whose URL is not on the forge, or that the push cannot reach, is not saved; the preemption event names it. The secret files of a Run and the wrapper's state files are outside the checkout, so a save never has them.
+
+For a forge that refuses refs outside `refs/heads`, the operator sets `DISPATCHER_WIP_REFS=refs/heads/agent-wip`: the saves then go to `refs/heads/agent-wip/<run id>`. The Dispatcher deletes the ref when the Run closes.
+
 ## Try the factory with mock data
 
 To see the factory work with no Claude account, no forge and no Nomad, run the demo on the dev box, with the dev stack up (`bin/dev`):

@@ -59,6 +59,8 @@ type savedWork struct {
 	Commit string
 	// Skipped are the files that the save left out.
 	Skipped []string
+	// parent is the WIP commit's parent: the agent's HEAD at the save.
+	parent string
 }
 
 // preemptSteps are the steps of the preemption handler. Each step gets a

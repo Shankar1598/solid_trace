@@ -37,18 +37,12 @@ var errNotSent = errors.New("the end call was not sent")
 // workSaver saves the work: a work-in-progress commit of the checkout.
 type workSaver interface {
 	save(ctx context.Context, reason string) (savedWork, error)
+	// checkpoint saves the work when it changed since the last save,
+	// and is true when it pushed.
+	checkpoint(ctx context.Context) (savedWork, bool, error)
 	// lastCheckpoint is the time of the last checkpoint (zero: none).
 	lastCheckpoint() time.Time
 }
-
-// noSaver is the saver of a wrapper with no work-in-progress save.
-type noSaver struct{}
-
-func (noSaver) save(context.Context, string) (savedWork, error) {
-	return savedWork{}, errors.New("the wrapper has no work-in-progress save, so the work in the checkout is not saved")
-}
-
-func (noSaver) lastCheckpoint() time.Time { return time.Time{} }
 
 // preemption is the preemption handler's part of an Execution.
 type preemption struct {
@@ -145,10 +139,10 @@ func (e *execution) trigger(reason string, at time.Time) {
 
 // save is step 3's save of the work: the work-in-progress save, then the
 // push of each commit of the Run's branch that is not on the remote (as
-// the usual end does).
+// the usual end does). The WIP ref keeps the save when that push fails.
 func (e *execution) save(ctx context.Context, reason string) (savedWork, error) {
 	saved, err := e.saver.save(ctx, reason)
-	if failed := e.push(e.environ); failed != "" {
+	if failed := e.push(e.environ, saved.parent); failed != "" {
 		err = errors.Join(err, errors.New(failed))
 	}
 	return saved, err

@@ -162,9 +162,10 @@ func newExecution(ctx context.Context, cfg config, c *client, task dispatcherapi
 	boundary killBoundary, runUser runUser) *execution {
 	e := &execution{cfg: cfg, client: c, task: task, log: log, boundary: boundary, runUser: runUser,
 		needsPerson: make(chan struct{}, 1), interrupts: make(chan struct{}, 1), uploads: newUploads(cfg, c, task, log), inbox: newInbox(),
-		clock: realClock{}, saver: noSaver{},
+		clock:   realClock{},
 		results: make(chan struct{}, 1), followed: make(chan struct{}), finished: make(chan struct{}),
 		preempted: make(chan struct{})}
+	e.saver = newWIPSaver(e)
 	e.marked, e.mark = context.WithCancel(ctx)
 	e.preemptEnd = errNotSent
 	return e
@@ -306,7 +307,7 @@ func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.Exe
 	}
 	// Before the end: each commit that is not pushed. After the
 	// Execution: no workspace and no home of the run user.
-	if failed := e.push(environ); failed != "" {
+	if failed := e.push(environ, ""); failed != "" {
 		if end.Error != "" {
 			end.Error += "; "
 		}
@@ -433,7 +434,12 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
 	e.uploads.start()
+	// The checkpoint runs while the harness runs, and stops at the
+	// preempting marker: the preemption handler then saves.
+	checkpointing, stopCheckpoints := context.WithCancel(e.marked)
+	go e.checkpoints(checkpointing, e.cfg.clock())
 	end := e.runHarness(environ)
+	stopCheckpoints()
 	// The last bytes go before the end call: the end step revokes the
 	// Execution's token. After the preempting marker, the preemption
 	// handler sends them, so this upload stops at once. A stop command or

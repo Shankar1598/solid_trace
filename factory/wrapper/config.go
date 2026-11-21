@@ -201,6 +201,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		c.dir = wd
 	}
+	// The hard rule of the work-in-progress save: the secret files and
+	// the wrapper's state files are outside the checkouts.
+	if dir := filepath.Clean(c.dir); within(dir, c.workspace) {
+		return c, fmt.Errorf("the wrapper's configuration is not complete: %s (%s) must not be in %s (%s): "+
+			"the secret files and the wrapper's state files are never in a checkout", EnvDir, dir, EnvWorkspace, c.workspace)
+	}
 	if c.harness == "" {
 		c.harness = "claude"
 	}

@@ -125,9 +125,11 @@ func TestANoticeOnTheMachineSavesTheWorkAndEndsTheExecutionAsPreempted(t *testin
 		t.Errorf("the Run's reason %q", run.Reason)
 	}
 	preemption := checkSaved(t, env, run, dispatcherapi.EndPreempted)
-	if problems, _ := preemption["preemption.problems"].([]any); len(problems) != 1 ||
-		!strings.Contains(problems[0].(string), "no work-in-progress save") {
-		t.Errorf("the problems: %v", preemption["preemption.problems"])
+	if problems, _ := preemption["preemption.problems"].([]any); len(problems) != 0 {
+		t.Errorf("the problems: %v", problems)
+	}
+	if saved, _ := env.Forge.Ref("example/shop", "refs/agent-wip/"+id); saved == "" || preemption["preemption.wip_commit"] != saved {
+		t.Errorf("the preemption's WIP commit %v, the Forge's refs/agent-wip/%s %q", preemption["preemption.wip_commit"], id, saved)
 	}
 	if _, err := killboundary.Reopen(wrapper.CgroupName(execution)); err == nil {
 		t.Errorf("the Execution's child cgroup is not removed")
