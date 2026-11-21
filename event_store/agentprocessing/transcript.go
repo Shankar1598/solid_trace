@@ -368,6 +368,10 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 				case "text":
 					text.WriteString(b.Text)
 				case "thinking":
+					// Claude Code can keep a thinking block with no text.
+					if b.Thinking == "" {
+						text.WriteString("[thinking]")
+					}
 					text.WriteString(b.Thinking)
 				case "tool_use", "server_tool_use":
 					text.WriteString(b.Name)
@@ -436,6 +440,14 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 		}
 	case "ai-title":
 		text.WriteString(line.AiTitle)
+	}
+	// A line with no text, as Claude Code's own records, has its kind as
+	// its message, so that it is not an empty Log.
+	if text.Len() == 0 && role == "" {
+		text.WriteString("[" + kind + "]")
+	}
+	if level == "" {
+		level = "info"
 	}
 	set("agent.line", kind)
 	set("agent.role", role)

@@ -101,7 +101,8 @@ func TestTheParseMakesOneLogForEachLineOfAnAgentSession(t *testing.T) {
 }
 
 // A failed tool call and a system line of level error have the level
-// error, so that a Query or a Monitor on level finds them.
+// error, and each other line the level info, so that a Query or a Monitor
+// on level finds them.
 func TestAFailedToolCallAndASystemErrorHaveTheLevelError(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -119,9 +120,38 @@ func TestAFailedToolCallAndASystemErrorHaveTheLevelError(t *testing.T) {
 	if len(logs) != len(lines) {
 		t.Fatalf("Expected %d Logs, got %+v", len(lines), logs)
 	}
-	for i, wantError := range []bool{true, false, true, false} {
-		if isError := logs[i].Level == "error"; isError != wantError {
-			t.Errorf("Log %d (%q): expected the level error %v, got the level %q", i, logs[i].Message, wantError, logs[i].Level)
+	for i, want := range []string{"error", "info", "error", "info"} {
+		if logs[i].Level != want {
+			t.Errorf("Log %d (%q): expected the level %q, got %q", i, logs[i].Message, want, logs[i].Level)
+		}
+	}
+}
+
+// A line with no text, as Claude Code's own records and a thinking block
+// that it keeps with no text, has its kind as its message, so that it is
+// not an empty row in the Logs explorer. The Agent session page does not
+// show the lines with no role.
+func TestALineWithNoTextHasItsKindAsItsMessage(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	lines := []string{
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-02T11:00:01Z"}`,
+		`{"type":"attachment","timestamp":"2026-10-02T11:00:02Z","attachment":{"type":"deferred_tools_record"}}`,
+		`{"type":"assistant","timestamp":"2026-10-02T11:00:03Z","message":{"id":"msg_1","role":"assistant","model":"claude-haiku-5-5","content":[{"type":"thinking","thinking":"","signature":"abc"}]}}`,
+		`{"type":"assistant","timestamp":"2026-10-02T11:00:04Z","message":{"id":"msg_1","role":"assistant","model":"claude-haiku-5-5","content":[{"type":"text","text":"Done"}]}}`,
+	}
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(lines...)}), 200)
+
+	logs := sessionLogs(t, env, o.project, laptopSession)
+	want := []string{"[queue-operation]", "[attachment/deferred_tools_record]", "[thinking]", "Done"}
+	if len(logs) != len(want) {
+		t.Fatalf("Expected %d Logs, got %+v", len(want), logs)
+	}
+	for i, log := range logs {
+		if log.Message != want[i] || log.Level != "info" {
+			t.Errorf("Log %d: expected the message %q and the level info, got %q and %q", i, want[i], log.Message, log.Level)
 		}
 	}
 }
