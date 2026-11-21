@@ -1,10 +1,14 @@
 package wrapper_test
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
@@ -22,7 +26,8 @@ func lookStep(t *testing.T, env *factorytest.Env, names ...string) (step string,
 	out := env.Runner.SharedDir("look-" + filepath.Base(t.TempDir()))
 	command := "git rev-parse HEAD >" + out + "/head && git rev-parse --abbrev-ref HEAD >" + out + "/branch && " +
 		"git status --porcelain --untracked-files=all >" + out + "/status && git diff --cached --name-only >" + out +
-		"/staged && git log --format=%s >" + out + "/log"
+		"/staged && git log --format=%s >" + out + "/log && { git rev-parse -q --verify refs/factory/saved-work >" + out +
+		"/saved || true; }"
 	for _, name := range names {
 		command += " && { cat " + name + " >" + out + "/file-" + strings.ReplaceAll(name, "/", "-") + " 2>/dev/null || true; }"
 	}
@@ -147,5 +152,374 @@ func TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork(t *testing.
 	// Execution's end.
 	if tip, _ := env.Forge.Ref("example/shop", "refs/heads/agent/"+id); tip != saved {
 		t.Errorf("the Run's branch on the Forge is at %s, want %s", tip, saved)
+	}
+}
+
+// A person's push to the Run's branch after the save wins: the new
+// Execution starts from the branch, and the first message says where the
+// saved work is.
+func TestAPersonsPushAfterTheSaveWinsOverTheSavedWork(t *testing.T) {
+	env, ana := newEnv(t)
+	change, changed := changeStep(t)
+	env.Runner.Agent(interruptedTurn(t, change)...)
+	look, seen := lookStep(t, env, "person.txt", "notes.txt")
+	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	changed()
+	env.Runner.HoldMachines()
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	waitForRestart(t, env, ana, id)
+	ref := "refs/agent-wip/" + id
+	wip, _ := env.Forge.Ref("example/shop", ref)
+
+	pushed := env.Forge.Push("example/shop", "agent/"+id, map[string]string{"person.txt": "mine\n"}, "A person's fix")
+	env.Runner.GiveMachines()
+
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if head := strings.TrimSpace(seen("head")); head != pushed {
+		t.Errorf("HEAD of the new Execution is %s, want the person's push %s", head, pushed)
+	}
+	if status := seen("status"); status != "" {
+		t.Errorf("the saved work went into the checkout over the person's push:\n%s", status)
+	}
+	if got := seen("file-person.txt"); got != "mine\n" {
+		t.Errorf("person.txt: %q", got)
+	}
+	if saved := strings.TrimSpace(seen("saved")); saved != wip {
+		t.Errorf("the checkout's refs/factory/saved-work is %q, want the save %s", saved, wip)
+	}
+	for _, text := range []string{"a person pushed", ref, wip} {
+		if !transcriptHas(t, env, text) {
+			t.Errorf("the first message does not say %q", text)
+		}
+	}
+	if tip, _ := env.Forge.Ref("example/shop", "refs/heads/agent/"+id); tip != pushed {
+		t.Errorf("the Run's branch on the Forge is at %s, want the person's push %s", tip, pushed)
+	}
+	if now, _ := env.Forge.Ref("example/shop", ref); now != wip {
+		t.Errorf("%s moved from %s to %s", ref, wip, now)
+	}
+}
+
+// waitForever is a step that waits until the machine goes.
+func waitForever(t *testing.T) string {
+	step, _ := gate(t)
+	return step
+}
+
+// runningExecution waits until the Run has n Executions and the last one
+// runs, and gives its id.
+func runningExecution(t *testing.T, ana *factorytest.Person, id string, n int) string {
+	t.Helper()
+	var last dispatcherapi.Execution
+	waitUntil(t, fmt.Sprintf("Execution %d runs", n), func() bool {
+		run := getRun(t, ana, id)
+		if len(run.Executions) != n {
+			return false
+		}
+		last = run.Executions[n-1]
+		return last.State == dispatcherapi.ExecutionRunning
+	})
+	return last.ID
+}
+
+// lostEvents are the Run's machine_lost events, in order.
+func lostEvents(env *factorytest.Env, id string) []map[string]any {
+	var lost []map[string]any
+	for _, ev := range env.RunEvents(id) {
+		if ev["event.kind"] == "machine_lost" {
+			lost = append(lost, ev)
+		}
+	}
+	return lost
+}
+
+func TestTheFourthLostMachineInARowFailsTheRun(t *testing.T) {
+	env, ana := newEnv(t)
+	for range 4 {
+		env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	}
+	id := start(t, env, ana, "Fix the cart")
+	for i := 1; i <= 4; i++ {
+		if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, i)); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, fmt.Sprintf("machine_lost event %d", i), func() bool { return len(lostEvents(env, id)) == i })
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if run.Reason != "machine lost 4 times in a row" {
+		t.Errorf("the Run's reason %q", run.Reason)
+	}
+	time.Sleep(settle)
+	if n := len(env.Runner.Dispatched()); n != 4 {
+		t.Errorf("%d Executions, want 4: the fourth lost machine must not restart the Run", n)
+	}
+	run = getRun(t, ana, id)
+	for i, ev := range lostEvents(env, id) {
+		checkFields(t, ev, map[string]any{"execution.id": run.Executions[i].ID, "machine_lost.reason": "machine lost",
+			"machine_lost.in_a_row": float64(i + 1), "machine_lost.restart": i < 3})
+	}
+}
+
+func TestAnExecutionThatEndsForAnotherReasonStartsTheCountAgain(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "needs_a_person", "--question", "Which tax?"),
+		reply, result, waitForEnd)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	for i := 1; i <= 2; i++ {
+		if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	send(t, env, ana, id, "The state tax")
+	if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, 4)); err != nil {
+		t.Fatal(err)
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 5 {
+		t.Fatalf("want 5 Executions, got %+v", run.Executions)
+	}
+	lost := lostEvents(env, id)
+	if len(lost) != 3 {
+		t.Fatalf("want 3 machine_lost events, got %v", lost)
+	}
+	checkFields(t, lost[1], map[string]any{"execution.id": run.Executions[1].ID, "machine_lost.in_a_row": float64(2)})
+	checkFields(t, lost[2], map[string]any{"execution.id": run.Executions[3].ID, "machine_lost.in_a_row": float64(1),
+		"machine_lost.restart": true})
+}
+
+// The restore uses only a save of a lost Execution: a checkpoint of an
+// Execution that ended for another reason is not the Run's last work.
+func TestTheRestoreDoesNotUseASaveOfAnExecutionThatEndedForAnotherReason(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Config.CheckpointInterval = 5 * time.Minute
+	env.Restart()
+	step, stepped := shellStep(t, "echo old >work.txt")
+	wait, open := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), step, wait,
+		reportStep("--outcome", "needs_a_person", "--question", "Which tax?"), reply, result, waitForEnd)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	look, seen := lookStep(t, env, "work.txt")
+	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	stepped()
+	env.Clock.Advance(5 * time.Minute)
+	wipRefOf(t, env, "refs/agent-wip/"+id, "")
+	open()
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	send(t, env, ana, id, "The state tax")
+	if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, 2)); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if status, file := seen("status"), seen("file-work.txt"); status != "" || file != "" {
+		t.Errorf("an old save came back: status %q, work.txt %q", status, file)
+	}
+	if !transcriptHas(t, env, "No saved work is back") {
+		t.Error("the first message does not say that no saved work is back")
+	}
+}
+
+// A machine that goes with no notice restarts the Run on the same
+// account, and the new Execution gets the last checkpoint back. The first
+// message names the files that the save left out.
+func TestALostMachineRestartsTheRunFromTheLastCheckpoint(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Config.CheckpointInterval = 5 * time.Minute
+	env.Restart()
+	step, stepped := shellStep(t, "echo saved >work.txt && head -c 6000000 /dev/zero >big.bin")
+	env.Runner.Agent(takeTask, initLine(t), step, waitForever(t))
+	look, seen := lookStep(t, env, "work.txt")
+	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	stepped()
+	env.Clock.Advance(5 * time.Minute)
+	wipRefOf(t, env, "refs/agent-wip/"+id, "")
+	first := getRun(t, ana, id).Executions[0]
+
+	if err := env.Runner.Fake.LoseMachine(first.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 || run.Executions[1].Account != first.Account {
+		t.Fatalf("want a second Execution on the account %s: %+v", first.Account, run.Executions)
+	}
+	if got := seen("file-work.txt"); got != "saved\n" {
+		t.Errorf("work.txt after the restore: %q", got)
+	}
+	if status := seen("status"); status != "?? work.txt\n" {
+		t.Errorf("the status after the restore:\n%s", status)
+	}
+	for _, text := range []string{"was lost with no notice", "at the last checkpoint", "big.bin", "not finish"} {
+		if !transcriptHas(t, env, text) {
+			t.Errorf("the first message does not say %q", text)
+		}
+	}
+	if lost := lostEvents(env, id); len(lost) != 1 {
+		t.Errorf("want one machine_lost event, got %v", lost)
+	}
+}
+
+// A preemption during a take-over gives waiting on a person with the
+// reason, and no restart, also with a kept message (V8).
+func TestAPreemptionDuringATakeOverWaitsOnAPersonAndDoesNotRestart(t *testing.T) {
+	env, ana := newEnv(t)
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, ana, id)
+	run, _ := takeOverTerminal(t, env, ana, id)
+	send(t, env, ana, id, "Add a test for the cart")
+
+	env.Runner.Preempt(run.Executions[0].ID)
+
+	run = waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if run.Reason != "the take-over ended: preempted" {
+		t.Errorf("the reason is %q", run.Reason)
+	}
+	if run.Executions[1].EndReason != dispatcherapi.EndPreempted {
+		t.Errorf("the take-over Execution ended with %q", run.Executions[1].EndReason)
+	}
+	time.Sleep(settle)
+	if n := len(env.Runner.Dispatched()); n != 1 || len(getRun(t, ana, id).Executions) != 2 {
+		t.Errorf("a preempted take-over started again by itself: %v", env.Runner.Dispatched())
+	}
+	preemption := awaitEvent(t, env, id, "preemption")
+	checkFields(t, preemption, map[string]any{"execution.id": run.Executions[1].ID, "preemption.restart": false})
+}
+
+// The time that a restarted Run waits in the queue for a machine does not
+// count to the limits of its new Execution.
+func TestTheWaitForAMachineDoesNotCountToTheLimits(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	env.Runner.HoldMachines()
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	waitForRestart(t, env, ana, id)
+
+	env.Clock.Advance(dispatcherapi.DefaultTotalLimit + time.Hour)
+	env.Runner.GiveMachines()
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 || run.Executions[1].EndReason != dispatcherapi.EndReported {
+		t.Errorf("the new Execution after the wait: %+v", run.Executions)
+	}
+}
+
+// A restore that cannot fetch the save fails the setup, so that no
+// checkpoint of a new Execution replaces the save; a later Execution
+// restores it.
+func TestARestoreThatCannotFetchTheSaveFailsTheSetupAndALaterExecutionRestores(t *testing.T) {
+	env, ana := newEnv(t)
+	step, stepped := shellStep(t, "echo saved >work.txt")
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	// The second Execution fails its setup: the harness does not start.
+	env.Runner.Agent(takeTask)
+	look, seen := lookStep(t, env, "work.txt")
+	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	stepped()
+	dir := env.Runner.SharedDir("no-fetch")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n[ \"$1\" = fetch ] && { echo 'fatal: the forge does not answer' >&2; exit 128; }\nexec " + real +
+		" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.PathFirst(dir)
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	ref := "refs/agent-wip/" + id
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if len(run.Executions) != 2 || !strings.Contains(run.Reason, "restore the work-in-progress save") {
+		t.Fatalf("the Run is %s (%s): %+v", run.State, run.Reason, run.Executions)
+	}
+	saved, _ := env.Forge.Ref("example/shop", ref)
+	env.Runner.PathFirst("")
+	send(t, env, ana, id, "Go on")
+
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if got := seen("file-work.txt"); got != "saved\n" {
+		t.Errorf("work.txt after the later restore: %q", got)
+	}
+	if now, _ := env.Forge.Ref("example/shop", ref); now != saved {
+		t.Errorf("%s moved from %s to %s", ref, saved, now)
+	}
+}
+
+// A restart takes another free account when the Run's account is at its
+// usage limit, and that is no account switch.
+func TestARestartTakesAnotherAccountWhenItsAccountIsNotFree(t *testing.T) {
+	env, ana := newEnv(t)
+	env.AddAccount("pool-2", secondToken)
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	first := getRun(t, ana, id).Executions[0]
+	other := "pool-2"
+	if first.Account == other {
+		other = factorytest.DefaultAccount
+	}
+	env.MarkAtLimit(first.Account, env.Clock.Now().Add(time.Hour))
+
+	env.Runner.Preempt(first.ID)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 || run.Executions[1].Account != other {
+		t.Errorf("want the restart on %s: %+v", other, run.Executions)
+	}
+	if slices.Contains(kinds(env.RunEvents(id)), "account_switched") {
+		t.Errorf("a restart made an account_switched event: %v", kinds(env.RunEvents(id)))
+	}
+}
+
+// With two free accounts, a restart stays on the Run's account, though
+// the pool's order gives the other one.
+func TestARestartStaysOnTheRunsAccountWhenItIsFree(t *testing.T) {
+	env, ana := newEnv(t)
+	env.AddAccount("pool-2", secondToken)
+	hold, release := gate(t)
+	env.Runner.Agent(takeTask, initLine(t), hold, reportStep("--outcome", "done", "--summary", "Other"), reply, result,
+		waitForEnd)
+	other := start(t, env, ana, "Fix the tax")
+	waitFor(t, env, ana, other, dispatcherapi.StateRunning)
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	first := getRun(t, ana, id).Executions[0]
+	release()
+	waitFor(t, env, ana, other, dispatcherapi.StateDone)
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+
+	env.Runner.Preempt(first.ID)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 || run.Executions[1].Account != first.Account || first.Account == factorytest.DefaultAccount {
+		t.Errorf("want both Executions on pool-2: %+v", run.Executions)
 	}
 }
