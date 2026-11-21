@@ -182,9 +182,16 @@ func TestAUsageLimitWithNoAccountFreeWaitsAndContinuesAtTheResetTime(t *testing.
 		delivered[0]["execution.id"] != run.Executions[1].ID {
 		t.Errorf("the message's delivered events: %v", delivered)
 	}
-	queued := eventsOf(env, id, "queued")
-	if last := queued[len(queued)-1]; last["run.continued_from"] != dispatcherapi.StateWaitingOnAccountLimit {
-		t.Errorf("the queued event of the continue: %v", last)
+	// The Dispatcher's queued events (they give the reason for the wait for a
+	// VM) carry no "continued_from": the continue has its own queued event.
+	var continued []map[string]any
+	for _, ev := range eventsOf(env, id, "queued") {
+		if ev["run.continued_from"] == dispatcherapi.StateWaitingOnAccountLimit {
+			continued = append(continued, ev)
+		}
+	}
+	if len(continued) != 1 {
+		t.Errorf("%d queued events continue from the account limit wait, want 1", len(continued))
 	}
 }
 
