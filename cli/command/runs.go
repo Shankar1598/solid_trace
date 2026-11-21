@@ -88,6 +88,35 @@ func stop(ctx context.Context, args []string, env Env) int {
 	return 0
 }
 
+// switchAccount moves a Run that waits on an account limit to another
+// free account.
+func switchAccount(ctx context.Context, args []string, env Env) int {
+	flags := flag.NewFlagSet("switch-account", flag.ContinueOnError)
+	flags.SetOutput(env.Stderr)
+	dispatcherURL := flags.String("dispatcher", "", "the Dispatcher's URL (kept for the next commands)")
+	positional, ok := parseInterspersed(flags, args)
+	if !ok {
+		return 2
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(env.Stderr, "solidtrace switch-account: give one RUN_ID")
+		return 2
+	}
+	client, err := env.dispatcher(*dispatcherURL)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace switch-account: %v\n", err)
+		return 1
+	}
+	switched, err := client.SwitchAccount(ctx, positional[0])
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace switch-account: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(env.Stdout, "Run %s is queued on the account %s (it waited for %s): a new Execution continues its "+
+		"Agent session.\n%s\n", switched.RunID, switched.New, switched.Old, switched.URL)
+	return 0
+}
+
 // message sends a message to a Run.
 func message(ctx context.Context, args []string, env Env) int {
 	flags := flag.NewFlagSet("message", flag.ContinueOnError)

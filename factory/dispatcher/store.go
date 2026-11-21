@@ -378,6 +378,10 @@ var migrations = []string{
 		read_at INTEGER NOT NULL,
 		PRIMARY KEY (connection_id, comment_id)
 	);`,
+	// next_account is the account that a switch (the automatic one at a
+	// usage limit, or a person's) chose for the Run's next Execution (''
+	// is none). The next Execution clears it.
+	`ALTER TABLE runs ADD COLUMN next_account TEXT NOT NULL DEFAULT '';`,
 }
 
 // store is the Dispatcher's SQLite database.
@@ -390,6 +394,9 @@ type store struct {
 	// writeBackWake wakes the write-back loop after a commit that can hold
 	// write-back steps.
 	writeBackWake chan struct{}
+	// waitAtLimit is the operator's AtAccountLimitWait: a Run stays on
+	// its account, and waits for its reset time.
+	waitAtLimit bool
 }
 
 var errNotFound = errors.New("not found")

@@ -81,6 +81,33 @@ func TestTheConfigurationNamesTheOneWrongForgeSetting(t *testing.T) {
 	}
 }
 
+func TestTheAccountLimitSettingIsSwitchOrWait(t *testing.T) {
+	valid := map[string]string{
+		dispatcher.EnvSolidTraceURL:   "https://console.example.com",
+		dispatcher.EnvSolidTraceToken: "stk_x",
+		dispatcher.EnvDatabase:        "/var/lib/dispatcher/d.sqlite3",
+		dispatcher.EnvEncryptionKey:   "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+	}
+	load := func(value string) error {
+		env := map[string]string{dispatcher.EnvAtAccountLimit: value}
+		for k, v := range valid {
+			env[k] = v
+		}
+		_, err := dispatcher.LoadConfig("", func(k string) string { return env[k] })
+		return err
+	}
+	for _, good := range []string{"", dispatcher.AtAccountLimitSwitch, dispatcher.AtAccountLimitWait} {
+		if err := load(good); err != nil {
+			t.Errorf("%q: %v", good, err)
+		}
+	}
+	for _, wrong := range []string{"stay", "Wait", "off"} {
+		if err := load(wrong); err == nil || !strings.Contains(err.Error(), dispatcher.EnvAtAccountLimit) {
+			t.Errorf("%q: the error %v does not name %s", wrong, err, dispatcher.EnvAtAccountLimit)
+		}
+	}
+}
+
 func TestTheSquidAllowlistNeedsTheDefaultList(t *testing.T) {
 	env := map[string]string{
 		dispatcher.EnvSolidTraceURL:   "https://console.example.com",

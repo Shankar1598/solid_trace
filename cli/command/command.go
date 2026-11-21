@@ -78,9 +78,15 @@ Usage:
       --dispatcher with the Dispatcher's URL, which your operator gives;
       later verbs use the same URL.
   solidtrace stop [--dispatcher URL] RUN_ID
-      Stop a Run that is queued, running or waiting on a person. The Run
-      is stopped at once; its agent is interrupted and its Execution
-      ends. A message continues a stopped Run.
+      Stop a Run that is queued, running, or waiting on a person or an
+      account limit. The Run is stopped at once; its agent is
+      interrupted and its Execution ends. A message continues a stopped
+      Run.
+  solidtrace switch-account [--dispatcher URL] RUN_ID
+      Move a Run that waits on an account limit to another subscription
+      account that is free. The Run is queued, and a new Execution
+      continues its Agent session on that account. With no other account
+      free, the switch is refused with the first reset time.
   solidtrace message [--dispatcher URL] RUN_ID MESSAGE
       Send MESSAGE to a Run. The agent of a running Run gets it when its
       current tool call ends, in the same turn, or in a new turn; there
@@ -210,6 +216,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return runs(ctx, args[1:], env)
 	case "stop":
 		return stop(ctx, args[1:], env)
+	case "switch-account":
+		return switchAccount(ctx, args[1:], env)
 	case "message":
 		return message(ctx, args[1:], env)
 	case "interrupt":

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -120,25 +121,295 @@ func (s *store) accountToken(name string) (string, error) {
 	return string(token), err
 }
 
+// limitLayout is how a reason and the operator command show a reset time.
+const limitLayout = "2006-01-02 15:04 UTC"
+
+func limitText(at time.Time) string { return at.UTC().Format(limitLayout) }
+
 // pickAccount picks the account for a new Execution: the free account (not
-// at its usage limit at now) with the fewest live Executions. With no free
-// account, it gives "" and the reason that the Run's page shows.
-func pickAccount(tx *sql.Tx, now time.Time) (name, reason string, err error) {
-	err = tx.QueryRow(`SELECT a.name FROM accounts a WHERE a.limited_until IS NULL OR a.limited_until <= ?
+// at its usage limit at now) with the fewest live Executions, other than
+// except ("" is none). With no free account, it gives "" and the reason
+// that the Run's page shows.
+func pickAccount(tx *sql.Tx, now time.Time, except string) (name, reason string, err error) {
+	err = tx.QueryRow(`SELECT a.name FROM accounts a WHERE (a.limited_until IS NULL OR a.limited_until <= ?)
+		AND a.name != ?
 		ORDER BY (SELECT COUNT(*) FROM executions e WHERE e.account = a.name AND e.state != ?), a.added_at, a.name
-		LIMIT 1`, now.UnixMicro(), dispatcherapi.ExecutionEnded).Scan(&name)
+		LIMIT 1`, now.UnixMicro(), except, dispatcherapi.ExecutionEnded).Scan(&name)
 	if err == nil || !errors.Is(err, sql.ErrNoRows) {
 		return name, "", err
 	}
-	var first sql.NullInt64
-	if err := tx.QueryRow(`SELECT MIN(limited_until) FROM accounts`).Scan(&first); err != nil {
+	var others int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM accounts WHERE name != ?`, except).Scan(&others); err != nil {
 		return "", "", err
 	}
-	if !first.Valid {
-		return "", "no free account: the pool has no account (an operator adds one with 'dispatcher accounts add')", nil
+	var first sql.NullInt64
+	if err := tx.QueryRow(`SELECT MIN(limited_until) FROM accounts WHERE limited_until > ?`, now.UnixMicro()).
+		Scan(&first); err != nil {
+		return "", "", err
 	}
-	return "", "no free account: each account is at its usage limit; the first is free again at " +
-		time.UnixMicro(first.Int64).UTC().Format("2006-01-02 15:04 UTC"), nil
+	switch {
+	case others == 0 && except == "":
+		return "", "no free account: the pool has no account (an operator adds one with 'dispatcher accounts add')", nil
+	case others == 0:
+		return "", "no other account is free: the pool has no other account (an operator adds one with " +
+			"'dispatcher accounts add')", nil
+	case except == "":
+		return "", "no free account: each account is at its usage limit; the first is free again at " +
+			limitText(time.UnixMicro(first.Int64)), nil
+	}
+	return "", "no other account is free: each account is at its usage limit; the first is free again at " +
+		limitText(time.UnixMicro(first.Int64)), nil
+}
+
+// lastAccount is the account of the Run's last Execution ("" is none).
+func lastAccount(tx *sql.Tx, runID string) (string, error) {
+	var name string
+	err := tx.QueryRow(`SELECT account FROM executions WHERE run_id = ? AND account != ''
+		ORDER BY dispatched_at DESC, rowid DESC LIMIT 1`, runID).Scan(&name)
+	return name, ignoreNoRows(err)
+}
+
+// limitOf is the reset time of an account at its usage limit at now (nil:
+// it is free, or it is not in the pool).
+func limitOf(tx *sql.Tx, name string, now time.Time) (*time.Time, error) {
+	var limited sql.NullInt64
+	err := tx.QueryRow(`SELECT limited_until FROM accounts WHERE name = ?`, name).Scan(&limited)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (!limited.Valid || limited.Int64 <= now.UnixMicro())) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return timeOf(limited), nil
+}
+
+// accountFor gives the account for the Run's next Execution at now, or ""
+// and the reason when there is none. The account that a switch chose
+// (runs.next_account) comes first when it is free. With the wait setting,
+// the Run stays on its account (the switch's, else its last Execution's)
+// and waits for its reset time. An account that is no longer in the pool
+// does not hold a Run.
+func (s *store) accountFor(tx *sql.Tx, runID string, now time.Time) (name, reason string, err error) {
+	var want string
+	if err := tx.QueryRow(`SELECT next_account FROM runs WHERE id = ?`, runID).Scan(&want); err != nil {
+		return "", "", err
+	}
+	if want == "" && s.waitAtLimit {
+		if want, err = lastAccount(tx, runID); err != nil {
+			return "", "", err
+		}
+	}
+	if want != "" {
+		var exists bool
+		if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM accounts WHERE name = ?)`, want).Scan(&exists); err != nil {
+			return "", "", err
+		}
+		until, err := limitOf(tx, want, now)
+		switch {
+		case err != nil:
+			return "", "", err
+		case exists && until == nil:
+			return want, "", nil
+		case exists && s.waitAtLimit:
+			return "", "the Run's account " + want + " is at its usage limit until " + limitText(*until) +
+				": the Run waits for it", nil
+		}
+	}
+	return pickAccount(tx, now, "")
+}
+
+// The reset time of an account at its usage limit, when the harness gives
+// none, or one that is not in the future: an hour from the end. A reset
+// time after maxLimitWait is cut to it, so that a wrong time does not take
+// an account out of the pool for longer than the weekly window.
+const (
+	defaultLimitWait = time.Hour
+	maxLimitWait     = 7 * 24 * time.Hour
+)
+
+// limitResetTime is the reset time of the account of an Execution that
+// ended at its usage limit at now, from the time that the harness gave
+// (nil: none).
+func limitResetTime(given *time.Time, now time.Time) time.Time {
+	switch {
+	case given == nil || !given.After(now):
+		return now.Add(defaultLimitWait)
+	case given.After(now.Add(maxLimitWait)):
+		return now.Add(maxLimitWait)
+	}
+	return *given
+}
+
+// eventAccountSwitched is the event of a Run that moves to another
+// account: account.old is the account at its usage limit, account.new
+// the account of the next Execution. Its actor is the person who switched
+// it, or the Dispatcher for the automatic switch.
+const eventAccountSwitched = "account_switched"
+
+// reasonAccountFree is the reason of a Run that waited on an account
+// limit and continues.
+const reasonAccountFree = "an account is free again: a new Execution resumes the Agent session"
+
+// atUsageLimit decides, in the end's transaction, where a Run goes when
+// its Execution on account ended at the usage limit: queued on another
+// free account (next is that account), or waiting on an account limit.
+// With the wait setting, it always waits for its own account.
+func (s *store) atUsageLimit(tx *sql.Tx, account string, now time.Time) (state, reason, next string, err error) {
+	at := "the account " + account + " is at its usage limit"
+	if account == "" {
+		at = "the account is at its usage limit"
+	}
+	until, err := limitOf(tx, account, now)
+	if err != nil {
+		return "", "", "", err
+	}
+	if until != nil {
+		at += " until " + limitText(*until)
+	}
+	if !s.waitAtLimit {
+		if next, _, err = pickAccount(tx, now, account); err != nil {
+			return "", "", "", err
+		}
+		if next != "" {
+			return dispatcherapi.StateQueued, at + ": the Run continues on the account " + next, next, nil
+		}
+		return dispatcherapi.StateWaitingOnAccountLimit, at + ", and no other account is free: the Run continues " +
+			"when an account is free again", "", nil
+	}
+	return dispatcherapi.StateWaitingOnAccountLimit, at + ": the Run waits for it (the operator's setting " +
+		EnvAtAccountLimit + "=" + AtAccountLimitWait + "); a person can switch its account", "", nil
+}
+
+// continueWaitingRuns queues each Run that waits on an account limit and
+// has an account at now: a new Execution resumes its Agent session.
+func (s *store) continueWaitingRuns(now time.Time) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT id FROM runs WHERE state = ? AND closed_at IS NULL AND pr_outcome = ''
+		ORDER BY created_at, id`, dispatcherapi.StateWaitingOnAccountLimit)
+	if err != nil {
+		return 0, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	continued := 0
+	for _, id := range ids {
+		account, _, err := s.accountFor(tx, id, now)
+		if err != nil {
+			return 0, err
+		}
+		if account == "" {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ? WHERE id = ?`, dispatcherapi.StateQueued,
+			reasonAccountFree, id); err != nil {
+			return 0, err
+		}
+		details := actor{kind: actorDispatcher, name: "Dispatcher"}.details()
+		details["run.continued_from"] = dispatcherapi.StateWaitingOnAccountLimit
+		if err := recordEvent(tx, now, id, eventQueued, details); err != nil {
+			return 0, err
+		}
+		continued++
+	}
+	if continued == 0 {
+		return 0, nil
+	}
+	return continued, s.commit(tx)
+}
+
+// notSwitchable is the error of a switch of a Run's account that cannot
+// be done.
+type notSwitchable struct{ why string }
+
+func (e *notSwitchable) Error() string { return e.why }
+
+// switchAccount moves a Run of the Organization that waits on an account
+// limit to another free account, in one transaction: the Run is queued,
+// and its next Execution gets that account. It gives the old and the new
+// account, errNotFound or a *notSwitchable.
+func (s *store) switchAccount(organizationID, runID string, by actor, at time.Time) (old, next string, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", "", err
+	}
+	defer tx.Rollback()
+	var state string
+	var closed bool
+	err = tx.QueryRow(`SELECT state, closed_at IS NOT NULL FROM runs WHERE id = ? AND organization_id = ?`, runID,
+		organizationID).Scan(&state, &closed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", errNotFound
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if state != dispatcherapi.StateWaitingOnAccountLimit || closed {
+		return "", "", &notSwitchable{"the Run is " + state + ": only a Run that waits on an account limit can switch " +
+			"its account"}
+	}
+	if old, err = lastAccount(tx, runID); err != nil {
+		return "", "", err
+	}
+	next, reason, err := pickAccount(tx, at, old)
+	if err != nil {
+		return "", "", err
+	}
+	if next == "" {
+		return "", "", &notSwitchable{reason}
+	}
+	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, next_account = ? WHERE id = ?`,
+		dispatcherapi.StateQueued, by.name+" switched the Run from the account "+old+" to "+next, next, runID); err != nil {
+		return "", "", err
+	}
+	details := by.details()
+	details["account.old"], details["account.new"] = old, next
+	if err := recordEvent(tx, at, runID, eventAccountSwitched, details); err != nil {
+		return "", "", err
+	}
+	return old, next, s.commit(tx)
+}
+
+// switchAccount is a person's switch of the account of a Run that waits
+// on an account limit.
+func (d *Dispatcher) switchAccount(w http.ResponseWriter, r *http.Request, p person) {
+	id := r.PathValue("id")
+	old, next, err := d.store.switchAccount(p.organization.id, id, actor{kind: actorPerson, id: p.id, name: p.name},
+		d.now())
+	var refused *notSwitchable
+	switch {
+	case errors.Is(err, errNotFound):
+		writeProblem(w, http.StatusNotFound, "no Run "+id+" in this Organization")
+		return
+	case errors.As(err, &refused):
+		writeProblem(w, http.StatusConflict, refused.Error())
+		return
+	case err != nil:
+		d.serverError(w, "switch the Run's account", err)
+		return
+	}
+	d.wakeDispatch()
+	run, err := d.store.run(p.organization.id, id)
+	if err != nil {
+		d.serverError(w, "read the Run", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dispatcherapi.AccountSwitched{RunID: id, Old: old, New: next,
+		URL: d.withURL(run, p).URL})
 }
 
 // MarkAtLimit marks an account at its usage limit until the reset time: no

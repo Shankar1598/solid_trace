@@ -267,6 +267,16 @@ A delivery from a sender with `solidtrace.notification`, and `solidtrace.issue_n
 - **The flags:** a done Run with a cause report and no PR shows **Cause report**, and not **no Evidence** or **No PR**. A Run with a PR keeps the usual flags: a PR with no check that passed shows **no Evidence**.
 - **The comments on the Issue:** the Dispatcher posts the cause report of a done Issue Run with no PR as a comment on the Issue, with the summary and the Run's link. When an Issue Run opens a PR, it posts one comment with the PR's link, the Run's link, the summary, the pass/fail list of the checks (`no Evidence` when no check passed) and the cause report. Console shows each comment with **Factory** and the Run's link as its author. A Monitor has no comments: a Monitor Run's cause report is on the Run's page only. The Dispatcher sends a comment again while SolidTrace does not answer, for up to 24 hours; it gives up a comment on an Issue that SolidTrace does not have, with a warning Log.
 
+## When an account reaches its usage limit
+
+Each Execution gets one subscription account of the pool: the free account with the fewest live Executions. When the agent's result reports the usage limit, the Execution ends with the reason `usage limit`, and the account is not free until its reset time (the time that Claude Code gives; one hour when it gives none, and at most seven days). `dispatcher accounts list` shows that time.
+
+- **Another account is free:** the Run is queued on it at once, and a new Execution continues the Agent session with `--resume`. The Run's events show `account_switched` with the old and the new account, by the Dispatcher.
+- **No account is free:** the Run waits on an account limit. Its reason names the account and the reset time. It continues in a new Execution when an account is free again. A message waits on the Run, and the agent gets it when the Run continues. Stop works on a Run that waits.
+- **A report before the limit** sets the outcome: for example, a Run that reported done is done.
+- **Switch by hand:** `solidtrace switch-account RUN_ID` moves a Run that waits on an account limit to another free account. With no other account free, it is refused with the first reset time.
+- **The fallback of cluster check 5:** with `DISPATCHER_AT_ACCOUNT_LIMIT=wait` (the default is `switch`), a Run stays on its account: at the usage limit it waits for that account's reset time, also when another account is free, and later Executions of the Run use the same account. A person can still switch its account. When the operator removes the account from the pool, the Run continues on a free account.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.

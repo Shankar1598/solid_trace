@@ -301,7 +301,7 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	switch end.Reason {
 	case dispatcherapi.EndReported, dispatcherapi.EndNoReport, dispatcherapi.EndHarnessExited,
 		dispatcherapi.EndSetupFailed, dispatcherapi.EndPreempted, dispatcherapi.EndMachineStopped,
-		dispatcherapi.EndStopped, dispatcherapi.EndTimeout, dispatcherapi.EndInterrupted:
+		dispatcherapi.EndStopped, dispatcherapi.EndTimeout, dispatcherapi.EndInterrupted, dispatcherapi.EndUsageLimit:
 	default:
 		writeProblem(w, http.StatusBadRequest, "no end reason "+quote(end.Reason))
 		return
@@ -313,6 +313,17 @@ func (d *Dispatcher) end(w http.ResponseWriter, r *http.Request, e storedExecuti
 	}
 	if len(end.Error) > maxReportText {
 		end.Error = strings.ToValidUTF8(end.Error[:maxReportText], "")
+	}
+	// The Credential source's limit signal: the account is not free until
+	// its reset time. The end then finds the Run another free account.
+	if end.Reason == dispatcherapi.EndUsageLimit && e.state == dispatcherapi.ExecutionRunning {
+		until := limitResetTime(end.UsageLimitResetsAt, d.now())
+		if err := d.MarkAtLimit(e.account, until); err != nil {
+			d.log.Warn("could not mark the account at its usage limit", "execution", e.id, "account", e.account,
+				"error", err)
+		} else {
+			d.log.Info("an account is at its usage limit", "account", e.account, "until", until)
+		}
 	}
 	err := d.store.endExecution(e.id, end, d.now())
 	if errors.Is(err, errEnded) {

@@ -33,9 +33,11 @@ const (
 	// StateStopped is a Run that a person, or the Dispatcher's backstop,
 	// stopped. A message continues it.
 	StateStopped = "stopped"
-	// StateWaitingOnAccountLimit is a Run that waits for a free
-	// subscription account (ticket 63 sets it). A message waits on the
-	// Run until it continues.
+	// StateWaitingOnAccountLimit is a Run whose account reached its usage
+	// limit when no other account was free (or with the operator's wait
+	// setting). It continues when an account is free again, or when a
+	// person switches its account. A message waits on the Run until it
+	// continues.
 	StateWaitingOnAccountLimit = "waiting_on_account_limit"
 	// StateTakenOver is a Run whose Execution a person works in (ticket
 	// 61 sets it). A message waits on the Run, in its events, and is not
@@ -606,6 +608,11 @@ const (
 	// EndInterrupted: a person interrupted the agent with no message. The
 	// Run waits on a person.
 	EndInterrupted = "interrupted"
+	// EndUsageLimit: the harness's result reported the usage limit of the
+	// Execution's account. The end call has the reset time when the
+	// harness gave one. The account is not free until then, and the Run
+	// continues on another free account, or waits on an account limit.
+	EndUsageLimit = "usage limit"
 )
 
 // Preempting is the body of the wrapper's preempting call: the first step
@@ -666,6 +673,22 @@ type ExecutionEnd struct {
 	// the Execution was not written: the Dispatcher sends each message
 	// that was not delivered again, in a new Execution.
 	Messages []MessageState `json:"messages,omitempty"`
+	// UsageLimitResetsAt is the reset time of the account's usage limit
+	// that the harness gave, for EndUsageLimit (nil: the harness gave
+	// none).
+	UsageLimitResetsAt *time.Time `json:"usage_limit_resets_at,omitempty"`
+}
+
+// AccountSwitched is the answer to a switch of a Run's account: the Run,
+// which waited on an account limit, is queued on the free account New.
+type AccountSwitched struct {
+	RunID string `json:"run_id"`
+	// Old is the account that the Run waited for, and New the account of
+	// its next Execution.
+	Old string `json:"old_account"`
+	New string `json:"new_account"`
+	// URL is the Run's page in Console.
+	URL string `json:"url"`
 }
 
 // StartRun is the body of a start.
@@ -1064,6 +1087,16 @@ func (c *Client) Interrupt(ctx context.Context, id, text string) (InterruptAccep
 	var accepted InterruptAccepted
 	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/interrupt", Interrupt{Text: text}, &accepted)
 	return accepted, err
+}
+
+// SwitchAccount moves a Run that waits on an account limit to another
+// free account: the Run is queued, and its next Execution continues its
+// Agent session on that account. With no other account free, it is
+// refused (409).
+func (c *Client) SwitchAccount(ctx context.Context, id string) (AccountSwitched, error) {
+	var switched AccountSwitched
+	err := c.call(ctx, http.MethodPost, "/runs/"+url.PathEscape(id)+"/switch-account", nil, &switched)
+	return switched, err
 }
 
 // Projects reads the Factory settings of the Organization's Projects.

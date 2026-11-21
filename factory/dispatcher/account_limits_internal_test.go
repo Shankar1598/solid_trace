@@ -1,0 +1,129 @@
+package dispatcher
+
+import (
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/solidtrace/cli/dispatcherapi"
+)
+
+// The boundaries of the account-limit transitions that Seam 3 cannot
+// time: a stop before the end at the usage limit, and an account that
+// leaves the pool while a Run waits for it.
+
+func usageLimitEnd(at time.Time) dispatcherapi.ExecutionEnd {
+	return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndUsageLimit, UsageLimitResetsAt: &at}
+}
+
+func TestAStopBeforeTheEndAtTheUsageLimitWinsAndTheRunDoesNotSwitch(t *testing.T) {
+	w := newAdminWorld(t)
+	d := w.d
+	if _, err := d.store.addAccount("pool-2", "sk-ant-oat01-test-pool-2", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	startedExecution(t, w)
+	if err := d.store.stopRun("7", "r-1", messenger, "stopped by ana@example.com", w.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.MarkAtLimit("pool-1", w.clock().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.store.endExecution("e-1", usageLimitEnd(w.clock().Add(time.Hour)), w.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if run := runState(t, d.store, "r-1"); run.State != dispatcherapi.StateStopped {
+		t.Errorf("the Run is %s, want stopped", run.State)
+	}
+	// A message continues the stopped Run on the free account.
+	if _, err := d.store.acceptMessage("7", "r-1", messenger, "Go on", w.clock()); err != nil {
+		t.Fatal(err)
+	}
+	// SolidTrace gets the events in order: each event of the end is there
+	// before the message's.
+	kinds := func() []string {
+		var list []string
+		for _, ev := range w.solidTrace.RunEvents() {
+			if ev["run.id"] == "r-1" {
+				list = append(list, ev["event.kind"].(string))
+			}
+		}
+		return list
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !slices.Contains(kinds(), eventMessageAccepted) {
+		if time.Now().After(deadline) {
+			t.Fatalf("SolidTrace has the events %v, and no message_accepted", kinds())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := kinds(); slices.Contains(got, eventAccountSwitched) {
+		t.Errorf("a stopped Run switched its account: %v", got)
+	}
+	if ok, err := d.store.addExecution("r-1", "e-2", w.clock()); !ok || err != nil {
+		t.Fatalf("add the Execution: %v %v", ok, err)
+	}
+	if e, err := d.store.execution("e-2"); err != nil || e.account != "pool-2" {
+		t.Errorf("the next Execution is on %q (%v), want pool-2", e.account, err)
+	}
+}
+
+func TestWithTheWaitSettingARunWhoseAccountLeavesThePoolContinuesOnAFreeAccount(t *testing.T) {
+	w := newAdminWorld(t)
+	d := w.d
+	d.store.waitAtLimit = true
+	startedExecution(t, w)
+	if _, err := d.store.addAccount("pool-2", "sk-ant-oat01-test-pool-2", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.MarkAtLimit("pool-1", w.clock().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.store.endExecution("e-1", usageLimitEnd(w.clock().Add(time.Hour)), w.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if run := runState(t, d.store, "r-1"); run.State != dispatcherapi.StateWaitingOnAccountLimit {
+		t.Fatalf("the Run is %s, want waiting on an account limit", run.State)
+	}
+	if n, err := d.store.continueWaitingRuns(w.clock()); n != 0 || err != nil {
+		t.Fatalf("with its account at its limit, %d Runs continued (%v)", n, err)
+	}
+
+	// The operator removes the account that the Run waits for.
+	if removed, err := d.store.removeAccount("pool-1"); !removed || err != nil {
+		t.Fatal(removed, err)
+	}
+	if n, err := d.store.continueWaitingRuns(w.clock()); n != 1 || err != nil {
+		t.Fatalf("%d Runs continued (%v), want 1", n, err)
+	}
+	if run := runState(t, d.store, "r-1"); run.State != dispatcherapi.StateQueued || run.Reason != reasonAccountFree {
+		t.Errorf("the Run is %s (%s), want queued", run.State, run.Reason)
+	}
+	if ok, err := d.store.addExecution("r-1", "e-2", w.clock()); !ok || err != nil {
+		t.Fatalf("add the Execution: %v %v", ok, err)
+	}
+	if e, err := d.store.execution("e-2"); err != nil || e.account != "pool-2" {
+		t.Errorf("the next Execution is on %q (%v), want pool-2", e.account, err)
+	}
+}
+
+func TestTheResetTimeOfALimitIsInTheFutureAndAtMostAWeekAway(t *testing.T) {
+	now := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { t := now.Add(d); return &t }
+	for name, c := range map[string]struct {
+		given *time.Time
+		want  time.Time
+	}{
+		"none":           {nil, now.Add(time.Hour)},
+		"past":           {at(-time.Minute), now.Add(time.Hour)},
+		"now":            {at(0), now.Add(time.Hour)},
+		"in two hours":   {at(2 * time.Hour), now.Add(2 * time.Hour)},
+		"in seven days":  {at(7 * 24 * time.Hour), now.Add(7 * 24 * time.Hour)},
+		"in a year":      {at(365 * 24 * time.Hour), now.Add(7 * 24 * time.Hour)},
+		"a second after": {at(time.Second), now.Add(time.Second)},
+	} {
+		if got := limitResetTime(c.given, now); !got.Equal(c.want) {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+}
