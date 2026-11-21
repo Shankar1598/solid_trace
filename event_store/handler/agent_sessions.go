@@ -155,9 +155,18 @@ func (h *AgentSessionsHandler) List(c *fiber.Ctx) error {
 	}
 
 	answer := agentSessionsAnswer{AgentSessions: []agentSessionRow{}, Repositories: repositories, More: len(sessions) > limit}
+	answer.Totals = sumAgentSessions(sessions)
+	for _, s := range sessions[:min(limit, len(sessions))] {
+		answer.AgentSessions = append(answer.AgentSessions, agentSessionRowOf(s))
+	}
+	return c.JSON(answer)
+}
+
+// sumAgentSessions sums the totals of sessions.
+func sumAgentSessions(sessions []storage.AgentSessionTotals) agentSessionsTotals {
+	var t agentSessionsTotals
 	var cost float64
-	for i, s := range sessions {
-		t := &answer.Totals
+	for _, s := range sessions {
 		t.AgentSessions++
 		t.Input, t.Output, t.CacheRead, t.CacheWrite = t.Input+s.Input, t.Output+s.Output, t.CacheRead+s.CacheRead, t.CacheWrite+s.CacheWrite
 		if s.CostUSD == nil {
@@ -166,11 +175,8 @@ func (h *AgentSessionsHandler) List(c *fiber.Ctx) error {
 			cost += *s.CostUSD
 			t.CostUSD = &cost
 		}
-		if i < limit {
-			answer.AgentSessions = append(answer.AgentSessions, agentSessionRowOf(s))
-		}
 	}
-	return c.JSON(answer)
+	return t
 }
 
 func agentSessionRowOf(s storage.AgentSessionTotals) agentSessionRow {
