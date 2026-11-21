@@ -29,6 +29,7 @@ package fakeforge
 
 import (
 	"bytes"
+	"net"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
@@ -89,6 +90,9 @@ type Forge struct {
 	root    string
 	backend string
 	server  *httptest.Server
+	// url is the base URL that links name (the server's URL, or the
+	// public URL of NewAt).
+	url string
 
 	mu       sync.Mutex
 	prs      map[string][]*PR
@@ -117,6 +121,19 @@ type hang struct {
 // New starts a fake Forge with no repositories. The test's cleanup stops it.
 func New(t testing.TB) *Forge {
 	t.Helper()
+	return start(t, nil, "")
+}
+
+// NewAt starts a fake Forge on the listener l, with url as its base URL in
+// the links and clone URLs that it gives, for a process that other
+// machines reach by a name (the local factory stack).
+func NewAt(t testing.TB, l net.Listener, url string) *Forge {
+	t.Helper()
+	return start(t, l, strings.TrimRight(url, "/"))
+}
+
+func start(t testing.TB, l net.Listener, url string) *Forge {
+	t.Helper()
 	execPath, err := exec.Command("git", "--exec-path").Output()
 	if err != nil {
 		t.Fatalf("fakeforge: git is needed: %v", err)
@@ -143,22 +160,31 @@ func New(t testing.TB) *Forge {
 	mux.HandleFunc("GET "+repository, f.api(f.getRepository))
 	mux.HandleFunc("GET "+repository+"/refs/branches/{name...}", f.api(f.getBranch))
 	mux.HandleFunc("GET "+repository+"/src/{commit}/{path...}", f.api(f.getSource))
-	f.server = httptest.NewServer(mux)
+	f.server = httptest.NewUnstartedServer(mux)
+	if l != nil {
+		f.server.Listener.Close()
+		f.server.Listener = l
+	}
+	f.server.Start()
 	t.Cleanup(f.server.Close)
+	f.url = f.server.URL
+	if url != "" {
+		f.url = url
+	}
 	return f
 }
 
 // URL is the Forge's base URL.
-func (f *Forge) URL() string { return f.server.URL }
+func (f *Forge) URL() string { return f.url }
 
 // APIURL is the base of the API, as https://api.bitbucket.org/2.0 is.
-func (f *Forge) APIURL() string { return f.server.URL + "/2.0" }
+func (f *Forge) APIURL() string { return f.url + "/2.0" }
 
 // GitURL is the base of the clone URLs, as https://bitbucket.org is.
-func (f *Forge) GitURL() string { return f.server.URL + "/git" }
+func (f *Forge) GitURL() string { return f.url + "/git" }
 
 // CloneURL is the HTTPS-style clone URL of a repository "owner/name".
-func (f *Forge) CloneURL(repo string) string { return f.server.URL + "/git/" + repo + ".git" }
+func (f *Forge) CloneURL(repo string) string { return f.url + "/git/" + repo + ".git" }
 
 // AddRepo makes a bare repository "owner/name" with one commit on main
 // that holds these files (a README when there are none).

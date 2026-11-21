@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -119,7 +120,9 @@ type session struct {
 type Linear struct {
 	mu     sync.Mutex
 	server *httptest.Server
-	now    func() time.Time
+	// url is the base URL that the links name.
+	url string
+	now func() time.Time
 
 	redirectURI string
 	// Deny makes the approval page deny the install; Forged makes the
@@ -144,22 +147,41 @@ type Linear struct {
 
 // New starts the fake with the clock now. The test's cleanup stops it.
 func New(t interface{ Cleanup(func()) }, now func() time.Time) *Linear {
+	return start(t, now, nil, "")
+}
+
+// NewAt starts the fake on the listener l, with url as its base URL, for
+// a process that other machines reach by a name (the local factory stack).
+func NewAt(t interface{ Cleanup(func()) }, now func() time.Time, l net.Listener, url string) *Linear {
+	return start(t, now, l, strings.TrimRight(url, "/"))
+}
+
+func start(t interface{ Cleanup(func()) }, now func() time.Time, ln net.Listener, url string) *Linear {
 	l := &Linear{now: now, codes: map[string]grant{}, access: map[string]session{}, refresh: map[string]bool{},
 		issues: map[string]*issue{}, teams: []Team{Engineering}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /oauth/authorize", l.authorize)
 	mux.HandleFunc("POST /oauth/token", l.token)
 	mux.HandleFunc("POST /graphql", l.graphQL)
-	l.server = httptest.NewServer(mux)
+	l.server = httptest.NewUnstartedServer(mux)
+	if ln != nil {
+		l.server.Listener.Close()
+		l.server.Listener = ln
+	}
+	l.server.Start()
 	t.Cleanup(l.server.Close)
+	l.url = l.server.URL
+	if url != "" {
+		l.url = url
+	}
 	return l
 }
 
 // URL is the base of the API.
-func (l *Linear) URL() string { return l.server.URL }
+func (l *Linear) URL() string { return l.url }
 
 // AuthorizeURL is the approval page.
-func (l *Linear) AuthorizeURL() string { return l.server.URL + "/oauth/authorize" }
+func (l *Linear) AuthorizeURL() string { return l.url + "/oauth/authorize" }
 
 // IssueURL is the page of the issue.
 func IssueURL(identifier string) string { return "https://linear.app/example/issue/" + identifier }

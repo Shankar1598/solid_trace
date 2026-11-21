@@ -1,6 +1,8 @@
 package fakeforge_test
 
 import (
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,5 +89,33 @@ func TestPersonPushIsSeenByTheAgent(t *testing.T) {
 	mustGit(t, f.Token, "", "clone", "-q", "--branch", "agent/r1", f.CloneURL(repo), work)
 	if got := strings.TrimSpace(mustGit(t, f.Token, work, "rev-parse", "HEAD")); got != sha {
 		t.Fatalf("HEAD of the clone %s; want the person's commit %s", got, sha)
+	}
+}
+
+// NewAt serves on the listener that it gets, and its links and clone URLs
+// name the public URL (the local factory stack's "http://forge").
+func TestNewAtServesOnTheListenerWithThePublicURL(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fakeforge.NewAt(t, l, "http://forge/")
+	if f.URL() != "http://forge" || f.CloneURL(repo) != "http://forge/git/"+repo+".git" || f.APIURL() != "http://forge/2.0" {
+		t.Fatalf("URL %q, CloneURL %q, APIURL %q", f.URL(), f.CloneURL(repo), f.APIURL())
+	}
+	f.AddRepo(repo, nil)
+	work := filepath.Join(t.TempDir(), "checkout")
+	mustGit(t, f.Token, "", "clone", "-q", "http://"+l.Addr().String()+"/git/"+repo+".git", work)
+
+	body := strings.NewReader(`{"title": "T", "source": {"branch": {"name": "main"}}, "destination": {"branch": {"name": "main"}}}`)
+	req, _ := http.NewRequest(http.MethodPost, "http://"+l.Addr().String()+"/2.0/repositories/"+repo+"/pullrequests", body)
+	req.Header.Set("Authorization", "Bearer "+f.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if prs := f.PRs(repo); len(prs) != 1 || !strings.HasPrefix(prs[0].Link, "http://forge/"+repo+"/pull-requests/") {
+		t.Fatalf("status %d, PRs %+v", resp.StatusCode, prs)
 	}
 }

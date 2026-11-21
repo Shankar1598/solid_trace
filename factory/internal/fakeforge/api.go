@@ -220,7 +220,7 @@ func (f *Forge) openPR(r *http.Request, repo string) (int, any, *apiError) {
 	now := time.Now().UTC()
 	p := &PR{ID: len(f.prs[repo]) + 1, Title: in.Title, Description: in.Description, Source: source,
 		Destination: destination, State: "OPEN", Author: FactoryAuthor, Created: now, Updated: now}
-	p.Link = fmt.Sprintf("%s/%s/pull-requests/%d", f.server.URL, repo, p.ID)
+	p.Link = fmt.Sprintf("%s/%s/pull-requests/%d", f.url, repo, p.ID)
 	f.prs[repo] = append(f.prs[repo], p)
 	return http.StatusCreated, f.prJSON(repo, p), nil
 }
@@ -350,7 +350,7 @@ func (f *Forge) listComments(r *http.Request, repo string) (int, any, *apiError)
 		q := next.Query()
 		q.Set("page", strconv.Itoa(number+1))
 		next.RawQuery = q.Encode()
-		out["next"] = f.server.URL + next.RequestURI()
+		out["next"] = f.url + next.RequestURI()
 	}
 	return http.StatusOK, out, nil
 }

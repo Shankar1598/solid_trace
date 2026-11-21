@@ -1,0 +1,83 @@
+# An overlay of compose.yml for ticket 54: the Dispatcher from its image (factory/Dockerfile),
+# the fake Forge and the fake Tracker (factory/internal/localfakes), with the dev SolidTrace
+# on the host. Use it only through "FACTORY_STACK_DISPATCHER=1 factory/local/stack ...",
+# which writes the Dispatcher's settings to the state directory first (README.md).
+#
+# The Dispatcher uses the host's network, as on the server VM
+# (factory/reference/docker-compose.yml). So it reaches the dev Console at
+# http://localhost:4001, and Console and the CLI reach it. Its private listener is on the
+# address of Docker's bridge on the host (the server VM's private address here), and the
+# agent machine reaches it through "dispatcher-gateway", which has the name "dispatcher" on
+# the factory network.
+services:
+  dispatcher:
+    build:
+      context: ../..
+      dockerfile: factory/Dockerfile
+    image: factory-local/dispatcher:dev
+    network_mode: host
+    # host.docker.internal is EventStore's ingest for the Dispatcher too.
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    env_file: ${FACTORY_STACK_STATE:?FACTORY_STACK_STATE}/dispatcher.env
+    volumes:
+      - dispatcher-data:/var/lib/dispatcher
+      # Squid's allowlist: the Dispatcher writes it in place, Squid reads it.
+      - ${FACTORY_STACK_STATE}/allowlist.txt:/etc/squid/factory/allowlist.txt
+      - ${FACTORY_STACK_STATE}/default-allowlist.txt:/etc/solid-trace-factory/default-allowlist.txt:ro
+    # "stack up" starts it last, after it made the Nomad token.
+    profiles: [dispatcher]
+    mem_limit: 512m
+    cpus: 1
+
+  dispatcher-gateway:
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    # BusyBox nc: a new connection to the Dispatcher's private listener for each connection.
+    command: ["nc", "-lk", "-p", "7600", "-e", "nc", "host.docker.internal", "7600"]
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      factory:
+        aliases: [dispatcher]
+      egress: {}
+    mem_limit: 64m
+
+  fakes:
+    build: ./fakes
+    image: factory-local/fakes:dev
+    environment:
+      FAKES_REPOS: example/factory-test
+    networks:
+      factory:
+        aliases: [forge, tracker]
+      fakes-host: {}
+    # For the Dispatcher on the host's network.
+    ports:
+      - "127.0.0.1::80"
+      - "127.0.0.1::8080"
+    mem_limit: 128m
+
+  nomad-api:
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    # For the Dispatcher on the host's network, as in compose.nomad-api.yml.
+    command: ["nc", "-lk", "-p", "4646", "-e", "nc", "nomad", "4646"]
+    networks: [factory, fakes-host]
+    ports:
+      - "127.0.0.1::4646"
+    depends_on:
+      nomad:
+        condition: service_healthy
+    mem_limit: 64m
+
+  squid:
+    entrypoint: ["/usr/local/bin/reload-on-change.sh"]
+    volumes:
+      - ${FACTORY_STACK_STATE}/allowlist.txt:/etc/squid/allowlist.txt:ro
+      - ./squid/reload-on-change.sh:/usr/local/bin/reload-on-change.sh:ro
+
+networks:
+  # The networks of the published ports. The factory network stays internal.
+  fakes-host: {}
+
+volumes:
+  dispatcher-data:

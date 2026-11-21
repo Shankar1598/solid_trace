@@ -1,0 +1,5 @@
+# The local factory stack's test repository (factory/local/fakes).
+
+[[checks]]
+name = "readme"
+command = "test -f README.md"

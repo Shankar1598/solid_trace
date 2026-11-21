@@ -9,18 +9,30 @@
 #   factory/local/stack nomad-env     with FACTORY_STACK_NOMAD_API=1: the published address of
 #                                     Nomad's HTTP API, the management token and the agent
 #                                     machine's container, as NAME=value lines
+#   factory/local/stack status        with FACTORY_STACK_DISPATCHER=1: the Dispatcher's status call
+#   factory/local/stack dispatcher <args>  with FACTORY_STACK_DISPATCHER=1: the Dispatcher's operator
+#                                     command, such as "accounts add NAME" with the token on stdin
 #
 # The compose project is factory-local, or FACTORY_STACK_PROJECT when it is set (an agent
 # that tests in a worktree uses a project of its own). It has its own containers, networks
 # and volumes, and publishes no port on the host. It never touches the dev SolidTrace's
 # containers. FACTORY_STACK_NOMAD_API=1 (for each command) adds compose.nomad-api.yml,
 # which publishes Nomad's HTTP API on 127.0.0.1, for the Runner's tests (test-runner).
+# FACTORY_STACK_DISPATCHER=1 (for each command) adds compose.dispatcher.yml: the Dispatcher,
+# the fake Forge and the fake Tracker, with the dev SolidTrace on the host (README.md).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project="${FACTORY_STACK_PROJECT:-factory-local}"
 files=(-f "$here/compose.yml")
 [ "${FACTORY_STACK_NOMAD_API:-}" != 1 ] || files+=(-f "$here/compose.nomad-api.yml")
+with_dispatcher=false
+if [ "${FACTORY_STACK_DISPATCHER:-}" = 1 ]; then
+  with_dispatcher=true
+  files+=(-f "$here/compose.dispatcher.yml")
+  # The Dispatcher's settings and secrets, outside the repository (mode 700).
+  export FACTORY_STACK_STATE="${FACTORY_STACK_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/solidtrace-factory/$project}"
+fi
 # "-p" first: COMPOSE_PROJECT_NAME in the environment comes before the file's "name".
 compose() { docker compose -p "$project" "${files[@]}" "$@"; }
 token_file=/nomad/data/management-token
@@ -63,22 +75,147 @@ wait_for_client() {
   return 1
 }
 
+# --- The Dispatcher (FACTORY_STACK_DISPATCHER=1) ---
+
+repo="$(cd "$here/../.." && pwd)"
+# The dev SolidTrace on the host, and the Organization, Project and Admin of the set-up.
+console_url="${FACTORY_CONSOLE_URL:-http://localhost:4001}"
+ingest_url="${FACTORY_INGEST_URL:-http://host.docker.internal:4000}"
+org="${FACTORY_ORG:-solid-trace-org}"
+project_slug="${FACTORY_PROJECT:-solid-trace-project}"
+admin="${FACTORY_ADMIN:-admin@solidtrace.local}"
+# The address of Docker's bridge on the host: the Dispatcher's private listener.
+bridge_ip() { docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'; }
+dispatcher_url() { echo "http://$(bridge_ip):7600"; }
+
+rails() { (cd "$repo/console" && mise exec -- bin/rails "$@"); }
+
+# Console's side (console/lib/tasks/factory_demo.rake): Agent sessions on, the Dispatcher's
+# token, and console_url. The secrets go to dispatcher.env only; state.json has no secret.
+console_up() {
+  local line
+  line="$(rails factory_demo:up DEMO_ORG="$org" DEMO_PROJECT="$project_slug" DEMO_ADMIN="$admin" DEMO_CONSOLE_URL="$console_url" | tail -n 1)"
+  jq -e .dispatcher_token.secret >/dev/null <<<"$line" || { echo "stack: Console's set-up failed" >&2; return 1; }
+  jq '.dispatcher_token.secret = null | .person_token.secret = null' <<<"$line" >"$FACTORY_STACK_STATE/state.json"
+  {
+    echo "DISPATCHER_SOLIDTRACE_TOKEN=$(jq -r .dispatcher_token.secret <<<"$line")"
+    echo "DISPATCHER_ENCRYPTION_KEY=$(openssl rand -base64 32)"
+  } >"$FACTORY_STACK_STATE/secrets.env"
+}
+
+console_down() {
+  [ -s "$FACTORY_STACK_STATE/state.json" ] || return 0
+  rails factory_demo:down DEMO_STATE="$(jq -c --arg url "$(dispatcher_url)" '.dispatcher_url = $url' "$FACTORY_STACK_STATE/state.json")" >/dev/null
+  rm -f "$FACTORY_STACK_STATE/state.json"
+}
+
+# The Dispatcher's Nomad token, with the reference policy (docs/factory.md, step 2).
+nomad_dispatcher_token() {
+  nomad acl policy apply -description "The factory Dispatcher" factory-dispatcher - <"$here/../reference/nomad/dispatcher-policy.hcl" >/dev/null
+  nomad acl token create -name factory-dispatcher -policy factory-dispatcher -type client -t '{{.SecretID}}' </dev/null
+}
+
+published() { compose port "$1" "$2" | sed 's/^0\.0\.0\.0/127.0.0.1/'; }
+
+write_dispatcher_env() {
+  local nomad_token="$1"
+  {
+    cat "$FACTORY_STACK_STATE/secrets.env"
+    cat <<SETTINGS
+DISPATCHER_SOLIDTRACE_URL=$console_url
+DISPATCHER_SOLIDTRACE_INGEST_URL=$ingest_url
+DISPATCHER_LISTEN=$(bridge_ip):7600
+DISPATCHER_NOMAD_ADDR=http://$(published nomad-api 4646)
+DISPATCHER_NOMAD_TOKEN=$nomad_token
+DISPATCHER_MACHINE_KINDS=default=1024
+DISPATCHER_WRAPPER_URL=http://dispatcher:7600
+DISPATCHER_TAKE_OVER_ATTACH=docker exec -i -u engineer $project-{vm} sudo -u {run_user} hc connect
+DISPATCHER_SQUID_ALLOWLIST=/etc/squid/factory/allowlist.txt
+DISPATCHER_DEFAULT_ALLOWLIST=/etc/solid-trace-factory/default-allowlist.txt
+DISPATCHER_SQUID_RELOAD=true
+DISPATCHER_BITBUCKET_API_URL=http://$(published fakes 80)/2.0
+DISPATCHER_BITBUCKET_GIT_URL=http://forge/git
+DISPATCHER_LINEAR_API_URL=http://$(published fakes 8080)
+SETTINGS
+  } >"$FACTORY_STACK_STATE/dispatcher.env.new"
+  mv "$FACTORY_STACK_STATE/dispatcher.env.new" "$FACTORY_STACK_STATE/dispatcher.env"
+}
+
+wait_for_dispatcher() {
+  for _ in $(seq 1 60); do
+    if curl -fsS "$(dispatcher_url)/api/v1/status" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "stack: the Dispatcher's status call did not answer 200 in 120 seconds" >&2
+  compose logs --tail 40 dispatcher >&2
+  curl -sS "$(dispatcher_url)/api/v1/status" >&2 || true
+  return 1
+}
+
+dispatcher_up() {
+  (umask 077 && mkdir -p "$FACTORY_STACK_STATE")
+  # The default list of the reference configuration, and the fake Forge's host.
+  { cat "$here/../reference/squid/allowlist.txt"; printf '\n# The local stack: the fake Forge.\nforge\n'; } >"$FACTORY_STACK_STATE/default-allowlist.txt"
+  if [ ! -e "$FACTORY_STACK_STATE/allowlist.txt" ]; then
+    cp "$FACTORY_STACK_STATE/default-allowlist.txt" "$FACTORY_STACK_STATE/allowlist.txt"
+  fi
+  # The Dispatcher (uid 10001) writes it in place; the directory is mode 700.
+  chmod 666 "$FACTORY_STACK_STATE/allowlist.txt"
+  [ -s "$FACTORY_STACK_STATE/secrets.env" ] || console_up
+  touch "$FACTORY_STACK_STATE/dispatcher.env"
+  (cd "$repo/factory" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$here/fakes/bin/localfakes" ./internal/localfakes)
+}
+
+dispatcher_start() {
+  write_dispatcher_env "$(nomad_dispatcher_token)"
+  compose --profile dispatcher up --detach dispatcher
+  wait_for_dispatcher
+  rails factory_demo:dispatcher_url DEMO_DISPATCHER_URL="$(dispatcher_url)" >/dev/null
+  echo "stack: the Dispatcher at $(dispatcher_url), for $console_url"
+}
+
 case "${1:-}" in
 up)
   # The wrapper and the agent CLI of this checkout, for the image recipe.
   "$here/../image/build" "$here/agent-machine/bin" >/dev/null
-  compose build --quiet
+  if $with_dispatcher; then
+    dispatcher_up
+    compose --profile dispatcher build --quiet
+  else
+    compose build --quiet
+  fi
   compose up --detach --wait --quiet-pull
   management_token >/dev/null
   introduce_client
   wait_for_client
+  ! $with_dispatcher || dispatcher_start
   echo "stack: up (compose project $project)"
   ;;
 down)
-  compose down --volumes --remove-orphans --timeout 5
+  compose --profile dispatcher down --volumes --remove-orphans --timeout 5
+  if $with_dispatcher; then
+    console_down
+    rm -rf "$FACTORY_STACK_STATE"
+  fi
   ;;
 clean)
-  compose down --volumes --remove-orphans --timeout 5 --rmi all
+  compose --profile dispatcher down --volumes --remove-orphans --timeout 5 --rmi all
+  if $with_dispatcher; then
+    console_down
+    rm -rf "$FACTORY_STACK_STATE"
+  fi
+  ;;
+status)
+  $with_dispatcher || { echo "stack: status needs FACTORY_STACK_DISPATCHER=1" >&2; exit 2; }
+  curl -sS "$(dispatcher_url)/api/v1/status"
+  echo
+  ;;
+dispatcher)
+  $with_dispatcher || { echo "stack: dispatcher needs FACTORY_STACK_DISPATCHER=1" >&2; exit 2; }
+  shift
+  compose --profile dispatcher exec -T dispatcher dispatcher "$@"
   ;;
 nomad)
   shift
@@ -97,7 +234,7 @@ shell)
   docker exec -it -u "${2:-root}" -w / "$(compose ps -q agent-machine)" bash -l
   ;;
 *)
-  sed -n '2,16p' "$0" >&2
+  sed -n '2,22p' "$0" >&2
   exit 2
   ;;
 esac

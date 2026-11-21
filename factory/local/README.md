@@ -7,7 +7,7 @@ A Docker Compose stack to build and test the factory on one machine, in place of
 - **The agent machine's firewall**: a container that owns the agent machine's network namespace, as a VPC firewall is outside a VM.
 - **Squid**: the only way out, with the default allowlist of the reference configuration ([../reference/squid/allowlist.txt](../reference/squid/allowlist.txt)).
 
-The dev SolidTrace runs on the host, as usual. Ticket 54 adds the Dispatcher and the fake Forge and Tracker to this stack.
+The dev SolidTrace runs on the host, as usual. With `FACTORY_STACK_DISPATCHER=1`, the stack also has the Dispatcher (from its image) and the fake Forge and Tracker ([The Dispatcher on the local stack](#the-dispatcher-on-the-local-stack)).
 
 `stack up` first builds the wrapper and the agent CLI of this checkout (`factory/image/build`, into `agent-machine/bin`, which git ignores). Then the Dockerfile runs the recipe in two layers: all but the two binaries, then the binaries. So a change to the wrapper does not download Claude Code again.
 
@@ -77,6 +77,29 @@ Nomad's ACLs are on, so a process on the agent machine cannot use the local Noma
 
 ACLs do not stop a Nomad client from registering, so client introduction is strict: a client registers only with an introduction token. `stack up` makes one for the agent machine's client and writes it to the client's state directory, which only root can read. A Nomad client that the run user starts cannot register, so Nomad never places a Run's task on it. The smoke check proves this.
 
+## The Dispatcher on the local stack
+
+`FACTORY_STACK_DISPATCHER=1` (for each command) adds [compose.dispatcher.yml](compose.dispatcher.yml). Start the dev SolidTrace on the host first (Console on 4001, ingest on 4000):
+
+```sh
+FACTORY_STACK_DISPATCHER=1 factory/local/stack up        # also the Dispatcher, the fakes, and the Console settings
+FACTORY_STACK_DISPATCHER=1 factory/local/stack dispatcher accounts add account-1 < <token file>
+FACTORY_STACK_DISPATCHER=1 factory/local/stack status    # the Dispatcher's status call
+FACTORY_STACK_DISPATCHER=1 factory/local/stack dispatcher accounts remove account-1
+FACTORY_STACK_DISPATCHER=1 factory/local/stack down      # also deletes the Console settings and the state directory
+```
+
+`stack up` runs `rails factory_demo:up` in `console/`: a Dispatcher API token, and the Console and Dispatcher URLs. It writes the Dispatcher's settings in the state directory (`FACTORY_STACK_STATE`, default `~/.local/state/solidtrace-factory/<project>`, mode 700), not in the repository. Then `solidtrace start` on the repository `bitbucket.org/example/factory-test` makes a real Run: the fake Forge serves that repository (from [fakes/test-repo](fakes/test-repo)), with one check, `readme`. Its `.claude/settings.json` sets the cheapest model.
+
+How it differs from the reference configuration (Seam 3):
+
+- The Dispatcher uses the host's network, so that it reaches the dev SolidTrace on `localhost`. Its private listener is on the `docker0` address (port 7600). On the factory network, the `dispatcher` name is a forwarder to it (`dispatcher-gateway`).
+- The Dispatcher reaches Nomad's API and the fakes on ports that the stack publishes on 127.0.0.1. Agents reach the fakes as `forge` and `tracker` on the factory network. `forge` is on the default allowlist. The fake Forge has a fixed token.
+- The fake Tracker is the fake Linear API over HTTP.
+- Squid reads the allowlist file that the Dispatcher writes, and a loop reloads Squid when the file changes.
+- The agent's MCP URL (`localhost:4001`) is the host's, so the agent machine cannot reach it.
+- Links to a PR are `http://forge/...`, which the host cannot open.
+
 ## A take-over on the local stack
 
 The wrapper starts the `hc` core as the run user. Then a person attaches as a member of the access group, `factory-access`. On this stack that is the user `engineer`, which only the Dockerfile's `local` target has; the `agent-vm` target (the image recipe) has no member of the group:
@@ -87,7 +110,7 @@ docker exec -i -u engineer factory-local-agent-machine-1 sudo -u agent hc connec
 
 Start the core before the first `hc connect`. When no core runs, `hc connect` starts one of its own, and that core gets the `SUDO_*` variables.
 
-For a take-over (`solidtrace take-over <run id>`), the wrapper of the Run's Execution continues on the machine in a new Execution, in a new cgroup. It starts the core as `agent` in that cgroup, with no `SUDO_*` or `HC_*` variable, and starts `claude --resume <session id>` in a terminal named `take-over`. Then it checks that the core and its holder are in the cgroup. When they are not (a core that an early `hc connect` started, or one that systemd started), it kills them, and the take-over does not start. Wait until the Run page shows the take-over Execution as running before you attach. On this stack, set `DISPATCHER_TAKE_OVER_ATTACH='docker exec -i -u engineer factory-local-{vm} sudo -u {run_user} hc connect'`: `{vm}` is the Nomad node's name (`agent-machine-1`).
+For a take-over (`solidtrace take-over <run id>`), the wrapper of the Run's Execution continues on the machine in a new Execution, in a new cgroup. It starts the core as `agent` in that cgroup, with no `SUDO_*` or `HC_*` variable, and starts `claude --resume <session id>` in a terminal named `take-over`. Then it checks that the core and its holder are in the cgroup. When they are not (a core that an early `hc connect` started, or one that systemd started), it kills them, and the take-over does not start. Wait until the Run page shows the take-over Execution as running before you attach. On this stack, `DISPATCHER_TAKE_OVER_ATTACH` is `docker exec -i -u engineer factory-local-{vm} sudo -u {run_user} hc connect` (the stack sets it with `FACTORY_STACK_DISPATCHER=1`): `{vm}` is the Nomad node's name (`agent-machine-1`). After `stack up` replaces the agent machine, wait until Nomad marks the old node down before a take-over: until then, Nomad can place the take-over on the old node, and it ends as a lost machine.
 
 The smoke check runs the wrapper's take-over cases as root under raw_exec (`checks/take-over-tests.nomad.hcl`, cluster check 6). One case uses the image's real `hc`: the core is in the take-over Execution's cgroup with no `SUDO_` variable, and `engineer` reaches it with `sudo -u agent hc connect`. Only this check: `SMOKE_ONLY='take-over as root' factory/local/smoke`.
 
