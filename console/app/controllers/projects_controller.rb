@@ -73,7 +73,10 @@ class ProjectsController < ApplicationController
         routes_path: project_factory_routes_path(@project, org_slug: @current_org.slug),
       },
       factory: InertiaRails.defer do
-        FactorySettings.new(user: current_user, project: @project).section(admin: policy(@project).update?)
+        section = FactorySettings.new(user: current_user, project: @project).section(admin: policy(@project).update?)
+        # Settings that a save with the CLI or the API made have not passed Console yet.
+        FactoryDashboard.make_once(organization: @current_org, user: current_user) if section[:settings]
+        section
       end,
     }
   end
