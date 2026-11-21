@@ -174,10 +174,20 @@ A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the
 A Bitbucket connection's webhook gives the outcome of a Run's PR at once. Without it, the Dispatcher checks the PRs of the Runs that are not closed every 5 minutes, and that check stays as the backstop.
 
 1. In each repository that a Project names, open **Repository settings → Webhooks → Add webhook**. Paste the Bitbucket connection's webhook URL (`solidtrace connections list`), and set a secret.
-2. Select the **Pull request: Merged** and **Pull request: Declined** triggers.
+2. Select the **Pull request: Merged**, **Pull request: Declined** and **Pull request: Comment created** triggers.
 3. Save the same secret: `solidtrace connections webhook-secret NAME < secret-file`.
 
-The Dispatcher checks `X-Hub-Signature` (`sha256=<hex>` of the raw body) and dedupes on `X-Request-UUID`. Bitbucket's webhooks carry no time, so the signature is the only check. `pullrequest:fulfilled` and `pullrequest:rejected` make the Dispatcher read the PR's state from Bitbucket: a merged PR gives the PR outcome merged, a declined PR gives declined, and the Run closes (a Run with an Execution queued or live closes when its Execution ends). Each other event, such as a push to a Run's work-in-progress ref, gets 200 and does nothing.
+The Dispatcher checks `X-Hub-Signature` (`sha256=<hex>` of the raw body) and dedupes on `X-Request-UUID`. Bitbucket's webhooks carry no time, so the signature is the only check. `pullrequest:fulfilled` and `pullrequest:rejected` make the Dispatcher read the PR's state from Bitbucket: a merged PR gives the PR outcome merged, a declined PR gives declined, and the Run closes (a Run with an Execution queued or live closes when its Execution ends). `pullrequest:comment_created` continues the Run (see below). Each other event, such as a push to a Run's work-in-progress ref, gets 200 and does nothing.
+
+### Continue a Run with a comment on its PR
+
+A comment on a Run's PR that starts with the trigger word (`/agent`; the operator changes it with `DISPATCHER_TRIGGER_WORD`) is a message to the Run, as `solidtrace message` is. Write your line comments first, then one general comment, such as `/agent address the review`: the agent gets all of them at once.
+
+- The Dispatcher reads the PR's comments from Bitbucket with the Run's connection. The message has the trigger comment first, then each other comment that is not resolved, with its author, file, line and thread. A comment goes to the Run one time; after an edit, the next trigger comment gives it again.
+- Each person who can comment on the PR of a private repository can continue the Run, also a reviewer who is not a SolidTrace member. The message's event has the Bitbucket account id and name (`actor.kind` `forge`).
+- These comments do nothing: a comment on a public repository, a comment by a bot, an app or an access token, a comment by the account that opened the PR (the factory's own identity), and a resolved or deleted comment. The comments of such accounts are not in the message.
+- On a Closed Run, the Dispatcher answers the trigger comment one time: the Run is closed, and a new Run continues the work. A PR gets at most one such answer in a day.
+- With no webhook, a comment does nothing: write a new trigger comment when the webhook works again.
 
 ## Start Runs on a schedule
 
