@@ -400,27 +400,28 @@ func TestALostMachineDuringTheTakeOverMakesTheRunWaitOnAPersonWithTheReason(t *t
 }
 
 // A core that is not in the Execution's cgroup (a person's hc connect
-// started it before the wrapper's core) would hold the take-over outside
-// the kill boundary: the take-over does not start, and the wrapper kills
-// that core.
+// started it before the wrapper's) would run the take-over's harness
+// outside the kill boundary, with the account's token: the wrapper kills
+// that core before it starts a terminal, and the take-over does not
+// start.
 func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.T) {
 	env, ana := newEnv(t)
-	outside := exec.Command("sleep", "60")
+	var attr *syscall.SysProcAttr
 	if os.Geteuid() == 0 {
 		// The run user's core, as a person's early hc connect starts it.
 		uid, _ := strconv.Atoi(env.Runner.RunUser().Uid)
 		gid, _ := strconv.Atoi(env.Runner.RunUser().Gid)
-		outside.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
+		attr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
 	}
-	if err := outside.Start(); err != nil {
+	// The test's process is outside each Execution's cgroup: so is the
+	// core, and each terminal that it starts.
+	outside, err := env.Runner.TakeOver.StartCore(env.Runner.HCProgram(), attr)
+	if err != nil {
 		t.Fatal(err)
 	}
 	ended := make(chan error, 1)
 	go func() { ended <- outside.Wait() }()
 	t.Cleanup(func() { outside.Process.Kill() })
-	if err := env.Runner.TakeOver.EscapeCore(outside.Process.Pid); err != nil {
-		t.Fatal(err)
-	}
 	id := inToolCallRun(t, env, ana)
 	takeOverCLI(t, env, ana, id)
 
@@ -436,8 +437,9 @@ func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.
 	case <-time.After(10 * time.Second):
 		t.Error("the core outside the cgroup still runs")
 	}
-	if terminals := env.Runner.TakeOver.Terminals(); len(terminals) != 1 || !env.Runner.TakeOver.Finished(terminals[0]) {
-		t.Errorf("the take-over's harness still runs: %v", terminals)
+	// No harness started: the core outside would have run it.
+	if terminals := env.Runner.TakeOver.Terminals(); len(terminals) != 0 {
+		t.Errorf("the wrapper started a terminal in the core outside the cgroup: %v", terminals)
 	}
 }
 

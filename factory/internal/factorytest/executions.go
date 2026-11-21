@@ -232,6 +232,10 @@ func (r *Runner) UseRealHC() string {
 	return program
 }
 
+// HCProgram is the fake hc program, for a core that the test starts
+// itself (fakehc.HC.StartCore).
+func (r *Runner) HCProgram() string { return filepath.Join(r.bin, hcName) }
+
 func (r *Runner) hc() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

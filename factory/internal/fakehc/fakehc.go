@@ -6,16 +6,20 @@
 //
 // The program knows the commands of hc that the wrapper uses:
 //
-//	hc server start                     records the core's user and environment
+//	hc server start                     starts the core, when no core runs
+//	hc server status --json             prints {"pid","holders":[{"pid"}]}
 //	hc run --bg --json [--name N] [--cwd D] [--no-notify] -- ARGV...
 //	                                    starts ARGV in a new terminal; prints {"address":"t1"}
 //	hc get --json T                     prints {"address","state":"live"|"finished","exit_code"}
 //	hc kill T                           ends T's program (SIGTERM), and waits for it
 //
-// A terminal's program runs under a holder process (the core's part): its
-// stdin gets each line that the test types, and closes when the test
-// leaves; its stdout and stderr are the screen. Both run in the cgroup of
-// the hc run command, as the real core's terminals run in the core's.
+// The core is a process, as the real one: hc server start starts it,
+// and it starts each terminal's holder as its child. So a terminal runs
+// in the core's cgroup, not in the cgroup of the hc run command: a core
+// that started outside the Execution's cgroup (StartCore, as a person's
+// early hc connect) runs its terminals outside it. A terminal's program
+// runs under its holder: its stdin gets each line that the test types,
+// and closes when the test leaves; its stdout and stderr are the screen.
 package fakehc
 
 import (
@@ -36,8 +40,12 @@ import (
 // EnvDir names the directory of the fake hc's state.
 const EnvDir = "FAKE_HC_DIR"
 
-// holdCommand is the holder's command (not a command of the real hc).
-const holdCommand = "__hold"
+// holdCommand is the holder's command, and coreCommand the core's (not
+// commands of the real hc).
+const (
+	holdCommand = "__hold"
+	coreCommand = "__core"
+)
 
 // HC is the state of one fake hc, as the test controls it.
 type HC struct{ dir string }
@@ -139,8 +147,8 @@ func (h *HC) Finished(address string) bool {
 	return err == nil
 }
 
-// Core gives the environment of the last hc server start, and its user id
-// (-1: no core started).
+// Core gives the environment of the last core that started, and its user
+// id (-1: no core started).
 func (h *HC) Core() (env []string, uid int) {
 	b, err := os.ReadFile(filepath.Join(h.dir, "core"))
 	if err != nil {
@@ -178,10 +186,13 @@ func Main(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 			err = errors.New("only server start and server status")
 			break
 		}
-		var b []byte
-		b, err = json.Marshal(map[string]any{"uid": os.Getuid(), "env": os.Environ()})
-		if err == nil {
-			err = os.WriteFile(filepath.Join(dir, "core"), b, 0o666)
+		if livePID(dir) > 0 {
+			// As the real hc: a core runs, so nothing happens.
+			break
+		}
+		var cmd *exec.Cmd
+		if cmd, err = coreCmd(""); err == nil {
+			err = startCore(dir, cmd)
 		}
 	case "run":
 		err = run(dir, args[1:], stdout)
@@ -191,6 +202,8 @@ func Main(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 		err = kill(dir, args[1:], stdout)
 	case holdCommand:
 		return hold(dir, args[1:])
+	case coreCommand:
+		return core(dir)
 	default:
 		err = fmt.Errorf("no command %q", args[0])
 	}
@@ -232,6 +245,9 @@ func run(dir string, args []string, stdout io.Writer) error {
 	if !bg || len(argv) == 0 {
 		return errors.New("the fake hc runs only --bg with a program")
 	}
+	if livePID(dir) <= 0 {
+		return errors.New("no core: run hc server start")
+	}
 	var address string
 	for n := 1; ; n++ {
 		address = "t" + strconv.Itoa(n)
@@ -243,26 +259,17 @@ func run(dir string, args []string, stdout io.Writer) error {
 	}
 	tdir := filepath.Join(dir, address)
 	os.Chmod(tdir, 0o777)
+	if err := os.WriteFile(filepath.Join(tdir, "cwd"), []byte(cwd), 0o666); err != nil {
+		return err
+	}
 	b, _ := json.Marshal(argv)
-	if err := os.WriteFile(filepath.Join(tdir, "argv"), b, 0o666); err != nil {
+	// The argv file comes last: with it, the core starts the holder.
+	if err := os.WriteFile(filepath.Join(tdir, "argv.new"), b, 0o666); err != nil {
 		return err
 	}
-	self, err := os.Executable()
-	if err != nil {
+	if err := os.Rename(filepath.Join(tdir, "argv.new"), filepath.Join(tdir, "argv")); err != nil {
 		return err
 	}
-	holder := exec.Command(self, holdCommand, address)
-	holder.Args[0] = os.Args[0]
-	holder.Path = self
-	holder.Dir = cwd
-	holder.Env = os.Environ()
-	// Its own session: it stays when hc run exits, as the core's
-	// terminals do.
-	holder.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := holder.Start(); err != nil {
-		return err
-	}
-	holder.Process.Release()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if _, err := os.Stat(filepath.Join(tdir, "pid")); err == nil {
@@ -391,25 +398,137 @@ func kill(dir string, args []string, stdout io.Writer) error {
 	return errors.New("the terminal's program did not end in 5 s")
 }
 
-// EscapeCore makes the fake's core seem to be outside the Execution's
-// cgroup: server status gives a process that is not in it (a core that
-// a person's hc connect started before the wrapper's).
-func (h *HC) EscapeCore(pid int) error {
-	return os.WriteFile(filepath.Join(h.dir, "escaped"), []byte(strconv.Itoa(pid)), 0o666)
+// StartCore starts a core from the test's process, so outside the
+// Execution's cgroup, as a person's 'sudo -u <run user> hc connect'
+// starts one before the wrapper's. program is the fake hc program, and
+// attr can set the core's user. The test ends the core it gives.
+func (h *HC) StartCore(program string, attr *syscall.SysProcAttr) (*exec.Cmd, error) {
+	cmd, err := coreCmd(program)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = append(os.Environ(), EnvDir+"="+h.dir)
+	cmd.SysProcAttr = attr
+	return cmd, startCore(h.dir, cmd)
 }
 
-// status prints the core's pid: the fake has no core process, so it is
-// the holder of the last terminal, which is in the cgroup of hc run.
-func status(dir string, stdout io.Writer) error {
-	pid := 0
-	if b, err := os.ReadFile(filepath.Join(dir, "escaped")); err == nil {
-		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
-	} else if list := (&HC{dir: dir}).Terminals(); len(list) > 0 {
-		b, _ := os.ReadFile(filepath.Join(dir, list[len(list)-1], "holder"))
-		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+// coreCmd is the command of the core: program, or this hc program.
+func coreCmd(program string) (*exec.Cmd, error) {
+	path := program
+	if path == "" {
+		self, err := os.Executable()
+		if err != nil {
+			return nil, err
+		}
+		path = self
 	}
+	cmd := exec.Command(path, coreCommand)
+	if program == "" {
+		// The name chooses the program of the test binary.
+		cmd.Args[0] = os.Args[0]
+	}
+	cmd.Env = os.Environ()
+	// Its own session: it stays when hc server start exits.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return cmd, nil
+}
+
+// startCore starts cmd, the core, and waits until it runs.
+func startCore(dir string, cmd *exec.Cmd) error {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setsid = true
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	pid := cmd.Process.Pid
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if livePID(dir) == pid {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("the core did not start in 10 s")
+		}
+	}
+}
+
+// livePID gives the pid of the core that runs (0: none). A core that the
+// end killed can stay as a zombie, with no command line: it does not run.
+func livePID(dir string) int {
+	b, err := os.ReadFile(filepath.Join(dir, "core"))
+	if err != nil {
+		return 0
+	}
+	var c struct {
+		PID int `json:"pid"`
+	}
+	if json.Unmarshal(b, &c) != nil || c.PID <= 0 {
+		return 0
+	}
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", c.PID))
+	if err != nil || !strings.Contains(string(cmdline), coreCommand) {
+		return 0
+	}
+	return c.PID
+}
+
+// core is the core's process: it records its user and environment, and
+// starts the holder of each new terminal as its child, so in its cgroup.
+// It runs until it is killed.
+func core(dir string) int {
+	b, _ := json.Marshal(map[string]any{"uid": os.Getuid(), "env": os.Environ(), "pid": os.Getpid()})
+	tmp := filepath.Join(dir, fmt.Sprintf("core.%d", os.Getpid()))
+	if os.WriteFile(tmp, b, 0o666) != nil || os.Rename(tmp, filepath.Join(dir, "core")) != nil {
+		return 1
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return 1
+	}
+	for ; ; time.Sleep(5 * time.Millisecond) {
+		for _, address := range (&HC{dir: dir}).Terminals() {
+			tdir := filepath.Join(dir, address)
+			if _, err := os.Stat(filepath.Join(tdir, "argv")); err != nil {
+				continue
+			}
+			claim, err := os.OpenFile(filepath.Join(tdir, "claimed"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+			if err != nil {
+				continue
+			}
+			claim.Close()
+			cwd, _ := os.ReadFile(filepath.Join(tdir, "cwd"))
+			holder := exec.Command(self, holdCommand, address)
+			holder.Args[0] = os.Args[0]
+			holder.Dir = string(cwd)
+			holder.Env = os.Environ()
+			holder.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			if err := holder.Start(); err != nil {
+				os.WriteFile(filepath.Join(tdir, "exit"), []byte("127"), 0o666)
+				continue
+			}
+			go holder.Wait()
+		}
+	}
+}
+
+// status prints the pid of the core that runs, and of the holder of
+// each terminal whose program runs.
+func status(dir string, stdout io.Writer) error {
+	pid := livePID(dir)
 	if pid <= 0 {
 		return errors.New("no core")
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"pid": pid, "holders": []map[string]any{{"pid": pid}}})
+	holders := []map[string]any{}
+	for _, address := range (&HC{dir: dir}).Terminals() {
+		tdir := filepath.Join(dir, address)
+		if _, err := os.Stat(filepath.Join(tdir, "exit")); err == nil {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(tdir, "holder"))
+		if n, _ := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n > 0 {
+			holders = append(holders, map[string]any{"pid": n})
+		}
+	}
+	return json.NewEncoder(stdout).Encode(map[string]any{"pid": pid, "holders": holders})
 }

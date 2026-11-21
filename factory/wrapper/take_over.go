@@ -129,6 +129,22 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 	if err != nil {
 		return failed(fmt.Errorf("find the wrapper's program: %w", err))
 	}
+	// The core has the run user's names and home, and no secret. Its
+	// start is a process of the run user in the cgroup: the core stays
+	// there, and the end kills it. It is the wrapper's child, so it has
+	// no SUDO_ variable (a core that 'sudo hc connect' starts has them,
+	// and takes the person's user from them).
+	e.coreEnv = coreEnv(e.gitEnv(environ, ""))
+	if out, err := e.hc("server", "start"); err != nil {
+		fmt.Fprintf(e.log, "wrapper: hc server start: %v: %s\n", err, lastLines(out, 5))
+	}
+	// The core and its holders must be in the Execution's cgroup before a
+	// terminal starts: a core that was there before (a person's early hc
+	// connect, or systemd started it) runs its terminals outside it, and
+	// the end would not kill the harness.
+	if err := e.checkCore(); err != nil {
+		return failed(err)
+	}
 	// The harness's environment is in a file of the secrets directory,
 	// not on the terminal's command line.
 	harnessEnv := append(append(coreEnv(e.gitEnv(environ, e.cfg.socket())), e.uploads.claudeEnv(e.cfg)...),
@@ -144,15 +160,6 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 		return end
 	}
 	e.mu.Unlock()
-	// The core has the run user's names and home, and no secret. Its
-	// start is a process of the run user in the cgroup: the core stays
-	// there, and the end kills it. It is the wrapper's child, so it has
-	// no SUDO_ variable (a core that 'sudo hc connect' starts has them,
-	// and takes the person's user from them).
-	e.coreEnv = coreEnv(e.gitEnv(environ, ""))
-	if out, err := e.hc("server", "start"); err != nil {
-		fmt.Fprintf(e.log, "wrapper: hc server start: %v: %s\n", err, lastLines(out, 5))
-	}
 	argv := append([]string{program, HarnessEnvCommand, envFile, "--", e.cfg.harness}, e.interactiveArgs()...)
 	out, err := e.hc(append([]string{"run", "--bg", "--json", "--no-notify", "--name", "take-over", "--cwd", e.workDir, "--"},
 		argv...)...)
@@ -164,9 +171,8 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 		return failed(fmt.Errorf("hc run gave no terminal: %s", lastLines(out, 5)))
 	}
 	address := started.Address
-	// The core and its holder must be in the Execution's cgroup, so that
-	// the end kills the take-over. A core that was there before (a
-	// person's hc connect started it) or that systemd started is not.
+	// Check again with the terminal's holder: it must be in the cgroup
+	// too, so that the end kills the take-over.
 	if err := e.checkCore(); err != nil {
 		e.hc("kill", address)
 		return failed(err)
