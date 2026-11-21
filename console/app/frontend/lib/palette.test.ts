@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, typedGroups, type PaletteContext, type PaletteItem } from './palette'
+import { filterGroups, organizationItems, pageItems, paletteGroups, queryLine, registerPaletteSource, typedGroups, type PaletteContext, type PaletteItem } from './palette'
 
-const context: PaletteContext = { viewer: 1, orgSlug: 'acme', organizations: [], projects: [{ name: 'Storefront', slug: 'storefront' }], dashboards: [], monitors: [] }
+const context: PaletteContext = { viewer: 1, orgSlug: 'acme', organizations: [], projects: [{ name: 'Storefront', slug: 'storefront' }], dashboards: [], monitors: [], factoryOn: false }
 const item = (group: string, label: string, detail?: string): PaletteItem => ({ id: `${group}/${label}`, group, label, detail, href: '/' })
 
 describe('the palette registry', () => {
@@ -81,5 +81,21 @@ describe('a recent Query on one line', () => {
       .toBe('where level == "error" | summarize count() by service')
     expect(queryLine("['storefront']")).toBe("['storefront']")
     expect(queryLine('logs\n  | take 5')).toBe('logs | take 5')
+  })
+})
+
+describe('the Pages group', () => {
+  const labels = (factoryOn: boolean) => pageItems({ ...context, factoryOn }).map(i => i.label)
+
+  it('has no Runs page while the factory is off: no Dispatcher URL is set', () => {
+    expect(labels(false)).toEqual(['Overview', 'Issues', 'Dashboards', 'Monitors', 'Agent sessions', 'Projects', 'Settings'])
+  })
+
+  it('has the Runs page, after Agent sessions, once the factory is on', () => {
+    expect(labels(true)).toEqual(['Overview', 'Issues', 'Dashboards', 'Monitors', 'Agent sessions', 'Runs', 'Projects', 'Settings'])
+  })
+
+  it('has no pages with no Organization', () => {
+    expect(pageItems({ ...context, orgSlug: '', factoryOn: true })).toEqual([])
   })
 })

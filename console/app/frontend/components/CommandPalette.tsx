@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { Combobox } from '@base-ui/react/combobox'
 import { router, usePage } from '@inertiajs/react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { filterGroups, organizationItems, paletteGroups, queryLine, registerPaletteSource, typedGroups, type PaletteContext, type PaletteGroup, type PaletteItem } from '@/lib/palette'
+import { filterGroups, organizationItems, pageItems, paletteGroups, queryLine, registerPaletteSource, typedGroups, type PaletteContext, type PaletteGroup, type PaletteItem } from '@/lib/palette'
 import { browserStorage, latestQueries } from '@/lib/recentQueries'
 import { toggleTheme } from '@/lib/theme'
 import type { SharedProps } from '@/types'
@@ -35,16 +35,7 @@ registerPaletteSource('monitors', ({ orgSlug, monitors }) => monitors.map(m => (
   id: `monitor/${m.id}`, group: 'Monitors', label: m.name, detail: 'Monitor', href: `/${orgSlug}/monitors/${m.id}`,
 })))
 
-registerPaletteSource('pages', ({ orgSlug }) => (orgSlug ? [
-  { id: 'page/overview', group: 'Pages', label: 'Overview', href: `/${orgSlug}/overview` },
-  { id: 'page/issues', group: 'Pages', label: 'Issues', href: `/${orgSlug}/issues` },
-  { id: 'page/dashboards', group: 'Pages', label: 'Dashboards', href: `/${orgSlug}/dashboards` },
-  { id: 'page/monitors', group: 'Pages', label: 'Monitors', href: `/${orgSlug}/monitors` },
-  { id: 'page/agent_sessions', group: 'Pages', label: 'Agent sessions', href: `/${orgSlug}/agent_sessions` },
-  { id: 'page/runs', group: 'Pages', label: 'Runs', href: `/${orgSlug}/runs` },
-  { id: 'page/projects', group: 'Pages', label: 'Projects', href: `/${orgSlug}/projects` },
-  { id: 'page/settings', group: 'Pages', label: 'Settings', href: `/${orgSlug}/settings/organization` },
-] : []))
+registerPaletteSource('pages', pageItems)
 
 registerPaletteSource('organizations', organizationItems)
 
@@ -79,6 +70,7 @@ export function CommandPalette({ children }: { children: React.ReactNode }) {
     projects: props.org_projects ?? [],
     dashboards: props.org_dashboards ?? [],
     monitors: props.org_monitors ?? [],
+    factoryOn: props.factory_on === true,
   }
   return (
     <OpenPalette.Provider value={() => setOpen(true)}>

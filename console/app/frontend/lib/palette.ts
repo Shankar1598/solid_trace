@@ -25,6 +25,8 @@ export interface PaletteContext {
   projects: { name: string; slug: string }[]
   dashboards: { id: number; name: string }[]
   monitors: { id: number; name: string }[]
+  /** Whether the Dispatcher URL is set: with none, the Factory's pages are not in the palette. */
+  factoryOn: boolean
 }
 
 export type PaletteSource = (context: PaletteContext) => PaletteItem[]
@@ -58,6 +60,22 @@ export function paletteGroups(context: PaletteContext): PaletteGroup[] {
     }
   }
   return [...groups].map(([group, items]) => ({ group, items }))
+}
+
+/** The "Pages" group: the Organization's pages. The Runs page is the Factory's, so it is here only with the factory on. */
+export const pageItems: PaletteSource = ({ orgSlug, factoryOn }) => {
+  if (!orgSlug) return []
+  const page = (id: string, label: string, path: string): PaletteItem => ({ id: `page/${id}`, group: 'Pages', label, href: `/${orgSlug}/${path}` })
+  return [
+    page('overview', 'Overview', 'overview'),
+    page('issues', 'Issues', 'issues'),
+    page('dashboards', 'Dashboards', 'dashboards'),
+    page('monitors', 'Monitors', 'monitors'),
+    page('agent_sessions', 'Agent sessions', 'agent_sessions'),
+    ...(factoryOn ? [page('runs', 'Runs', 'runs')] : []),
+    page('projects', 'Projects', 'projects'),
+    page('settings', 'Settings', 'settings/organization'),
+  ]
 }
 
 /** The "Organizations" group: the viewer's other Organizations, each going to its Issues. */
