@@ -68,17 +68,18 @@ func savingExecution(t *testing.T, files map[string]string, change func(*dispatc
 // agentState is what the agent sees of its checkout.
 func agentState(t *testing.T, checkout string) string {
 	t.Helper()
-	index, err := os.ReadFile(filepath.Join(checkout, ".git", "index"))
+	path := gitRun(t, "-C", checkout, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	index, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(checkout, ".git", "index"))
+	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return strings.Join([]string{
 		"index " + string(index) + info.ModTime().String(),
-		"head " + gitRun(t, "-C", checkout, "symbolic-ref", "HEAD") + " " + gitRun(t, "-C", checkout, "rev-parse", "HEAD"),
+		"head " + gitRun(t, "-C", checkout, "rev-parse", "--symbolic-full-name", "HEAD") + " " + gitRun(t, "-C", checkout, "rev-parse", "HEAD"),
 		"status " + gitRun(t, "--no-optional-locks", "-C", checkout, "status", "--porcelain=v2", "--branch", "--untracked-files=all"),
 		"refs " + gitRun(t, "-C", checkout, "for-each-ref"),
 		"objects " + gitRun(t, "-C", checkout, "count-objects", "-v"),
