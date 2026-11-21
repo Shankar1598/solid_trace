@@ -65,3 +65,30 @@ func TestEachNameInTheReferenceConfigurationIsASettingOfTheDispatcher(t *testing
 		}
 	}
 }
+
+// HashiCorp's Nomad package puts /etc/nomad.d/nomad.hcl in place, which turns on a server and
+// a client. Nomad merges the files of the directory, and "enabled = false" in another file
+// does not override a true. So the guide and the Nomad files must tell the operator to empty
+// the package's file.
+func TestTheGuideAndTheNomadFilesTellTheOperatorToEmptyThePackagesConfiguration(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("..", "docs", "factory.md"),
+		filepath.Join("reference", "nomad", "server.hcl"),
+		filepath.Join("reference", "nomad", "client.hcl"),
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), ": > /etc/nomad.d/nomad.hcl") {
+			t.Errorf("%s does not tell the operator to empty /etc/nomad.d/nomad.hcl", path)
+		}
+	}
+	guide, err := os.ReadFile(filepath.Join("..", "docs", "factory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(guide), ": > /etc/nomad.d/nomad.hcl"); n < 2 {
+		t.Errorf("the guide tells the operator %d time to empty nomad.hcl; the server VM and the agent VM both need it", n)
+	}
+}

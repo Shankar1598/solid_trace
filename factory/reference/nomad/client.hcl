@@ -10,6 +10,10 @@
 #   nomad node intro create -node-name VM_NAME -ttl 10m
 # Put the token in the client's data directory, as the file client/intro_token.jwt, readable
 # by root only. Do not put it in the VM's metadata.
+#
+# HashiCorp's package also puts /etc/nomad.d/nomad.hcl in place, which turns on a server and a
+# client and binds to 0.0.0.0. Nomad merges the files, and "enabled = false" does not override
+# a true. Empty that file (: > /etc/nomad.d/nomad.hcl) before you start Nomad.
 
 data_dir = "/opt/nomad/data"
 

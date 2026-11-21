@@ -88,7 +88,7 @@ Make the server VM (Debian 12, 2 vCPU and 4 GB or more) and put the rules of the
 
 ### 2. Install and set up Nomad
 
-1. Install Nomad 2.1.1 or later from HashiCorp's packages. It is the version that the local stack's tests use.
+1. Install Nomad 2.1.1 or later from HashiCorp's packages. It is the version that the local stack's tests use. The package puts its own `/etc/nomad.d/nomad.hcl` in place, which turns on a Nomad server **and** a Nomad client, and binds to `0.0.0.0`. Nomad merges all the files of `/etc/nomad.d`, and a `enabled = false` in another file does not turn them off. Empty the file: `: > /etc/nomad.d/nomad.hcl`. Do this before you start Nomad, and again after each upgrade of the package, if the package puts the file back.
 2. Copy [`nomad/server.hcl`](../factory/reference/nomad/server.hcl) to `/etc/nomad.d/server.hcl`, and set `PRIVATE_IP`. Start Nomad (`systemctl enable --now nomad`).
 3. Bootstrap the ACLs, and keep the management token: `nomad acl bootstrap`.
 4. Make the node pool of each machine kind. A file `standard.pool.hcl` has `node_pool "standard" { description = "The standard machine kind" }`. Then run `nomad node pool apply standard.pool.hcl`.
@@ -171,7 +171,7 @@ docker compose exec dispatcher dispatcher accounts remove alice@example.com
    FACTORY_BIN_DIR=/tmp/factory-bin ./agent-vm.sh
    ```
 
-3. Install Docker and Nomad on the same image. Make the image of the VM.
+3. Install Docker and Nomad on the same image, and empty the package's `/etc/nomad.d/nomad.hcl` (`: > /etc/nomad.d/nomad.hcl`). If you leave it, the agent VM starts a Nomad server of its own, on `0.0.0.0`, beside the client. Make the image of the VM.
 4. Make each agent VM from the image, with the tag `factory-agent` and the service account with no roles. Put [`nomad/client.hcl`](../factory/reference/nomad/client.hcl) at `/etc/nomad.d/client.hcl`, with the server's address and the node pool.
 5. On the server VM, make an introduction token for the VM: `nomad node intro create -node-name VM_NAME -ttl 10m`. Put it in the file `client/intro_token.jwt` of the client's data directory, readable by root only. Do not put it in the metadata. The client registers, and `nomad node status` shows it as `ready` in its node pool.
 

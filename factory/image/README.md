@@ -19,7 +19,7 @@
 | The Nomad client's settings for the Runner's job: `raw_exec` on, `max_kill_timeout = "120s"` | `/etc/nomad.d/factory.hcl` | |
 | The directory of the Executions | `/var/lib/factory/executions`, mode 711, owned by root | |
 
-It does not install Nomad (its licence is BSL, [ADR 0019](../../docs/adr/0019-agents-run-on-nomad-and-the-factory-is-a-separable-module.md)) or Docker. Your pipeline installs them, and the operator's own Nomad client file in `/etc/nomad.d` gives the servers, the node pool and the introduction token. The recipe makes the `docker` group, and the Docker package uses it.
+It does not install Nomad (its licence is BSL, [ADR 0019](../../docs/adr/0019-agents-run-on-nomad-and-the-factory-is-a-separable-module.md)) or Docker. Your pipeline installs them (and empties the Nomad package's `/etc/nomad.d/nomad.hcl`, which turns on a Nomad server), and the operator's own Nomad client file in `/etc/nomad.d` gives the servers, the node pool and the introduction token. The recipe makes the `docker` group, and the Docker package uses it.
 
 The image has no credential of any kind. A Run gets its tokens from the Dispatcher. The git credential helper of each Execution is a file that the wrapper writes in the Execution's secrets directory, for the forge's URL only; the image has no helper of its own.
 
