@@ -395,6 +395,12 @@ var migrations = []string{
 	ALTER TABLE executions ADD COLUMN taken_over_by_name TEXT NOT NULL DEFAULT '';
 	ALTER TABLE executions ADD COLUMN after_execution TEXT NOT NULL DEFAULT '';
 	CREATE INDEX executions_by_workload ON executions (workload, state);`,
+	// placed_at is when the Runner first said that the Execution has a
+	// machine (Nomad placed it). wait_warned_at is when the Dispatcher
+	// wrote the warning Log for an Execution that waited too long for
+	// one: at most one for each Execution.
+	`ALTER TABLE executions ADD COLUMN placed_at INTEGER;
+	ALTER TABLE executions ADD COLUMN wait_warned_at INTEGER;`,
 }
 
 // store is the Dispatcher's SQLite database.

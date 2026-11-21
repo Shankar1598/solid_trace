@@ -9,6 +9,8 @@ The files that an operator copies to the server VM and the agent VMs. [The opera
 | [nomad/server.hcl](nomad/server.hcl) | The server VM | The Nomad server: ACLs on, and a client registers only with an introduction token. |
 | [nomad/dispatcher-policy.hcl](nomad/dispatcher-policy.hcl) | The server VM | The Nomad ACL policy of the Dispatcher's token. |
 | [nomad/client.hcl](nomad/client.hcl) | Each agent VM | The Nomad client: the server's address and the node pool of the machine kind. |
+| [nomad/autoscaler-policy.hcl](nomad/autoscaler-policy.hcl) | The server VM | The Nomad ACL policy of the Autoscaler's token. |
+| [autoscaler/](autoscaler) | The server VM | The Nomad Autoscaler: its agent file, one scaling policy for each machine kind, the fallback policy (Prometheus), and a Compose file. The guide's [Scaling](../../docs/factory.md#scaling) section says how to use them. |
 | [squid/allowlist.txt](squid/allowlist.txt) | The server VM | The default allowlist: the hosts that Claude Code, git, and the usual package tools need. |
 | [squid/squid.conf](squid/squid.conf) | The server VM | Squid, the only way out for the agent VMs. |
 | [systemd/](systemd) | The server VM | Reloads Squid when the Dispatcher changes the allowlist. |

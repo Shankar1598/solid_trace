@@ -79,6 +79,11 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	if account == "" {
 		return false, tx.Commit()
 	}
+	// The Run is queued until its wrapper takes the task (startExecution
+	// clears this). With no VM free, it stays so, and the page says why.
+	if _, err := tx.Exec(`UPDATE runs SET reason = ? WHERE id = ?`, reasonWaitingForVM, runID); err != nil {
+		return false, err
+	}
 	if _, err := tx.Exec(`UPDATE runs SET next_account = '' WHERE id = ?`, runID); err != nil {
 		return false, err
 	}
@@ -86,7 +91,14 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 		id, runID, dispatcherapi.ExecutionDispatched, at.UnixMicro(), account); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	// The last run event of a Run that waits for a VM must carry the
+	// reason: the Console pages read it from the run events.
+	details := actor{kind: actorDispatcher, name: "Dispatcher"}.details()
+	details["execution.id"] = id
+	if err := recordEvent(tx, at, runID, eventQueued, details); err != nil {
+		return false, err
+	}
+	return true, s.commit(tx)
 }
 
 func ignoreNoRows(err error) error {
@@ -199,7 +211,7 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 			return run, err
 		}
 		// A take-over Execution's Run is taken over already.
-		if _, err := tx.Exec(`UPDATE runs SET state = ? WHERE id = ? AND state = ? AND NOT ?`,
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = '' WHERE id = ? AND state = ? AND NOT ?`,
 			dispatcherapi.StateRunning, runID, dispatcherapi.StateQueued, interactive); err != nil {
 			return run, err
 		}

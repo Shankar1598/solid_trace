@@ -10,6 +10,7 @@ This guide goes from an empty server VM to a first Run. Read [Agent sessions](ag
 |---|---|---|
 | The Dispatcher | The server VM | One container, from the release's image `ghcr.io/shankar1598/solid-trace-dispatcher`, for amd64 and arm64. It keeps its state in one SQLite file. |
 | Nomad | The server VM and the agent VMs | One server and one client for each agent VM. Nomad is not in any SolidTrace image (its licence is BSL). You install it from HashiCorp's packages. |
+| The Nomad Autoscaler | The server VM | Optional. It adds and removes agent VMs ([Scaling](#scaling)). It is HashiCorp's image, not SolidTrace's. |
 | Squid | The server VM | The only way out for the agent VMs. It allows only the hosts of an allowlist. |
 | Caddy | The server VM | The public route to the Dispatcher's webhook listener. You can use your own load balancer in place of it. |
 | The agent VM image | Each agent VM | You bake it with [the recipe](../factory/image/README.md). It has Claude Code, the wrapper, the agent CLI and the run user. |
@@ -196,6 +197,79 @@ solidtrace start --project my-project "Add a test for the date parser"
 ```
 
 The command prints the Run's id and its link in Console. On the Run's page, the state goes from queued to running. The Dispatcher starts a Nomad job. Nomad places it on an agent VM, and the wrapper starts the agent. When the agent is done, the Run shows its PR and its Evidence. If the Run stays queued, look at its reason on the Run's page, and at `docker compose logs dispatcher`.
+
+## Scaling
+
+Steps 1 to 11 make the agent VMs by hand. For more than a few Runs at one time, let the **Nomad Autoscaler** add and remove them. This part is optional, and the local factory stack has no autoscaling.
+
+How it works:
+
+- Each machine kind has one Nomad node pool and one managed instance group (MIG) of agent VMs.
+- The Autoscaler looks at the memory that Nomad allocated in each node pool (the Nomad APM, the query `percentage-allocated_memory`). Each Run takes all the memory of its VM, so this is the share of busy VMs. The target is 70%: with all VMs busy, it adds VMs. With a few busy, it removes the VMs that are not busy.
+- It removes only a VM that has no allocation (the `empty` node selector). It never ends a Run to save a VM.
+- You set the minimum and the maximum number of VMs of each kind. The first team uses 1 and 10.
+- A Run that Nomad cannot place on a VM (the pool is at its maximum, or Spot capacity is short) waits in the queue. Its page says "waiting for a VM". After 10 minutes, the Dispatcher writes one warning Log (file `dispatcher`, the message starts "a Run waited more than 10 minutes for a VM", with the attributes `factory.run` and `factory.execution`). Make a Monitor on it.
+
+### The instance template
+
+The template is the same for Spot and standard VMs, except for the provisioning model. The Dispatcher, the wrapper and the Runs are the same on both. The example makes a Spot template. Change the image, the machine type, the network and the project:
+
+```sh
+gcloud compute instance-templates create factory-agent-standard-spot \
+  --machine-type=e2-custom-4-12288 --image=factory-agent-image --image-project=PROJECT \
+  --network=factory --subnet=factory --no-address --tags=factory-agent \
+  --service-account=factory-agent@PROJECT.iam.gserviceaccount.com --no-scopes \
+  --provisioning-model=SPOT --instance-termination-action=DELETE --preemption-notice-duration=120s
+```
+
+- **Spot:** `--provisioning-model=SPOT`, with the termination action `DELETE` and a notice of 120 seconds (`--preemption-notice-duration=120s`; `preemptionNoticeDuration` in the REST API). Google takes the VM back after the notice. The wrapper sees the notice, saves the Run's work, and a new Execution on a new VM continues it.
+- **Standard:** `--provisioning-model=STANDARD`, and leave out the termination action and the notice. Use it when Google takes back Spot VMs too often. The wrapper still saves the work every 5 minutes.
+- The metadata and the startup script hold no secret (the section "The network"). Each new VM needs an introduction token for its Nomad client before the client starts (step 9, item 5). A group cannot ask you for one: give the token with your own infrastructure code, in the client's root-only file, never in the metadata. This reference configuration does not do it for you.
+
+Make one MIG for each kind, from its template. Do not turn on Google's own autoscaler for it: the Nomad Autoscaler sets the size.
+
+```sh
+gcloud compute instance-groups managed create factory-agents-standard \
+  --template=factory-agent-standard-spot --size=1 --zone=europe-west1-b
+```
+
+### Change between Spot and standard
+
+1. Make a second template, with the other provisioning model.
+2. Point the group at it, with an opportunistic update, so that Google does not replace a VM that works on a Run:
+
+   ```sh
+   gcloud compute instance-groups managed rolling-action start-update factory-agents-standard \
+     --version=template=factory-agent-standard --type=opportunistic --zone=europe-west1-b
+   ```
+
+3. Each VM that the group makes from now on is of the new model. The Autoscaler removes the old VMs when they are idle, and makes new ones when it needs them.
+
+### Set up the Autoscaler
+
+1. Make its Nomad token on the server VM with the policy [`nomad/autoscaler-policy.hcl`](../factory/reference/nomad/autoscaler-policy.hcl):
+
+   ```sh
+   nomad acl policy apply factory-autoscaler autoscaler-policy.hcl
+   nomad acl token create -name factory-autoscaler -policy factory-autoscaler -type client
+   ```
+
+2. Give the server VM's service account the right to resize the groups and to delete their VMs (for example `roles/compute.instanceAdmin.v1` on the project). The Autoscaler reads its credentials from the metadata server.
+3. Copy [`autoscaler/autoscaler.hcl`](../factory/reference/autoscaler/autoscaler.hcl) to `/etc/nomad-autoscaler/autoscaler.hcl` and set the server VM's address. Copy [`autoscaler/policies/standard.hcl`](../factory/reference/autoscaler/policies/standard.hcl) to `/etc/nomad-autoscaler/policies/`, one file for each machine kind: change the name of the policy, `node_pool` (the kind's name), `mig_name`, `project` and `zone`.
+4. Put the line `NOMAD_TOKEN=` and the token in `/etc/solid-trace-factory/autoscaler.env` (owner root, mode 600). Start it with [`autoscaler/docker-compose.yml`](../factory/reference/autoscaler/docker-compose.yml): `docker compose -f docker-compose.yml up -d`.
+5. Look at `docker compose logs`. A policy that the Autoscaler refuses is in the log, with the reason.
+
+### Set the minimum and the maximum
+
+The `min` and `max` of the policy file of each kind are the minimum and the maximum number of VMs of that kind. Change them, and restart the Autoscaler (`docker compose restart autoscaler`).
+
+- A minimum of 1 keeps one VM ready, so that the first Run does not wait for a VM to start (about two minutes). A minimum of 0 costs nothing when idle, and the first Run waits.
+- Runs over the maximum wait in the queue, and give the warning Log after 10 minutes. If you see the warning often, raise the maximum.
+- Keep the maximum under what your Google Cloud quota allows.
+
+### The fallback policy
+
+If the Nomad APM does not scale a group in your cluster (cluster check 4 of the build fails), use [`autoscaler/fallback/standard.hcl`](../factory/reference/autoscaler/fallback/standard.hcl) in place of the main policy. It reads the busy VMs from Prometheus, with the pass-through strategy. It needs Nomad's metrics in your Prometheus, and the `apm "prometheus"` block of `autoscaler.hcl`.
 
 ## Operate
 

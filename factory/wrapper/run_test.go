@@ -158,6 +158,9 @@ func TestARunIsRunningWhenItsExecutionStartsAndDoneWhenTheAgentReportsDone(t *te
 	if e := onlyExecution(t, running); e.State != dispatcherapi.ExecutionRunning || e.StartedAt == nil {
 		t.Errorf("the Execution of a running Run: %+v", e)
 	}
+	if running.Reason != "" {
+		t.Errorf("a running Run keeps the reason %q of its wait for a VM", running.Reason)
+	}
 	open()
 
 	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
