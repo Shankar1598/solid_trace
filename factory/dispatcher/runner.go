@@ -221,20 +221,34 @@ func (d *Dispatcher) watchLoop(ctx context.Context) {
 				d.log.Info("an Execution changed state on the Runner", "execution", ev.Execution, "state", ev.State)
 				continue
 			}
-			_, stopped := d.runnerStopped.LoadAndDelete(ev.Execution)
-			if ev.Lost {
-				d.endByDispatcher(ev.Execution, "the machine was lost", nil)
-				continue
+			// The Runner names the workload's first Execution. A take-over
+			// Execution in the same workload ends with it.
+			ids, err := d.store.executionsOfWorkload(ev.Execution)
+			if err != nil {
+				d.log.Error("could not read the Executions of a workload", "execution", ev.Execution, "error", err)
+				ids = []string{ev.Execution}
 			}
-			code := ev.ExitCode
-			if stopped {
-				d.endByDispatcher(ev.Execution, endStoppedByRunner, &code)
-				continue
+			for _, id := range ids {
+				d.endOnTheRunner(id, ev)
 			}
-			d.endByDispatcher(ev.Execution,
-				fmt.Sprintf("the wrapper exited with code %d before the end of the Execution", code), &code)
 		}
 	}
+}
+
+// endOnTheRunner ends an Execution whose workload ended on the Runner
+// before its end call.
+func (d *Dispatcher) endOnTheRunner(id string, ev RunnerEvent) {
+	_, stopped := d.runnerStopped.LoadAndDelete(id)
+	if ev.Lost {
+		d.endByDispatcher(id, "the machine was lost", nil)
+		return
+	}
+	code := ev.ExitCode
+	if stopped {
+		d.endByDispatcher(id, endStoppedByRunner, &code)
+		return
+	}
+	d.endByDispatcher(id, fmt.Sprintf("the wrapper exited with code %d before the end of the Execution", code), &code)
 }
 
 // endByDispatcher ends an Execution that has not ended, and fails its
@@ -252,6 +266,24 @@ func (d *Dispatcher) endByDispatcher(id, reason string, exitCode *int) {
 		d.revokeTokens(id)
 		d.wakeDispatch()
 	}
+}
+
+// takeOverOutcome is the Run's state at the end of a take-over Execution:
+// the outcome of a report made during the take-over, or with none,
+// waiting on a person. A stop wins, as for a headless Execution.
+func takeOverOutcome(report *dispatcherapi.Report, end dispatcherapi.ExecutionEnd) (state, reason, question, summary string) {
+	if end.Reason == dispatcherapi.EndStopped || report != nil {
+		return outcome(report, end)
+	}
+	reason = dispatcherapi.ReasonTakeOverNoReport
+	if end.Reason != dispatcherapi.EndSessionEnded && end.Reason != "" {
+		reason += " (" + end.Reason
+		if end.Error != "" {
+			reason += ": " + end.Error
+		}
+		reason += ")"
+	}
+	return dispatcherapi.StateWaitingOnPerson, reason, "", ""
 }
 
 // outcome is the Run's state from the Execution's last valid report, or,

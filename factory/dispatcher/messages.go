@@ -158,7 +158,8 @@ func acceptMessageIn(tx *sql.Tx, organizationID, runID string, by actor, text st
 	var live string
 	switch {
 	case state == dispatcherapi.StateRunning:
-		err = tx.QueryRow(`SELECT id FROM executions WHERE run_id = ? AND state = ? AND end_agreed = 0`, runID,
+		err = tx.QueryRow(`SELECT id FROM executions WHERE run_id = ? AND state = ? AND end_agreed = 0
+			AND form = ''`, runID,
 			dispatcherapi.ExecutionRunning).Scan(&live)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return accepted, err
@@ -367,19 +368,20 @@ func settleMessages(tx *sql.Tx, runID, executionID string, states []dispatcherap
 }
 
 // continueForMessages decides, in the end's transaction, if the Run's
-// kept messages queue it for a new Execution: the Run is still running
-// (a stop wins), its new state is done, failed or waiting on a person, it
-// is not closed, its PR has no outcome, and a kept message went to fewer
-// than maxSends Executions. Then it gives the sent-again event of each
-// message of returned (of the Execution that ended) that goes again.
-func continueForMessages(tx *sql.Tx, runID, executionID, state string, returned []string, at time.Time) (bool, error) {
+// kept messages queue it for a new Execution: the Run is still in the
+// state from (running, or taken over for a take-over Execution; a stop
+// wins), its new state is done, failed or waiting on a person, it is not
+// closed, its PR has no outcome, and a kept message went to fewer than
+// maxSends Executions. Then it gives the sent-again event of each message
+// of returned (of the Execution that ended) that goes again.
+func continueForMessages(tx *sql.Tx, runID, executionID, from, state string, returned []string, at time.Time) (bool, error) {
 	if !slices.Contains(continuedStates, state) {
 		return false, nil
 	}
 	var due bool
 	err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM messages m JOIN runs r ON r.id = m.run_id WHERE m.run_id = ?
 		AND m.execution_id = '' AND m.delivered_at IS NULL AND m.sends < ? AND r.closed_at IS NULL
-		AND r.pr_outcome = '' AND r.state = ?)`, runID, maxSends, dispatcherapi.StateRunning).Scan(&due)
+		AND r.pr_outcome = '' AND r.state = ?)`, runID, maxSends, from).Scan(&due)
 	if err != nil || !due {
 		return false, err
 	}

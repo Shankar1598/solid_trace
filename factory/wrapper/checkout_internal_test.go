@@ -51,6 +51,7 @@ type startBoundary struct{}
 func (startBoundary) Start(cmd *exec.Cmd) error  { return cmd.Start() }
 func (startBoundary) Populated() (bool, error)   { return false, nil }
 func (startBoundary) Kill() error                { return nil }
+func (startBoundary) Holds(int) (bool, error)    { return true, nil }
 func (startBoundary) Remove(time.Duration) error { return nil }
 
 // setupExecution is an Execution for a call of setup: the Execution's

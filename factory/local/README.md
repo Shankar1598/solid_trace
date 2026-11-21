@@ -87,6 +87,10 @@ docker exec -i -u engineer factory-local-agent-machine-1 sudo -u agent hc connec
 
 Start the core before the first `hc connect`. When no core runs, `hc connect` starts one of its own, and that core gets the `SUDO_*` variables.
 
+For a take-over (`solidtrace take-over <run id>`), the wrapper of the Run's Execution continues on the machine in a new Execution, in a new cgroup. It starts the core as `agent` in that cgroup, with no `SUDO_*` or `HC_*` variable, and starts `claude --resume <session id>` in a terminal named `take-over`. Then it checks that the core and its holder are in the cgroup. When they are not (a core that an early `hc connect` started, or one that systemd started), it kills them, and the take-over does not start. Wait until the Run page shows the take-over Execution as running before you attach. On this stack, set `DISPATCHER_TAKE_OVER_ATTACH='docker exec -i -u engineer factory-local-{vm} sudo -u {run_user} hc connect'`: `{vm}` is the Nomad node's name (`agent-machine-1`).
+
+The smoke check runs the wrapper's take-over cases as root under raw_exec (`checks/take-over-tests.nomad.hcl`, cluster check 6). One case uses the image's real `hc`: the core is in the take-over Execution's cgroup with no `SUDO_` variable, and `engineer` reaches it with `sudo -u agent hc connect`. Only this check: `SMOKE_ONLY='take-over as root' factory/local/smoke`.
+
 ## What is different from an agent VM
 
 - No Docker socket and no Docker daemon. The end procedure skips `docker kill`.

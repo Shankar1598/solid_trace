@@ -203,6 +203,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/runs/{id}", d.person(d.getRun))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/stop", d.person(d.stopRun))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/messages", d.person(d.sendMessage))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/take-over", d.person(d.takeOverRun))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/interrupt", d.person(d.interruptRun))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/switch-account", d.person(d.switchAccount))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects", d.person(d.listSettings))

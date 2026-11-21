@@ -103,6 +103,14 @@ func (u *uploads) prepare(r runUser) error {
 	return nil
 }
 
+// adopt takes the open project directory of the Execution that a
+// take-over follows on this machine, in place of prepare.
+func (u *uploads) adopt(dir *os.Root) {
+	u.mu.Lock()
+	u.dir = dir
+	u.mu.Unlock()
+}
+
 // root is the open project directory, or nil before prepare.
 func (u *uploads) root() *os.Root {
 	u.mu.Lock()

@@ -41,6 +41,15 @@ func TestTheMachineKindsAreNodePoolsAndTheFirstIsTheDefault(t *testing.T) {
 		t.Errorf("the wrapper command is %q", c.WrapperCommand)
 	}
 
+	if c.TakeOverAttach != "" {
+		t.Errorf("with no Take-over setting it is %q", c.TakeOverAttach)
+	}
+	const attach = "docker exec -i -u engineer factory-local-{vm} sudo -u {run_user} hc connect"
+	if c, err := dispatcher.LoadConfig("", nomadEnv(map[string]string{dispatcher.EnvTakeOverAttach: attach})); err != nil ||
+		c.TakeOverAttach != attach {
+		t.Errorf("the Take-over setting is %q (%v), want %q", c.TakeOverAttach, err, attach)
+	}
+
 	c, err = dispatcher.LoadConfig("", nomadEnv(map[string]string{dispatcher.EnvDefaultMachineKind: "large"}))
 	if k, _ := c.MachineKind(""); err != nil || k.Name != "large" {
 		t.Errorf("with the default kind large: %+v %v", k, err)
@@ -54,12 +63,13 @@ func TestTheConfigurationNamesTheOneWrongNomadSetting(t *testing.T) {
 		dispatcher.EnvDefaultMachineKind: {dispatcher.EnvDefaultMachineKind: "huge"},
 		dispatcher.EnvWrapperURL:         {dispatcher.EnvWrapperURL: ""},
 		dispatcher.EnvWrapperCommand:     {dispatcher.EnvWrapperCommand: "factory-wrapper"},
+		dispatcher.EnvTakeOverAttach:     {dispatcher.EnvTakeOverAttach: "ssh {vm}\nrm -rf /"},
 	}
 	for _, kinds := range []string{"standard", "standard=0", "standard=12 GB", "a pool=1024", "standard=1024,standard=2048"} {
 		cases[dispatcher.EnvMachineKinds+" "+kinds] = map[string]string{dispatcher.EnvMachineKinds: kinds}
 	}
 	all := []string{dispatcher.EnvNomadAddress, dispatcher.EnvMachineKinds, dispatcher.EnvDefaultMachineKind,
-		dispatcher.EnvWrapperURL, dispatcher.EnvWrapperCommand}
+		dispatcher.EnvWrapperURL, dispatcher.EnvWrapperCommand, dispatcher.EnvTakeOverAttach}
 	for name, changes := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := dispatcher.LoadConfig("", nomadEnv(changes))

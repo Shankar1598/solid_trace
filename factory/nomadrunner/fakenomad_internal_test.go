@@ -310,3 +310,21 @@ func TestTheJobGivesTheWrapperADirectoryOutsideNomadsDataDir(t *testing.T) {
 		t.Errorf("WRAPPER_DIR is %q, want %q", got, want)
 	}
 }
+
+// The wrapper of a take-over names its machine by the Nomad node's name,
+// and its attach command by the Take-over setting.
+func TestTheJobGivesTheWrapperItsMachineAndTheTakeOverSetting(t *testing.T) {
+	_, r := newFakeNomad(t)
+	env := r.job(r.cfg.Kinds[0]).TaskGroups[0].Tasks[0].Env
+	if got := env["WRAPPER_VM"]; got != "${node.unique.name}" {
+		t.Errorf("WRAPPER_VM is %q, want the node's name", got)
+	}
+	if got, ok := env["WRAPPER_TAKE_OVER_ATTACH"]; ok {
+		t.Errorf("with no Take-over setting the job sets WRAPPER_TAKE_OVER_ATTACH=%q", got)
+	}
+	const attach = "docker exec -i -u engineer factory-local-{vm} sudo -u {run_user} hc connect"
+	r.cfg.TakeOverAttach = attach
+	if got := r.job(r.cfg.Kinds[0]).TaskGroups[0].Tasks[0].Env["WRAPPER_TAKE_OVER_ATTACH"]; got != attach {
+		t.Errorf("WRAPPER_TAKE_OVER_ATTACH is %q, want %q", got, attach)
+	}
+}

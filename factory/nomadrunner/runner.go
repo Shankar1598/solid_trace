@@ -42,6 +42,9 @@ type Config struct {
 	// wrapper.
 	Command string
 	Args    []string
+	// TakeOverAttach is the Take-over setting (the wrapper's
+	// WRAPPER_TAKE_OVER_ATTACH; "" is the wrapper's default).
+	TakeOverAttach string
 	// WrapperURL is the Dispatcher's private listener as the agent machine
 	// reaches it.
 	WrapperURL string
@@ -70,7 +73,9 @@ func FromConfig(c dispatcher.Config, log *slog.Logger) Config {
 		DefaultKind: c.DefaultMachineKind,
 		Command:     c.WrapperCommand,
 		WrapperURL:  c.WrapperURL,
-		Log:         log,
+		// The template's {vm} is the Nomad node's name.
+		TakeOverAttach: c.TakeOverAttach,
+		Log:            log,
 	}
 }
 
@@ -281,6 +286,11 @@ func (r *Runner) job(kind dispatcher.MachineKind) *api.Job {
 		"WRAPPER_EXECUTION_ID":   "${NOMAD_META_" + MetaExecution + "}",
 		"WRAPPER_IDENTITY_FILE":  "${NOMAD_SECRETS_DIR}/nomad_" + IdentityName + ".jwt",
 		"WRAPPER_DIR":            path.Join(r.cfg.ExecutionsDir, "${NOMAD_META_"+MetaExecution+"}"),
+		// The machine of a take-over, for its attach command.
+		"WRAPPER_VM": "${node.unique.name}",
+	}
+	if r.cfg.TakeOverAttach != "" {
+		task.Env["WRAPPER_TAKE_OVER_ATTACH"] = r.cfg.TakeOverAttach
 	}
 	task.KillTimeout = &killTimeout
 	task.KillSignal = "SIGTERM"

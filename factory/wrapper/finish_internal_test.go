@@ -21,6 +21,7 @@ type fakeBoundary struct {
 func (b *fakeBoundary) Start(*exec.Cmd) error    { return nil }
 func (b *fakeBoundary) Populated() (bool, error) { return b.kills < b.emptyAfter, nil }
 func (b *fakeBoundary) Kill() error              { b.kills++; return nil }
+func (b *fakeBoundary) Holds(int) (bool, error)  { return true, nil }
 func (b *fakeBoundary) Remove(time.Duration) error {
 	b.removes++
 	if b.kills < b.emptyAfter {

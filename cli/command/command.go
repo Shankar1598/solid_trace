@@ -101,6 +101,13 @@ Usage:
       stops. With MESSAGE, the agent gets it in the same Execution when
       its turn stops, and works on. With no MESSAGE, the Execution ends,
       and the Run waits on a person; a message continues it.
+  solidtrace take-over [--dispatcher URL] RUN_ID
+      Take over a running Run: its agent is interrupted, and the same
+      Agent session continues in a terminal on the same machine. It
+      prints the machine and the command that attaches you (for example
+      in the Herdr app). When you leave the Agent session, a report that
+      you made in it sets the Run's state; with no report, the Run waits
+      on a person.
   solidtrace runs list [--dispatcher URL]
       List the Runs of your Organization, newest first.
   solidtrace runs get [--dispatcher URL] RUN_ID
@@ -220,6 +227,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return switchAccount(ctx, args[1:], env)
 	case "message":
 		return message(ctx, args[1:], env)
+	case "take-over":
+		return takeOver(ctx, args[1:], env)
 	case "interrupt":
 		return interrupt(ctx, args[1:], env)
 	case "projects":
