@@ -181,10 +181,10 @@ function RunsTable({ rows, more, projectNames, path }: { rows: RunRow[]; more: b
                     {row.active && <Badge variant="count">Active</Badge>}
                     {row.closed && <Badge>Closed</Badge>}
                   </div>
-                  {row.reason && <div className="mt-1 max-w-56 text-xs text-muted-foreground">{row.reason}</div>}
+                  {row.reason && <div className="mt-1 max-w-56 whitespace-normal text-xs text-muted-foreground">{row.reason}</div>}
                 </TableCell>
                 <TableCell className="align-top">
-                  <Link href={`${path}/${row.id}`} className="block max-w-80 text-sm underline-offset-2 hover:underline">
+                  <Link href={`${path}/${row.id}`} className="block max-w-80 whitespace-normal text-sm underline-offset-2 hover:underline">
                     {row.title || <span className="text-muted-foreground">No title</span>}
                   </Link>
                   <div className="font-mono text-xs text-muted-foreground">{row.id}</div>
