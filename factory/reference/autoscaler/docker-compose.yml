@@ -1,0 +1,22 @@
+# The Nomad Autoscaler on the server VM (docs/factory.md, "Scaling"). It is HashiCorp's image,
+# not SolidTrace's: pin the version that factory/autoscaler_reference_test.go reads your
+# policies with. Put autoscaler.hcl and the policies in /etc/nomad-autoscaler (the policy files
+# in /etc/nomad-autoscaler/policies), and the Nomad token in /etc/solid-trace-factory/autoscaler.env
+# as the line NOMAD_TOKEN=... (owned by root, mode 600).
+#
+#   docker compose -f docker-compose.yml up -d
+
+name: solid-trace-factory-autoscaler
+
+services:
+  autoscaler:
+    image: hashicorp/nomad-autoscaler:0.6.0@sha256:1140c079acaa8cfc0769f7add3553ea06f589673c4500d2139e01aa447575cad
+    command: ["agent", "-config=/etc/nomad-autoscaler/autoscaler.hcl"]
+    # The host's network: it reaches Nomad's private address, and the metadata server that gives
+    # the VM's Google credentials. Its HTTP port (127.0.0.1:8080) answers on the host only.
+    network_mode: host
+    env_file: /etc/solid-trace-factory/autoscaler.env
+    volumes:
+      - /etc/nomad-autoscaler:/etc/nomad-autoscaler:ro
+    mem_limit: 256m
+    restart: unless-stopped

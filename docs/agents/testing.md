@@ -35,6 +35,8 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      factory/image/test
      ```
 
+     The reference Autoscaler policies (`factory/reference/autoscaler/`, the main one and the fallback) have a test in `factory/` (`autoscaler_reference_test.go`): it starts HashiCorp's pinned Nomad Autoscaler image with no network, and checks in its debug log that the Autoscaler loads each policy file and makes a handler for it, and that it refuses a policy with a minimum over the maximum. It needs Docker (it pulls the image when the box has none), and takes a few seconds. It runs in the usual `go test ./...` of `factory/`, and skips with no Docker. It reads the policies only: the real scale-in and scale-out are cluster check 4 on Google Cloud.
+
      The Dispatcher's image (`factory/Dockerfile`) has a test of its own: it builds the image as the release job does, runs it with the host's network, and checks its version, its user, its private listener (it answers on the configured address only), its operator commands, its database volume and the Squid allowlist that it writes from the reference configuration's default list. The factory's release files (the wrapper, the agent CLI and the image recipe, as archives with their sums) have a test too. Both need Docker or Go, the internet for the image, and no other stack. The image test takes about 3 minutes (more for the first build). Run them when the image, the recipe or the release job changes, and before a release. The release job itself is tried with a test release (below):
 
      ```bash
