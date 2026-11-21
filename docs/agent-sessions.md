@@ -296,6 +296,18 @@ The Run page shows one Run from its run events:
 - The **last report**: each check with pass or fail and the last lines of its output, the Evidence files (an image shows on the page; click another file to download it), and `evidence/report.md` in full. A done report with no check that passed shows **no Evidence**. The report of an Issue or a Monitor Run shows its cause report.
 - Links to the Run's Agent sessions, and the CLI commands to message the Run, take it over or stop it.
 
+### The totals of a Closed Run
+
+The `closed` run event of a Run carries its totals, so that you can measure the factory with a Query or a Chart on the Agent Project:
+
+- `totals.seconds_to_first_execution` and `totals.seconds_to_pr_opened` (from the trigger), and `totals.seconds_from_pr_opened_to_outcome`. A time is absent when its step did not occur: a Run that closed after 30 days with no activity and no PR has no PR times.
+- `totals.interventions.total`, and `totals.interventions.message`, `.interrupt`, `.stop`, `.take_over`, `.account_switch` and `.continue`. They count what people (and senders, forge users and tracker users) did, not what the Dispatcher did by itself, such as an account switch at a usage limit. A message that continues the Run is a message and a continue; the total counts it one time.
+- `totals.restarts`: the automatic restarts after a lost machine. `run.executions` counts all the Executions.
+- `totals.agent_sessions`, `totals.tokens.input`, `totals.tokens.output`, `totals.tokens.cache_read`, `totals.tokens.cache_write`, `totals.cost_usd` and `totals.no_cost`: the sums of the Run's Agent sessions, as the Agent sessions page shows them, also for a take-over. `totals.cost_usd` is absent when no Agent session has a cost; `totals.no_cost` counts the Agent sessions with no cost.
+- `totals.complete` is false when SolidTrace had not yet read all the uploads of the Run's Agent sessions at the close, or did not answer. The Run closes and does not wait.
+
+Each event also has the PR outcome (`run.pr.outcome`), the trigger (`run.trigger`) and the Project (`factory.project`).
+
 **Take over** a running Run with `solidtrace take-over <run id>`. The Run's agent stops, and its Agent session continues in a terminal on the same VM, in a new Execution. The command prints the VM and the command to attach, from the Dispatcher's Take-over setting (`DISPATCHER_TAKE_OVER_ATTACH`, such as ssh to the VM, then `sudo -u <run user> hc connect`). During the take-over, the Stop hook does not ask for a report, and only the total limit applies, not the idle limit. A message to the Run is kept, and starts a new Execution when the take-over ends. When you leave the Agent session with no report, the Run waits on a person with the reason "take-over ended with no report". A report of done gives done.
 
 **Stop** ends a Run that goes wrong. It shows only when Settings → Instance has the Dispatcher's URL, and only on a Run that can stop (queued, running, taken over, or waiting on a person or an account limit). Console sends the stop to the Dispatcher as you, with a factory token that lasts 5 minutes. The page shows the state that the Dispatcher gives at once; the stop event shows when it arrives from the Dispatcher.

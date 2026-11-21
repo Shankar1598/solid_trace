@@ -77,6 +77,18 @@ import (
 //     machine_lost.in_a_row, as for a preemption.
 //   - interventions (message_accepted, interrupt, stop, take_over,
 //     account_switched, continue): actor.* is the actor who did it.
+//   - closed: run.close_reason (pr_merged, pr_declined or no_activity)
+//     and the Run's totals: totals.seconds_to_first_execution,
+//     totals.seconds_to_pr_opened, totals.seconds_from_pr_opened_to_outcome
+//     (each absent when its step did not occur),
+//     totals.interventions.total and totals.interventions.<kind> (message,
+//     interrupt, stop, take_over, account_switch, continue),
+//     totals.restarts, and the sums of the Run's Agent sessions from the
+//     agent ingest API's totals call: totals.agent_sessions,
+//     totals.tokens.input, .output, .cache_read, .cache_write,
+//     totals.cost_usd (absent with no cost) and totals.no_cost. Those sums
+//     are absent when the call did not answer. totals.complete is false
+//     then, and when the parse had not caught up.
 //
 // Readers order by run.seq and drop repeats of (run.id, run.seq): the
 // Dispatcher's sender delivers at least once.
