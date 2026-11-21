@@ -94,6 +94,11 @@ func (d *Dispatcher) wakeDispatch() {
 }
 
 func (d *Dispatcher) dispatchQueued(ctx context.Context) {
+	// A Run that waits on an account limit continues when an account is
+	// free again (at a reset time, or an account that the operator added).
+	if _, err := d.store.continueWaitingRuns(d.now()); err != nil {
+		d.log.Error("could not continue the Runs that wait on an account limit", "error", err)
+	}
 	runs, err := d.store.queuedRuns()
 	if err != nil {
 		d.log.Error("could not read the queued Runs", "error", err)
@@ -276,6 +281,11 @@ func outcome(report *dispatcherapi.Report, end dispatcherapi.ExecutionEnd) (stat
 		case dispatcherapi.OutcomeFailed:
 			return dispatcherapi.StateFailed, report.Summary, "", report.Summary
 		}
+	}
+	// At the usage limit, the end decides the Run's account (see
+	// store.atUsageLimit). A report before it set the outcome above.
+	if end.Reason == dispatcherapi.EndUsageLimit {
+		return dispatcherapi.StateWaitingOnAccountLimit, dispatcherapi.EndUsageLimit, "", ""
 	}
 	reason = end.Reason
 	if reason == "" || reason == dispatcherapi.EndReported {

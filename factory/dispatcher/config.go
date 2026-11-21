@@ -71,6 +71,10 @@ type Config struct {
 	// (the default), or refs/heads/agent-wip for a forge that refuses refs
 	// outside refs/heads (the fallback of cluster check 12).
 	WIPRefs string
+	// AtAccountLimit is what a Run does when its account reaches its
+	// usage limit: AtAccountLimitSwitch ("" is it) or AtAccountLimitWait
+	// (the fallback of cluster check 5).
+	AtAccountLimit string
 
 	// NomadAddress is the Nomad server's HTTP API, such as
 	// http://127.0.0.1:4646. With none, the Dispatcher has no Runner, and
@@ -224,6 +228,22 @@ const (
 	// EnvScheduleMinInterval is a Go duration, such as 1h or 30m.
 	EnvScheduleMinInterval = "DISPATCHER_SCHEDULE_MIN_INTERVAL"
 	EnvTriggerWord         = "DISPATCHER_TRIGGER_WORD"
+	// EnvAtAccountLimit is AtAccountLimitSwitch (the default) or
+	// AtAccountLimitWait.
+	EnvAtAccountLimit = "DISPATCHER_AT_ACCOUNT_LIMIT"
+)
+
+// What a Run does when its account reaches its usage limit
+// (Config.AtAccountLimit).
+const (
+	// AtAccountLimitSwitch: the Run continues at once on another free
+	// account, and waits on an account limit only when none is free.
+	AtAccountLimitSwitch = "switch"
+	// AtAccountLimitWait: the Run stays on its account, and waits for its
+	// reset time. It is the fallback of cluster check 5, for when a
+	// resume under another account does not work. A person can still
+	// switch a waiting Run's account.
+	AtAccountLimitWait = "wait"
 )
 
 // DefaultTriggerWord is the trigger word when the operator sets none.
@@ -295,6 +315,7 @@ func readConfig(path string, getenv func(string) string) (Config, error) {
 		LinearAPIURL:        strings.TrimRight(value(EnvLinearAPIURL), "/"),
 		NotionAPIURL:        strings.TrimRight(value(EnvNotionAPIURL), "/"),
 		WIPRefs:             value(EnvWIPRefs),
+		AtAccountLimit:      strings.TrimSpace(value(EnvAtAccountLimit)),
 
 		NomadAddress:       strings.TrimRight(value(EnvNomadAddress), "/"),
 		NomadToken:         value(EnvNomadToken),
@@ -367,6 +388,10 @@ func (c Config) Check() error {
 	if c.WIPRefs != "" && c.WIPRefs != forge.WIPOutsideBranches && c.WIPRefs != forge.WIPInBranches {
 		problems = append(problems, EnvWIPRefs+" (the place of the work-in-progress refs) must be "+
 			forge.WIPOutsideBranches+" or "+forge.WIPInBranches+", not "+fmt.Sprintf("%q", c.WIPRefs))
+	}
+	if c.AtAccountLimit != "" && c.AtAccountLimit != AtAccountLimitSwitch && c.AtAccountLimit != AtAccountLimitWait {
+		problems = append(problems, EnvAtAccountLimit+" (what a Run does at its account's usage limit) must be "+
+			AtAccountLimitSwitch+" or "+AtAccountLimitWait+", not "+fmt.Sprintf("%q", c.AtAccountLimit))
 	}
 	problems = append(problems, c.limitProblems...)
 	if c.SenderStartsPerMinute < 0 || c.SenderActiveRuns < 0 {

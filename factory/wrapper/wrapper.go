@@ -804,6 +804,8 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	// interruptBy is the end of the wait for the result of the wrapper's
 	// interrupt request (zero: no interrupt is out).
 	var interruptBy time.Time
+	// limit reads the stream for the usage limit of the account.
+	var limit usageLimit
 	tick := time.NewTicker(e.cfg.limitEvery)
 	defer tick.Stop()
 	tryEnd := func() {
@@ -917,12 +919,21 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 				e.setRunState(func(s *runState) { s.BackgroundTasks = len(tasks) })
 			case ev["type"] == "system" && ev["subtype"] == "init" && offers(ev, "AskUserQuestion"):
 				e.startEnd(dispatcherapi.EndSetupFailed, "the harness offers AskUserQuestion, which no person answers in a Run")
+			case ev["type"] == "rate_limit_event" || (ev["type"] == "assistant" && ev["error"] != nil):
+				limit.event(ev)
 			case ev["type"] == "result" && e.isMarked():
 				// The halt waits for it; the handler ends the Execution.
 				select {
 				case e.results <- struct{}{}:
 				default:
 				}
+			case ev["type"] == "result" && limit.result(ev):
+				// The account is at its usage limit: no turn can work on
+				// it, so the Execution ends at once. The Dispatcher gives
+				// the Run another free account. A report made before it
+				// still sets the Run's outcome.
+				e.setRunState(func(s *runState) { s.Turn++ })
+				e.startEnd(dispatcherapi.EndUsageLimit, "")
 			case ev["type"] == "result":
 				// The turn ended: the next stop is in a new turn. This
 				// comes before the end closes stdin.
@@ -970,6 +981,9 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	code := e.harness.ProcessState.ExitCode()
 	e.followEnd = dispatcherapi.ExecutionEnd{Reason: reason, Error: why, ExitCode: &code, TaskDeliveredAt: delivered,
 		Messages: e.messageStates()}
+	if reason == dispatcherapi.EndUsageLimit {
+		e.followEnd.UsageLimitResetsAt = limit.resetsAt
+	}
 	close(e.followed)
 	return e.followEnd
 }

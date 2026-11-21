@@ -156,6 +156,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.waitAtLimit = config.AtAccountLimit == AtAccountLimitWait
 	d := &Dispatcher{
 		config:  config,
 		version: options.Version,
@@ -203,6 +204,7 @@ func Open(config Config, options Options) (*Dispatcher, error) {
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/stop", d.person(d.stopRun))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/messages", d.person(d.sendMessage))
 	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/interrupt", d.person(d.interruptRun))
+	mux.HandleFunc("POST "+dispatcherapi.Path+"/runs/{id}/switch-account", d.person(d.switchAccount))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects", d.person(d.listSettings))
 	mux.HandleFunc("GET "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.getSettings))
 	mux.HandleFunc("PUT "+dispatcherapi.Path+"/projects/{project}/settings", d.person(d.admin(d.saveSettings)))

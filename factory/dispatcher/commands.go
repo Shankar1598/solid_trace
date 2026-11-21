@@ -55,7 +55,8 @@ const eventStop = "stop"
 const actorDispatcher = "dispatcher"
 
 // stoppable are the states that a stop changes to stopped.
-var stoppable = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson}
+var stoppable = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson,
+	dispatcherapi.StateWaitingOnAccountLimit}
 
 // actor is who caused an intervention.
 type actor struct{ kind, id, name string }

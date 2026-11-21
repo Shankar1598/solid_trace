@@ -64,7 +64,7 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	if err != nil || !free {
 		return false, ignoreNoRows(err)
 	}
-	account, reason, err := pickAccount(tx, at)
+	account, reason, err := s.accountFor(tx, runID, at)
 	if err != nil {
 		return false, err
 	}
@@ -73,6 +73,9 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	}
 	if account == "" {
 		return false, tx.Commit()
+	}
+	if _, err := tx.Exec(`UPDATE runs SET next_account = '' WHERE id = ?`, runID); err != nil {
+		return false, err
 	}
 	if _, err := tx.Exec(`INSERT INTO executions (id, run_id, state, dispatched_at, account) VALUES (?, ?, ?, ?, ?)`,
 		id, runID, dispatcherapi.ExecutionDispatched, at.UnixMicro(), account); err != nil {
@@ -210,7 +213,11 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	// The task always has the prompt: the wrapper writes it only when it
 	// cannot resume the Agent session, or has no message to write.
 	if state == dispatcherapi.ExecutionDispatched {
-		details := map[string]any{"execution.id": id}
+		var account string
+		if err := tx.QueryRow(`SELECT account FROM executions WHERE id = ?`, id).Scan(&account); err != nil {
+			return run, err
+		}
+		details := map[string]any{"execution.id": id, "execution.account": account}
 		if run.prompt != "" {
 			// The task is a message of the factory: its uuid and the hash of
 			// its text let the Agent session page say that the factory said
@@ -271,13 +278,14 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		return err
 	}
 	defer tx.Rollback()
-	var runID, state, checks, startedBy, attributes string
+	var runID, state, checks, startedBy, attributes, account string
 	var prID int
 	var report dispatcherapi.Report
 	err = tx.QueryRow(`SELECT run_id, e.state, report_outcome, report_summary, report_question, report_checks,
-		report_cause, r.pr_id, r.started_by_kind, r.attributes FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
+		report_cause, r.pr_id, r.started_by_kind, r.attributes, e.account FROM executions e JOIN runs r ON r.id = e.run_id
+		WHERE e.id = ?`, id).
 		Scan(&runID, &state, &report.Outcome, &report.Summary, &report.Question, &checks, &report.CauseReport, &prID,
-			&startedBy, &attributes)
+			&startedBy, &attributes, &account)
 	if err != nil {
 		return err
 	}
@@ -289,6 +297,14 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 		last = nil
 	}
 	runState, reason, question, summary := outcome(last, end)
+	// At the usage limit (with no report), the Run goes on another free
+	// account at once, or waits on an account limit.
+	var nextAccount string
+	if runState == dispatcherapi.StateWaitingOnAccountLimit {
+		if runState, reason, nextAccount, err = s.atUsageLimit(tx, account, at); err != nil {
+			return err
+		}
+	}
 	returned, err := settleMessages(tx, runID, id, end.Messages, at)
 	if err != nil {
 		return err
@@ -330,22 +346,38 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 			return err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ?, flags = ? WHERE id = ? AND state = ?`,
-		runState, reason, question, summary, flags, runID, dispatcherapi.StateRunning); err != nil {
+	res, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = ?, summary = ?, flags = ?, next_account = ?
+		WHERE id = ? AND state = ?`,
+		runState, reason, question, summary, flags, nextAccount, runID, dispatcherapi.StateRunning)
+	if err != nil {
 		return err
+	}
+	// A stop before the end wins: the Run is not running, and does not
+	// switch.
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		nextAccount = ""
 	}
 	if end.Preemption != nil {
 		if err := recordEvent(tx, at, runID, eventPreemption, preemptionDetails(id, *end.Preemption)); err != nil {
 			return err
 		}
 	}
-	details := map[string]any{"execution.id": id, "execution.reason": endReason}
+	details := map[string]any{"execution.id": id, "execution.reason": endReason, "execution.account": account}
 	if end.ExitCode != nil {
 		details["execution.exit_code"] = *end.ExitCode
 	}
 	details["execution.background_tasks_killed"] = max(end.BackgroundTasksKilled, 0)
 	if err := recordEvent(tx, at, runID, eventExecutionEnded, details); err != nil {
 		return err
+	}
+	if nextAccount != "" {
+		switched := actor{kind: actorDispatcher, name: "Dispatcher"}.details()
+		switched["account.old"], switched["account.new"] = account, nextAccount
+		if err := recordEvent(tx, at, runID, eventAccountSwitched, switched); err != nil {
+			return err
+		}
 	}
 	return s.commit(tx)
 }
