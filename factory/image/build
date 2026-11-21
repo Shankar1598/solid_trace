@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Builds the two binaries of this repository that the agent VM image recipe installs:
+# the wrapper (factory-wrapper) and the agent CLI (solidtrace), for Linux on x86_64, with
+# no cgo, so that each is one static file. The recipe takes the directory with
+# FACTORY_BIN_DIR (README.md).
+#
+#   factory/image/build <directory> [version]    (version: v0.19.0; default dev)
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+[ $# -ge 1 ] || { sed -n '2,7p' "$0" >&2; exit 2; }
+mkdir -p "$1"
+out="$(cd "$1" && pwd)"
+version="${2:-dev}"
+ldflags="-s -w -X github.com/solidtrace/cli/version.Version=$version"
+
+(cd "$repo/factory" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$ldflags" \
+  -o "$out/factory-wrapper" ./cmd/wrapper)
+(cd "$repo/cli" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$ldflags" \
+  -o "$out/solidtrace" ./cmd/solidtrace)
+echo "$out/factory-wrapper"
+echo "$out/solidtrace"

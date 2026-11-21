@@ -315,6 +315,9 @@ func reportText(r dispatcherapi.Report) string {
 	if r.Question != "" {
 		fmt.Fprintf(&b, "## Question\n\n%s\n\n", r.Question)
 	}
+	if r.CauseReport != "" {
+		fmt.Fprintf(&b, "## Cause report\n\n%s\n\n", r.CauseReport)
+	}
 	b.WriteString("## Checks\n\n")
 	if len(r.Checks) == 0 {
 		b.WriteString("No check ran.\n")

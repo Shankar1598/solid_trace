@@ -60,6 +60,9 @@ type Recorder struct {
 	eventStoreDown bool
 
 	refuseChildren int
+	refuseScopes   map[string]int
+	refuseComments int
+	comments       []IssueComment
 	children       []*ChildToken
 	uploads        []Upload
 	files          map[string]map[string]*storedFile
@@ -91,7 +94,7 @@ type Project struct {
 // New starts a recorder that accepts token checks from callerToken.
 func New(callerToken string) *Recorder {
 	r := &Recorder{CallerToken: callerToken, answers: map[string]Answer{}, projects: map[string][]Project{},
-		files: map[string]map[string]*storedFile{}}
+		files: map[string]map[string]*storedFile{}, refuseScopes: map[string]int{}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	return r
 }
@@ -218,6 +221,10 @@ func (r *Recorder) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.URL.Path == ChildTokensPath || strings.HasPrefix(req.URL.Path, ChildTokensPath+"/") {
 		r.serveChildTokens(w, req, call)
+		return
+	}
+	if req.URL.Path == IssueCommentsPath {
+		r.serveIssueComments(w, call)
 		return
 	}
 	if strings.HasPrefix(req.URL.Path, AgentSessionsPath) {

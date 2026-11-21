@@ -29,6 +29,12 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      factory/local/test-runner
      ```
 
+     The agent VM image recipe (`factory/image/agent-vm.sh`) has a test of its own: it runs the recipe in a clean Debian container and checks what it made, the sudoers rule and the refusals among it. It needs Docker and the internet, and takes about 2 minutes (more for the first download of Claude Code). Run it when the recipe changes, and before a release, with no other stack running:
+
+     ```bash
+     factory/image/test
+     ```
+
      The Harness contract checks (Seam 4, `factory/internal/harnesscontract`) are skipped there. They run the real Claude Code with Haiku, under your own Claude login, and save the streams that they record in `fakeharness/streams/`. Run them only when the pinned Claude Code version (`fakeharness.Version`) changes: change that constant first, then run the checks from `factory/` and commit the new streams. They take about 2 minutes and cost about 2 US cents:
 
      ```bash

@@ -353,6 +353,9 @@ func (d *Dispatcher) sendWriteBack(ctx context.Context, w ticketWrite) error {
 
 // writeBack sets the step's status (one time) and posts its comment.
 func (d *Dispatcher) writeBack(ctx context.Context, w ticketWrite) error {
+	if w.connectionID == issueConnection {
+		return d.commentOnIssue(ctx, w)
+	}
 	source, err := d.store.withToken(w.connectionID)
 	if errors.Is(err, errNotFound) {
 		return fmt.Errorf("%w: the connection is deleted", errGiveUp)
@@ -405,9 +408,30 @@ type checkLine struct {
 }
 
 // reportChecks gives the checks of the Execution's last valid report,
-// for the pass/fail list. The report does not carry the checks yet (the
-// check verb adds them): until then, each PR has no Evidence.
-func (s *store) reportChecks(executionID string) ([]checkLine, error) { return nil, nil }
+// for the pass/fail list (none: the Execution has no report).
+func (s *store) reportChecks(executionID string) ([]checkLine, error) {
+	var stored string
+	err := s.db.QueryRow(`SELECT report_checks FROM executions WHERE id = ?`, executionID).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var checks []dispatcherapi.CheckResult
+	if err := unmarshalList(stored, &checks); err != nil {
+		return nil, err
+	}
+	lines := make([]checkLine, 0, len(checks))
+	for _, c := range checks {
+		name := c.Name
+		if name == "" {
+			name = c.Command
+		}
+		lines = append(lines, checkLine{name: name, passed: c.Passed})
+	}
+	return lines, nil
+}
 
 // writeBackComment is the comment of a step.
 func (d *Dispatcher) writeBackComment(w ticketWrite) (string, error) {
@@ -420,7 +444,7 @@ func (d *Dispatcher) writeBackComment(w ticketWrite) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return prOpenedComment(w.prURL, run, w.text, checks), nil
+		return prOpenedComment("this ticket", w.prURL, run, w.text, checks), nil
 	case stepNeedsAPerson:
 		return "SolidTrace Factory needs a person to continue the Run.\n" + run + "\n\nQuestion:\n" + w.text, nil
 	case stepDone:
@@ -434,9 +458,9 @@ func (d *Dispatcher) writeBackComment(w ticketWrite) (string, error) {
 // prOpenedComment is the comment of a PR that opened: the PR's link, the
 // Run's link, the summary and the pass/fail list of the checks. A PR with
 // no passed check has no Evidence.
-func prOpenedComment(prURL, run, summary string, checks []checkLine) string {
+func prOpenedComment(what, prURL, run, summary string, checks []checkLine) string {
 	var b strings.Builder
-	b.WriteString("SolidTrace Factory opened a PR for this ticket.\nPR: " + prURL + "\n" + run + "\n\n")
+	b.WriteString("SolidTrace Factory opened a PR for " + what + ".\nPR: " + prURL + "\n" + run + "\n\n")
 	if summary != "" {
 		b.WriteString("Summary:\n" + summary + "\n\n")
 	}

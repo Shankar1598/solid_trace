@@ -115,7 +115,7 @@ type Run struct {
 	// ("" when the Run has no PR).
 	PRURL string `json:"pr_url,omitempty"`
 	// Flags are the flags of a done Run: FlagNoEvidence, FlagNoPR, in
-	// this order (none for another state).
+	// this order, or FlagCauseReport alone (none for another state).
 	Flags []string `json:"flags,omitempty"`
 	// PROutcome is PRMerged or PRDeclined when the Run's PR is closed (""
 	// while it is open, or when the Run has no PR).
@@ -133,6 +133,10 @@ const (
 	FlagNoEvidence = "no Evidence"
 	// FlagNoPR: the Run pushed no branch, or has no open PR.
 	FlagNoPR = "No PR"
+	// FlagCauseReport: an Issue or a Monitor Run that is done with a
+	// cause report and no PR. Its standing task opens a PR only when a
+	// check proves the fix, so it has neither of the other flags.
+	FlagCauseReport = "Cause report"
 )
 
 // The markers of the Evidence block in a PR's description. After each
@@ -217,6 +221,9 @@ type Report struct {
 	Summary string `json:"summary"`
 	// Question is what the agent asks a person (needs a person only).
 	Question string `json:"question,omitempty"`
+	// CauseReport is the cause that an Issue or a Monitor Run found (done
+	// only): what causes the problem, and what proves it.
+	CauseReport string `json:"cause_report,omitempty"`
 	// Checks, Evidence and DeliveredMessages are the wrapper's: it drops
 	// what the agent sends in them. Checks are the checks that the
 	// wrapper ran in this Execution (the last result of each command).
@@ -328,6 +335,10 @@ type Task struct {
 	IngestURL string `json:"ingest_url"`
 	// Uploads is the Execution's child token. Only the wrapper keeps it.
 	Uploads SessionToken `json:"uploads"`
+	// MCP is the MCP token of an Issue or a Monitor Run (nil for another
+	// Run). The wrapper writes it to a file of the secrets directory, which
+	// the run user reads.
+	MCP *MCPToken `json:"mcp,omitempty"`
 	// Limits are the Execution's time limits: the factory file's, or the
 	// defaults.
 	Limits Limits `json:"limits"`
@@ -543,6 +554,23 @@ type SessionToken struct {
 	AgentSessionIDs []string `json:"agent_session_ids"`
 	SessionID       string   `json:"session_id"`
 }
+
+// MCPToken is an Issue or a Monitor Run's child token with mcp:read for
+// the Run's Project only, made for one Execution, and the URL of
+// SolidTrace's MCP server.
+type MCPToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	URL       string    `json:"url"`
+}
+
+// EnvMCPTokenFile is the name of the variable in the harness's
+// environment that names the file of the Run's MCP token (MCPToken).
+// EnvMCPURL names the MCP server's URL.
+const (
+	EnvMCPTokenFile = "SOLIDTRACE_MCP_TOKEN_FILE"
+	EnvMCPURL       = "SOLIDTRACE_MCP_URL"
+)
 
 // TokenRequest is the body of the wrapper's token call. A new Agent
 // session id (a /clear, or a second Claude Code process) is added to the

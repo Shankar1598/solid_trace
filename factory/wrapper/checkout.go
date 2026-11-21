@@ -76,6 +76,9 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	if err := e.writeGitConfig(secrets); err != nil {
 		return err
 	}
+	if err := e.writeMCP(); err != nil {
+		return err
+	}
 	checkout := e.cfg.checkout(repository)
 	if err := e.runUser.mkdirAll(filepath.Dir(checkout)); err != nil {
 		return err
