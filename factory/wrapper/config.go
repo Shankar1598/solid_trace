@@ -76,6 +76,10 @@ const (
 	// EnvHC is the hc program of the take-over (default hc). A test gives
 	// a fake one: no test may reach the hc of the dev box.
 	EnvHC = "WRAPPER_HC"
+	// EnvClaudeTemplate is the image's template of .claude.json (default
+	// /etc/factory/claude.json): the take-over puts its keys in the run
+	// user's .claude.json, so that Claude Code shows no first-run dialog.
+	EnvClaudeTemplate = "WRAPPER_CLAUDE_TEMPLATE"
 )
 
 // DefaultTakeOverAttach is the attach command when the Take-over setting
@@ -100,7 +104,10 @@ type config struct {
 	// wrapper uploads the Agent sessions under
 	// <claudeConfig>/projects/<projectName>.
 	claudeConfig, projectName string
-	uploadEvery               time.Duration
+	// claudeTemplate is the image's template of .claude.json
+	// (EnvClaudeTemplate).
+	claudeTemplate string
+	uploadEvery    time.Duration
 	// machineNotice is gce or none; metadataURL is GCE's metadata root.
 	machineNotice, metadataURL string
 	// clock is the clock of the limits, and limitEvery how often the
@@ -145,25 +152,26 @@ func fileClock(path string) (func() time.Time, error) {
 
 func loadConfig(getenv func(string) string) (config, error) {
 	c := config{
-		dispatcherURL: strings.TrimRight(getenv(EnvDispatcherURL), "/"),
-		execution:     getenv(EnvExecution),
-		identityFile:  getenv(EnvIdentityFile),
-		dir:           getenv(EnvDir),
-		harness:       getenv(EnvHarness),
-		docker:        getenv(EnvDocker),
-		workspace:     getenv(EnvWorkspace),
-		home:          getenv(EnvHome),
-		cache:         getenv(EnvCache),
-		claudeConfig:  getenv("CLAUDE_CONFIG_DIR"),
-		projectName:   getenv("CLAUDE_CODE_PROJECT_DIR_NAME"),
-		uploadEvery:   uploadEvery,
-		machineNotice: getenv(EnvMachineNotice),
-		metadataURL:   getenv(EnvMetadataURL),
-		clock:         time.Now,
-		limitEvery:    limitEvery,
-		vm:            getenv(EnvVM),
-		attach:        getenv(EnvTakeOverAttach),
-		hc:            getenv(EnvHC),
+		dispatcherURL:  strings.TrimRight(getenv(EnvDispatcherURL), "/"),
+		execution:      getenv(EnvExecution),
+		identityFile:   getenv(EnvIdentityFile),
+		dir:            getenv(EnvDir),
+		harness:        getenv(EnvHarness),
+		docker:         getenv(EnvDocker),
+		workspace:      getenv(EnvWorkspace),
+		home:           getenv(EnvHome),
+		cache:          getenv(EnvCache),
+		claudeConfig:   getenv("CLAUDE_CONFIG_DIR"),
+		projectName:    getenv("CLAUDE_CODE_PROJECT_DIR_NAME"),
+		uploadEvery:    uploadEvery,
+		machineNotice:  getenv(EnvMachineNotice),
+		metadataURL:    getenv(EnvMetadataURL),
+		clock:          time.Now,
+		limitEvery:     limitEvery,
+		vm:             getenv(EnvVM),
+		attach:         getenv(EnvTakeOverAttach),
+		hc:             getenv(EnvHC),
+		claudeTemplate: getenv(EnvClaudeTemplate),
 	}
 	if c.vm == "" {
 		c.vm, _ = os.Hostname()
@@ -253,6 +261,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if c.claudeConfig == "" {
 		c.claudeConfig = filepath.Join(c.home, ".claude")
+	}
+	if c.claudeTemplate == "" {
+		c.claudeTemplate = "/etc/factory/claude.json"
 	}
 	return c, nil
 }

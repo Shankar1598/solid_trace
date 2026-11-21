@@ -160,7 +160,7 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 		return end
 	}
 	e.mu.Unlock()
-	argv := append([]string{program, HarnessEnvCommand, envFile, "--", e.cfg.harness}, e.interactiveArgs()...)
+	argv := append([]string{program, HarnessEnvCommand, envFile, e.cfg.claudeTemplate, "--", e.cfg.harness}, e.interactiveArgs()...)
 	out, err := e.hc(append([]string{"run", "--bg", "--json", "--no-notify", "--name", "take-over", "--cwd", e.workDir, "--"},
 		argv...)...)
 	if err != nil {
@@ -337,13 +337,17 @@ func (e *execution) checkCore() error {
 }
 
 // HarnessEnv is the harness-env command: args are the environment file
-// (NUL-separated NAME=value), "--", and the harness's command line. It
-// starts the harness with environ and the file's names (the file wins).
+// (NUL-separated NAME=value), the template of .claude.json, "--", and the
+// harness's command line. It runs as the run user, in the checkout's
+// folder. It puts the template and the trust of that folder in
+// $CLAUDE_CONFIG_DIR/.claude.json (prepareClaudeJSON), then starts the
+// harness with environ and the file's names (the file wins).
 func HarnessEnv(args []string, environ []string, stderr io.Writer) int {
-	if len(args) < 3 || args[1] != "--" {
-		fmt.Fprintln(stderr, "wrapper harness-env: give FILE -- PROGRAM [ARGS...]")
+	if len(args) < 4 || args[2] != "--" {
+		fmt.Fprintln(stderr, "wrapper harness-env: give FILE TEMPLATE -- PROGRAM [ARGS...]")
 		return 2
 	}
+	template := args[1]
 	b, err := os.ReadFile(args[0])
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper harness-env:", err)
@@ -382,15 +386,91 @@ func HarnessEnv(args []string, environ []string, stderr io.Writer) int {
 	for _, name := range order {
 		list = append(list, env[name])
 	}
+	if config, ok := env["CLAUDE_CONFIG_DIR"]; ok {
+		if cwd, err := os.Getwd(); err != nil {
+			fmt.Fprintln(stderr, "wrapper harness-env:", err)
+		} else if err := prepareClaudeJSON(strings.TrimPrefix(config, "CLAUDE_CONFIG_DIR="), template, cwd); err != nil {
+			// Claude Code then shows its first-run dialogs; the person
+			// can still answer them.
+			fmt.Fprintln(stderr, "wrapper harness-env: .claude.json:", err)
+		}
+	}
 	if path, ok := env["PATH"]; ok {
 		os.Setenv("PATH", strings.TrimPrefix(path, "PATH="))
 	}
-	program, err := exec.LookPath(args[2])
+	program, err := exec.LookPath(args[3])
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper harness-env:", err)
 		return 127
 	}
-	err = syscall.Exec(program, args[2:], list)
+	err = syscall.Exec(program, args[3:], list)
 	fmt.Fprintln(stderr, "wrapper harness-env:", err)
 	return 126
+}
+
+// prepareClaudeJSON puts the keys of the image's template (the onboarding
+// done) and projects[checkout].hasTrustDialogAccepted in
+// <config>/.claude.json, and keeps the other keys that the Executions
+// before wrote there. With them, the interactive Claude Code opens at its
+// prompt, with no first-run dialog. It runs as the run user (harness-env),
+// so it writes only what that user can write. With no template, it writes
+// the trust, and gives the error.
+func prepareClaudeJSON(config, template, checkout string) error {
+	path := filepath.Join(config, ".claude.json")
+	got := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(b, &got); err != nil || got == nil {
+			return fmt.Errorf("%s is not a JSON object: %v", path, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var templateErr error
+	if b, err := os.ReadFile(template); err != nil {
+		templateErr = fmt.Errorf("the template: %w", err)
+	} else {
+		var keys map[string]any
+		if err := json.Unmarshal(b, &keys); err != nil {
+			templateErr = fmt.Errorf("the template %s: %w", template, err)
+		}
+		for name, value := range keys {
+			if name != "projects" {
+				got[name] = value
+			}
+		}
+	}
+	projects, _ := got["projects"].(map[string]any)
+	if projects == nil {
+		projects = map[string]any{}
+	}
+	project, _ := projects[checkout].(map[string]any)
+	if project == nil {
+		project = map[string]any{}
+	}
+	project["hasTrustDialogAccepted"] = true
+	projects[checkout] = project
+	got["projects"] = projects
+	b, err := json.MarshalIndent(got, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(config, 0o700); err != nil {
+		return err
+	}
+	part, err := os.CreateTemp(config, ".claude.json.part")
+	if err != nil {
+		return err
+	}
+	_, err = part.Write(b)
+	if cerr := part.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(part.Name(), path)
+	}
+	if err != nil {
+		os.Remove(part.Name())
+		return err
+	}
+	return templateErr
 }

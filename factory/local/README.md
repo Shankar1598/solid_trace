@@ -106,7 +106,7 @@ It also runs the wrapper's restore and restart cases as root under raw_exec, wit
 The wrapper deletes the run user's home after each Execution, and it sets `CLAUDE_CONFIG_DIR`. So the image recipe keeps the accepted dialogs in files that root owns, not in the home ([../image/files](../image/files)):
 
 - `/etc/claude-code/managed-settings.json` (Claude Code's managed settings, which the run user cannot change): no bypass-mode warning, and no auto-updater, so that the pinned version stays.
-- `/etc/factory/claude.json`: the template of the run user's `.claude.json`, with the onboarding done. For each Execution, the wrapper copies it to `$CLAUDE_CONFIG_DIR/.claude.json` and adds `projects["<checkout>"].hasTrustDialogAccepted`. Claude Code trusts a checkout only at its exact path.
+- `/etc/factory/claude.json`: the template of the run user's `.claude.json`, with the onboarding done. For each take-over, the wrapper's `harness-env` step (as the run user, just before Claude Code starts) puts its keys in `$CLAUDE_CONFIG_DIR/.claude.json` and adds `projects["<checkout>"].hasTrustDialogAccepted`; the keys that the headless Executions wrote there stay. The headless form (`claude -p`) shows no first-run dialog. Claude Code trusts a checkout only at its exact path.
 
 The smoke check starts Claude Code in the same way: from a new, empty home and a new `CLAUDE_CONFIG_DIR`.
 
