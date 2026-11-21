@@ -344,3 +344,18 @@ func TestStopOnARunThatWaitsOnAnAccountLimitStopsIt(t *testing.T) {
 		t.Errorf("after the reset time the Run is %s with %d Executions", run.State, len(run.Executions))
 	}
 }
+
+// A Run that waits on an account limit is active: a delivery with its
+// dedupe_key gives that Run and starts none, so two Runs do not work on
+// the same Issue when the reset time comes.
+func TestARunThatWaitsOnAnAccountLimitKeepsItsDedupeKey(t *testing.T) {
+	env, ana := newEnv(t)
+	sender, path := env.Sender("Alerts")
+	env.Runner.Agent(script(takeTask, initLine(t), usageLimit(env.Clock.Now().Add(2*time.Hour)))...)
+
+	waiting := deliver(t, env, path, sender.Secret, "d-1", "issue-1")
+	waitFor(t, env, ana, waiting.RunID, dispatcherapi.StateWaitingOnAccountLimit)
+	if again := deliver(t, env, path, sender.Secret, "d-2", "issue-1"); again.Started || again.RunID != waiting.RunID {
+		t.Errorf("the dedupe_key of a Run that waits on an account limit: %+v, want the Run %s", again, waiting.RunID)
+	}
+}

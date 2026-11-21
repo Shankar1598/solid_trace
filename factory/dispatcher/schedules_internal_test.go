@@ -11,16 +11,14 @@ import (
 	"github.com/solidtrace/cli/dispatcherapi"
 )
 
-// Each state of activeStates makes a schedule's last Run active, also a
-// state that a later ticket adds to the list.
-func TestEachStateOfActiveStatesMakesAScheduleRunActive(t *testing.T) {
-	const later = "waiting_on_an_account_limit"
-	t.Cleanup(func(states []string) func() { return func() { activeStates = states } }(activeStates))
-	activeStates = append(activeStates[:len(activeStates):len(activeStates)], later)
-
+// Each state of an Active Run makes a schedule's last Run active: it
+// works, or it waits on a person or on an account limit. A failed Run is
+// not active.
+func TestEachStateOfAnActiveRunMakesAScheduleRunActive(t *testing.T) {
 	s := testStore(t, filepath.Join(t.TempDir(), "d.sqlite3"))
 	at := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
-	for i, state := range append([]string{dispatcherapi.StateFailed}, activeStates...) {
+	for i, state := range []string{dispatcherapi.StateFailed, dispatcherapi.StateQueued, dispatcherapi.StateRunning,
+		dispatcherapi.StateWaitingOnPerson, dispatcherapi.StateWaitingOnAccountLimit} {
 		scheduleID := fmt.Sprintf("schedule%d", i)
 		run := storedRun{Run: dispatcherapi.Run{ID: fmt.Sprintf("run%d", i), Organization: "example", Project: "shop",
 			Prompt: "Update the dependencies", State: state, StartedBy: dispatcherapi.Person{Kind: actorSchedule,

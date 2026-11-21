@@ -32,11 +32,11 @@ const scheduleEvery = 30 * time.Second
 // missedLimit is the age of a missed fire time that gives no Run.
 const missedLimit = 24 * time.Hour
 
-// activeStates are the states of an Active Run that the Dispatcher has
-// now (a later state, waiting on an account limit, joins it). A Run that
-// is not closed and has an open PR is active in each state: see
-// activeRunSQL.
-var activeStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson}
+// activeStates are the states of an Active Run: it works, or it waits on
+// a person or on an account limit. A Run that is not closed and has an
+// open PR is active in each state: see activeRunSQL.
+var activeStates = []string{dispatcherapi.StateQueued, dispatcherapi.StateRunning, dispatcherapi.StateWaitingOnPerson,
+	dispatcherapi.StateWaitingOnAccountLimit}
 
 // The limits of a schedule's values.
 const (
