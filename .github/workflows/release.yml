@@ -1,8 +1,8 @@
 name: Release images and the agent CLI
 
-# Builds Console's and EventStore's images for a published release, for amd64
-# and arm64 (GCP's T2A, AWS's Graviton), and pushes them to GitHub Container
-# Registry, tagged with the release's tag. A published release that is not a
+# Builds Console's, EventStore's and the Dispatcher's images for a published
+# release, for amd64 and arm64 (GCP's T2A, AWS's Graviton), and pushes them to
+# GitHub Container Registry, tagged with the release's tag. A published release that is not a
 # pre-release also moves latest, which deploy/install pulls
 # (.github/scripts/image-tags).
 #
@@ -10,6 +10,13 @@ name: Release images and the agent CLI
 # binary for each OS and architecture, SHA256SUMS, install.sh, the Claude
 # Code plugin as solidtrace-plugin.zip, and its marketplace.json, whose
 # plugin entry is the zip of the same release with its SHA-256.
+#
+# The Dispatcher is the factory's service (docs/factory.md). Its image is not in
+# deploy/docker-compose.yml: a SolidTrace install does not run it, and an
+# operator pulls it onto the server VM beside the Nomad server. The factory job
+# adds the factory's files to the release: the wrapper and the agent CLI for the
+# agent VM image, the image recipe, and their SHA-256 sums
+# (factory/image/release-files).
 #
 # Each architecture builds on its own native runner, as emulating arm64 makes
 # the cgo and asset builds far slower; a last job joins the two into one tag.
@@ -71,11 +78,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$TAG" cli/dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
+  factory:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: factory/go.mod
+          cache-dependency-path: factory/go.mod
+
+      - name: Make the factory's release files
+        run: factory/image/release-files factory/dist "$TAG"
+
+      - name: Upload the files to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" factory/dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
   build:
     if: github.event_name == 'release' || inputs.images
     strategy:
       matrix:
-        app: [console, event_store]
+        app: [console, event_store, dispatcher]
         platform:
           - { arch: amd64, runner: ubuntu-24.04 }
           - { arch: arm64, runner: ubuntu-24.04-arm }
@@ -109,10 +140,14 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.app }}
+          # The Dispatcher's build needs the factory and the CLI modules, so its
+          # context is the repository's root.
+          context: ${{ matrix.app == 'dispatcher' && '.' || matrix.app }}
+          file: ${{ matrix.app == 'dispatcher' && 'factory/Dockerfile' || format('{0}/Dockerfile', matrix.app) }}
           platforms: linux/${{ matrix.platform.arch }}
           # Console's image keeps it for its call timings; EventStore's
-          # names it in prepare-clickhouse's marker.
+          # names it in prepare-clickhouse's marker; the Dispatcher's
+          # binary prints it ('dispatcher version').
           build-args: |
             SOLIDTRACE_VERSION=${{ env.TAG }}
           outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
@@ -140,7 +175,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        app: [console, event_store]
+        app: [console, event_store, dispatcher]
     steps:
       # The workflow's own commit, so that a run by hand for an older tag
       # also has the script.

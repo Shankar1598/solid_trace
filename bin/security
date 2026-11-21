@@ -15,7 +15,8 @@
 #   rust     The VRL crate's dependencies with known CVEs (osv-scanner)
 #   secrets  Keys and passwords in git's history (gitleaks; .gitleaksignore
 #            lists the false alarms)
-#   images   The images deploy/docker-compose.yml runs, at the latest release,
+#   images   The images deploy/docker-compose.yml and the factory's reference
+#            docker-compose.yml run, at the latest release,
 #            for fixable high and critical CVEs (trivy; .trivyignore.yaml lists
 #            the accepted ones, each until a date)
 #
@@ -48,12 +49,13 @@ check_rust() {
 }
 check_secrets() { mise x "gitleaks@$GITLEAKS" -- gitleaks git --no-banner --redact "$root"; }
 
-# Console's and EventStore's images are tagged by release; latest is the
-# newest one, which is what a VM upgrades to.
+# Console's, EventStore's and the Dispatcher's images are tagged by release;
+# latest is the newest one, which is what a VM upgrades to. The Dispatcher's is
+# in factory/reference/docker-compose.yml: a SolidTrace install does not run it.
 check_images() {
   local image status=0
-  for image in $(grep -oE 'image: *[^ ]+' "$root/deploy/docker-compose.yml" | awk '{print $2}' |
-    sed 's/\${SOLIDTRACE_VERSION:-dev}/latest/'); do
+  for image in $(grep -ohE 'image: *[^ ]+' "$root/deploy/docker-compose.yml" "$root/factory/reference/docker-compose.yml" |
+    awk '{print $2}' | sed -E 's/\$\{SOLIDTRACE_VERSION:-[a-z]+\}/latest/'); do
     echo "== $image"
     mise x "trivy@$TRIVY" -- trivy image --quiet --scanners vuln --severity HIGH,CRITICAL \
       --ignore-unfixed --ignorefile "$root/.trivyignore.yaml" --exit-code 1 "$image" || status=1

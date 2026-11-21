@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Makes the factory's files of a release, for the release job (.github/workflows/release.yml):
+#
+#   factory-bin-linux-amd64.tar.gz   the wrapper (factory-wrapper) and the agent CLI (solidtrace),
+#                                    static, with the release's version, at the top of the archive:
+#                                    unpack it into the directory that FACTORY_BIN_DIR names
+#   factory-image-recipe.tar.gz      agent-vm.sh and its files/, to bake the agent VM image (README.md)
+#   factory-SHA256SUMS               the SHA-256 of the two archives (sha256sum -c factory-SHA256SUMS)
+#
+# The agent VM image is for Linux on x86_64 (the recipe downloads hc for that), so the wrapper has
+# one architecture. The Dispatcher's image (factory/Dockerfile) is not a file: the release job
+# pushes it to the registry for amd64 and arm64.
+#
+#   factory/image/release-files <directory> <tag>    (tag: v0.23.0)
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ $# -eq 2 ] || { sed -n '2,15p' "$0" >&2; exit 2; }
+mkdir -p "$1"
+out="$(cd "$1" && pwd)"
+tag="$2"
+
+bin="$(mktemp -d)"
+trap 'rm -rf "$bin"' EXIT
+"$here/build" "$bin" "$tag" >/dev/null
+
+# Fixed owner, order and times, so that the same files give the same archive.
+pack() { # <archive> <directory> <file>...
+  local archive="$1" dir="$2"
+  shift 2
+  tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='2000-01-01 00:00Z' \
+    -C "$dir" -czf "$out/$archive" "$@"
+}
+pack factory-bin-linux-amd64.tar.gz "$bin" factory-wrapper solidtrace
+pack factory-image-recipe.tar.gz "$here" agent-vm.sh files README.md
+(cd "$out" && sha256sum factory-bin-linux-amd64.tar.gz factory-image-recipe.tar.gz >factory-SHA256SUMS)
+ls -l "$out"

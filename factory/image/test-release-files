@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# The test of factory/image/release-files, which the release job runs: it makes the files of
+# a test release in a temporary directory and checks them. It needs Go. About 20 seconds.
+#
+#   factory/image/test-release-files
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+tag=v0.0.0-release-test
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+failed=0
+fail() { echo "FAIL  $*"; failed=1; }
+
+"$here/release-files" "$work/dist" "$tag" >"$work/log" 2>&1 || { cat "$work/log"; exit 1; }
+ls "$work/dist" | sort | tr '\n' ' ' | grep -qx 'factory-SHA256SUMS factory-bin-linux-amd64.tar.gz factory-image-recipe.tar.gz ' ||
+  fail "the files are: $(ls "$work/dist" | tr '\n' ' ')"
+(cd "$work/dist" && sha256sum -c --quiet factory-SHA256SUMS) || fail "the sums do not match the archives"
+
+mkdir "$work/bin" "$work/recipe"
+tar -xzf "$work/dist/factory-bin-linux-amd64.tar.gz" -C "$work/bin"
+tar -xzf "$work/dist/factory-image-recipe.tar.gz" -C "$work/recipe"
+[ "$(ls "$work/bin" | sort | tr '\n' ' ')" = "factory-wrapper solidtrace " ] || fail "the binaries are: $(ls "$work/bin")"
+[ "$("$work/bin/factory-wrapper" version)" = "$tag" ] || fail "the wrapper's version is not $tag"
+"$work/bin/solidtrace" --version 2>&1 | grep -q "$tag" || fail "the agent CLI's version is not $tag"
+file "$work/bin/factory-wrapper" | grep -q 'statically linked' || fail "the wrapper is not static"
+[ -x "$work/recipe/agent-vm.sh" ] && [ -f "$work/recipe/files/managed-settings.json" ] && [ -f "$work/recipe/files/claude.json" ] ||
+  fail "the recipe archive lacks the recipe or its files/"
+cmp -s "$here/agent-vm.sh" "$work/recipe/agent-vm.sh" || fail "the recipe in the archive is not the recipe of this checkout"
+
+# The same files give the same archives.
+"$here/release-files" "$work/again" "$tag" >/dev/null 2>&1
+cmp -s "$work/dist/factory-SHA256SUMS" "$work/again/factory-SHA256SUMS" || fail "a second run gives other archives"
+
+[ $failed -eq 0 ] && echo "ok    the factory's release files"
+exit $failed

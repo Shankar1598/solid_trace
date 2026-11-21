@@ -2,9 +2,10 @@ name: Scan images
 
 # Scans the images deploy/docker-compose.yml runs, as bin/security's images
 # check does: Console's and EventStore's at latest (the newest release), and
-# the pinned ClickHouse, Caddy and Vector, for fixable high and critical CVEs,
-# with .trivyignore.yaml's accepted ones left out. Findings go to the
-# repository's Security tab, one category per image, so an advisory published
+# the pinned ClickHouse, Caddy and Vector, and the Dispatcher's (which
+# factory/reference/docker-compose.yml runs on a factory's server VM), for
+# fixable high and critical CVEs, with .trivyignore.yaml's accepted ones left
+# out. Findings go to the repository's Security tab, one category per image, so an advisory published
 # after a release shows there without a rebuild. The job doesn't fail on a
 # finding; the Security tab keeps them open until a scan no longer sees them.
 #
@@ -38,8 +39,8 @@ jobs:
       - name: List the images
         id: list
         run: |
-          list=$(grep -oE 'image: *[^ ]+' deploy/docker-compose.yml | awk '{print $2}' |
-            sed 's/\${SOLIDTRACE_VERSION:-dev}/latest/' | jq -Rnc '[inputs]')
+          list=$(grep -ohE 'image: *[^ ]+' deploy/docker-compose.yml factory/reference/docker-compose.yml |
+            awk '{print $2}' | sed -E 's/\$\{SOLIDTRACE_VERSION:-[a-z]+\}/latest/' | jq -Rnc '[inputs]')
           echo "list=$list" >> "$GITHUB_OUTPUT"
 
   scan:

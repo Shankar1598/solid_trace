@@ -22,8 +22,8 @@ private=127.0.0.2
 key="$(head -c 32 /dev/urandom | base64)"
 
 cleanup() {
-  docker rm -f "$container" >/dev/null 2>&1
-  docker volume rm "$volume" >/dev/null 2>&1
+  docker rm -f "$container" "$container-squid" >/dev/null 2>&1
+  docker volume rm "$volume" "$volume-squid" >/dev/null 2>&1
   docker rmi "$tag" >/dev/null 2>&1
 }
 trap cleanup EXIT
@@ -92,6 +92,24 @@ else
   failed=$((failed + 1))
   echo "FAIL  the container does not start"
 fi
+
+# Squid's allowlist: with the reference configuration's default list, the Dispatcher writes
+# the list that Squid reads (the reference docker-compose.yml mounts the same two places).
+docker volume create "$volume-squid" >/dev/null
+docker run --rm --user 0 --entrypoint chown -v "$volume-squid:/etc/squid/factory" "$tag" 10001 /etc/squid/factory
+docker run -d --name "$container-squid" --memory 256m --network host \
+  -v "$volume-squid:/etc/squid/factory" \
+  -v "$repo/factory/reference/squid/allowlist.txt:/etc/solid-trace-factory/default-allowlist.txt:ro" \
+  -e "DISPATCHER_LISTEN=$private:$((port + 1))" -e DISPATCHER_SQUID_ALLOWLIST=/etc/squid/factory/allowlist.txt \
+  -e DISPATCHER_DEFAULT_ALLOWLIST=/etc/solid-trace-factory/default-allowlist.txt -e DISPATCHER_SQUID_RELOAD=true \
+  -e DISPATCHER_SOLIDTRACE_URL=https://console.example.com -e DISPATCHER_SOLIDTRACE_TOKEN=stk_image_test \
+  -e "DISPATCHER_ENCRYPTION_KEY=$key" "$tag" >/dev/null
+sleep 3
+list() { docker run --rm --entrypoint cat -v "$volume-squid:/etc/squid/factory" "$tag" /etc/squid/factory/allowlist.txt; }
+check "the Dispatcher writes Squid's allowlist: the default list and SolidTrace's host" bash -c \
+  "$(declare -f list); tag='$tag'; volume='$volume'; list | grep -qx 'api.anthropic.com' && list | grep -qx 'console.example.com'"
+docker rm -f "$container-squid" >/dev/null 2>&1
+docker volume rm "$volume-squid" >/dev/null 2>&1
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
