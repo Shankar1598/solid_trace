@@ -1,92 +1,60 @@
-# The first agent machine of the local factory stack. Ticket 46 makes this the image
-# recipe for agent VMs. It has the run user, the one sudoers rule, hc, Claude Code at
-# the pinned version with its first-run dialogs accepted, and the proxy settings.
+# The agent machine of the local factory stack, made by the agent VM image recipe
+# (factory/image/agent-vm.sh), as an image pipeline makes an agent VM. The recipe has
+# the pinned versions, the run user, the one sudoers rule, hc, Claude Code with its
+# first-run dialogs accepted, the wrapper, the agent CLI and the proxy settings.
+#
+# Build it with two contexts: this directory, with bin/ from factory/image/build, and
+# the recipe's directory as "image". factory/local/stack does both:
+#
+#   factory/image/build factory/local/agent-machine/bin
+#   docker build --build-context image=factory/image factory/local/agent-machine
 #
 # It has no Nomad binary: Nomad is not shipped (ADR 0019). The stack mounts the binary
 # from Nomad's image, which only the local stack's compose file names.
 #
 # It has no credentials of any kind. A Run gets its Claude token from the Dispatcher.
 #
-# Two targets: agent-vm (the image recipe) and local (agent-vm with the local stack's
-# take-over user). The local stack's compose file builds local.
+# Two targets: agent-vm (the image recipe only) and local (agent-vm with the local
+# stack's take-over user and its Nomad client). The local stack's compose file builds
+# local.
 FROM debian:bookworm-20261104-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS agent-vm
 
-# The pinned versions, with the SHA-256 of each download (linux x86_64).
-ARG CLAUDE_CODE_VERSION=2.1.325
-ARG CLAUDE_CODE_SHA256=0dc4f4a9a165fc60746d7ae8489712e5fc352f1e7ad4eb22e7141bd0812eb0cf
-ARG HC_VERSION=0.1.21
-ARG HC_SHA256=78424755c10a40dde38a0bdb55c20ac19706e9ae05ed68fc2acf1fcff0d941c1
+# The recipe's settings for the local stack: Squid and the Dispatcher are compose services.
+ENV FACTORY_PROXY_URL=http://squid:3128 \
+    FACTORY_DISPATCHER_HOST=dispatcher
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl git sudo procps \
- && rm -rf /var/lib/apt/lists/*
+# Two layers, so that a change to the wrapper or the agent CLI does not download Claude
+# Code again. The cache keeps the downloads for the next build.
+RUN --mount=type=bind,from=image,target=/opt/factory-image \
+    --mount=type=cache,target=/var/cache/factory-image \
+    FACTORY_DOWNLOAD_CACHE=/var/cache/factory-image /opt/factory-image/agent-vm.sh system
+RUN --mount=type=bind,source=bin,target=/opt/factory-bin \
+    --mount=type=bind,from=image,target=/opt/factory-image \
+    FACTORY_BIN_DIR=/opt/factory-bin /opt/factory-image/agent-vm.sh factory
 
-RUN curl -fsSL -o /usr/local/bin/claude \
-      "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude" \
- && echo "${CLAUDE_CODE_SHA256}  /usr/local/bin/claude" | sha256sum -c - \
- && chmod 755 /usr/local/bin/claude
-
-RUN curl -fsSL -o /tmp/hc.tar.gz \
-      "https://releases.herdr.dev/core/${HC_VERSION}/herdr-core-linux-x86_64.tar.gz" \
- && echo "${HC_SHA256}  /tmp/hc.tar.gz" | sha256sum -c - \
- && tar -xzf /tmp/hc.tar.gz -C /usr/local/bin herdr-core \
- && rm /tmp/hc.tar.gz \
- && chown root:root /usr/local/bin/herdr-core \
- && chmod 755 /usr/local/bin/herdr-core \
- && ln -s herdr-core /usr/local/bin/hc
-
-# The run user (not root, in the docker group) and the access group. On a VM, OS Login
-# gives the access group to each person of the Google group. The Nomad job gives each
-# wrapper the directory <executions>/<execution>, which the wrapper makes: root owns
-# each parent, and the run user can only search them.
-RUN groupadd --system docker \
- && groupadd --system factory-access \
- && useradd --create-home --shell /bin/bash --groups docker agent \
- && install -d -o agent -g agent -m 755 /work \
- && install -d -o root -g root -m 711 /var/lib/factory/executions
-
-COPY sudoers /etc/sudoers.d/factory-take-over
-RUN chmod 440 /etc/sudoers.d/factory-take-over && visudo -c
-
-# Claude Code's first-run dialogs, accepted in files that root owns. The wrapper deletes
-# the run user's home after each Execution and sets CLAUDE_CONFIG_DIR, so files in the
-# home do not apply to a Run.
-# - Claude Code's managed settings, which the run user cannot change: no bypass-mode
-#   warning, and no auto-updater, so that the pinned version stays.
-# - The template of the run user's .claude.json, with the onboarding done. For each
-#   Execution the wrapper copies it to $CLAUDE_CONFIG_DIR/.claude.json and adds
-#   projects["<checkout>"].hasTrustDialogAccepted for its checkout: Claude Code trusts
-#   a checkout only at its exact path (a trusted parent directory does not count).
-COPY managed-settings.json /etc/claude-code/managed-settings.json
-COPY claude.json /etc/factory/claude.json
-
-# The proxy settings. Tools read HTTPS_PROXY; git over ssh is rewritten to HTTPS.
-# NO_PROXY has the Dispatcher's host: the agent machine opens a direct connection to its
-# private listener (Squid refuses that port). On the local stack the host is "dispatcher".
+# A container has no systemd and no PAM login, so the proxy settings of the recipe's
+# /etc/factory/proxy.env are also the image's environment, for "docker exec". The
+# entrypoint gives the file to the Nomad client, as systemd does on a VM. The smoke
+# check compares the two.
 ENV HTTPS_PROXY=http://squid:3128 \
     HTTP_PROXY=http://squid:3128 \
     https_proxy=http://squid:3128 \
     http_proxy=http://squid:3128 \
-    NO_PROXY=localhost,127.0.0.1,dispatcher \
-    no_proxy=localhost,127.0.0.1,dispatcher \
+    NO_PROXY=localhost,127.0.0.1,169.254.169.254,metadata.google.internal,dispatcher \
+    no_proxy=localhost,127.0.0.1,169.254.169.254,metadata.google.internal,dispatcher \
     DISABLE_AUTOUPDATER=1
-RUN printf '%s\n' \
-      'HTTPS_PROXY=http://squid:3128' 'HTTP_PROXY=http://squid:3128' \
-      'https_proxy=http://squid:3128' 'http_proxy=http://squid:3128' \
-      'NO_PROXY=localhost,127.0.0.1,dispatcher' 'no_proxy=localhost,127.0.0.1,dispatcher' \
-      'DISABLE_AUTOUPDATER=1' >>/etc/environment \
- && git config --system url."https://github.com/".insteadOf "git@github.com:" \
- && git config --system --add url."https://github.com/".insteadOf "ssh://git@github.com/" \
- && git config --system url."https://bitbucket.org/".insteadOf "git@bitbucket.org:" \
- && git config --system --add url."https://bitbucket.org/".insteadOf "ssh://git@bitbucket.org/"
 
-COPY client.hcl /etc/nomad.d/client.hcl
-COPY entrypoint.sh /usr/local/bin/agent-machine
-RUN chmod 755 /usr/local/bin/agent-machine && install -d -m 700 /var/lib/nomad
-
-CMD ["/usr/local/bin/agent-machine"]
+CMD ["/bin/bash"]
 
 # The local stack only: "engineer", a member of the access group, attaches with
 # "docker exec" in place of ssh and OS Login. The agent-vm target has no such user.
+# The Nomad client's own settings (the server, the introduction token) and the
+# entrypoint, which prepares cgroup v2 as a VM has it.
 FROM agent-vm AS local
-RUN useradd --create-home --shell /bin/bash --groups factory-access engineer
+RUN useradd --create-home --shell /bin/bash --groups factory-access engineer \
+ && install -d -o agent -g agent -m 755 /work \
+ && install -d -m 700 /var/lib/nomad
+COPY client.hcl /etc/nomad.d/client.hcl
+COPY entrypoint.sh /usr/local/bin/agent-machine
+RUN chmod 755 /usr/local/bin/agent-machine
+CMD ["/usr/local/bin/agent-machine"]
