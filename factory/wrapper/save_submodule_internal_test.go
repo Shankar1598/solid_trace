@@ -37,7 +37,7 @@ func submoduleExecution(t *testing.T) (e *execution, remote, lib string) {
 
 	cfg := testConfig(dir)
 	task := dispatcherapi.Task{RunID: saveRunID, ExecutionID: "ex1", Repository: "bitbucket.org/example/shop",
-		CloneURL: "file://" + remote, Branch:dispatcherapi.RunBranch(saveRunID), BaseBranch: "main"}
+		CloneURL: "file://" + remote, Branch: dispatcherapi.RunBranch(saveRunID), BaseBranch: "main"}
 	var log bytes.Buffer
 	e = setupExecution(t, cfg, &log, task)
 	// git clones a submodule over file:// only when it is permitted.
@@ -159,10 +159,10 @@ func TestASubmodulesURLMustBeOnTheForge(t *testing.T) {
 		GitURL: "https://git.example.test/git/"}}
 	parent := "https://git.example.test/git/example/shop.git"
 	for raw, want := range map[string]string{
-		"git@bitbucket.org:example/lib.git":                "https://git.example.test/git/example/lib.git",
-		"ssh://git@bitbucket.org/example/lib.git":          "https://git.example.test/git/example/lib.git",
-		"../lib.git":                                       "https://git.example.test/git/example/lib.git",
-		"./nested.git":                                     "https://git.example.test/git/example/shop.git/nested.git",
+		"git@bitbucket.org:example/lib.git":       "https://git.example.test/git/example/lib.git",
+		"ssh://git@bitbucket.org/example/lib.git": "https://git.example.test/git/example/lib.git",
+		"../lib.git":   "https://git.example.test/git/example/lib.git",
+		"./nested.git": "https://git.example.test/git/example/shop.git/nested.git",
 		"https://git.example.test/git/other/lib.git":       "https://git.example.test/git/other/lib.git",
 		"https://elsewhere.example/git/example/lib.git":    "",
 		"https://git.example.test/gitx/example/lib.git":    "",
