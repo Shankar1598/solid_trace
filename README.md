@@ -19,6 +19,7 @@ SolidTrace groups your application's errors into Issues and keeps its Logs, with
 - **Dashboards** with filters, and **[Monitors](docs/logs/monitors.md)** that notify by email, Slack or PagerDuty.
 - **The Overview**: what came in, what was kept and what it costs.
 - **An [MCP server](docs/mcp.md)** for Claude Code, Cursor and other agents.
+- **[Agent sessions](docs/agent-sessions.md)** from your engineers' coding agents, and an optional **[Factory](docs/factory.md)** that gives work to agents on your own machines. The Factory is off unless you install it on its own server VM.
 
 ## Scale
 
