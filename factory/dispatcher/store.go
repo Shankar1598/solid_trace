@@ -405,6 +405,16 @@ var migrations = []string{
 	// the Execution's machine went: preempted, machine stopped or machine
 	// lost ('' is an Execution that ended for another reason).
 	`ALTER TABLE executions ADD COLUMN machine_lost TEXT NOT NULL DEFAULT '';`,
+	// The closing totals (ticket 84). run_counts counts the run events of
+	// each Run by what they count as (see countsOf), with the time of the
+	// first one.
+	`CREATE TABLE run_counts (
+		run_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		n INTEGER NOT NULL,
+		first_at INTEGER NOT NULL,
+		PRIMARY KEY (run_id, name)
+	) WITHOUT ROWID;`,
 }
 
 // store is the Dispatcher's SQLite database.

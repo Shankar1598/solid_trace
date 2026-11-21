@@ -464,12 +464,28 @@ func (w *PebbleWriter) AgentFilesInserted(projectID uint32, files []AgentFileSta
 	if err != nil {
 		return false, err
 	}
+	return cursorPassed(cursor, files), nil
+}
+
+// AgentFilesParsed reports whether the parse has inserted the Logs and
+// the agent_sessions totals of each unit stored of files, the states that
+// AgentSessionFiles gave: its cursor is at or after each one's batch.
+func (w *PebbleWriter) AgentFilesParsed(projectID uint32, files []AgentFileState) (bool, error) {
+	cursor, err := w.AgentParseCursor(projectID)
+	if err != nil {
+		return false, err
+	}
+	return cursorPassed(cursor, files), nil
+}
+
+// cursorPassed is true when cursor is at or after the batch of each file.
+func cursorPassed(cursor uuid.UUID, files []AgentFileState) bool {
 	for _, f := range files {
 		if bytes.Compare(f.Batch[:], cursor[:]) > 0 {
-			return false, nil
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 // AgentFileBatchesAfter returns a Project's Agent file batches after the

@@ -189,9 +189,11 @@ func (d *Dispatcher) closeIdleRuns(ctx context.Context, now time.Time) {
 
 // close closes the Run with the reason, then deletes its work-in-progress
 // ref. A Run that is closed already, or has an Execution queued or live,
-// stays as it is.
+// stays as it is. The closed event carries the Run's totals, with the
+// sums of its Agent sessions that SolidTrace gives before the close.
 func (d *Dispatcher) close(ctx context.Context, r closingRun, reason string, now time.Time) {
-	closed, err := d.store.closeRun(r.id, reason, now)
+	totals := d.runSessionTotals(ctx, r.id)
+	closed, err := d.store.closeRun(r.id, reason, now, totals.attributes())
 	if err != nil {
 		d.log.Error("could not close a Run", "run", r.id, "error", err)
 		return
@@ -329,10 +331,11 @@ func (s *store) savePROutcome(runID, outcome string, at time.Time) error {
 }
 
 // closeRun closes the Run at at with the reason, in one transaction with
-// its closed event. It is false when the Run is closed already, or has
-// an Execution queued or live: a Closed Run has no Execution that can
-// save a work-in-progress ref after the close.
-func (s *store) closeRun(runID, reason string, at time.Time) (bool, error) {
+// its closed event, which has the Run's own totals and sessionTotals (the
+// Attributes of its Agent sessions' totals). It is false when the Run is
+// closed already, or has an Execution queued or live: a Closed Run has no
+// Execution that can save a work-in-progress ref after the close.
+func (s *store) closeRun(runID, reason string, at time.Time, sessionTotals map[string]any) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
@@ -347,7 +350,15 @@ func (s *store) closeRun(runID, reason string, at time.Time) (bool, error) {
 	if n, err := result.RowsAffected(); err != nil || n == 0 {
 		return false, err
 	}
-	if err := recordEvent(tx, at, runID, eventClosed, map[string]any{"run.close_reason": reason}); err != nil {
+	details, err := closingTotals(tx, runID)
+	if err != nil {
+		return false, err
+	}
+	for k, v := range sessionTotals {
+		details[k] = v
+	}
+	details["run.close_reason"] = reason
+	if err := recordEvent(tx, at, runID, eventClosed, details); err != nil {
 		return false, err
 	}
 	return true, s.commit(tx)

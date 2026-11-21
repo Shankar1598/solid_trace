@@ -159,6 +159,9 @@ func recordEvent(tx *sql.Tx, at time.Time, runID, kind string, details map[strin
 	event["run.started_by.kind"] = actorKind
 	event["run.started_by.id"] = actorID
 	event["run.started_by.name"] = actorName
+	if err := countEvent(tx, at, runID, kind, event); err != nil {
+		return err
+	}
 	if err := queueWriteBack(tx, at, runID, kind, details); err != nil {
 		return err
 	}

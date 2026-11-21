@@ -58,7 +58,9 @@ type AgentConfig struct {
 	Downloads AgentDownloads
 	// RunEvents stores the Dispatcher's run events as Logs.
 	RunEvents RunEventsIngest
-	Clock     clock.Clock
+	// Totals reads the totals of Agent sessions for the totals call.
+	Totals AgentTotals
+	Clock  clock.Clock
 	// Version is the server's version, as SOLIDTRACE_VERSION gives it
 	// (v0.19.0). A version that is not a release, such as dev, accepts a
 	// client of each version.
@@ -74,6 +76,7 @@ type AgentHandler struct {
 	notifyFiles func(projectID uint32)
 	downloads   AgentDownloads
 	runEvents   RunEventsIngest
+	totals      AgentTotals
 	clock       clock.Clock
 	version     string
 	minimum     *clientVersion
@@ -91,6 +94,7 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 		notifyFiles: cfg.NotifyFiles,
 		downloads:   cfg.Downloads,
 		runEvents:   cfg.RunEvents,
+		totals:      cfg.Totals,
 		clock:       cfg.Clock,
 		version:     cfg.Version,
 		minimum:     minimumClientVersion(cfg.Version),
@@ -105,6 +109,7 @@ func RegisterAgentRoutes(app *fiber.App, h *AgentHandler) {
 	api.Get("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.AgentSessionFiles)
 	api.Post("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.UploadAgentFile)
 	api.Get("/agent-sessions/:session_id/download", h.requireScope(ScopeSessionsRead), h.DownloadAgentSession)
+	api.Get("/agent-session-totals", h.requireScope(ScopeSessionsRead), h.AgentSessionTotals)
 	api.Post("/run-events", h.requireScope(ScopeRunEventsWrite), h.SendRunEvents)
 }
 

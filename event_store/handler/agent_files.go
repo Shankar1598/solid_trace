@@ -35,6 +35,7 @@ type AgentFiles interface {
 	WriteAgentFileUnit(projectID uint32, upload storage.AgentUpload) (storage.AgentFileState, bool, error)
 	AgentSessionFiles(projectID uint32, sessionID uuid.UUID) (storage.AgentSession, bool, []storage.AgentFileState, error)
 	AgentFilesInserted(projectID uint32, files []storage.AgentFileState) (bool, error)
+	AgentFilesParsed(projectID uint32, files []storage.AgentFileState) (bool, error)
 }
 
 // agentSessionOf checks the Agent session id of the path against the
@@ -51,17 +52,24 @@ func (h *AgentHandler) agentSessionOf(c *fiber.Ctx, token auth.Token) (projectID
 		return 0, uuid.Nil, false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": fmt.Sprintf("This token is limited to the Agent sessions of a Run, and %s is not one of them.", sessionID)})
 	}
+	projectID, ok, err = h.agentProjectOf(c, token)
+	return projectID, sessionID, ok, err
+}
+
+// agentProjectOf finds the token's Agent Project. ok is false when it has
+// answered.
+func (h *AgentHandler) agentProjectOf(c *fiber.Ctx, token auth.Token) (projectID uint32, ok bool, err error) {
 	projectID, on, err := h.settings.AgentProject(token.Organization.ID)
 	if err != nil {
 		logger.L.Error("Failed to find the Agent Project", "organization_id", token.Organization.ID, "error", err)
-		return 0, uuid.Nil, false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The Agent Project could not be read. Try again later."})
+		return 0, false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The Agent Project could not be read. Try again later."})
 	}
 	if !on {
-		return 0, uuid.Nil, false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+		return 0, false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": fmt.Sprintf("Agent sessions are off in %s. An Admin turns them on in Console on Settings → Agent sessions.",
 				token.Organization.Name)})
 	}
-	return projectID, sessionID, true, nil
+	return projectID, true, nil
 }
 
 func limitHas(ids []string, sessionID uuid.UUID) bool {

@@ -192,7 +192,7 @@ func main() {
 	defer agentTokens.Close()
 	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter, NotifyFiles: agentFileProcessor.Notify,
-		Downloads: clickHouse, RunEvents: ingestService, Clock: clock.System{}, Version: serverVersion(),
+		Downloads: clickHouse, RunEvents: ingestService, Totals: clickHouseLogs, Clock: clock.System{}, Version: serverVersion(),
 	}))
 
 	queryApp := fiber.New(fiber.Config{
