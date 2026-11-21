@@ -274,7 +274,7 @@ An agent machine can go during an Execution: a Spot VM that the cloud takes back
 - **The checkpoint:** every 5 minutes, only when the work changed since the last save. It runs on standard VMs too. The operator changes the interval with `DISPATCHER_CHECKPOINT_INTERVAL` (a duration, such as `10m`); `0` turns the checkpoint off.
 - **The preemption save:** when the machine goes with a notice, after the agent stops.
 
-A save is a commit of the working tree, with the Run's HEAD as its parent, and the message "WIP [skip ci]: saved by the factory at <UTC time>, Run <id>, Execution <id>, reason <checkpoint|preempted|machine stopped>. Not reviewed." Commits that are not pushed go with it. The save does not change the agent's index, HEAD or branch, and it does not run the hooks or the programs of the checkout's git configuration.
+A save is a commit of the working tree, with the Run's HEAD as its parent, and the message "WIP [skip ci]: saved by the factory at <UTC time>, Run <id>, Execution <id>, reason <checkpoint|preempted|machine stopped>. Not reviewed." Commits that are not pushed go with it: when the push of the Run's branch fails at a preemption (for example, a person pushed to the branch), the WIP ref keeps the save. The save does not change the agent's index, HEAD or branch, and it does not run the hooks or the programs of the checkout's git configuration.
 
 A save leaves out these files, and the preemption event names them:
 

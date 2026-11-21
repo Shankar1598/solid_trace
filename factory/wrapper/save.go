@@ -214,8 +214,7 @@ type repoSave struct {
 	// work is the working tree, gitDir the agent's git directory, and
 	// pushURL the clone URL that the save pushes to.
 	work, gitDir, pushURL string
-	// dir is the save's own folder: its git directory (repo) and the
-	// patterns that it leaves out (exclude).
+	// dir is the save's own folder, with its git directory (repo).
 	dir string
 	env []string
 	// head is the agent's HEAD, headTree its tree, and tree the tree of
@@ -315,7 +314,8 @@ func (s *wipSaver) snapshot(ctx context.Context, git gitCommand, r *repoSave, de
 		return err
 	}
 	repo := filepath.Join(r.dir, "repo")
-	init := []string{"init", "--quiet", "--bare"}
+	// No template: the info/exclude of prepare stays.
+	init := []string{"init", "--quiet", "--bare", "--template="}
 	if len(head) == 64 {
 		init = append(init, "--object-format=sha256")
 	}
@@ -410,25 +410,25 @@ func (s *wipSaver) prepare(r *repoSave) error {
 	if err := os.Chmod(dir, 0o711); err != nil {
 		return err
 	}
-	// The factory file's patterns, and the agent's own
-	// .git/info/exclude, which git does not read from another git
-	// directory.
-	patterns := strings.Join(e.task.SaveExclude, "\n") + "\n"
-	info := filepath.Join(r.gitDir, "info", "exclude")
-	if st, err := os.Lstat(info); err == nil && st.Mode().IsRegular() && st.Size() < 1<<20 {
-		if b, err := os.ReadFile(info); err == nil {
-			patterns += string(b) + "\n"
-		}
+	// The factory file's patterns go in the info/exclude of the save's
+	// git directory, which root writes before the run user gets the
+	// directory. The agent's own .git/info/exclude, which git does not
+	// read from another git directory, is the save's core.excludesFile:
+	// git reads it as the run user, so the wrapper reads no file that the
+	// agent can change (a link to a file of root's gives nothing). The
+	// factory file's patterns win over the agent's.
+	repo := filepath.Join(dir, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		return err
 	}
-	exclude := filepath.Join(dir, "exclude")
-	if err := os.WriteFile(exclude, []byte(patterns), 0o644); err != nil {
+	if err := os.Mkdir(filepath.Join(repo, "info"), 0o755); err != nil {
+		return err
+	}
+	exclude := filepath.Join(repo, "info", "exclude")
+	if err := os.WriteFile(exclude, []byte(strings.Join(e.task.SaveExclude, "\n")+"\n"), 0o644); err != nil {
 		return err
 	}
 	if err := os.Chmod(exclude, 0o644); err != nil {
-		return err
-	}
-	repo := filepath.Join(dir, "repo")
-	if err := os.Mkdir(repo, 0o700); err != nil {
 		return err
 	}
 	if err := e.runUser.give(repo); err != nil {
@@ -444,7 +444,7 @@ func (s *wipSaver) prepare(r *repoSave) error {
 	r.env = append(r.env, "HOME="+dir, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_LITERAL_PATHSPECS=1",
 		"GIT_CONFIG_COUNT=3",
-		"GIT_CONFIG_KEY_0=core.excludesFile", "GIT_CONFIG_VALUE_0="+exclude,
+		"GIT_CONFIG_KEY_0=core.excludesFile", "GIT_CONFIG_VALUE_0="+filepath.Join(r.gitDir, "info", "exclude"),
 		"GIT_CONFIG_KEY_1=core.fsmonitor", "GIT_CONFIG_VALUE_1=false",
 		"GIT_CONFIG_KEY_2=core.untrackedCache", "GIT_CONFIG_VALUE_2=false",
 		"GIT_AUTHOR_NAME="+commitName, "GIT_AUTHOR_EMAIL="+commitEmail,

@@ -1,10 +1,12 @@
 package wrapper
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -98,5 +100,69 @@ func TestASaveRunsNoProgramOfTheAgentsGitConfiguration(t *testing.T) {
 	}
 	if got := gitRun(t, "--git-dir", remote, "show", "refs/agent-wip/"+saveRunID+":app.txt"); got != "two" {
 		t.Errorf("app.txt in the save: %q", got)
+	}
+}
+
+// The wrapper never reads the agent's .git/info/exclude: git reads it as
+// the run user, with the agent's rights. A link at .git/info or at
+// info/exclude to a file of root's gives no copy of that file in the
+// save's folder, and the agent's own patterns still apply.
+func TestTheWrapperCopiesNoFileThatTheAgentsInfoExcludeNames(t *testing.T) {
+	for _, link := range []string{"info", "info/exclude"} {
+		t.Run(link, func(t *testing.T) {
+			e, remote := savingExecution(t, map[string]string{"app.txt": "one\n"}, func(task *dispatcherapi.Task) {
+				task.SaveExclude = []string{"factory.txt"}
+			})
+			outside := t.TempDir()
+			writeFiles(t, outside, map[string]string{"exclude": "local.txt\n# the secret of root\n"})
+			gitDir := filepath.Join(e.checkout, ".git")
+			if err := os.RemoveAll(filepath.Join(gitDir, "info")); err != nil {
+				t.Fatal(err)
+			}
+			if link == "info" {
+				if err := os.Symlink(outside, filepath.Join(gitDir, "info")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.Mkdir(filepath.Join(gitDir, "info"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "exclude"), filepath.Join(gitDir, "info", "exclude")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			r := &repoSave{work: e.checkout, gitDir: gitDir}
+			defer r.remove()
+			if err := newWIPSaver(e).prepare(r); err != nil {
+				t.Fatalf("prepare: %v", err)
+			}
+			err := filepath.WalkDir(r.dir, func(path string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return err
+				}
+				b, err := os.ReadFile(path)
+				if bytes.Contains(b, []byte("the secret of root")) {
+					t.Errorf("the wrapper copied the agent's exclude file to %s", path)
+				}
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			writeFiles(t, e.checkout, map[string]string{"factory.txt": "x\n", "local.txt": "x\n", "new.txt": "new\n"})
+			saved, err := e.saver.save(context.Background(), dispatcherapi.EndPreempted)
+			if err != nil {
+				t.Fatalf("the save: %v", err)
+			}
+			if got := gitRun(t, "--git-dir", remote, "show", "refs/agent-wip/"+saveRunID+":new.txt"); got != "new" {
+				t.Errorf("new.txt in the save: %q", got)
+			}
+			slices.Sort(saved.Skipped)
+			if want := []string{"factory.txt", "local.txt"}; !slices.Equal(saved.Skipped, want) {
+				t.Errorf("the save names as left out %q, want %q", saved.Skipped, want)
+			}
+		})
 	}
 }
