@@ -302,7 +302,18 @@ func (s *wipSaver) snapshot(ctx context.Context, git gitCommand, r *repoSave, de
 	if r.path != "" {
 		prefix = r.path + "/"
 	}
-	for _, name := range splitNUL(ignored) {
+	// git can name an ignored folder and a file in it: the folder is
+	// enough.
+	names := splitNUL(ignored)
+	slices.Sort(names)
+	dir := ""
+	for _, name := range names {
+		if dir != "" && strings.HasPrefix(name, dir) {
+			continue
+		}
+		if strings.HasSuffix(name, "/") {
+			dir = name
+		}
 		r.skipped = append(r.skipped, prefix+name)
 	}
 	var keep []byte
