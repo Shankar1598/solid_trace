@@ -199,7 +199,7 @@ function Report({ report }: { report: RunReport }) {
           {report.checks.length === 0 ? <None text="No checks." /> : (
             <ul className="space-y-2">
               {report.checks.map((c, i) => (
-                <li key={`${c.name}-${i}`} data-check={c.name} className="border p-2">
+                <li key={`${c.name}-${i}`} data-check={c.name ?? c.command} className="border p-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant={c.passed ? 'ok' : 'error'}>{checkText(c)}</Badge>
                     <span className="font-medium">{c.name}</span>
