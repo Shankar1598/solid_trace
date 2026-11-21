@@ -115,7 +115,7 @@ Make the server VM (Debian 12, 2 vCPU and 4 GB or more) and put the rules of the
    ```
 
    `default-allowlist.txt` is the default allowlist of the reference configuration. Edit it for your team. The Dispatcher writes `/etc/squid/factory/allowlist.txt` as this list, plus the hosts of SolidTrace, plus the extra hosts of each repository that a Project names. It changes the file when a Project or a factory file changes.
-3. Copy [`squid/squid.conf`](../factory/reference/squid/squid.conf) to `/etc/squid/squid.conf`. Set `agent_net` to the subnet of the agent VMs. Set or delete the `solidtrace_*` lines, as the comment says.
+3. Copy [`squid/squid.conf`](../factory/reference/squid/squid.conf) to `/etc/squid/squid.conf`. Set `agent_net` to the subnet of the agent VMs. Set the `solidtrace_*` lines to the host and port of the ingest URL (`4443` with HTTPS, `4000` without), or delete them when the ingest uses port 80 or 443. The wrappers upload through Squid, and Squid refuses a request to a port that is not set here.
 4. Make Squid reload when the allowlist changes: copy the two files of [`systemd/`](../factory/reference/systemd) to `/etc/systemd/system/`, then run `systemctl enable --now squid-allowlist.path`. Restart Squid.
 
 ### 4. Install Caddy
@@ -129,7 +129,7 @@ An Admin of the Organization opens **Settings → API tokens & MCP**, and makes 
 ### 6. Start the Dispatcher
 
 1. Make a directory `/opt/solid-trace-factory` with [`docker-compose.yml`](../factory/reference/docker-compose.yml). Copy [`dispatcher.env.example`](../factory/reference/dispatcher.env.example) to `/etc/solid-trace-factory/dispatcher.env`, with mode 600.
-2. Set the values: SolidTrace's URL, the Dispatcher's token (step 5), the Nomad address and token (step 2), the machine kinds, and the private listener's address. Make the encryption key with `openssl rand -base64 32`, and keep a copy of it away from the VM. With another key, the Dispatcher does not start.
+2. Set the values: SolidTrace's URL, SolidTrace's **ingest URL** (`DISPATCHER_SOLIDTRACE_INGEST_URL`; it is `https://HOST:4443` on an install with HTTPS, `http://HOST:4000` on one without, and is not Console's URL), the Dispatcher's token (step 5), the Nomad address and token (step 2), the machine kinds, and the private listener's address. Make the encryption key with `openssl rand -base64 32`, and keep a copy of it away from the VM. With another key, the Dispatcher does not start.
 3. Set `DISPATCHER_LISTEN` to the server VM's **private address** and a port, such as `10.100.0.3:7600`. Do not use a public address or `0.0.0.0`. The default, `127.0.0.1:7600`, is a safe address that no agent VM can reach.
 4. Start it:
 

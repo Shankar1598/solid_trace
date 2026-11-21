@@ -36,6 +36,10 @@ func TestTheReferenceConfigurationStartsTheDispatcher(t *testing.T) {
 	if config.NomadAddress != "http://10.100.0.3:4646" || len(config.MachineKinds) != 1 || config.MachineKinds[0].Name != "standard" {
 		t.Errorf("Nomad %q, machine kinds %v", config.NomadAddress, config.MachineKinds)
 	}
+	// Console does not serve the agent ingest: with no ingest URL, no Agent session arrives.
+	if config.SolidTraceIngestURL != "https://solidtrace.example.com:4443" {
+		t.Errorf("the ingest URL is %q, want SolidTrace's ingest on port 4443", config.SolidTraceIngestURL)
+	}
 	if config.SquidAllowlist != "/etc/squid/factory/allowlist.txt" || config.SquidReload != "true" {
 		t.Errorf("Squid's allowlist %q, reload %q", config.SquidAllowlist, config.SquidReload)
 	}
