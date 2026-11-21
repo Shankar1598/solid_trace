@@ -90,7 +90,7 @@ func (e *execution) setupTakeOver(ctx context.Context, environ []string) error {
 	if err := e.writeGitConfig(secrets); err != nil {
 		return err
 	}
-	e.uploads.dir = e.kept.projectDir
+	e.uploads.adopt(e.kept.projectDir)
 	e.checkout = checkout
 	tip, _, err := e.git(ctx, environ, checkout, "rev-parse", "HEAD")
 	if err != nil {
@@ -111,7 +111,7 @@ func (e *execution) setupTakeOver(ctx context.Context, environ []string) error {
 // starts with its id.
 func (e *execution) interactiveArgs() []string {
 	args := []string{"--permission-mode", "bypassPermissions"}
-	if _, err := e.uploads.dir.Stat(e.task.SessionID + ".jsonl"); err == nil {
+	if _, err := e.uploads.root().Stat(e.task.SessionID + ".jsonl"); err == nil {
 		return append(args, "--resume", e.task.SessionID)
 	}
 	return append(args, "--session-id", e.task.SessionID)

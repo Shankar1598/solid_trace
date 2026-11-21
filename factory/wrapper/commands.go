@@ -58,6 +58,9 @@ func (e *execution) pollCommands(ctx context.Context) {
 			after = max(after, c.Seq)
 			switch c.Kind {
 			case dispatcherapi.CommandStop:
+				// The stopping state is set first: the Runner's SIGTERM
+				// after the stop is then not the machine's stop.
+				e.stopping.Store(true)
 				e.beginEnd(dispatcherapi.EndStopped, "", true)
 			case dispatcherapi.CommandTakeOver:
 				// The usual end procedure; the end call's answer names the

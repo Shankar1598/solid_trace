@@ -2,6 +2,8 @@ package wrapper
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +14,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentapi"
@@ -47,20 +51,22 @@ type uploads struct {
 	client     *client
 	task       dispatcherapi.Task
 	projectDir string
-	// dir is projectDir, open from before the run user's first process.
-	dir      *os.Root
-	every    time.Duration
-	log      io.Writer
-	capturer *capture.Capturer
+	every      time.Duration
+	log        io.Writer
+	capturer   *capture.Capturer
 
-	mu    sync.Mutex
+	mu sync.Mutex
+	// dir is projectDir, open from before the run user's first process.
+	// It is nil until prepare: the preemption handler can start before.
+	dir   *os.Root
 	token dispatcherapi.SessionToken
 	// refused are the Agent session ids that the Dispatcher did not add
 	// to the Run: the wrapper does not ask for them again.
 	refused map[string]bool
 
-	stop context.CancelFunc
-	done chan struct{}
+	stop     context.CancelFunc
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
 func newUploads(cfg config, c *client, task dispatcherapi.Task, log io.Writer) *uploads {
@@ -91,8 +97,25 @@ func (u *uploads) prepare(r runUser) error {
 	if err != nil {
 		return err
 	}
+	u.mu.Lock()
 	u.dir = dir
+	u.mu.Unlock()
 	return nil
+}
+
+// adopt takes the open project directory of the Execution that a
+// take-over follows on this machine, in place of prepare.
+func (u *uploads) adopt(dir *os.Root) {
+	u.mu.Lock()
+	u.dir = dir
+	u.mu.Unlock()
+}
+
+// root is the open project directory, or nil before prepare.
+func (u *uploads) root() *os.Root {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.dir
 }
 
 // Token is the Execution's child token (agentapi.Tokens).
@@ -165,25 +188,150 @@ func (u *uploads) start() {
 	}()
 }
 
+// stopLoop stops the uploads during the Execution, and waits for the
+// pass that runs.
+func (u *uploads) stopLoop() {
+	u.stopOnce.Do(func() {
+		if u.stop != nil {
+			u.stop()
+			<-u.done
+		}
+	})
+}
+
 // finish stops the uploads during the Execution and sends the last bytes
-// of each file.
-func (u *uploads) finish() {
-	if u.stop != nil {
-		u.stop()
-		<-u.done
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), finalWait)
+// of each file, within finalWait or until ctx ends.
+func (u *uploads) finish(ctx context.Context) {
+	u.stopLoop()
+	ctx, cancel := context.WithTimeout(ctx, finalWait)
 	defer cancel()
 	u.pass(ctx, true)
-	// The project directory stays open: a take-over on this machine
-	// uploads through it (Main closes it).
+}
+
+// close closes the project directory. It comes after the last upload of
+// the usual end and of the preemption handler: the handler's last upload
+// comes after finish.
+func (u *uploads) close() {
+	if dir := u.root(); dir != nil {
+		dir.Close()
+	}
+}
+
+// last is the preemption handler's last upload: it stops the uploads
+// during the Execution, sends the last bytes of each file, and gives how
+// many bytes of the current Agent session's transcript SolidTrace has.
+// It fails when SolidTrace has less of the transcript than the disk, or
+// does not have an evidence/ file as it is on disk.
+func (u *uploads) last(ctx context.Context) (*uint64, error) {
+	u.stopLoop()
+	u.pass(ctx, true)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	u.mu.Lock()
+	session := u.token.SessionID
+	u.mu.Unlock()
+	if session == "" {
+		session = u.task.SessionID
+	}
+	files, err := u.capturer.API.AgentSessionFiles(ctx, session)
+	if err != nil {
+		return nil, fmt.Errorf("ask SolidTrace what it has of the transcript: %w", err)
+	}
+	var offset uint64
+	hashes := map[string]string{}
+	for _, f := range files {
+		if f.Path == session+".jsonl" {
+			offset = f.EndOffset
+		}
+		hashes[f.Path] = f.ContentHash
+	}
+	info, err := os.Stat(filepath.Join(u.projectDir, session+".jsonl"))
+	if err == nil && uint64(info.Size()) > offset {
+		return nil, fmt.Errorf("SolidTrace has %d of the transcript's %d bytes", offset, info.Size())
+	}
+	missing, err := u.missingEvidence(ctx, hashes)
+	if err != nil {
+		return nil, fmt.Errorf("read the evidence/ files: %w", err)
+	}
+	if len(missing) > 0 {
+		return &offset, fmt.Errorf("SolidTrace does not have these evidence/ files as they are on disk: %s",
+			strings.Join(missing, ", "))
+	}
+	return &offset, nil
+}
+
+// missingEvidence are the evidence/ files on disk whose content SolidTrace
+// does not have (hashes: each path's content hash at SolidTrace). As the
+// upload does, it skips each file that is empty or is not regular.
+func (u *uploads) missingEvidence(ctx context.Context, hashes map[string]string) ([]string, error) {
+	var missing []string
+	err := filepath.WalkDir(filepath.Join(u.projectDir, evidenceDir), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(u.projectDir, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		hash, err := fileHash(ctx, p)
+		if err != nil {
+			return err
+		}
+		if hash != "" && hashes[rel] != hash {
+			missing = append(missing, rel)
+		}
+		return nil
+	})
+	return missing, err
+}
+
+// fileHash is the content hash of the file at p, as capture gives it
+// ("" for an empty file).
+func fileHash(ctx context.Context, p string) (string, error) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, ctxReader{ctx, f})
+	if err != nil || n == 0 {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ctxReader stops a read when its context ends.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r ctxReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 // pass is one upload of each of the Run's Agent sessions on disk. An
 // Agent session id that the Run does not have (a /clear) is added first.
-// final sends each file that is not .jsonl at once.
+// final sends each file that is not .jsonl at once. Before prepare there
+// is no project directory, so there is nothing to send.
 func (u *uploads) pass(ctx context.Context, final bool) {
-	entries, err := fs.ReadDir(u.dir.FS(), ".")
+	dir := u.root()
+	if dir == nil {
+		return
+	}
+	entries, err := fs.ReadDir(dir.FS(), ".")
 	if err != nil {
 		fmt.Fprintln(u.log, "wrapper: upload: read the project directory:", err)
 		return
@@ -217,7 +365,7 @@ func (u *uploads) pass(ctx context.Context, final bool) {
 		if !slices.Contains(tok.AgentSessionIDs, id) || ctx.Err() != nil {
 			continue
 		}
-		r := capture.RunUpload{SessionID: id, ProjectDir: u.projectDir, Dir: u.dir, RunID: u.task.RunID, Project: u.task.Project,
+		r := capture.RunUpload{SessionID: id, ProjectDir: u.projectDir, Dir: dir, RunID: u.task.RunID, Project: u.task.Project,
 			Repository: capture.Repository{Name: u.task.Repository, Folder: u.task.Folder}, Final: final}
 		if id == tok.SessionID {
 			r.Extra = []string{evidenceDir}
