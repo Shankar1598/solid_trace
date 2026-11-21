@@ -48,9 +48,44 @@ func changeStep(t *testing.T) (step string, wait func()) {
 		"git add new.txt && echo notes >notes.txt")
 }
 
-// firstMessage is the text of the first person message of the Run's
-// Agent session that the Execution's harness got, from the transcript
-// at SolidTrace.
+// waitForRestart waits until the Run is queued again after its machine
+// went, with a new Execution that waits for a machine (the test called
+// env.Runner.HoldMachines), and gives the Run.
+func waitForRestart(t *testing.T, env *factorytest.Env, p *factorytest.Person, id string) dispatcherapi.Run {
+	t.Helper()
+	var run dispatcherapi.Run
+	waitUntil(t, "the restart of the Run", func() bool {
+		run = getRun(t, p, id)
+		n := len(run.Executions)
+		return run.State == dispatcherapi.StateQueued && n >= 2 &&
+			run.Executions[n-2].State == dispatcherapi.ExecutionEnded &&
+			run.Executions[n-1].State == dispatcherapi.ExecutionDispatched
+	})
+	return run
+}
+
+// endedAs gives the Run's state and reason that the execution_ended
+// event of the Execution records: the reason of a queued Run goes when
+// its next Execution is dispatched.
+func endedAs(t *testing.T, env *factorytest.Env, run, execution string) (state, reason string) {
+	t.Helper()
+	var ended map[string]any
+	waitUntil(t, "the execution_ended event of "+execution, func() bool {
+		for _, ev := range env.RunEvents(run) {
+			if ev["event.kind"] == "execution_ended" && ev["execution.id"] == execution {
+				ended = ev
+				return true
+			}
+		}
+		return false
+	})
+	state, _ = ended["run.state"].(string)
+	reason, _ = ended["run.reason"].(string)
+	return state, reason
+}
+
+// transcriptHas tells if the transcript of the Run's Agent session at
+// SolidTrace has text: the messages that the harnesses got are in it.
 func transcriptHas(t *testing.T, env *factorytest.Env, text string) bool {
 	t.Helper()
 	session := firstToken(t, env).AgentSessionIDs[0]

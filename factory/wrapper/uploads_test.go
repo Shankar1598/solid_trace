@@ -395,10 +395,11 @@ func TestALostMachineRevokesTheExecutionsToken(t *testing.T) {
 	id := start(t, env, ana, "Fix the cart")
 	run := waitFor(t, env, ana, id, dispatcherapi.StateRunning)
 	tok := firstToken(t, env)
+	env.Runner.HoldMachines()
 	if err := env.Runner.Fake.LoseMachine(run.Executions[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	waitForRestart(t, env, ana, id)
 	waitUntil(t, "the token is revoked", func() bool { return env.SolidTrace.ChildTokens()[0].Revoked })
 	if status := ingest(t, env, tok.Secret, tok.AgentSessionIDs[0]); status != http.StatusUnauthorized {
 		t.Errorf("the token after the lost machine: %d", status)

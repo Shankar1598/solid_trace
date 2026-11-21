@@ -69,7 +69,7 @@ func TestARunIsDoneWhileEventStoreIsDownAndItsEventsArriveInOrderWhenItIsBack(t 
 	}
 }
 
-func TestALostMachineSendsTheExecutionEndedEventWithTheFailedState(t *testing.T) {
+func TestALostMachineSendsTheMachineLostEventAndRestartsTheRun(t *testing.T) {
 	env, ana := newEnv(t)
 	wait, _ := gate(t)
 	env.Runner.Agent(takeTask, initLine(t), wait)
@@ -77,14 +77,19 @@ func TestALostMachineSendsTheExecutionEndedEventWithTheFailedState(t *testing.T)
 	run := waitFor(t, env, ana, id, dispatcherapi.StateRunning)
 	env.WaitForRunEvents(id, 3)
 
+	env.Runner.HoldMachines()
 	if err := env.Runner.Fake.LoseMachine(run.Executions[0].ID); err != nil {
 		t.Fatal(err)
 	}
 
-	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
-	events := env.WaitForRunEvents(id, 4)
-	checkFields(t, events[3], map[string]any{"event.kind": "execution_ended", "run.seq": float64(4),
-		"run.state": "failed", "run.reason": "the machine was lost", "execution.reason": "the machine was lost",
+	waitForRestart(t, env, ana, id)
+	events := env.WaitForRunEvents(id, 5)
+	restarted := "machine lost: a new Execution continues the Run (1 of 3 lost machines in a row)"
+	checkFields(t, events[3], map[string]any{"event.kind": "machine_lost", "run.seq": float64(4),
+		"run.state": "queued", "run.reason": restarted, "machine_lost.reason": "machine lost",
+		"machine_lost.in_a_row": float64(1), "machine_lost.restart": true, "execution.id": run.Executions[0].ID})
+	checkFields(t, events[4], map[string]any{"event.kind": "execution_ended", "run.seq": float64(5),
+		"run.state": "queued", "run.reason": restarted, "execution.reason": "the machine was lost",
 		"execution.id": run.Executions[0].ID})
 	if warning := env.WaitForWarning("no end call"); warning["execution.id"] != run.Executions[0].ID {
 		t.Errorf("the warning: %v", warning)
