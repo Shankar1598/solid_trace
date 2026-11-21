@@ -108,10 +108,10 @@ test('the demo starts six Runs; the Runs list and a Run page show them', async (
   await expect(page.locator('[data-section="events"] [data-event="pr_opened"]')).toHaveCount(1)
   await expect(page.locator('[data-section="executions"] [data-execution]')).toHaveCount(1)
   await page.screenshot({ path: join(consoleDir, 'tmp', 'demo-run.png'), fullPage: true })
-  const session = page.locator('dl a[href*="/agent-sessions/"]').first()
+  const session = page.locator('dl a[href*="/agent_sessions/"]').first()
   await expect(session).toBeVisible()
   await session.click()
-  await expect(page).toHaveURL(/\/agent-sessions\//)
+  await expect(page).toHaveURL(/\/agent_sessions\//)
 
   // The second Run has no Evidence; the third has its question.
   await page.goto(`/${ORG}/runs/${runs[1]}`)
