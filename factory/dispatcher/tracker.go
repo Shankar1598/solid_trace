@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +38,28 @@ type Tracker interface {
 	// Comment posts a comment of plain text on a ticket, as the
 	// connection's own identity.
 	Comment(ctx context.Context, c TrackerConnection, id, body string) error
+	// Comments lists the comments on a ticket, oldest first, with what
+	// the kind knows of each author. ErrNoTicket is as in Ticket.
+	Comments(ctx context.Context, c TrackerConnection, id string) ([]TicketComment, error)
+}
+
+// TicketComment is a comment on a ticket.
+type TicketComment struct {
+	ID string
+	// Edit changes at each edit of the comment's text ("" is none yet).
+	Edit string
+	Text string
+	// CreatedAt is when the author wrote the comment.
+	CreatedAt time.Time
+	By        TrackerUser
+	// Insider is true only for a person whom the team let in: a member,
+	// or a guest whom the team invited. It is false for the connection's
+	// own identity, a bot or an integration, an external user, a
+	// comment on a page that the public can see, and an author that the
+	// kind cannot read. Only an insider's comment can steer a Run.
+	Insider bool
+	// Refusal says why the comment is not an insider's.
+	Refusal string
 }
 
 // bodyReader is a Tracker whose Ticket and ReadyTickets give each ticket
@@ -157,6 +180,23 @@ func (d *Dispatcher) reconcileTickets(ctx context.Context, t Tracker, source Web
 		}
 		if ok {
 			acted = append(acted, ticket.ID)
+		}
+	}
+	// The comments: of the ticket, or of each ticket with a Run that is
+	// not Closed.
+	commented := []string{entity}
+	if entity == "" {
+		if commented, err = d.store.commentTickets(c.ID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, id := range commented {
+		ok, err := step.comments(ctx, id)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("the comments of ticket %s: %w", id, err))
+		}
+		if ok && !slices.Contains(acted, id) {
+			acted = append(acted, id)
 		}
 	}
 	return acted, errors.Join(errs...)

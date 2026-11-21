@@ -11,9 +11,9 @@
 //	GET  /repositories/{workspace}/{repo_slug}/pullrequests?q=&state=     q: source.branch.name, destination.branch.name, state with =, AND
 //	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}
 //	PUT  /repositories/{workspace}/{repo_slug}/pullrequests/{id}          {title, description}; absent fields stay
-//	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments
-//	POST /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments {content.raw, inline.path, inline.to}
-//	GET  /repositories/{workspace}/{repo_slug}                            mainbranch.name is the bare repository's HEAD
+//	GET  /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments pagelen (10 by default, at most 100), page; next
+//	POST /repositories/{workspace}/{repo_slug}/pullrequests/{id}/comments {content.raw, inline.path, inline.to, parent.id}
+//	GET  /repositories/{workspace}/{repo_slug}                            mainbranch.name is the bare repository's HEAD; is_private
 //	GET  /repositories/{workspace}/{repo_slug}/refs/branches/{name}       target.hash
 //	GET  /repositories/{workspace}/{repo_slug}/src/{commit}/{path}        a file's raw content; 404 when absent
 //
@@ -63,15 +63,21 @@ type PR struct {
 }
 
 // Comment is a general comment on a PR, or an inline one with a file and
-// a line.
+// a line. A reply has the id of its Parent, and the file and line of the
+// comment that it answers. A Bot comment is by an app account (an access
+// token, a Forge or Connect app), not by a person.
 type Comment struct {
 	ID       int       `json:"id"`
 	Author   string    `json:"author"`
 	Body     string    `json:"body"`
 	File     string    `json:"file,omitempty"`
 	Line     int       `json:"line,omitempty"`
+	Parent   int       `json:"parent,omitempty"`
+	Bot      bool      `json:"bot,omitempty"`
 	Resolved bool      `json:"resolved"`
+	Deleted  bool      `json:"deleted,omitempty"`
 	Created  time.Time `json:"created"`
+	Updated  time.Time `json:"updated"`
 }
 
 // Forge is the fake Forge.
@@ -98,6 +104,8 @@ type Forge struct {
 	refusedGit map[string]bool
 	// apiCalls counts the REST API calls.
 	apiCalls int
+	// public are the repositories that the public can see.
+	public map[string]bool
 }
 
 type hang struct {
@@ -312,13 +320,57 @@ func (f *Forge) PersonComments(repo string, pr int, c Comment) Comment {
 func (f *Forge) Resolve(repo string, pr, comment int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, c := range f.comments[repo][pr] {
-		if c.ID == comment {
-			c.Resolved = true
-			return
-		}
+	f.comment(repo, pr, comment).Resolved = true
+}
+
+// Edit changes a comment's text, as its author does: the comment's
+// updated_on changes.
+func (f *Forge) Edit(repo string, pr, comment int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := f.comment(repo, pr, comment)
+	c.Body = body
+	// Each edit has a later time, also within one clock tick.
+	c.Updated = later(c.Updated)
+}
+
+// Delete deletes a comment, as its author does: Bitbucket keeps it with
+// deleted true.
+func (f *Forge) Delete(repo string, pr, comment int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := f.comment(repo, pr, comment)
+	c.Deleted, c.Updated = true, later(c.Updated)
+}
+
+// SetPublic makes a repository public (true) or private (false, the
+// default), as its Admin does.
+func (f *Forge) SetPublic(repo string, public bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.public == nil {
+		f.public = map[string]bool{}
 	}
-	f.t.Fatalf("fakeforge: no comment %d on PR %d", comment, pr)
+	f.public[repo] = public
+}
+
+// later is now, or a microsecond after t when now is not after it.
+func later(t time.Time) time.Time {
+	now := time.Now().UTC()
+	if !now.After(t) {
+		now = t.Add(time.Microsecond)
+	}
+	return now
+}
+
+// comment is a comment of the PR; the test fails when there is none.
+// The caller holds f.mu.
+func (f *Forge) comment(repo string, pr, id int) *Comment {
+	c := f.findComment(repo, pr, id)
+	if c == nil {
+		f.t.Fatalf("fakeforge: no comment %d on PR %d", id, pr)
+	}
+	return c
 }
 
 // SetState sets a PR's state (OPEN, MERGED or DECLINED), as a person does.

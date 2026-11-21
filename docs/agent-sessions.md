@@ -126,6 +126,16 @@ A ticket of a tracker connection (Notion, Linear) that a person sets to the read
 - **No route:** a ready ticket that no route matches starts no Run. It gets one comment that names the routing field and the values that the routes match, and the Dispatcher writes a warning Log. A new edit of the ticket gets the comment and the warning again; the same edit gets none.
 - A ready ticket starts at most one Run for each edit, and no Run while it has an Active Run.
 
+### Continue a Run from its ticket
+
+A comment on a Run's ticket that starts with the trigger word, `/agent` (for example `/agent Use the second fix`), is a message to the ticket's newest Run, as `solidtrace message` is. It is not a mention: the word is the first word of the comment. A Run that waits on a person, is done, failed or stopped continues in a new Execution with the comment; a queued Run keeps it for its next Execution; a running Run gets it at once. A Closed Run does not continue: when the ticket's newest Run is Closed, the comment goes to no Run, and an older Run of the ticket does not continue. The Run's events show the comment's text and its author's tracker name.
+
+- **Who can steer:** a member of the tracker's team, and a guest whom the team invited. Never the connection's own identity (the Notion integration or the Linear app), another bot or integration, a Linear external user (such as a customer from a support tool), or anyone on a Notion page that is published to the web. The Dispatcher writes such a comment in its own log and does nothing.
+- **Notion** gives the type of a comment's author only to an integration with the capability "Read user information without email addresses". With none, no comment can steer a Run, and the Dispatcher's log says why.
+- Each comment goes to the Run one time, and again when its author edits it. A comment from before the Run (before its first minute) is not for it.
+- Linear's **Comment** webhook and Notion's comment events make the Dispatcher read the ticket's comments at once. The backstop (and the poll of a Notion connection with no webhook) reads the comments of each ticket whose Run is not Closed.
+- The operator changes the trigger word with `DISPATCHER_TRIGGER_WORD` (one word with no spaces).
+
 ### Connect Linear
 
 A Linear connection is an install of a Linear OAuth app with `actor=app`, so the factory's status changes and comments show as the app, not as the Admin who installed it.
@@ -144,7 +154,7 @@ A Linear connection is an install of a Linear OAuth app with `actor=app`, so the
 
 Each page of one Notion database is a ticket. Its title and its content (text blocks, also in columns, synced blocks and tables, at most 64 KiB) are the prompt. The Dispatcher reads the content when it starts the Run. When it cannot read all of the content, such as a block type that it does not know, the prompt ends with a note that the page has more content. Its status is the database's property of the type Status (the one named `Status` when there are several), and its routing field is a select property.
 
-1. In Notion, make an internal integration with the capabilities "Read content", "Update content", "Read comments" and "Insert comments". "Read user information without email addresses" is optional: with it, a Run shows the name of the Notion user who set the status; with none, it shows their Notion id. After an Admin adds the capability, the names show in at most 10 minutes. Share the database with the integration (the database's `...` menu → Connections).
+1. In Notion, make an internal integration with the capabilities "Read content", "Update content", "Read comments" and "Insert comments". Also give it "Read user information without email addresses": with it, a Run shows the name of the Notion user who set the status, and a `/agent` comment can continue a Run (see "Continue a Run from its ticket"). With none, a Run shows the user's Notion id, and no comment continues a Run. After an Admin adds the capability, it applies in at most 10 minutes. Share the database with the integration (the database's `...` menu → Connections).
 2. Save the integration's token: `solidtrace connections set NAME --kind notion < token-file`. The Dispatcher keeps it encrypted.
 3. Give the database: `PUT /api/v1/connections/NAME/tracker` with `{"database": "...", "ready_status": "...", "routing_field": "..."}`. The database is its id or the link to it. Each save gives all three values (an empty status or field is the default).
 
@@ -174,10 +184,20 @@ A webhook is only a hint. The Dispatcher checks its HMAC-SHA256 signature on the
 A Bitbucket connection's webhook gives the outcome of a Run's PR at once. Without it, the Dispatcher checks the PRs of the Runs that are not closed every 5 minutes, and that check stays as the backstop.
 
 1. In each repository that a Project names, open **Repository settings → Webhooks → Add webhook**. Paste the Bitbucket connection's webhook URL (`solidtrace connections list`), and set a secret.
-2. Select the **Pull request: Merged** and **Pull request: Declined** triggers.
+2. Select the **Pull request: Merged**, **Pull request: Declined** and **Pull request: Comment created** triggers.
 3. Save the same secret: `solidtrace connections webhook-secret NAME < secret-file`.
 
-The Dispatcher checks `X-Hub-Signature` (`sha256=<hex>` of the raw body) and dedupes on `X-Request-UUID`. Bitbucket's webhooks carry no time, so the signature is the only check. `pullrequest:fulfilled` and `pullrequest:rejected` make the Dispatcher read the PR's state from Bitbucket: a merged PR gives the PR outcome merged, a declined PR gives declined, and the Run closes (a Run with an Execution queued or live closes when its Execution ends). Each other event, such as a push to a Run's work-in-progress ref, gets 200 and does nothing.
+The Dispatcher checks `X-Hub-Signature` (`sha256=<hex>` of the raw body) and dedupes on `X-Request-UUID`. Bitbucket's webhooks carry no time, so the signature is the only check. `pullrequest:fulfilled` and `pullrequest:rejected` make the Dispatcher read the PR's state from Bitbucket: a merged PR gives the PR outcome merged, a declined PR gives declined, and the Run closes (a Run with an Execution queued or live closes when its Execution ends). `pullrequest:comment_created` continues the Run (see below). Each other event, such as a push to a Run's work-in-progress ref, gets 200 and does nothing.
+
+### Continue a Run with a comment on its PR
+
+A comment on a Run's PR that starts with the trigger word (`/agent`; the operator changes it with `DISPATCHER_TRIGGER_WORD`) is a message to the Run, as `solidtrace message` is. Write your line comments first, then one general comment, such as `/agent address the review`: the agent gets all of them at once.
+
+- The Dispatcher reads the PR's comments from Bitbucket with the Run's connection. The message has the trigger comment first, then each other comment that is not resolved, with its author, file, line and thread. A comment goes to the Run one time; after an edit, the next trigger comment gives it again.
+- Each person who can comment on the PR of a private repository can continue the Run, also a reviewer who is not a SolidTrace member. The message's event has the Bitbucket account id and name (`actor.kind` `forge`).
+- These comments do nothing: a comment on a public repository, a comment by a bot, an app or an access token, a comment by the account that opened the PR (the factory's own identity), and a resolved or deleted comment. The comments of such accounts are not in the message.
+- On a Closed Run, the Dispatcher answers the trigger comment one time: the Run is closed, and a new Run continues the work. A PR gets at most one such answer in a day.
+- With no webhook, a comment does nothing: write a new trigger comment when the webhook works again.
 
 ## Start Runs on a schedule
 
