@@ -1,0 +1,7 @@
+[Unit]
+Description=Reload Squid for the factory's allowlist
+After=squid.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/squid -k reconfigure
