@@ -91,6 +91,8 @@ For a take-over (`solidtrace take-over <run id>`), the wrapper of the Run's Exec
 
 The smoke check runs the wrapper's take-over cases as root under raw_exec (`checks/take-over-tests.nomad.hcl`, cluster check 6). One case uses the image's real `hc`: the core is in the take-over Execution's cgroup with no `SUDO_` variable, and `engineer` reaches it with `sudo -u agent hc connect`. Only this check: `SMOKE_ONLY='take-over as root' factory/local/smoke`.
 
+It also runs the wrapper's restore and restart cases as root under raw_exec, with the run user `agent` (`checks/restart-tests.nomad.hcl`, ticket 66): a preempted, a stopped and a lost machine restart the Run, the new Execution's git restores the save as `agent`, a person's push wins over the save, and the fourth lost machine in a row fails the Run. Only this check: `SMOKE_ONLY='restore and the restart' factory/local/smoke`.
+
 ## What is different from an agent VM
 
 - No Docker socket and no Docker daemon. The end procedure skips `docker kill`.

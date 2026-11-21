@@ -16,6 +16,38 @@ import (
 
 // The restore after a lost machine (the spec's V6) and the automatic
 // restart (V7), through the Dispatcher, the wrappers and the fake Forge.
+// The steps keep their marks in folders that the run user can write: the
+// local factory stack runs these cases as root, with the run user agent.
+
+// sharedPath is a new path name in a folder that the run user can write.
+func sharedPath(t *testing.T, env *factorytest.Env, name string) string {
+	t.Helper()
+	return filepath.Join(env.Runner.SharedDir(name+"-"+filepath.Base(t.TempDir())), name)
+}
+
+// agentShell is a step that runs command in the agent's checkout, then
+// makes a mark; the wait waits for the mark.
+func agentShell(t *testing.T, env *factorytest.Env, command string) (step string, wait func()) {
+	t.Helper()
+	path := sharedPath(t, env, "done")
+	return shell(command + " && touch " + path), func() {
+		waitUntil(t, "the agent's command", func() bool {
+			_, err := os.Stat(path)
+			return err == nil
+		})
+	}
+}
+
+// agentGate is a step that waits until the test opens the gate.
+func agentGate(t *testing.T, env *factorytest.Env) (step string, open func()) {
+	t.Helper()
+	path := sharedPath(t, env, "open")
+	return shell("while [ ! -e " + path + " ]; do sleep 0.02; done"), func() {
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 // lookStep is a step that writes what the agent sees in its checkout
 // to files in a folder that the test reads: HEAD, the branch, the
@@ -31,7 +63,7 @@ func lookStep(t *testing.T, env *factorytest.Env, names ...string) (step string,
 	for _, name := range names {
 		command += " && { cat " + name + " >" + out + "/file-" + strings.ReplaceAll(name, "/", "-") + " 2>/dev/null || true; }"
 	}
-	path := filepath.Join(t.TempDir(), "looked")
+	path := filepath.Join(env.Runner.SharedDir("looked-"+filepath.Base(t.TempDir())), "looked")
 	return shell(command + " && touch " + path), func(name string) string {
 		t.Helper()
 		waitUntil(t, "the agent's look at the checkout", func() bool {
@@ -47,8 +79,8 @@ func lookStep(t *testing.T, env *factorytest.Env, names ...string) (step string,
 // pushed (committed.txt), then changes that are not committed: README.md
 // changed, old.txt deleted, new.txt new and staged, and notes.txt new
 // and not staged.
-func changeStep(t *testing.T) (step string, wait func()) {
-	return shellStep(t, "echo kept >committed.txt && echo old >old.txt && git add committed.txt old.txt && "+
+func changeStep(t *testing.T, env *factorytest.Env) (step string, wait func()) {
+	return agentShell(t, env, "echo kept >committed.txt && echo old >old.txt && git add committed.txt old.txt && "+
 		"git commit -q -m 'Add the cart total' && echo changed >>README.md && rm old.txt && echo new >new.txt && "+
 		"git add new.txt && echo notes >notes.txt")
 }
@@ -99,7 +131,7 @@ func transcriptHas(t *testing.T, env *factorytest.Env, text string) bool {
 
 func TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork(t *testing.T) {
 	env, ana := newEnv(t)
-	change, changed := changeStep(t)
+	change, changed := changeStep(t, env)
 	env.Runner.Agent(interruptedTurn(t, change)...)
 	look, seen := lookStep(t, env, "README.md", "new.txt", "notes.txt", "old.txt", "committed.txt")
 	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
@@ -160,7 +192,7 @@ func TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork(t *testing.
 // saved work is.
 func TestAPersonsPushAfterTheSaveWinsOverTheSavedWork(t *testing.T) {
 	env, ana := newEnv(t)
-	change, changed := changeStep(t)
+	change, changed := changeStep(t, env)
 	env.Runner.Agent(interruptedTurn(t, change)...)
 	look, seen := lookStep(t, env, "person.txt", "notes.txt")
 	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
@@ -203,8 +235,8 @@ func TestAPersonsPushAfterTheSaveWinsOverTheSavedWork(t *testing.T) {
 }
 
 // waitForever is a step that waits until the machine goes.
-func waitForever(t *testing.T) string {
-	step, _ := gate(t)
+func waitForever(t *testing.T, env *factorytest.Env) string {
+	step, _ := agentGate(t, env)
 	return step
 }
 
@@ -238,7 +270,7 @@ func lostEvents(env *factorytest.Env, id string) []map[string]any {
 func TestTheFourthLostMachineInARowFailsTheRun(t *testing.T) {
 	env, ana := newEnv(t)
 	for range 4 {
-		env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+		env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
 	}
 	id := start(t, env, ana, "Fix the cart")
 	for i := 1; i <= 4; i++ {
@@ -265,11 +297,11 @@ func TestTheFourthLostMachineInARowFailsTheRun(t *testing.T) {
 
 func TestAnExecutionThatEndsForAnotherReasonStartsTheCountAgain(t *testing.T) {
 	env, ana := newEnv(t)
-	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
-	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "needs_a_person", "--question", "Which tax?"),
 		reply, result, waitForEnd)
-	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
 		waitForEnd)
 	id := start(t, env, ana, "Fix the cart")
@@ -303,11 +335,11 @@ func TestTheRestoreDoesNotUseASaveOfAnExecutionThatEndedForAnotherReason(t *test
 	env, ana := newEnv(t)
 	env.Config.CheckpointInterval = 5 * time.Minute
 	env.Restart()
-	step, stepped := shellStep(t, "echo old >work.txt")
-	wait, open := gate(t)
+	step, stepped := agentShell(t, env, "echo old >work.txt")
+	wait, open := agentGate(t, env)
 	env.Runner.Agent(takeTask, initLine(t), step, wait,
 		reportStep("--outcome", "needs_a_person", "--question", "Which tax?"), reply, result, waitForEnd)
-	env.Runner.Agent(takeTask, initLine(t), waitForever(t))
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
 	look, seen := lookStep(t, env, "work.txt")
 	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
 		result, waitForEnd)
@@ -338,8 +370,8 @@ func TestALostMachineRestartsTheRunFromTheLastCheckpoint(t *testing.T) {
 	env, ana := newEnv(t)
 	env.Config.CheckpointInterval = 5 * time.Minute
 	env.Restart()
-	step, stepped := shellStep(t, "echo saved >work.txt && head -c 6000000 /dev/zero >big.bin")
-	env.Runner.Agent(takeTask, initLine(t), step, waitForever(t))
+	step, stepped := agentShell(t, env, "echo saved >work.txt && head -c 6000000 /dev/zero >big.bin")
+	env.Runner.Agent(takeTask, initLine(t), step, waitForever(t, env))
 	look, seen := lookStep(t, env, "work.txt")
 	env.Runner.Agent(takeTask, initLine(t), look, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
 		result, waitForEnd)
@@ -403,7 +435,7 @@ func TestAPreemptionDuringATakeOverWaitsOnAPersonAndDoesNotRestart(t *testing.T)
 // count to the limits of its new Execution.
 func TestTheWaitForAMachineDoesNotCountToTheLimits(t *testing.T) {
 	env, ana := newEnv(t)
-	step, working := ready(t)
+	step, working := agentShell(t, env, `printf 'the cart total is right' >"$SOLIDTRACE_EVIDENCE_DIR/notes.txt"`)
 	env.Runner.Agent(interruptedTurn(t, step)...)
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
 		waitForEnd)
@@ -427,7 +459,7 @@ func TestTheWaitForAMachineDoesNotCountToTheLimits(t *testing.T) {
 // restores it.
 func TestARestoreThatCannotFetchTheSaveFailsTheSetupAndALaterExecutionRestores(t *testing.T) {
 	env, ana := newEnv(t)
-	step, stepped := shellStep(t, "echo saved >work.txt")
+	step, stepped := agentShell(t, env, "echo saved >work.txt")
 	env.Runner.Agent(interruptedTurn(t, step)...)
 	// The second Execution fails its setup: the harness does not start.
 	env.Runner.Agent(takeTask)
@@ -472,7 +504,7 @@ func TestARestoreThatCannotFetchTheSaveFailsTheSetupAndALaterExecutionRestores(t
 func TestARestartTakesAnotherAccountWhenItsAccountIsNotFree(t *testing.T) {
 	env, ana := newEnv(t)
 	env.AddAccount("pool-2", secondToken)
-	step, working := ready(t)
+	step, working := agentShell(t, env, `printf 'the cart total is right' >"$SOLIDTRACE_EVIDENCE_DIR/notes.txt"`)
 	env.Runner.Agent(interruptedTurn(t, step)...)
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
 		waitForEnd)
@@ -501,12 +533,12 @@ func TestARestartTakesAnotherAccountWhenItsAccountIsNotFree(t *testing.T) {
 func TestARestartStaysOnTheRunsAccountWhenItIsFree(t *testing.T) {
 	env, ana := newEnv(t)
 	env.AddAccount("pool-2", secondToken)
-	hold, release := gate(t)
+	hold, release := agentGate(t, env)
 	env.Runner.Agent(takeTask, initLine(t), hold, reportStep("--outcome", "done", "--summary", "Other"), reply, result,
 		waitForEnd)
 	other := start(t, env, ana, "Fix the tax")
 	waitFor(t, env, ana, other, dispatcherapi.StateRunning)
-	step, working := ready(t)
+	step, working := agentShell(t, env, `printf 'the cart total is right' >"$SOLIDTRACE_EVIDENCE_DIR/notes.txt"`)
 	env.Runner.Agent(interruptedTurn(t, step)...)
 	id := start(t, env, ana, "Fix the cart")
 	working()
