@@ -18,6 +18,7 @@ const (
 	EventPRFulfilled = "pullrequest:fulfilled"
 	EventPRRejected  = "pullrequest:rejected"
 	EventPRCreated   = "pullrequest:created"
+	EventPRComment   = "pullrequest:comment_created"
 	EventPush        = "repo:push"
 )
 
@@ -60,6 +61,22 @@ func (f *Forge) PRWebhook(repo string, id int) []byte {
 	}
 	body, _ := json.Marshal(map[string]any{"actor": account("Rita"), "pullrequest": f.prJSON(repo, p),
 		"repository": repositoryJSON(repo)})
+	return body
+}
+
+// CommentWebhook is the body of the pullrequest:comment_created webhook
+// of a comment on the PR, as the forge has them now.
+func (f *Forge) CommentWebhook(repo string, pr, comment int) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, c := f.findPR(repo, pr), f.findComment(repo, pr, comment)
+	if p == nil || c == nil {
+		f.t.Fatalf("fakeforge: no comment %d on PR %d in %s", comment, pr, repo)
+	}
+	repository := repositoryJSON(repo)
+	repository["is_private"] = !f.public[repo]
+	body, _ := json.Marshal(map[string]any{"actor": commentJSON(pr, c)["user"], "comment": commentJSON(pr, c),
+		"pullrequest": f.prJSON(repo, p), "repository": repository})
 	return body
 }
 

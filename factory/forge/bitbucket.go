@@ -128,11 +128,13 @@ type prJSON struct {
 			Href string `json:"href"`
 		} `json:"html"`
 	} `json:"links"`
+	Author accountJSON `json:"author"`
 }
 
 func (p prJSON) pr() PR {
 	return PR{ID: p.ID, Title: p.Title, Description: p.Description, State: PRState(p.State),
-		Source: p.Source.Branch.Name, Destination: p.Destination.Branch.Name, Link: p.Links.HTML.Href}
+		Source: p.Source.Branch.Name, Destination: p.Destination.Branch.Name, Link: p.Links.HTML.Href,
+		Author: p.Author.account()}
 }
 
 type branchJSON struct {
