@@ -1,5 +1,7 @@
 # The Nomad client of the agent machine. It runs as root, and its raw_exec tasks run
-# as root: the wrapper changes to the run user itself.
+# as root: the wrapper changes to the run user itself. The image recipe's
+# /etc/nomad.d/factory.hcl turns raw_exec on and sets max_kill_timeout (120 seconds) for
+# the Runner's job; Nomad reads both files.
 
 data_dir  = "/var/lib/nomad"
 bind_addr = "0.0.0.0"
@@ -20,19 +22,8 @@ client {
   gc_disk_usage_threshold  = 100
   gc_inode_usage_threshold = 100
 
-  # The Runner's job gives each task 120 seconds to stop (kill_timeout): the
-  # wrapper's end procedure and preemption handler need them. The client gives a
-  # task no more than this.
-  max_kill_timeout = "120s"
-
   meta {
     machine = "local"
-  }
-}
-
-plugin "raw_exec" {
-  config {
-    enabled = true
   }
 }
 

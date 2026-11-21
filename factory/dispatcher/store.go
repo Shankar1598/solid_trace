@@ -352,6 +352,32 @@ var migrations = []string{
 	// report_cause is the cause report of the Execution's last valid
 	// report: an Issue or a Monitor Run's ('' is none).
 	`ALTER TABLE executions ADD COLUMN report_cause TEXT NOT NULL DEFAULT '';`,
+	// pr_comments are the comments on a Run's PR that the Dispatcher read
+	// for the Run, with the edit that it read (Bitbucket's updated_on): a
+	// comment goes to the Run one time, and again after an edit.
+	// closed_answer_at is the time of the last answer comment on the PR
+	// of a Closed Run (0 is none): at most one in a day.
+	`CREATE TABLE pr_comments (
+		run_id TEXT NOT NULL REFERENCES runs (id),
+		comment_id INTEGER NOT NULL,
+		edit TEXT NOT NULL,
+		read_at INTEGER NOT NULL,
+		PRIMARY KEY (run_id, comment_id)
+	);
+	ALTER TABLE runs ADD COLUMN closed_answer_at INTEGER NOT NULL DEFAULT 0;`,
+	// ticket_comments are the trigger comments on tickets that the
+	// Dispatcher read, by the connection and the comment's id, with the
+	// edit that it read: a comment goes to a Run one time, and again
+	// after an edit. run_id is the Run that it was for.
+	`CREATE TABLE ticket_comments (
+		connection_id TEXT NOT NULL,
+		comment_id TEXT NOT NULL,
+		ticket_id TEXT NOT NULL,
+		run_id TEXT NOT NULL,
+		edit TEXT NOT NULL,
+		read_at INTEGER NOT NULL,
+		PRIMARY KEY (connection_id, comment_id)
+	);`,
 	// The take-over (ticket 61). form is '' (headless) or 'interactive'.
 	// vm and attach are what the wrapper's task call gave: the machine,
 	// and the command that attaches a person to a take-over there.

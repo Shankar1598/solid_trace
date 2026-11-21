@@ -2,7 +2,7 @@
 // implementation, Bitbucket Cloud. The Dispatcher opens and reads PRs and
 // deletes a Run's work-in-progress ref through it; the wrapper clones and
 // pushes with its credential helper and saves the work-in-progress ref.
-// The comment calls come in a later ticket.
+// The Dispatcher reads a PR's comments and posts its own through it.
 package forge
 
 import (
@@ -44,6 +44,68 @@ type Forge interface {
 	// gives the path and the content, or "" and no error when none of
 	// the paths is there.
 	DefaultBranchFile(ctx context.Context, repository string, paths ...string) (string, []byte, error)
+	// Private is true when only the people that the repository lets in
+	// can see it, and false for a public repository.
+	Private(ctx context.Context, repository string) (bool, error)
+	// PRComments gives each comment on a PR, the oldest first: general
+	// and inline comments, replies, and resolved and deleted ones.
+	PRComments(ctx context.Context, repository string, id int) ([]Comment, error)
+	// PostPRComment posts a general comment on a PR, or a reply to the
+	// comment Parent.
+	PostPRComment(ctx context.Context, repository string, id int, comment NewComment) (Comment, error)
+}
+
+// Account is an account on the forge: the author of a PR or a comment.
+type Account struct {
+	// ID is the forge's account id, and UUID its other fixed id.
+	ID, UUID string
+	// Name is the name that the forge shows.
+	Name string
+	// Kind is the forge's kind of account: AccountPerson for a person.
+	// Bitbucket gives app_user for an access token or an app.
+	Kind string
+}
+
+// AccountPerson is the Kind of a person's account.
+const AccountPerson = "user"
+
+// Person is true for a person's account, and false for a bot, an app or
+// an access token.
+func (a Account) Person() bool { return a.Kind == AccountPerson }
+
+// Same is true when a and b are one account. An account with no id is
+// never the same as another.
+func (a Account) Same(b Account) bool {
+	return (a.UUID != "" && a.UUID == b.UUID) || (a.ID != "" && a.ID == b.ID)
+}
+
+// Comment is a comment on a PR.
+type Comment struct {
+	ID     int
+	Author Account
+	Text   string
+	// File and Line are the place of an inline comment ("" and 0 for a
+	// general comment). A reply has the place of its thread.
+	File string
+	Line int
+	// Parent is the comment that this one replies to (0 is none).
+	Parent int
+	// Resolved is true when a person resolved the comment's thread on
+	// this comment.
+	Resolved bool
+	// Deleted is a comment that its author deleted. Pending is a comment
+	// of a review that its author did not submit: only the author sees
+	// it.
+	Deleted, Pending bool
+	// Edited is the forge's time of the last change: an edit changes it.
+	Edited string
+}
+
+// NewComment is a comment to post: a general comment, or a reply to the
+// comment Parent.
+type NewComment struct {
+	Text   string
+	Parent int
 }
 
 // PRState is the state of a PR.
@@ -68,6 +130,9 @@ type PR struct {
 	State       PRState
 	// Link is the PR's page for a person.
 	Link string
+	// Author is the account that opened the PR: for a Run's PR, the
+	// factory's own identity on the forge.
+	Author Account
 }
 
 // NewPR is a PR to open. With no Destination, the PR goes to the

@@ -122,15 +122,27 @@ func (d *Dispatcher) sendMessage(w http.ResponseWriter, r *http.Request, p perso
 // queued.
 func (s *store) acceptMessage(organizationID, runID string, by actor, text string,
 	at time.Time) (dispatcherapi.MessageAccepted, error) {
-	accepted := dispatcherapi.MessageAccepted{ID: newSessionID(), RunID: runID, AcceptedAt: at.UTC()}
 	tx, err := s.db.Begin()
+	if err != nil {
+		return dispatcherapi.MessageAccepted{}, err
+	}
+	defer tx.Rollback()
+	accepted, err := acceptMessageIn(tx, organizationID, runID, by, text, at, nil)
 	if err != nil {
 		return accepted, err
 	}
-	defer tx.Rollback()
+	return accepted, s.commit(tx)
+}
+
+// acceptMessageIn is acceptMessage in the transaction tx, with more
+// details on the accepted event. It writes nothing when it refuses the
+// message.
+func acceptMessageIn(tx *sql.Tx, organizationID, runID string, by actor, text string, at time.Time,
+	more map[string]any) (dispatcherapi.MessageAccepted, error) {
+	accepted := dispatcherapi.MessageAccepted{ID: newSessionID(), RunID: runID, AcceptedAt: at.UTC()}
 	var state, prOutcome string
 	var closed bool
-	err = tx.QueryRow(`SELECT state, closed_at IS NOT NULL, pr_outcome FROM runs WHERE id = ? AND organization_id = ?`,
+	err := tx.QueryRow(`SELECT state, closed_at IS NOT NULL, pr_outcome FROM runs WHERE id = ? AND organization_id = ?`,
 		runID, organizationID).Scan(&state, &closed, &prOutcome)
 	if errors.Is(err, sql.ErrNoRows) {
 		return accepted, errNotFound
@@ -188,10 +200,10 @@ func (s *store) acceptMessage(organizationID, runID string, by actor, text strin
 	if accepted.Continued {
 		details["run.continued_from"] = state
 	}
-	if err := recordEvent(tx, at, runID, eventMessageAccepted, details); err != nil {
-		return accepted, err
+	for k, v := range more {
+		details[k] = v
 	}
-	return accepted, s.commit(tx)
+	return accepted, recordEvent(tx, at, runID, eventMessageAccepted, details)
 }
 
 // messageEvent is the wrapper's message call: it wrote a message of its

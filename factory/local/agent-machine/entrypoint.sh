@@ -38,4 +38,9 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 [ -s "$intro_token" ] || { echo "agent-machine: no Nomad introduction token at $intro_token in 120 seconds" >&2; exit 1; }
-exec "$nomad" agent -config=/etc/nomad.d/client.hcl
+# The proxy settings of the image recipe, as systemd gives them to the Nomad client on a
+# VM (EnvironmentFile). Each raw_exec task gets the client's environment.
+set -a
+. /etc/factory/proxy.env
+set +a
+exec "$nomad" agent -config=/etc/nomad.d

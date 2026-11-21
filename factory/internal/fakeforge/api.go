@@ -117,10 +117,17 @@ func (f *Forge) HoldNextAPI() (reached <-chan struct{}, release func()) {
 	return h.reached, release
 }
 
-// account is Bitbucket's account object of an author.
+// account is Bitbucket's account object of an author who is a person.
 func account(name string) map[string]any {
 	return map[string]any{"type": "user", "display_name": name, "nickname": name,
 		"account_id": "557058:" + name, "uuid": "{" + name + "}"}
+}
+
+// appAccount is Bitbucket's account object of an app user: the account
+// of an access token or of an app, which is not a person.
+func appAccount(name string) map[string]any {
+	return map[string]any{"type": "app_user", "display_name": name, "kind": "repository_access_token",
+		"account_id": "557058:app-" + name, "uuid": "{app-" + name + "}"}
 }
 
 func endpoint(repo, branch string) map[string]any {
@@ -144,14 +151,25 @@ func (f *Forge) prJSON(repo string, p *PR) map[string]any {
 
 // commentJSON is a comment in Bitbucket's pullrequest_comment shape.
 func commentJSON(pr int, c *Comment) map[string]any {
+	user := account(c.Author)
+	if c.Bot {
+		user = appAccount(c.Author)
+	}
+	body := c.Body
+	if c.Deleted {
+		body = ""
+	}
 	out := map[string]any{
-		"type": "pullrequest_comment", "id": c.ID, "user": account(c.Author),
-		"content":    map[string]any{"raw": c.Body, "markup": "markdown"},
-		"created_on": c.Created.Format(time.RFC3339Nano), "updated_on": c.Created.Format(time.RFC3339Nano),
-		"deleted": false, "pullrequest": map[string]any{"type": "pullrequest", "id": pr},
+		"type": "pullrequest_comment", "id": c.ID, "user": user,
+		"content":    map[string]any{"raw": body, "markup": "markdown"},
+		"created_on": c.Created.Format(time.RFC3339Nano), "updated_on": c.Updated.Format(time.RFC3339Nano),
+		"deleted": c.Deleted, "pending": false, "pullrequest": map[string]any{"type": "pullrequest", "id": pr},
 	}
 	if c.File != "" {
-		out["inline"] = map[string]any{"path": c.File, "to": c.Line}
+		out["inline"] = map[string]any{"path": c.File, "to": c.Line, "from": nil}
+	}
+	if c.Parent != 0 {
+		out["parent"] = map[string]any{"id": c.Parent}
 	}
 	if c.Resolved {
 		out["resolution"] = map[string]any{"type": "comment_resolution", "user": account("A person")}
@@ -298,16 +316,43 @@ func (f *Forge) updatePR(r *http.Request, repo string) (int, any, *apiError) {
 	return http.StatusOK, f.prJSON(repo, p), nil
 }
 
+// listComments gives one page of the PR's comments, oldest first, as
+// Bitbucket does: pagelen (10 when absent, at most 100) and page (from
+// 1), with the absolute URL of the next page in next.
 func (f *Forge) listComments(r *http.Request, repo string) (int, any, *apiError) {
 	p, e := f.prFrom(r, repo)
 	if e != nil {
 		return 0, nil, e
 	}
-	var values []map[string]any
-	for _, c := range f.comments[repo][p.ID] {
-		values = append(values, commentJSON(p.ID, c))
+	size, number := 10, 1
+	if v := r.URL.Query().Get("pagelen"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 100 {
+			return 0, nil, &apiError{status: http.StatusBadRequest, message: "Invalid pagelen"}
+		}
+		size = n
 	}
-	return http.StatusOK, page(values), nil
+	if v := r.URL.Query().Get("page"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return 0, nil, &apiError{status: http.StatusBadRequest, message: "Invalid page"}
+		}
+		number = n
+	}
+	all := f.comments[repo][p.ID]
+	values := []map[string]any{}
+	for k := (number - 1) * size; k < len(all) && k < number*size; k++ {
+		values = append(values, commentJSON(p.ID, all[k]))
+	}
+	out := map[string]any{"pagelen": size, "page": number, "size": len(all), "values": values}
+	if number*size < len(all) {
+		next := *r.URL
+		q := next.Query()
+		q.Set("page", strconv.Itoa(number+1))
+		next.RawQuery = q.Encode()
+		out["next"] = f.server.URL + next.RequestURI()
+	}
+	return http.StatusOK, out, nil
 }
 
 func (f *Forge) postComment(r *http.Request, repo string) (int, any, *apiError) {
@@ -321,6 +366,7 @@ func (f *Forge) postComment(r *http.Request, repo string) (int, any, *apiError) 
 			Path string
 			To   int
 		}
+		Parent *struct{ ID int }
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Content.Raw == "" {
 		return 0, nil, fieldError("content", "This field is required.")
@@ -328,6 +374,12 @@ func (f *Forge) postComment(r *http.Request, repo string) (int, any, *apiError) 
 	c := Comment{Author: FactoryAuthor, Body: in.Content.Raw}
 	if in.Inline != nil {
 		c.File, c.Line = in.Inline.Path, in.Inline.To
+	}
+	if in.Parent != nil {
+		if f.findComment(repo, p.ID, in.Parent.ID) == nil {
+			return 0, nil, fieldError("parent", "Comment not found")
+		}
+		c.Parent = in.Parent.ID
 	}
 	return http.StatusCreated, commentJSON(p.ID, f.addComment(repo, p.ID, c)), nil
 }
@@ -339,7 +391,7 @@ func (f *Forge) getRepository(r *http.Request, repo string) (int, any, *apiError
 	if err != nil {
 		return 0, nil, &apiError{status: http.StatusInternalServerError, message: head}
 	}
-	return http.StatusOK, map[string]any{"type": "repository", "full_name": repo,
+	return http.StatusOK, map[string]any{"type": "repository", "full_name": repo, "is_private": !f.public[repo],
 		"mainbranch": map[string]any{"type": "branch", "name": strings.TrimSpace(head)}}, nil
 }
 
@@ -365,10 +417,25 @@ func (f *Forge) getSource(r *http.Request, repo string) (int, any, *apiError) {
 	return http.StatusOK, rawFile(out), nil
 }
 
-// addComment keeps a comment. The caller holds f.mu.
+// findComment is a comment of the PR, or nil. The caller holds f.mu.
+func (f *Forge) findComment(repo string, pr, id int) *Comment {
+	for _, c := range f.comments[repo][pr] {
+		if c.ID == id {
+			return c
+		}
+	}
+	return nil
+}
+
+// addComment keeps a comment. A reply gets the file and line of its
+// parent. The caller holds f.mu.
 func (f *Forge) addComment(repo string, pr int, c Comment) *Comment {
 	f.nextID++
 	c.ID, c.Created = f.nextID, time.Now().UTC()
+	c.Updated = c.Created
+	if parent := f.findComment(repo, pr, c.Parent); parent != nil && c.File == "" {
+		c.File, c.Line = parent.File, parent.Line
+	}
 	if f.comments[repo] == nil {
 		f.comments[repo] = map[int][]*Comment{}
 	}

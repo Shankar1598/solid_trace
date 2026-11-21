@@ -6,6 +6,7 @@ package linear
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -428,6 +430,110 @@ func Signature(header http.Header) ([]byte, error) {
 		return nil, errors.New("the webhook has no " + SignatureHeader)
 	}
 	return hex.DecodeString(value)
+}
+
+// Comment is a comment on an issue, with its author: a user (a member, a
+// guest, or an app's own user), a bot actor (an integration), or an
+// external user (such as a customer from a support tool).
+type Comment struct {
+	ID, Body  string
+	CreatedAt time.Time
+	// EditedAt is the time of the last edit of its text (zero is none).
+	EditedAt time.Time
+	// User is nil when no Linear user wrote the comment.
+	User *CommentUser
+	// Bot is the name of the bot actor, and External the name of the
+	// external user ("" is none).
+	Bot, External string
+}
+
+// CommentUser is the Linear user who wrote a comment.
+type CommentUser struct {
+	ID, Name string
+	// Guest is a guest of the workspace; App is an app's own user.
+	Guest, App bool
+}
+
+// CommentsPageSize is the number of comments in one page of Comments,
+// and MaxCommentPages the most pages that it reads.
+const (
+	CommentsPageSize = 50
+	MaxCommentPages  = 10
+)
+
+// Comments lists the comments on the issue, oldest first, and gives the
+// id of the issue's team.
+func (a API) Comments(ctx context.Context, token, issueID string) (string, []Comment, error) {
+	type actor struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	var comments []Comment
+	team := ""
+	var after any
+	for range MaxCommentPages {
+		var data struct {
+			Issue *struct {
+				Team struct {
+					ID string `json:"id"`
+				} `json:"team"`
+				Comments struct {
+					Nodes []struct {
+						ID        string     `json:"id"`
+						Body      string     `json:"body"`
+						CreatedAt time.Time  `json:"createdAt"`
+						EditedAt  *time.Time `json:"editedAt"`
+						User      *struct {
+							ID    string `json:"id"`
+							Name  string `json:"name"`
+							Guest bool   `json:"guest"`
+							App   bool   `json:"app"`
+						} `json:"user"`
+						BotActor     *actor `json:"botActor"`
+						ExternalUser *actor `json:"externalUser"`
+					} `json:"nodes"`
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+				} `json:"comments"`
+			} `json:"issue"`
+		}
+		err := a.graphQL(ctx, token, "TicketComments", `query TicketComments($id: String!, $after: String) {
+  issue(id: $id) { team { id }
+    comments(first: `+fmt.Sprint(CommentsPageSize)+`, after: $after) {
+      nodes { id body createdAt editedAt user { id name guest app } botActor { id name } externalUser { id name } }
+      pageInfo { hasNextPage endCursor } } } }`, map[string]any{"id": issueID, "after": after}, &data)
+		if err != nil {
+			return "", nil, err
+		}
+		if data.Issue == nil {
+			return "", nil, ErrNotFound
+		}
+		team = data.Issue.Team.ID
+		for _, n := range data.Issue.Comments.Nodes {
+			c := Comment{ID: n.ID, Body: n.Body, CreatedAt: n.CreatedAt}
+			if n.EditedAt != nil {
+				c.EditedAt = *n.EditedAt
+			}
+			if n.User != nil {
+				c.User = &CommentUser{ID: n.User.ID, Name: n.User.Name, Guest: n.User.Guest, App: n.User.App}
+			}
+			if n.BotActor != nil {
+				c.Bot = cmp.Or(n.BotActor.Name, n.BotActor.ID, "a bot")
+			}
+			if n.ExternalUser != nil {
+				c.External = cmp.Or(n.ExternalUser.Name, n.ExternalUser.ID, "an external user")
+			}
+			comments = append(comments, c)
+		}
+		if !data.Issue.Comments.PageInfo.HasNextPage {
+			break
+		}
+		after = data.Issue.Comments.PageInfo.EndCursor
+	}
+	slices.SortStableFunc(comments, func(x, y Comment) int { return x.CreatedAt.Compare(y.CreatedAt) })
+	return team, comments, nil
 }
 
 // Webhook is what a Linear webhook says.

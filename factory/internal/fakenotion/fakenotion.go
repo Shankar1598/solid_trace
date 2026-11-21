@@ -40,8 +40,12 @@ const SignatureHeader = "X-Notion-Signature"
 // comment that the Dispatcher posts.
 const BotID = "b0000000-0000-4000-8000-000000000001"
 
-// User is a Notion user.
-type User struct{ ID, Name string }
+// User is a Notion user. A Bot is an integration's bot user; each other
+// user is a person (Notion gives a guest as a person too).
+type User struct {
+	ID, Name string
+	Bot      bool
+}
 
 // Block is a block of a page's content. Type is a Notion block type, such
 // as paragraph, heading_2, bulleted_list_item, to_do, code, column_list or
@@ -70,6 +74,8 @@ type Comment struct {
 	By             string
 	// Parts is how many rich text objects the comment had.
 	Parts int
+
+	created, edited time.Time
 }
 
 type page struct {
@@ -259,6 +265,47 @@ func (n *Notion) Comments(pageID string) []Comment {
 	return list
 }
 
+// AddComment adds a comment of the user on the page, and gives its id. A
+// comment is not an edit of the page. Notion sends comment.created for
+// it (CommentEvent).
+func (n *Notion) AddComment(pageID, text string, by User) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	p := n.pageOf(pageID)
+	if p == nil {
+		panic("fakenotion: no page " + pageID)
+	}
+	now := n.now()
+	c := Comment{ID: NewID(), Page: p.ID, Text: text, By: by.ID, Parts: 1, created: now, edited: now}
+	n.comments = append(n.comments, c)
+	return c.ID
+}
+
+// EditComment changes the text of a comment.
+func (n *Notion) EditComment(id, text string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for i := range n.comments {
+		if n.comments[i].ID == id {
+			n.comments[i].Text = text
+			edited := n.now()
+			if !edited.After(n.comments[i].edited) {
+				edited = n.comments[i].edited.Add(time.Millisecond)
+			}
+			n.comments[i].edited = edited
+			return
+		}
+	}
+	panic("fakenotion: no comment " + id)
+}
+
+func (n *Notion) now() time.Time {
+	if n.Now != nil {
+		return n.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
 // FailNext makes the next n calls whose "METHOD /path" starts with
 // prefix answer with status.
 func (n *Notion) FailNext(prefix string, status, count int) {
@@ -397,6 +444,8 @@ func (n *Notion) serve(w http.ResponseWriter, r *http.Request) {
 		n.children(w, r, parts[1])
 	case r.Method == "POST" && len(parts) == 1 && parts[0] == "comments":
 		n.comment(w, r)
+	case r.Method == "GET" && len(parts) == 1 && parts[0] == "comments":
+		n.listComments(w, r)
 	case r.Method == "GET" && len(parts) == 2 && parts[0] == "users":
 		n.user(w, token, parts[1])
 	default:
@@ -669,7 +718,9 @@ func (n *Notion) comment(w http.ResponseWriter, r *http.Request) {
 		}
 		sb.WriteString(part.Text.Content)
 	}
-	comment := Comment{ID: NewID(), Page: p.ID, Text: sb.String(), By: BotID, Parts: len(c.RichText)}
+	now := n.now()
+	comment := Comment{ID: NewID(), Page: p.ID, Text: sb.String(), By: BotID, Parts: len(c.RichText), created: now,
+		edited: now}
 	n.comments = append(n.comments, comment)
 	answer(w, map[string]any{"object": "comment", "id": comment.ID,
 		"parent": map[string]string{"type": "page_id", "page_id": p.ID}, "discussion_id": NewID(),
@@ -682,9 +733,50 @@ func (n *Notion) user(w http.ResponseWriter, token, id string) {
 		return
 	}
 	u, ok := n.users[id]
+	if id == BotID {
+		u, ok = User{ID: BotID, Name: "SolidTrace Factory", Bot: true}, true
+	}
 	if !ok {
 		notFound(w, id)
 		return
 	}
-	answer(w, map[string]any{"object": "user", "id": u.ID, "name": u.Name, "type": "person", "avatar_url": nil})
+	user := map[string]any{"object": "user", "id": u.ID, "name": u.Name, "type": "person", "avatar_url": nil,
+		"person": map[string]any{}}
+	if u.Bot {
+		user["type"] = "bot"
+		delete(user, "person")
+		user["bot"] = map[string]any{}
+	}
+	answer(w, user)
+}
+
+// listComments is GET /v1/comments?block_id=: the comments on a page,
+// oldest first, PageSize at a time.
+func (n *Notion) listComments(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("block_id")
+	p := n.pageOf(id)
+	if p == nil || p.gone() {
+		notFound(w, id)
+		return
+	}
+	var ids []string
+	byID := map[string]Comment{}
+	for _, c := range n.comments {
+		if c.Page == p.ID {
+			ids = append(ids, c.ID)
+			byID[c.ID] = c
+		}
+	}
+	size, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	window, more, next := n.window(ids, r.URL.Query().Get("start_cursor"), size)
+	list := []map[string]any{}
+	for _, cid := range window {
+		c := byID[cid]
+		list = append(list, map[string]any{"object": "comment", "id": c.ID,
+			"parent": map[string]string{"type": "page_id", "page_id": p.ID}, "discussion_id": "d-" + c.ID,
+			"created_time":     c.created.Format("2006-01-02T15:04:05.000Z"),
+			"last_edited_time": c.edited.Format("2006-01-02T15:04:05.000Z"),
+			"created_by":       map[string]string{"object": "user", "id": c.By}, "rich_text": []any{text(c.Text)}})
+	}
+	answer(w, map[string]any{"object": "list", "results": list, "has_more": more, "next_cursor": next})
 }

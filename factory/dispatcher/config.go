@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/solidtrace/factory/forge"
 )
@@ -19,7 +20,7 @@ import (
 // from a file and from the environment. The file holds NAME=value lines
 // with the same names as the environment (blank lines and lines that start
 // with # are not read), and a name in the environment wins over the file.
-// Later tickets add the checkpoint interval and the trigger word.
+// A later ticket adds the checkpoint interval.
 type Config struct {
 	// SolidTraceURL is the Console URL: the OAuth issuer that checks
 	// tokens, and the base of each link to a Run's page.
@@ -111,6 +112,11 @@ type Config struct {
 	// ScheduleMinInterval is the shortest time between two fire times of a
 	// schedule, checked at save (DefaultScheduleMinInterval when 0).
 	ScheduleMinInterval time.Duration
+
+	// TriggerWord is the word at the start of a comment that makes the
+	// comment a message to the Run of its ticket (DefaultTriggerWord when
+	// ""). It has no spaces.
+	TriggerWord string
 
 	// scheduleMinIntervalProblem is why EnvScheduleMinInterval could not
 	// be read.
@@ -225,7 +231,14 @@ const (
 	EnvSquidReload      = "DISPATCHER_SQUID_RELOAD"
 	// EnvScheduleMinInterval is a Go duration, such as 1h or 30m.
 	EnvScheduleMinInterval = "DISPATCHER_SCHEDULE_MIN_INTERVAL"
+	EnvTriggerWord         = "DISPATCHER_TRIGGER_WORD"
 )
+
+// DefaultTriggerWord is the trigger word when the operator sets none.
+const DefaultTriggerWord = "/agent"
+
+// triggerWord is the word that starts a comment to a Run.
+func (c Config) triggerWord() string { return cmp.Or(c.TriggerWord, DefaultTriggerWord) }
 
 // EnvSenderStartsPerMinute and EnvSenderActiveRuns are the limits of each
 // sender of the generic webhook.
@@ -301,6 +314,7 @@ func readConfig(path string, getenv func(string) string) (Config, error) {
 		SquidAllowlist:     value(EnvSquidAllowlist),
 		DefaultAllowlist:   value(EnvDefaultAllowlist),
 		SquidReload:        value(EnvSquidReload),
+		TriggerWord:        strings.TrimSpace(value(EnvTriggerWord)),
 	}
 	c.MachineKinds, c.machineKindsProblem = parseMachineKinds(value(EnvMachineKinds))
 	for _, limit := range []struct {
@@ -369,6 +383,10 @@ func (c Config) Check() error {
 	}
 	if c.scheduleMinIntervalProblem != "" {
 		problems = append(problems, c.scheduleMinIntervalProblem)
+	}
+	if strings.ContainsFunc(c.TriggerWord, unicode.IsSpace) {
+		problems = append(problems, EnvTriggerWord+" (the word that starts a comment to a Run) must be one word "+
+			"with no spaces, not "+fmt.Sprintf("%q", c.TriggerWord))
 	}
 	if c.SquidAllowlist != "" && c.DefaultAllowlist == "" {
 		problems = append(problems, EnvDefaultAllowlist+" (the default allowlist, such as the reference "+

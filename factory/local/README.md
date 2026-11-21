@@ -3,11 +3,13 @@
 A Docker Compose stack to build and test the factory on one machine, in place of the cloud resources. It has:
 
 - **Nomad**: one server with ACLs, as in dev mode. It has no client of its own, so Nomad places each task on the agent machine.
-- **One agent machine**: a container made from [agent-machine/Dockerfile](agent-machine/Dockerfile). It is a Nomad client with `raw_exec`. It has the run user `agent` (not root, in the `docker` group), the one sudoers rule of a take-over, `hc`, and Claude Code at the pinned version with its first-run dialogs accepted. It has no credentials.
+- **One agent machine**: a container that the agent VM image recipe ([../image/agent-vm.sh](../image/README.md)) makes, through [agent-machine/Dockerfile](agent-machine/Dockerfile). It is a Nomad client with `raw_exec`. It has the run user `agent` (not root, in the `docker` group), the one sudoers rule of a take-over, `hc`, Claude Code at the pinned version with its first-run dialogs accepted, the wrapper and the agent CLI of this checkout, and the proxy settings. It has no credentials.
 - **The agent machine's firewall**: a container that owns the agent machine's network namespace, as a VPC firewall is outside a VM.
 - **Squid**: the only way out, with the default allowlist of the reference configuration ([../reference/squid/allowlist.txt](../reference/squid/allowlist.txt)).
 
-The dev SolidTrace runs on the host, as usual. Ticket 54 adds the Dispatcher and the fake Forge and Tracker to this stack. Ticket 46 makes the Dockerfile into the image recipe for agent VMs.
+The dev SolidTrace runs on the host, as usual. Ticket 54 adds the Dispatcher and the fake Forge and Tracker to this stack.
+
+`stack up` first builds the wrapper and the agent CLI of this checkout (`factory/image/build`, into `agent-machine/bin`, which git ignores). Then the Dockerfile runs the recipe in two layers: all but the two binaries, then the binaries. So a change to the wrapper does not download Claude Code again.
 
 ## Where it runs
 
@@ -54,7 +56,7 @@ factory/local/test-runner -run Lost ./nomadrunner/
 
 For these tests only, `FACTORY_STACK_NOMAD_API=1` adds [compose.nomad-api.yml](compose.nomad-api.yml): a forwarder that publishes Nomad's HTTP API on a free port of 127.0.0.1, because the host has no address on the internal factory network. Then `stack nomad-env` gives `NOMAD_ADDR`, `NOMAD_TOKEN` and `AGENT_MACHINE`. The test process is the Dispatcher. Each task prints what it got (such as its workload identity JWT) in place of the wrapper, and the test reads it through Nomad's API. The lost machine test pauses the agent machine's container (`docker pause`) until Nomad marks its node down, then continues it, and checks that the lost Execution's task stops and that Nomad does not place it again. These tests are also a step of the release suites ([docs/agents/testing.md](../../docs/agents/testing.md)).
 
-The agent machine's Nomad client has `max_kill_timeout = "120s"`, as the Runner's job needs ([agent-machine/client.hcl](agent-machine/client.hcl)).
+The agent machine's Nomad client has `max_kill_timeout = "120s"`, as the Runner's job needs. The image recipe writes it, with `raw_exec` on, to `/etc/nomad.d/factory.hcl`; [agent-machine/client.hcl](agent-machine/client.hcl) has the local stack's own settings. The entrypoint gives the recipe's `/etc/factory/proxy.env` to the Nomad client, as systemd does on a VM.
 
 ## The network rules
 
@@ -99,7 +101,7 @@ The smoke check runs the wrapper's take-over cases as root under raw_exec (`chec
 
 ## Claude Code's first-run dialogs
 
-The wrapper deletes the run user's home after each Execution, and it sets `CLAUDE_CONFIG_DIR`. So the image keeps the accepted dialogs in files that root owns, not in the home:
+The wrapper deletes the run user's home after each Execution, and it sets `CLAUDE_CONFIG_DIR`. So the image recipe keeps the accepted dialogs in files that root owns, not in the home ([../image/files](../image/files)):
 
 - `/etc/claude-code/managed-settings.json` (Claude Code's managed settings, which the run user cannot change): no bypass-mode warning, and no auto-updater, so that the pinned version stays.
 - `/etc/factory/claude.json`: the template of the run user's `.claude.json`, with the onboarding done. For each Execution, the wrapper copies it to `$CLAUDE_CONFIG_DIR/.claude.json` and adds `projects["<checkout>"].hasTrustDialogAccepted`. Claude Code trusts a checkout only at its exact path.
