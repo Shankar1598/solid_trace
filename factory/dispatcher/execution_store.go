@@ -24,6 +24,9 @@ type storedExecution struct {
 	// form is "" (headless) or dispatcherapi.FormInteractive (a
 	// take-over).
 	form string
+	// follows is the Execution that a take-over Execution follows in the
+	// same workload ("" is none: a take-over that queued its Run).
+	follows string
 }
 
 func (e storedExecution) interactive() bool { return e.form == dispatcherapi.FormInteractive }
@@ -87,8 +90,12 @@ func (s *store) addExecution(runID, id string, at time.Time) (bool, error) {
 	if _, err := tx.Exec(`UPDATE runs SET next_account = '' WHERE id = ?`, runID); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(`INSERT INTO executions (id, run_id, state, dispatched_at, account) VALUES (?, ?, ?, ?, ?)`,
-		id, runID, dispatcherapi.ExecutionDispatched, at.UnixMicro(), account); err != nil {
+	// A Run that a take-over queued gets its take-over Execution: in the
+	// interactive form, by the person who took it over.
+	if _, err := tx.Exec(`INSERT INTO executions (id, run_id, state, dispatched_at, account, form, taken_over_by_id,
+		taken_over_by_name) SELECT ?, id, ?, ?, ?, CASE WHEN take_over_by_name != '' THEN ? ELSE '' END,
+		take_over_by_id, take_over_by_name FROM runs WHERE id = ?`,
+		id, dispatcherapi.ExecutionDispatched, at.UnixMicro(), account, dispatcherapi.FormInteractive, runID); err != nil {
 		return false, err
 	}
 	// The last run event of a Run that waits for a VM must carry the
@@ -143,9 +150,9 @@ func (s *store) runCheckout(runID string) (checkoutOfRun, error) {
 // execution reads one Execution.
 func (s *store) execution(id string) (storedExecution, error) {
 	var e storedExecution
-	err := s.db.QueryRow(`SELECT e.id, e.run_id, r.organization_id, r.project_id, e.workload, e.state, e.account, e.form
-		FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
-		Scan(&e.id, &e.runID, &e.organizationID, &e.projectID, &e.workload, &e.state, &e.account, &e.form)
+	err := s.db.QueryRow(`SELECT e.id, e.run_id, r.organization_id, r.project_id, e.workload, e.state, e.account, e.form,
+		e.after_execution FROM executions e JOIN runs r ON r.id = e.run_id WHERE e.id = ?`, id).
+		Scan(&e.id, &e.runID, &e.organizationID, &e.projectID, &e.workload, &e.state, &e.account, &e.form, &e.follows)
 	if errors.Is(err, sql.ErrNoRows) {
 		return e, errNotFound
 	}
@@ -213,9 +220,16 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 			dispatcherapi.ExecutionRunning, at.UnixMicro(), int64(limits.Total()/time.Second), id); err != nil {
 			return run, err
 		}
-		// A take-over Execution's Run is taken over already.
+		// The Run of a take-over Execution in a running Run's workload is
+		// taken over already. A Run that a take-over queued is taken over
+		// now.
 		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = '' WHERE id = ? AND state = ? AND NOT ?`,
 			dispatcherapi.StateRunning, runID, dispatcherapi.StateQueued, interactive); err != nil {
+			return run, err
+		}
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, take_over_by_id = '', take_over_by_name = ''
+			WHERE id = ? AND state = ? AND ?`, dispatcherapi.StateTakenOver, "taken over by "+takenOverByName, runID,
+			dispatcherapi.StateQueued, interactive); err != nil {
 			return run, err
 		}
 		if _, err := tx.Exec(`UPDATE runs SET session_id = ? WHERE id = ? AND session_id = ''`,
@@ -606,10 +620,12 @@ func (s *store) endWithNoCall(id, reason string, exitCode *int, lost string, at 
 	if form == dispatcherapi.FormInteractive {
 		// A take-over that ends with no end call (the machine went, or
 		// the wrapper failed) does not start again by itself: the Run
-		// waits on a person, with the reason (V8).
-		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '' WHERE id = ?
-			AND state = ?`, dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+reason, runID,
-			dispatcherapi.StateTakenOver); err != nil {
+		// waits on a person, with the reason (V8). So does a Run that a
+		// take-over queued, when its take-over Execution did not start.
+		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '', take_over_by_id = '',
+			take_over_by_name = '' WHERE id = ? AND (state = ? OR (state = ? AND NOT ?))`,
+			dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+reason, runID, dispatcherapi.StateTakenOver,
+			dispatcherapi.StateQueued, started); err != nil {
 			return false, err
 		}
 	} else {

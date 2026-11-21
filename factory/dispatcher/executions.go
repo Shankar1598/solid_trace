@@ -134,9 +134,10 @@ func (d *Dispatcher) task(w http.ResponseWriter, r *http.Request, e storedExecut
 		// not lost: it goes back in the queue, and its next Execution gets
 		// a free account.
 		why := "the account " + e.account + " is no longer in the pool"
-		if e.interactive() {
-			// A take-over is on its machine, not in the queue: the Run
-			// waits on a person.
+		if e.interactive() && e.follows != "" {
+			// A take-over of a running Run is on its machine, not in the
+			// queue: the Run waits on a person. A take-over that queued
+			// its Run goes back in the queue, still a take-over.
 			d.endByDispatcher(e.id, why, nil)
 			writeProblem(w, http.StatusConflict, why)
 			return

@@ -150,6 +150,27 @@ class RunPageTest < ActionDispatch::IntegrationTest
       view["executions"].map { |e| e.values_at("id", "form", "attach") }
   end
 
+  test "a Run that a take-over queued shows the VM and the attach command of its take-over Execution" do
+    attach = "docker exec -i -u engineer factory-local-agent-machine-2 sudo -u agent hc connect"
+    dee = { kind: "person", id: "12", name: "Dee" }
+    list = events + [
+      event(7, "2026-10-03T11:00:00Z", "take_over", "queued", actor: dee, "run.continued_from" => "done"),
+      event(8, "2026-10-03T11:00:01Z", "queued", "queued", actor: { kind: "dispatcher", id: "", name: "Dispatcher" },
+        "execution.id" => "x2"),
+      event(9, "2026-10-03T11:01:00Z", "execution_started", "taken_over", actor: dee, "execution.id" => "x2",
+        "execution.form" => "interactive", "execution.account" => "team-2", "execution.vm" => "agent-machine-2",
+        "execution.attach" => attach)
+    ]
+    stub_run(list)
+    stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
+    sign_in_as(@member)
+
+    view = page
+
+    assert_equal({ "vm" => "agent-machine-2", "attach" => attach, "by" => { "kind" => "person", "id" => "12", "name" => "Dee" } },
+      view["take_over"])
+  end
+
   test "a Run that is not taken over has no take-over" do
     stub_run
     stub_evidence("evidence/report.md", "Fixed.", "text/markdown")

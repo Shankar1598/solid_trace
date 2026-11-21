@@ -88,14 +88,23 @@ class RunView
 
   # While the Run is taken over, the take-over from its last take_over
   # event: the VM, the command that attaches to the terminal there, and the
-  # person who took over. Else nil.
+  # person who took over. Else nil. A take-over of a Run with no live
+  # Execution queues the Run, and its event has no VM: the VM and the
+  # attach command are then the take-over Execution's, from its start.
   def take_over
     return nil unless run["state"] == "taken_over"
 
-    a = raw_events.reverse.find { |log| log.dig("attributes", "event.kind") == "take_over" }&.dig("attributes")
-    return nil unless a
+    i = raw_events.rindex { |log| log.dig("attributes", "event.kind") == "take_over" }
+    return nil unless i
 
-    { vm: a["execution.vm"].presence, attach: a["execution.attach"].presence, by: actor(a) }
+    a = raw_events[i]["attributes"]
+    place = a
+    if a["execution.vm"].blank?
+      place = raw_events.drop(i + 1).map { |log| log["attributes"] || {} }.find do |s|
+        s["event.kind"] == "execution_started" && s["execution.form"] == "interactive"
+      end || {}
+    end
+    { vm: place["execution.vm"].presence, attach: place["execution.attach"].presence, by: actor(a) }
   end
 
   # Each Execution, from its execution_started and execution_ended events:
