@@ -39,7 +39,21 @@ func takeOverCLI(t *testing.T, env *factorytest.Env, p *factorytest.Person, id s
 // waits until it is there.
 func inToolCallRun(t *testing.T, env *factorytest.Env, p *factorytest.Person) string {
 	t.Helper()
-	here, reached := marker(t)
+	// The marker is where the run user can write: the take-over cases
+	// also run as root on the local factory stack (cluster check 6).
+	path := filepath.Join(env.Runner.SharedDir(fmt.Sprintf("marker-%d", time.Now().UnixNano())), "here")
+	here := shell("touch " + path)
+	reached := func() {
+		t.Helper()
+		for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if _, err := os.Stat(path); err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the agent did not reach the marker in 30 s")
+			}
+		}
+	}
 	env.Runner.Agent(takeTask, initLine(t), here, inToolCall, interrupted, thenEOF)
 	id := start(t, env, p, "Fix the cart")
 	reached()
@@ -392,6 +406,12 @@ func TestALostMachineDuringTheTakeOverMakesTheRunWaitOnAPersonWithTheReason(t *t
 func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.T) {
 	env, ana := newEnv(t)
 	outside := exec.Command("sleep", "60")
+	if os.Geteuid() == 0 {
+		// The run user's core, as a person's early hc connect starts it.
+		uid, _ := strconv.Atoi(env.Runner.RunUser().Uid)
+		gid, _ := strconv.Atoi(env.Runner.RunUser().Gid)
+		outside.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
+	}
 	if err := outside.Start(); err != nil {
 		t.Fatal(err)
 	}

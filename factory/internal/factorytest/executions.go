@@ -535,6 +535,21 @@ func (r *Runner) forRunUser(dirs ...string) error {
 	return nil
 }
 
+// SharedDir makes the directory name under the Runner's directory, which
+// the run user can write (as root, a test's own t.TempDir is root's
+// only), and gives its path.
+func (r *Runner) SharedDir(name string) string {
+	r.env.t.Helper()
+	dir := filepath.Join(r.dir, "shared", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		r.env.t.Fatal(err)
+	}
+	if err := r.forRunUser(filepath.Join(r.dir, "shared"), dir); err != nil {
+		r.env.t.Fatal(err)
+	}
+	return dir
+}
+
 // RenewIdentity writes a new workload identity JWT for the Execution, at
 // the environment's clock, to the file that its wrapper reads, as the
 // Runner does before the old JWT expires.
