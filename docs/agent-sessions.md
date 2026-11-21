@@ -308,6 +308,17 @@ The `closed` run event of a Run carries its totals, so that you can measure the 
 
 Each event also has the PR outcome (`run.pr.outcome`), the trigger (`run.trigger`) and the Project (`factory.project`).
 
+### The starter Factory Dashboard
+
+Console makes one Dashboard, **Factory**, for each Organization, so that you see if the factory pays for itself. It is on the Agent Project, has a Dashboard filter, **Project**, and shows 30 days. Its four Charts read the `closed` run events:
+
+- **Tokens for each merged PR:** the mean of the four token sums, for the Runs that closed with `pr_merged`.
+- **Cycle time of merged PRs:** the mean of `totals.seconds_to_pr_opened` and `totals.seconds_from_pr_opened_to_outcome` added, in hours, for the same Runs.
+- **Acceptance rate:** `pr_merged` over `pr_merged` and `pr_declined` as a percentage. The Query divides two `countif()` counts.
+- **Interventions for each Run:** the mean of `totals.interventions.total` for the Runs that closed.
+
+Console makes the Dashboard one time, when it first sees Factory settings of the Organization: when an Admin saves them in a Project's Factory section; at the next read of a Factory section that has settings (a save with the CLI or the API does not pass Console); or at the first read of the Runs page that finds a Run. It needs the Agent Project, so an Organization with none gets it at a later read. After that, Console never makes it again, also when a member deletes it. Any member can change or delete the Dashboard.
+
 **Take over** a running Run with `solidtrace take-over <run id>`. The Run's agent stops, and its Agent session continues in a terminal on the same VM, in a new Execution. The command prints the VM and the command to attach, from the Dispatcher's Take-over setting (`DISPATCHER_TAKE_OVER_ATTACH`, such as ssh to the VM, then `sudo -u <run user> hc connect`). During the take-over, the Stop hook does not ask for a report, and only the total limit applies, not the idle limit. A message to the Run is kept, and starts a new Execution when the take-over ends. When you leave the Agent session with no report, the Run waits on a person with the reason "take-over ended with no report". A report of done gives done.
 
 **Stop** ends a Run that goes wrong. It shows only when Settings → Instance has the Dispatcher's URL, and only on a Run that can stop (queued, running, taken over, or waiting on a person or an account limit). Console sends the stop to the Dispatcher as you, with a factory token that lasts 5 minutes. The page shows the state that the Dispatcher gives at once; the stop event shows when it arrives from the Dispatcher.

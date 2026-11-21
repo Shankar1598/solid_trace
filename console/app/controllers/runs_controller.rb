@@ -3,7 +3,8 @@
 # The Runs page (Organization navigation): the Runs of the Organization's
 # Agent Project from their run events, over the range and the filters in
 # the URL (range=<span> or from and to, project, state), Active Runs first.
-# The default range is 30 days. RunsView builds it. Each member sees it;
+# The default range is 30 days. RunsView builds it. The first read that finds
+# a Run makes the starter Factory Dashboard (FactoryDashboard). Each member sees it;
 # someone outside the Organization gets 404 (set_current_org).
 class RunsController < ApplicationController
   layout "dashboard"
@@ -13,6 +14,8 @@ class RunsController < ApplicationController
   def index
     view = RunsView.new(organization: @current_org, range: range, filters: RunsView.filters(params))
     props = view.to_h.merge(settings_path: agent_session_settings_path(org_slug: @current_org.slug))
+    # The first Run that Console sees shows that the Organization has Factory settings.
+    FactoryDashboard.make_once(organization: @current_org, user: current_user) if props[:rows].present?
     render inertia: "Runs/Index", props: { runs: props }
   end
 

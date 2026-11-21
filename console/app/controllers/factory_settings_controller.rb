@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 # Saves the Factory section of a Project's settings at the Dispatcher
-# (FactorySettings). Only an Admin of the Organization saves; anyone else
+# (FactorySettings), and the first save in an Organization makes its starter
+# Dashboard (FactoryDashboard). Only an Admin of the Organization saves; anyone else
 # gets 403, with no call to the Dispatcher. With no Dispatcher URL, 404.
 class FactorySettingsController < ApplicationController
   before_action :set_current_org
@@ -19,6 +20,7 @@ class FactorySettingsController < ApplicationController
     back = project_path(project, org_slug: @current_org.slug)
     FactorySettings.new(user: current_user, project: project)
       .save(params.fetch(:factory, {}).permit(*FactorySettings::FIELDS).to_h)
+    FactoryDashboard.make_once(organization: @current_org, user: current_user)
     redirect_to back, notice: "Factory settings saved"
   rescue Dispatcher::Refused, Dispatcher::Unavailable => e
     if e.is_a?(Dispatcher::Refused) && FORM_ERRORS.include?(e.status)
