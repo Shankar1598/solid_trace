@@ -129,6 +129,21 @@ func transcriptHas(t *testing.T, env *factorytest.Env, text string) bool {
 	return strings.Contains(string(env.SolidTrace.Stored(session, session+".jsonl")), text)
 }
 
+// goneWords are the words of the first message after a lost machine that
+// tell what did not come back with the machine.
+const goneWords = "Containers, background processes, caches and the files that .gitignore excludes are gone"
+
+// wentAt is the part of the first message after a lost machine that
+// tells when the machine of the Run's first Execution went (RFC 3339,
+// UTC). The save's time can be the same, so the words around it count.
+func wentAt(t *testing.T, run dispatcherapi.Run) string {
+	t.Helper()
+	if run.Executions[0].EndedAt == nil {
+		t.Fatal("the first Execution has no end time")
+	}
+	return " at " + run.Executions[0].EndedAt.UTC().Format(time.RFC3339) + ". This is a new Execution"
+}
+
 func TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork(t *testing.T) {
 	env, ana := newEnv(t)
 	change, changed := changeStep(t, env)
@@ -175,7 +190,8 @@ func TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork(t *testing.
 			t.Errorf("%s after the restore: %q, want %q", name, got, want)
 		}
 	}
-	for _, text := range []string{"preempted", "is back", "not finish"} {
+	for _, text := range []string{"preempted", "is back", "not finish", wentAt(t, run), "Changes after the save are not back",
+		goneWords} {
 		if !transcriptHas(t, env, text) {
 			t.Errorf("the first message of the new Execution does not say %q", text)
 		}
@@ -446,7 +462,8 @@ func TestALostMachineRestartsTheRunFromTheLastCheckpoint(t *testing.T) {
 	if status := seen("status"); status != "?? work.txt\n" {
 		t.Errorf("the status after the restore:\n%s", status)
 	}
-	for _, text := range []string{"was lost with no notice", "at the last checkpoint", "big.bin", "not finish"} {
+	for _, text := range []string{"was lost with no notice", "at the last checkpoint", "big.bin", "not finish",
+		wentAt(t, run), goneWords} {
 		if !transcriptHas(t, env, text) {
 			t.Errorf("the first message does not say %q", text)
 		}
