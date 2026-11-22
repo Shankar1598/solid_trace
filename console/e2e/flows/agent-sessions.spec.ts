@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { ADMIN, MEMBER, ORG } from '../support/data'
 import { fakeAnthropicKey, longSession, MODEL, shortSession, writeSession, type FixtureSession } from '../support/agentTranscripts'
 import { shoot, watchErrors } from '../support/screens'
+import { newContext } from '../support/video'
 
 // Laptop Agent sessions, from the real capture to the pages. The admin and
 // the member each sign in the real `solidtrace` CLI with the device flow
@@ -102,7 +103,7 @@ async function signIn(page: Page, m: Machine, origin: string) {
 }
 
 async function signedInPage(browser: Browser, user: { email: string; password: string }): Promise<Page> {
-  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } })
+  const context = await newContext(browser, { storageState: { cookies: [], origins: [] } })
   const page = await context.newPage()
   await page.goto('/login')
   await page.fill('input[type=email]', user.email)

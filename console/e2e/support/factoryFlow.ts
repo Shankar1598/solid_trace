@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { ADMIN, ORG, PROJECT } from './data'
+import { newContext } from './video'
 
 // The factory's Seam 5 flows (runs.spec.ts, factory-integration.spec.ts):
 // the real Dispatcher and the real wrapper against this stack's Console,
@@ -46,7 +47,7 @@ export function filesIn(dir: string): Record<string, Buffer> {
 
 /** A page of a new browser context, signed in as the user. */
 export async function signedInPage(browser: Browser, user: { email: string; password: string }): Promise<Page> {
-  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } })
+  const context = await newContext(browser, { storageState: { cookies: [], origins: [] } })
   const page = await context.newPage()
   await page.goto('/login')
   await page.fill('input[type=email]', user.email)

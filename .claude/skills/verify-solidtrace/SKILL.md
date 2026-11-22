@@ -86,9 +86,12 @@ Run doctor first when something looks wrong. `verify flow` runs doctor before ea
   ```bash
   "$V" flow -- e2e/flows/runs.spec.ts                 # paths relative to console/
   "$V" flow -- e2e/flows/logs-v1-query.spec.ts -g "Ctrl+Enter"
+  "$V" flow --video -- e2e/flows/runs.spec.ts         # also a .webm of each browser context
   ```
 
   The arguments after `--` go to `playwright test --project=flows`. Global setup seeds the database, signs the admin in, and tops up the Logs. To prove a new behavior, add or extend a flow in `console/e2e/flows/`, in the same style as the other flows. Then run it with `verify flow`.
+
+  `--video` records each browser context, as `E2E_VIDEO=on` in `e2e/support/video.ts` sets it. Headless Chromium shows no mouse pointer, so the video draws one. The pointer moves to each action and shows the click there, with the action's name at the top right and the test's title at the bottom left. A flow that opens a second user's browser must make the context with `newContext(browser, ...)` from `e2e/support/video.ts`. A context from `browser.newContext()` is not recorded. Use `--video` when a person will watch the proof, because each video is a few MB.
 - **One page, signed in.** This makes a quick visual and ARIA proof without a spec:
 
   ```bash
@@ -118,7 +121,7 @@ The feature map in [`features/README.md`](features/README.md) gives the recipe f
 
 The proof goes in `<run>/evidence/`. The run directory is in `~/.cache/solid-trace/verify/runs/`, outside the checkout and outside `/tmp` (the dev box clears `/tmp` when it restarts). `down` keeps it. `prune` deletes it 7 days after the run, so copy what must stay longer.
 
-- `flow-<HHMMSS>/`: `output.txt` (the reporter output), `exit-code`, and `playwright/<test>/trace.zip` for every test. Traces are on for pass and fail, and each trace has the actions, DOM snapshots, network and console. Look at one with `bunx playwright show-trace <trace.zip>` from `console/`.
+- `flow-<HHMMSS>/`: `output.txt` (the reporter output), `exit-code`, and `playwright/<test>/trace.zip` for every test. Traces are on for pass and fail, and each trace has the actions, DOM snapshots, network and console. Look at one with `bunx playwright show-trace <trace.zip>` from `console/`. With `--video`, the same test folder has one `.webm` for each browser context of the test, for example the admin's and the member's.
 - `<name>.png` and `<name>.aria.txt` from `snap`.
 - `doctor-before-flow.txt`, and `stack.log` (web, Vite, jobs and EventStore output), which `down` copies here.
 

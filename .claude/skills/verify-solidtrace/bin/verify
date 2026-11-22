@@ -6,7 +6,9 @@
 #   verify up [--slot N]                 start a stack; prints its run dir when it is usable
 #   verify doctor [--run DIR]            read-only: is this stack worth driving?
 #   verify run [--run DIR] -- CMD...     run CMD in console/ with the stack's environment
-#   verify flow [--run DIR] -- SPEC...   run Playwright flows against the stack, traces kept
+#   verify flow [--run DIR] [--video] -- SPEC...
+#                                        run Playwright flows against the stack, traces kept,
+#                                        and with --video a .webm of each browser context
 #   verify snap [--run DIR] --path P --name N [--as admin|member]
 #                                        sign in, open P, save N.png and N.aria.txt
 #   verify down [--run DIR]              stop the stack and delete its data; the evidence stays
@@ -59,10 +61,12 @@ load_run() { # sets RUN and reads its meta
 
 parse_run_flag() { # leaves the other args in ARGS
   RUN_ARG=""
+  VIDEO=off
   ARGS=()
   while (($#)); do
     case $1 in
       --run) RUN_ARG=$2; shift 2 ;;
+      --video) VIDEO=on; shift ;;
       --) shift; ARGS+=("$@"); break ;;
       *) ARGS+=("$1"); shift ;;
     esac
@@ -279,7 +283,7 @@ cmd_flow() {
   # shellcheck disable=SC1091
   source "$RUN/env"
   set +e
-  (cd "$CHECKOUT/console" && mise exec -- bun run e2e "${ARGS[@]}" --reporter=line --trace=on --output="$out/playwright") 2>&1 |
+  (cd "$CHECKOUT/console" && E2E_VIDEO=$VIDEO mise exec -- bun run e2e "${ARGS[@]}" --reporter=line --trace=on --output="$out/playwright") 2>&1 |
     tee "$out/output.txt"
   code=${PIPESTATUS[0]}
   set -e
@@ -365,5 +369,5 @@ case ${1:-} in
   snap) shift; cmd_snap "$@" ;;
   down) shift; parse_run_flag "$@"; cmd_down "$RUN_ARG" ;;
   list) cmd_list ;;
-  *) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

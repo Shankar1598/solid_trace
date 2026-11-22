@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
+import { newContext } from '../support/video'
 
 // An admin invites someone new from the Members page and copies their invite
 // link from the Invited row. The invited person opens it in their own browser,
@@ -45,7 +46,7 @@ test('an invited person joins through the link copied from their Invited row', a
   expect(new URL(link).pathname).toMatch(/^\/invites\//)
 
   // The invited person, in a browser that nobody is signed in to.
-  const invitedContext = await browser.newContext({ storageState: { cookies: [], origins: [] } })
+  const invitedContext = await newContext(browser, { storageState: { cookies: [], origins: [] } })
   const invited = await invitedContext.newPage()
   const invitedErrors = watchErrors(invited)
   await invited.goto(link)
@@ -101,7 +102,7 @@ test('revoking an invite takes the Invited row away, and its link stops working'
     await expect(page.getByRole('row').filter({ hasText: revokedEmail })).toHaveCount(0)
     expect(errors).toEqual([])
 
-    const context = await browser.newContext({ storageState: { cookies: [], origins: [] } })
+    const context = await newContext(browser, { storageState: { cookies: [], origins: [] } })
     const stranger = await context.newPage()
     await stranger.goto(link)
     await expect(stranger.getByText('Invite link expired')).toBeVisible()
