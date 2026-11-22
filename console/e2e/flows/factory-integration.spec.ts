@@ -133,7 +133,7 @@ test('a Monitor with the Factory Integration starts one Run, with its cause repo
   // A Monitor that tells it, made from the explorer.
   await openLogs(page, last24h('query'))
   await page.getByLabel('Query', { exact: true }).fill(`${SOURCE}\n| summarize count() by bin_auto(time)`)
-  // The dev Console has few threads: its Query and histogram can meet the
+  // Runs that an earlier edit sent can still wait on EventStore and meet the
   // busy limit, and then the run answers "busy" and shows no chart. Run again.
   await expect(async () => {
     await runBy(page, () => page.getByLabel('Query', { exact: true }).press('Control+Enter'))
@@ -278,10 +278,11 @@ test('an Issue Run reads only its Project over MCP, and its cause report is a co
 test('the starter Factory Dashboard shows its four Charts with the Project filter', async ({ page }) => {
   test.setTimeout(180_000)
   await useTheme(page, test.info())
-  // The dev Console has few threads (it runs one chart at a time), so some of
-  // the four charts can answer "busy" (503) on a run. The flow presses
-  // Refresh until each chart has run once, and a chart that did not run says
-  // only "busy": no other error.
+  // A Refresh sends the four charts again while the last runs can still wait
+  // on EventStore, so a chart can answer "busy" (503) on a run. The flow
+  // presses Refresh until each chart has run once, and a chart that did not
+  // run says only "busy": no other error. A chart that ran shows its chart,
+  // its number or its table, and no error.
   const titles = ['Tokens for each merged PR', 'Cycle time of merged PRs', 'Acceptance rate', 'Interventions for each Run']
   const errors = watchErrors(page, [failedLoad(503)])
   const chartsRan = async () => {
@@ -290,8 +291,9 @@ test('the starter Factory Dashboard shows its four Charts with the Project filte
       await expect(page.getByRole('status', { name: "Running the chart's Query" })).toHaveCount(0, { timeout: 5_000 })
       for (const title of titles) {
         const card = page.locator(`[data-chart-card="${title}"]`)
-        if (await card.getByText(/^[\d,]+ rows?$|^No rows/).count() > 0) ran.add(title)
-        else await expect(card).toContainText('Console is busy running other charts')
+        const error = card.locator('[data-chart-error]')
+        if (await error.count() === 0 && await card.getByText(/^Cancelled\./).count() === 0) ran.add(title)
+        else await expect(error).toContainText('Console is busy running other charts')
       }
       if (ran.size < titles.length) {
         await page.getByRole('button', { name: 'Refresh' }).click()

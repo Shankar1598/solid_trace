@@ -60,7 +60,8 @@ test('a Summarize shows a table, and More adds a search, a sort and a limit', as
   const table = page.locator('.sticky.top-0').filter({ hasText: 'count_' })
   await expect(table).toBeVisible()
   await expect(table).toContainText('service')
-  await expect(page.getByText('billing', { exact: true }).first()).toBeVisible()
+  // In the table's rows: the bar chart above it names each bar in a hidden SVG title too.
+  await expect(table.locator('xpath=following-sibling::div[1]').getByText('billing', { exact: true })).toBeVisible()
 
   // More: a search…
   await page.getByRole('button', { name: 'Add a search, sort or limit' }).click()
