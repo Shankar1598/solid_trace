@@ -170,6 +170,15 @@ sudoers() {
   put "$tmp" /etc/sudoers.d/factory-take-over 440
   rm -f "$tmp"
   visudo -c -q || die "visudo refuses the sudoers files"
+  # No general sudo: the take-over rule is the one rule. Debian's /etc/sudoers gives all
+  # commands to root and to the group sudo, so that group must have no member. The base
+  # image must have no other rule (README.md, "The take-over rule").
+  others="$(ls -A /etc/sudoers.d | grep -v -x -e README -e factory-take-over | tr '\n' ' ')"
+  [ -z "$others" ] ||
+    die "no general sudo: remove the other files in /etc/sudoers.d from the base image: $others"
+  members="$(getent group sudo | cut -d: -f4)"
+  [ -z "$members" ] ||
+    die "no general sudo: remove the members of the group sudo from the base image: $members"
 }
 
 # Claude Code's first-run dialogs, accepted in files that root owns. The wrapper deletes

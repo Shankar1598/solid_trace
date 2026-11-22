@@ -161,6 +161,29 @@ recipe_runs_a_second_time() {
 }
 check "a second run of the recipe changes nothing" recipe_runs_a_second_time
 
+# The take-over rule is the one sudoers rule ("no general sudo"). A base image with
+# another file in /etc/sudoers.d (such as a cloud guest agent's rule), or with a member
+# of the group sudo (Debian's /etc/sudoers gives it all commands), makes the recipe
+# fail with a clear message. $1 sets up the base image, $2 removes it again.
+recipe_refuses_another_sudo_rule() {
+  local setup="$1" undo="$2" out status=0
+  as root sh -c "$setup"
+  out="$(run_recipe /recipe/agent-vm.sh 2>&1)" || status=$?
+  as root sh -c "$undo"
+  [ "$status" != 0 ] || want "the recipe to refuse another sudo rule, but it ran: $(tail -n 3 <<<"$out")"
+  grep -q -F "no general sudo" <<<"$out" || want "the message 'no general sudo', got: $(tail -n 5 <<<"$out")"
+}
+recipe_refuses_another_file_in_sudoers_d() {
+  recipe_refuses_another_sudo_rule \
+    'printf "%s\n" "%google-sudoers ALL=(ALL:ALL) NOPASSWD:ALL" >/etc/sudoers.d/google_sudoers && chmod 440 /etc/sudoers.d/google_sudoers' \
+    'rm -f /etc/sudoers.d/google_sudoers'
+}
+recipe_refuses_a_member_of_the_group_sudo() {
+  recipe_refuses_another_sudo_rule 'useradd --groups sudo admin' 'userdel admin'
+}
+check "the recipe fails when another file in /etc/sudoers.d gives sudo" recipe_refuses_another_file_in_sudoers_d
+check "the recipe fails when the group sudo has a member" recipe_refuses_a_member_of_the_group_sudo
+
 # --- Each part at its pinned version -----------------------------------------------------
 
 each_part_is_at_its_pinned_version() {
