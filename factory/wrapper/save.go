@@ -534,11 +534,12 @@ func (s *wipSaver) submodules(ctx context.Context, git gitCommand, r *repoSave, 
 			sub.notSaved = fmt.Sprintf("it is deeper than %d submodules", submoduleDepth)
 			continue
 		}
-		if sub.pushURL, err = s.e.submoduleURL(m.url, r.pushURL); err != nil {
-			sub.notSaved = err.Error()
-			continue
-		}
-		if err := s.snapshot(ctx, git, sub, depth+1); err != nil {
+		// A URL that is not on the forge (such as a public dependency)
+		// stops only the save of a submodule that changed.
+		sub.pushURL, err = s.e.submoduleURL(m.url, r.pushURL)
+		if snapErr := s.snapshot(ctx, git, sub, depth+1); snapErr != nil {
+			sub.notSaved = snapErr.Error()
+		} else if err != nil && sub.changed() {
 			sub.notSaved = err.Error()
 		}
 	}

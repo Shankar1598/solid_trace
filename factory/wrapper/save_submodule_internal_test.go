@@ -152,6 +152,43 @@ func TestASubmoduleThatCannotBePushedIsListedAsNotSaved(t *testing.T) {
 	}
 }
 
+// A submodule that is not on the forge, such as a public dependency, is
+// not a part of the save while it has no change: the save does not name
+// it, and it does not make a checkpoint push.
+func TestAnUnchangedSubmoduleThatIsNotOnTheForgeIsNotNamed(t *testing.T) {
+	e, remote, lib := submoduleExecution(t)
+	e.task.GitURL = "https://git.example.test/git"
+
+	if _, pushed, err := e.saver.checkpoint(context.Background()); err != nil || pushed {
+		t.Fatalf("a checkpoint with no change: pushed %v (%v)", pushed, err)
+	}
+	if refs := gitRun(t, "--git-dir", remote, "for-each-ref"); strings.Contains(refs, "agent-wip") {
+		t.Fatalf("a checkpoint with no change pushed: %s", refs)
+	}
+
+	writeFiles(t, e.checkout, map[string]string{"app.txt": "app\n"})
+	saved, err := e.saver.save(context.Background(), dispatcherapi.EndPreempted)
+	if err != nil {
+		t.Fatalf("the save: %v", err)
+	}
+	if len(saved.Skipped) != 0 {
+		t.Errorf("the save names as left out %q", saved.Skipped)
+	}
+	if refs := gitRun(t, "--git-dir", lib, "for-each-ref"); strings.Contains(refs, "agent-wip") {
+		t.Errorf("the save pushed the submodule: %s", refs)
+	}
+
+	writeFiles(t, filepath.Join(e.checkout, "vendor", "lib"), map[string]string{"lib.txt": "two\n"})
+	saved, err = e.saver.save(context.Background(), dispatcherapi.EndPreempted)
+	if err != nil {
+		t.Fatalf("the save after a change in the submodule: %v", err)
+	}
+	if len(saved.Skipped) != 1 || !strings.Contains(saved.Skipped[0], "vendor/lib (a submodule that is not saved: ") ||
+		!strings.Contains(saved.Skipped[0], "is not on the forge") {
+		t.Errorf("the save after a change in the submodule names as left out %q", saved.Skipped)
+	}
+}
+
 // A submodule push that fails is tried again at the next checkpoint, also
 // when nothing changed after it.
 func TestTheNextCheckpointPushesASubmoduleWhosePushFailed(t *testing.T) {

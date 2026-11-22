@@ -339,7 +339,7 @@ A save leaves out these files, and the preemption event names them:
 - the files that `.gitignore` or `.git/info/exclude` excludes, and the factory file's `save_exclude` patterns;
 - each untracked file over 5 MiB, and each untracked file after the first 50 MiB of untracked files.
 
-A submodule with changes saves to the same ref name in its own repository. A submodule whose URL is not on the forge, or that the push cannot reach, is not saved; the preemption event names it. The secret files of a Run and the wrapper's state files are outside the checkout, so a save never has them.
+A submodule with changes saves to the same ref name in its own repository. A submodule with changes whose URL is not on the forge, or that the push cannot reach, is not saved; the preemption event names it, and the next checkpoint tries the push again. A submodule with no changes is not a part of the save. The secret files of a Run and the wrapper's state files are outside the checkout, so a save never has them.
 
 For a forge that refuses refs outside `refs/heads`, the operator sets `DISPATCHER_WIP_REFS=refs/heads/agent-wip`: the saves then go to `refs/heads/agent-wip/<run id>`. The Dispatcher deletes the ref when the Run closes.
 
