@@ -91,7 +91,14 @@ func checkSaved(t *testing.T, env *factorytest.Env, run dispatcherapi.Run, reaso
 	if got := string(env.SolidTrace.Stored(session, "evidence/notes.txt")); got != "the cart total is right" {
 		t.Errorf("the Evidence file at SolidTrace: %q", got)
 	}
-	events := env.WaitForRunEvents(run.ID, 5)
+	// The run events come to SolidTrace after the end call: the Run can
+	// be queued again before they all came.
+	waitUntil(t, "the preemption's run events", func() bool {
+		got := kinds(env.RunEvents(run.ID))
+		return slices.Contains(got, "preempting") && slices.Contains(got, "preemption") &&
+			slices.Contains(got, "execution_ended")
+	})
+	events := env.RunEvents(run.ID)
 	order := kinds(events)
 	if i, j, k := slices.Index(order, "preempting"), slices.Index(order, "preemption"),
 		slices.Index(order, "execution_ended"); i < 0 || j < i || k < j {
