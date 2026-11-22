@@ -59,7 +59,7 @@ export default function SettingsUser({ user, authenticator_app, recovery_codes_l
       <PageHeader title="Account" description="Your name as others in the Organization see it." />
       <div className="space-y-6">
         <Card>
-          <form onSubmit={submit}>
+          <form onSubmit={submit} aria-label="Profile">
             <CardHeader>
               <CardTitle>Profile</CardTitle>
             </CardHeader>

@@ -29,7 +29,7 @@ test('an API token is shown once with its snippets, listed, and revoked', async 
   await expect(page.getByRole('link', { name: 'Account', exact: true })).not.toHaveClass(/bg-secondary/)
   await expect(page.getByText('API tokens', { exact: true })).toBeVisible()
 
-  await page.getByLabel('Token name').fill(name)
+  await page.getByLabel('Token name', { exact: true }).fill(name)
   await page.getByRole('button', { name: 'Make token' }).click()
 
   // The secret, once, and the snippets that use it.

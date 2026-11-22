@@ -4,21 +4,25 @@ import { watchErrors } from '../support/screens'
 
 // User settings' profile form saves the name from both places the page is
 // served, with and without an Organization, and the name is put back after.
+// The Passkeys card has a Name field too when the page is at the Console URL,
+// so the flow finds the profile's Name in the Profile form.
+
+const profileName = (page: Page) => page.getByRole('form', { name: 'Profile' }).getByLabel('Name', { exact: true })
 
 async function saveName(page: Page, path: string, name: string) {
   await page.goto(path)
-  await page.getByLabel('Name', { exact: true }).fill(name)
+  await profileName(page).fill(name)
   await page.getByRole('button', { name: 'Save changes' }).click()
   await expect(page.getByText('User settings updated')).toBeVisible()
   await page.reload()
-  await expect(page.getByLabel('Name', { exact: true })).toHaveValue(name)
+  await expect(profileName(page)).toHaveValue(name)
 }
 
 for (const path of [`/${ORG}/settings/user`, '/user_settings']) {
   test(`the profile form saves the name at ${path}`, async ({ page }) => {
     const errors = watchErrors(page)
     await page.goto(path)
-    const before = await page.getByLabel('Name', { exact: true }).inputValue()
+    const before = await profileName(page).inputValue()
 
     await saveName(page, path, `${before} Flow`)
     await saveName(page, path, before)
@@ -29,7 +33,7 @@ for (const path of [`/${ORG}/settings/user`, '/user_settings']) {
 
 test('Account is about the profile alone, and lit alone in the sidebar', async ({ page }) => {
   await page.goto(`/${ORG}/settings/user`)
-  await expect(page.getByLabel('Name', { exact: true })).toBeVisible()
+  await expect(profileName(page)).toBeVisible()
   await expect(page.getByRole('link', { name: 'Account', exact: true })).toHaveClass(/bg-secondary/)
   await expect(page.getByRole('link', { name: 'API tokens & MCP', exact: true })).not.toHaveClass(/bg-secondary/)
   await expect(page.getByLabel('Token name')).toHaveCount(0)
