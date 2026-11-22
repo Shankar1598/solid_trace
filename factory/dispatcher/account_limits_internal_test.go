@@ -127,3 +127,50 @@ func TestTheResetTimeOfALimitIsInTheFutureAndAtMostAWeekAway(t *testing.T) {
 		}
 	}
 }
+
+// resetTimeOf is the reset time of the account's limit (nil: not at its limit).
+func resetTimeOf(t *testing.T, s *store, name string, now time.Time) *time.Time {
+	t.Helper()
+	list, err := s.accounts(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range list {
+		if a.Name == name {
+			return a.AtLimitUntil
+		}
+	}
+	t.Fatalf("no account %s", name)
+	return nil
+}
+
+// A later limit end with an earlier reset time (the one-hour default when
+// the harness gives none) does not make a reset time that the harness
+// gave earlier shorter. A limit that has ended does not hold a new one.
+func TestALaterLimitWithAnEarlierResetTimeKeepsTheLaterResetTime(t *testing.T) {
+	w := newAdminWorld(t)
+	d := w.d
+	now := w.clock()
+	for _, c := range []struct {
+		mark, want time.Duration
+	}{
+		{3 * time.Hour, 3 * time.Hour},
+		{time.Hour, 3 * time.Hour},
+		{4 * time.Hour, 4 * time.Hour},
+	} {
+		if err := d.MarkAtLimit("pool-1", now.Add(c.mark)); err != nil {
+			t.Fatal(err)
+		}
+		if got := resetTimeOf(t, d.store, "pool-1", now); got == nil || !got.Equal(now.Add(c.want)) {
+			t.Errorf("after a mark until +%v: at the limit until %v, want +%v", c.mark, got, c.want)
+		}
+	}
+	// Five hours on, the limit has ended: a new mark sets its own time.
+	later := now.Add(5 * time.Hour)
+	if err := d.MarkAtLimit("pool-1", later.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := resetTimeOf(t, d.store, "pool-1", later); got == nil || !got.Equal(later.Add(time.Hour)) {
+		t.Errorf("after the end of the limit: at the limit until %v, want %v", got, later.Add(time.Hour))
+	}
+}

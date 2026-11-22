@@ -95,8 +95,13 @@ func (s *store) accounts(now time.Time) ([]Account, error) {
 }
 
 // markAtLimit marks an account at its usage limit until the reset time.
+// It keeps a later reset time that the account has: a limit end with no
+// reset time from the harness (the one-hour default) does not make a
+// reset time that the harness gave before shorter. A limit that ended is
+// always earlier than a new reset time.
 func (s *store) markAtLimit(name string, until time.Time) error {
-	res, err := s.db.Exec(`UPDATE accounts SET limited_until = ? WHERE name = ?`, until.UnixMicro(), name)
+	res, err := s.db.Exec(`UPDATE accounts SET limited_until = MAX(COALESCE(limited_until, 0), ?) WHERE name = ?`,
+		until.UnixMicro(), name)
 	if err != nil {
 		return err
 	}
