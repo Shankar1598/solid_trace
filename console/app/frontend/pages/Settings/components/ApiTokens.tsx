@@ -159,11 +159,12 @@ export function ApiTokens() {
             {offered.map(scope => (
               <div key={scope.name} className="flex items-start gap-2">
                 <Checkbox
+                  className="mt-0.5"
                   id={`scope-${scope.name}`}
                   checked={form.scopes.includes(scope.name)}
                   onCheckedChange={(on) => tick(scope.name, !!on)}
                 />
-                <Label htmlFor={`scope-${scope.name}`} className="text-sm font-normal leading-snug">
+                <Label htmlFor={`scope-${scope.name}`} className="block text-sm font-normal leading-snug">
                   <span className="font-mono">{scope.name}</span>
                   <span className="text-muted-foreground"> — {scope.text.replace('%{organization}', organization?.name ?? 'the Organization')}</span>
                 </Label>
@@ -229,26 +230,26 @@ export function ApiTokens() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Scopes</TableHead>
-                <TableHead>Organization</TableHead>
-                <TableHead>Limits</TableHead>
-                <TableHead>Expires</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Last used</TableHead>
+                <TableHead className="max-md:hidden">Organization</TableHead>
+                <TableHead className="max-md:hidden">Limits</TableHead>
+                <TableHead className="max-md:hidden">Expires</TableHead>
+                <TableHead className="max-md:hidden">Created</TableHead>
+                <TableHead className="max-md:hidden">Last used</TableHead>
                 <TableHead className="w-0" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {tokens.map(token => (
                 <TableRow key={token.id}>
-                  <TableCell>{token.name}</TableCell>
-                  <TableCell className="font-mono text-xs">
+                  <TableCell className="whitespace-normal break-words">{token.name}</TableCell>
+                  <TableCell className="font-mono text-xs whitespace-normal break-words">
                     {token.scopes.length > 0 ? token.scopes.join(' ') : <span className="font-sans text-muted-foreground">None (MCP as you)</span>}
                   </TableCell>
-                  <TableCell>{token.organization?.name ?? <span className="text-muted-foreground">Each</span>}</TableCell>
-                  <TableCell className="text-muted-foreground">{tokenLimitsText(token)}</TableCell>
-                  <TableCell className="text-muted-foreground">{expiry(token.expires_at)}</TableCell>
-                  <TableCell className="text-muted-foreground">{ago(token.created_at)}</TableCell>
-                  <TableCell className="text-muted-foreground">{token.last_used_at ? ago(token.last_used_at) : 'Never'}</TableCell>
+                  <TableCell className="max-md:hidden">{token.organization?.name ?? <span className="text-muted-foreground">Each</span>}</TableCell>
+                  <TableCell className="whitespace-normal text-muted-foreground max-md:hidden">{tokenLimitsText(token)}</TableCell>
+                  <TableCell className="text-muted-foreground max-md:hidden">{expiry(token.expires_at)}</TableCell>
+                  <TableCell className="text-muted-foreground max-md:hidden">{ago(token.created_at)}</TableCell>
+                  <TableCell className="text-muted-foreground max-md:hidden">{token.last_used_at ? ago(token.last_used_at) : 'Never'}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="outline" size="sm" onClick={() => setRevoking(token)} aria-label={`Revoke ${token.name}`}>
                       Revoke

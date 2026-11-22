@@ -162,9 +162,9 @@ export default function SettingsAgentSessions({ agent_sessions, notice_text, can
               <TableBody>
                 {agent_sessions.confirmations.map(confirmation => (
                   <TableRow key={`${confirmation.at}-${confirmation.entries.join(',')}`}>
-                    <TableCell className="font-mono text-xs" title={confirmation.at}>{new Date(confirmation.at).toLocaleString()}</TableCell>
+                    <TableCell className="font-mono text-xs whitespace-normal" title={confirmation.at}>{new Date(confirmation.at).toLocaleString()}</TableCell>
                     <TableCell>{confirmation.user ?? 'A removed user'}</TableCell>
-                    <TableCell className="font-mono text-xs whitespace-normal">{confirmation.entries.join(', ')}</TableCell>
+                    <TableCell className="font-mono text-xs whitespace-normal break-all">{confirmation.entries.join(', ')}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

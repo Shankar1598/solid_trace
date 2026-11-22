@@ -219,41 +219,43 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
           <TableHeader>
             <TableRow>
               <TableHead>Start</TableHead>
-              <TableHead>Last activity</TableHead>
+              <TableHead className="max-md:hidden">Last activity</TableHead>
               <TableHead>Person or Run</TableHead>
-              <TableHead>Repository</TableHead>
-              <TableHead>Model</TableHead>
+              <TableHead className="max-md:hidden">Repository</TableHead>
+              <TableHead className="max-md:hidden">Model</TableHead>
               <TableHead className="text-right">Tokens</TableHead>
-              <TableHead className="text-right">Estimated cost</TableHead>
-              <TableHead className="text-right">Messages</TableHead>
-              <TableHead className="text-right">Tool calls</TableHead>
+              <TableHead className="text-right max-md:hidden">Estimated cost</TableHead>
+              <TableHead className="text-right max-2xl:hidden">Messages</TableHead>
+              <TableHead className="text-right max-2xl:hidden">Tool calls</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map(row => (
               <TableRow key={row.id} data-session={row.id}>
                 <TableCell className="font-mono text-xs whitespace-nowrap">{timeText(row.first)}</TableCell>
-                <TableCell className="font-mono text-xs whitespace-nowrap">{timeText(row.last)}</TableCell>
-                <TableCell>
+                <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.last)}</TableCell>
+                <TableCell className="max-md:whitespace-normal max-md:break-all">
                   <Link href={`${path}/${row.id}`} className={`underline-offset-2 hover:underline ${row.run ? 'font-mono text-xs' : ''}`}>{whoText(row)}</Link>
                   {row.flags.map(flag => <Badge key={flag} variant="warn" className="ml-1.5">{flag}</Badge>)}
+                  {/* Below md the Repository column is hidden, so that the table fits. */}
+                  <div className="mt-1 font-mono text-xs break-all text-muted-foreground md:hidden">{row.repository}{row.folder && `/${row.folder}`}</div>
                 </TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell className="font-mono text-xs max-md:hidden">
                   {row.repository}
                   {row.folder && <span className="text-muted-foreground">/{row.folder}</span>}
                 </TableCell>
-                <TableCell className="font-mono text-xs">{row.model || <span className="font-sans text-muted-foreground">None</span>}</TableCell>
+                <TableCell className="font-mono text-xs max-md:hidden">{row.model || <span className="font-sans text-muted-foreground">None</span>}</TableCell>
                 <TableCell
                   className="text-right font-mono text-xs tabular-nums"
                   title={`${row.input_tokens.toLocaleString()} input, ${row.output_tokens.toLocaleString()} output, ${row.cache_read_tokens.toLocaleString()} cache read, ${row.cache_write_tokens.toLocaleString()} cache write`}
                 >
                   {tokensText(totalTokens(row))}
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs tabular-nums">
+                <TableCell className="text-right font-mono text-xs tabular-nums max-md:hidden">
                   {row.cost_usd === null ? <span className="font-sans text-muted-foreground">No cost</span> : costText(row.cost_usd)}
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs tabular-nums">{row.person_messages.toLocaleString()}</TableCell>
-                <TableCell className="text-right font-mono text-xs tabular-nums">{row.tool_calls.toLocaleString()}</TableCell>
+                <TableCell className="text-right font-mono text-xs tabular-nums max-2xl:hidden">{row.person_messages.toLocaleString()}</TableCell>
+                <TableCell className="text-right font-mono text-xs tabular-nums max-2xl:hidden">{row.tool_calls.toLocaleString()}</TableCell>
               </TableRow>
             ))}
           </TableBody>
