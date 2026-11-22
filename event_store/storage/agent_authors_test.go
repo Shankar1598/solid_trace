@@ -88,3 +88,30 @@ func TestAgentAuthorsGivesTheAuthorOfAnEventThatArrivesLate(t *testing.T) {
 		t.Errorf("Expected the author on the next read, got %q", got)
 	}
 }
+
+func TestAgentAuthorsDoesNotDependOnTheOrderOfTheTakeOverEvent(t *testing.T) {
+	typed := authorsPerson(1200, "k1", "", "Show me the diff")
+	for _, c := range []struct {
+		what   string
+		events []models.Log
+		want   string
+	}{
+		{"the take-over event after the started event", []models.Log{
+			authorsEvent(1190, "execution_started", "x3", "", "", "person", "Cy"),
+			authorsEvent(1191, "take_over", "x3", "", "", "person", "Cy"),
+		}, "person:Cy"},
+		{"two take-over events, the last wins", []models.Log{
+			authorsEvent(1188, "take_over", "x3", "", "", "person", "Ana"),
+			authorsEvent(1190, "execution_started", "x3", "", "", "person", "Cy"),
+			authorsEvent(1191, "take_over", "x3", "", "", "person", "Cy"),
+		}, "person:Cy"},
+		{"a take-over event for an Execution that has no started event", []models.Log{
+			authorsEvent(1190, "execution_started", "x2", "", "", "person", "Ana"),
+			authorsEvent(1191, "take_over", "x3", "", "", "person", "Cy"),
+		}, "not from a person:"},
+	} {
+		if got := authorOf(AgentAuthors(c.events, []AgentTimelineStep{typed}), typed); got != c.want {
+			t.Errorf("%s: expected %q, got %q", c.what, c.want, got)
+		}
+	}
+}

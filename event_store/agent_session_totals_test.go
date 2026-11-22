@@ -115,6 +115,23 @@ func TestAgentSessionTotalsOfARun(t *testing.T) {
 		}
 	})
 
+	t.Run("ids that have no upload do not read the totals of the whole Project", func(t *testing.T) {
+		// Other Agent sessions of the Project hold tokens in agent_sessions.
+		answer := sessionTotalsAnswer(t, env, child(read, laptopSession), laptopSession)
+		expectStatus(t, answer, 200)
+		for _, name := range []string{"agent_sessions", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"} {
+			if numberIn(t, answer, name) != 0 {
+				t.Errorf("Expected %s 0 for an id with no upload, got %s", name, answer.raw)
+			}
+		}
+		if cost, present := answer.body["cost_usd"]; !present || cost != nil {
+			t.Errorf("Expected cost_usd null, got %s", answer.raw)
+		}
+		if answer.body["complete"] != true {
+			t.Errorf("Expected complete true, got %s", answer.raw)
+		}
+	})
+
 	t.Run("an id that is not in the token's list is refused", func(t *testing.T) {
 		secret := child(read, runSession, takeOverSession)
 		for _, ids := range [][]string{{otherSession}, {runSession, otherSession}} {
