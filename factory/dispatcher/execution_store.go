@@ -626,11 +626,23 @@ func (s *store) endWithNoCall(id, reason string, exitCode *int, lost string, at 
 		// A take-over that ends with no end call (the machine went, or
 		// the wrapper failed) does not start again by itself: the Run
 		// waits on a person, with the reason (V8). So does a Run that a
-		// take-over queued, when its take-over Execution did not start.
+		// take-over queued, when its take-over Execution did not start:
+		// then no agent ran and no person attached, so the messages that
+		// the Run kept while queued start a new Execution, as after the
+		// end of a take-over.
+		runState, runReason := dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+reason
+		if !started {
+			again, err := continueForMessages(tx, runID, id, dispatcherapi.StateQueued, runState, returned, at)
+			if err != nil {
+				return false, err
+			}
+			if again {
+				runState, runReason = dispatcherapi.StateQueued, reasonMessagesAfterTakeOver
+			}
+		}
 		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '', take_over_by_id = '',
 			take_over_by_name = '' WHERE id = ? AND (state = ? OR (state = ? AND NOT ?))`,
-			dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+reason, runID, dispatcherapi.StateTakenOver,
-			dispatcherapi.StateQueued, started); err != nil {
+			runState, runReason, runID, dispatcherapi.StateTakenOver, dispatcherapi.StateQueued, started); err != nil {
 			return false, err
 		}
 	} else {

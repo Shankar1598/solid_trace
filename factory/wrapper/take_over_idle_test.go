@@ -303,6 +303,31 @@ func TestATakeOverExecutionThatDoesNotStartMakesTheRunWaitOnAPersonWithTheReason
 	}
 }
 
+// The take-over Execution ran no agent and no person attached: the
+// messages that the Run kept while it was queued start a new Execution,
+// as they do after any end of the take-over.
+func TestMessagesKeptForATakeOverThatDoesNotStartStartANewExecution(t *testing.T) {
+	env, ana := newEnv(t)
+	id := idleRun(t, env, ana, dispatcherapi.StateDone)
+	env.MarkAtLimit(factorytest.DefaultAccount, env.Clock.Now().Add(time.Hour))
+	takeOverIdleCLI(t, env, ana, id)
+	message := send(t, env, ana, id, "Add a test for the cart")
+	env.Runner.BreakWrapper()
+
+	// The take-over Execution's dispatch, then the Execution after it.
+	env.Runner.Agent(takeTask)
+	env.Runner.Agent(takeTask, done("Added the test."), reply, result, waitForEnd)
+	env.Clock.Advance(time.Hour)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 3 || run.Executions[1].StartedAt != nil || run.Executions[2].Form != dispatcherapi.FormHeadless {
+		t.Fatalf("want a take-over Execution that did not start, then a headless Execution: %+v", run.Executions)
+	}
+	if delivered := waitForMessageEvent(t, env, id, message, "message_delivered"); delivered["execution.id"] != run.Executions[2].ID {
+		t.Errorf("the message was delivered in %v, want the Execution after the take-over", delivered["execution.id"])
+	}
+}
+
 func TestAStopOfARunThatATakeOverQueuedStopsItAndEndsTheTakeOver(t *testing.T) {
 	env, ana := newEnv(t)
 	id := idleRun(t, env, ana, dispatcherapi.StateDone)
