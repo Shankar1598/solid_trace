@@ -17,30 +17,11 @@ class FactoryDashboard
   DEFAULT_RANGE = "30d"
   FILTER = "project"
 
-  # A Run's closed event, of the Projects that the filter picks (all with no value).
-  CLOSED = 'event.kind == "closed" and factory.project == $project'
-  MERGED = 'run.close_reason == "pr_merged"'
-  DECLINED = 'run.close_reason == "pr_declined"'
-  TOKENS = %w[input output cache_read cache_write].map { |kind| "totals.tokens.#{kind}" }.join(" + ")
-
-  # title, Query, options. Each Query has one number column by a time bin.
-  CHARTS = [
-    [ "Tokens for each merged PR",
-      "where #{CLOSED} and #{MERGED}\n| summarize tokens = avg(#{TOKENS}) by bin_auto(time)",
-      { "unit" => "tokens", "decimals" => 0 } ],
-    [ "Cycle time of merged PRs",
-      "where #{CLOSED} and #{MERGED}\n" \
-      "| summarize cycle_hours = avg(totals.seconds_to_pr_opened + totals.seconds_from_pr_opened_to_outcome) / 3600 " \
-      "by bin_auto(time)",
-      { "unit" => "h", "decimals" => 1 } ],
-    [ "Acceptance rate",
-      "where #{CLOSED} and (#{MERGED} or #{DECLINED})\n" \
-      "| summarize acceptance = 100 * countif(#{MERGED}) / (countif(#{MERGED}) + countif(#{DECLINED})) by bin_auto(time)",
-      { "unit" => "%", "decimals" => 1 } ],
-    [ "Interventions for each Run",
-      "where #{CLOSED}\n| summarize interventions = avg(totals.interventions.total) by bin_auto(time)",
-      { "decimals" => 2 } ]
-  ].freeze
+  # Title, Query and options of each Chart, from config/factory_dashboard_queries.yml.
+  # EventStore's tests run those Queries on closed run events. Each has one
+  # number column by a time bin, and drops the repeats of a closed event.
+  CHARTS = YAML.safe_load_file(Rails.root.join("config/factory_dashboard_queries.yml")).fetch("charts")
+    .map { |chart| [ chart.fetch("title"), chart.fetch("query"), chart.fetch("options") ] }.freeze
 
   # Makes the Dashboard for the organization, by user, unless it made one
   # before or has no Agent Project yet (a later first sight makes it). Never

@@ -1,0 +1,40 @@
+# The Charts of the starter Factory Dashboard (app/services/factory_dashboard.rb).
+# EventStore's tests read this file too (event_store/factory_dashboard_queries_test.go):
+# they run each Query on closed run events, so a Query that EventStore
+# cannot run fails there.
+#
+# Each Query reads the `closed` run events of the Projects that the Dashboard
+# filter `project` picks (all with no value), and returns a time bin and one
+# number. The Dispatcher sends each run event at least once, and a repeat has
+# the same run.id, run.seq and time as the first. The `distinct` stage drops
+# the repeats, so a Run counts one time in each bin: its columns are the
+# time, the Run's id and seq, and the value that the Chart needs.
+charts:
+  - title: Tokens for each merged PR
+    options: { unit: tokens, decimals: 0 }
+    query: |-
+      where event.kind == "closed" and factory.project == $project and run.close_reason == "pr_merged"
+      | extend used = totals.tokens.input + totals.tokens.output + totals.tokens.cache_read + totals.tokens.cache_write
+      | distinct time, run.id, run.seq, used
+      | summarize tokens = avg(used) by bin_auto(time)
+  - title: Cycle time of merged PRs
+    options: { unit: h, decimals: 1 }
+    query: |-
+      where event.kind == "closed" and factory.project == $project and run.close_reason == "pr_merged"
+      | extend seconds = totals.seconds_to_pr_opened + totals.seconds_from_pr_opened_to_outcome
+      | distinct time, run.id, run.seq, seconds
+      | summarize cycle_hours = avg(seconds) / 3600 by bin_auto(time)
+  - title: Acceptance rate
+    options: { unit: "%", decimals: 1 }
+    query: |-
+      where event.kind == "closed" and factory.project == $project and (run.close_reason == "pr_merged" or run.close_reason == "pr_declined")
+      | extend outcome = run.close_reason
+      | distinct time, run.id, run.seq, outcome
+      | summarize acceptance = 100 * countif(outcome == "pr_merged") / (countif(outcome == "pr_merged") + countif(outcome == "pr_declined")) by bin_auto(time)
+  - title: Interventions for each Run
+    options: { decimals: 2 }
+    query: |-
+      where event.kind == "closed" and factory.project == $project
+      | extend total = totals.interventions.total
+      | distinct time, run.id, run.seq, total
+      | summarize interventions = avg(total) by bin_auto(time)
