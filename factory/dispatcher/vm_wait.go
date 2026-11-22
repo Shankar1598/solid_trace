@@ -77,8 +77,31 @@ func (s *store) markVMWaitWarned(id string, at time.Time) (bool, error) {
 	return n > 0, err
 }
 
-// markPlaced records that the Runner gave the Execution a machine.
+// reasonPlaced is the reason of a queued Run whose Execution the Runner
+// placed on a machine, before the wrapper takes the task.
+const reasonPlaced = "starting on a machine: the Runner placed the Execution, and the wrapper has not started it yet"
+
+// markPlaced records that the Runner gave the Execution a machine. A Run
+// that waits for a VM for it is then queued with reasonPlaced. No run
+// event: the wrapper's task call comes soon after, and its
+// execution_started event carries the next state.
 func (s *store) markPlaced(id string, at time.Time) error {
-	_, err := s.db.Exec(`UPDATE executions SET placed_at = ? WHERE id = ? AND placed_at IS NULL`, at.UnixMicro(), id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE executions SET placed_at = ? WHERE id = ? AND placed_at IS NULL`, at.UnixMicro(), id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE runs SET reason = ? WHERE id = (SELECT run_id FROM executions WHERE id = ? AND state = ?)
+		AND state = ? AND reason = ?`, reasonPlaced, id, dispatcherapi.ExecutionDispatched,
+		dispatcherapi.StateQueued, reasonWaitingForVM); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

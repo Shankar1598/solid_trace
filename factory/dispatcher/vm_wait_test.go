@@ -151,6 +151,35 @@ func TestTheWarningLogComesOnceAlsoWhenTheDispatcherStartsAgain(t *testing.T) {
 	}
 }
 
+// When the Runner places the Execution on a machine, the Run no longer
+// waits for a VM: its reason says that it starts.
+func TestARunWhoseExecutionIsPlacedIsQueuedWithTheReasonThatItStarts(t *testing.T) {
+	env, runner, id, execution := vmWaitEnv(t)
+	runner.place(execution)
+
+	ana := env.Member("Ana")
+	var run dispatcherapi.Run
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		ana.API("GET", "/api/v1/runs/"+id, nil).JSON(t, &run)
+		if !strings.Contains(run.Reason, "waiting for a VM") || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if run.State != dispatcherapi.StateQueued || !strings.Contains(run.Reason, "placed the Execution") ||
+		strings.Contains(run.Reason, "waiting for a VM") {
+		t.Fatalf("the Run is %s with reason %q, want queued with a reason that says the Runner placed it", run.State,
+			run.Reason)
+	}
+	// No warning comes for a placed Execution.
+	env.Clock.Advance(time.Hour)
+	loopLooks()
+	if got := vmWaitWarnings(env); len(got) != 0 {
+		t.Errorf("a warning for an Execution that Nomad placed: %v", got)
+	}
+}
+
 func TestTheRunEventOfADispatchedExecutionCarriesTheReasonForTheWait(t *testing.T) {
 	env, _, id, _ := vmWaitEnv(t)
 
