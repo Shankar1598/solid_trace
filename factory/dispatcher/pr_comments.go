@@ -63,6 +63,15 @@ func (k bitbucketWebhooks) prComments(ctx context.Context, source WebhookSource,
 		return nil, fmt.Errorf("the Run %s: %w", run.id, err)
 	}
 	if !private {
+		// The comments of this time never go to the Run, also when the
+		// repository is private again.
+		comments, err := f.PRComments(ctx, repository, id)
+		if err == nil {
+			err = d.store.skipPRComments(run.id, comments, d.now().UTC())
+		}
+		if err != nil {
+			return nil, fmt.Errorf("the Run %s: %w", run.id, err)
+		}
 		d.log.Info("a comment on a PR of a public repository never continues a Run", log...)
 		return nil, nil
 	}
@@ -309,14 +318,36 @@ func (s *store) acceptPRComments(run closingRun, r review, more map[string]any, 
 	if got.refused != nil {
 		done = triggers
 	}
-	for _, c := range done {
-		if _, err := tx.Exec(`INSERT INTO pr_comments (run_id, comment_id, edit, read_at) VALUES (?, ?, ?, ?)
-			ON CONFLICT (run_id, comment_id) DO UPDATE SET edit = excluded.edit, read_at = excluded.read_at`,
-			run.id, c.ID, c.Edited, at.UnixMicro()); err != nil {
-			return got, err
-		}
+	if err := markPRComments(tx, run.id, done, at); err != nil {
+		return got, err
 	}
 	return got, s.commit(tx)
+}
+
+// markPRComments keeps the edit of each comment as read by the Run.
+func markPRComments(tx *sql.Tx, runID string, comments []forge.Comment, at time.Time) error {
+	for _, c := range comments {
+		if _, err := tx.Exec(`INSERT INTO pr_comments (run_id, comment_id, edit, read_at) VALUES (?, ?, ?, ?)
+			ON CONFLICT (run_id, comment_id) DO UPDATE SET edit = excluded.edit, read_at = excluded.read_at`,
+			runID, c.ID, c.Edited, at.UnixMicro()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// skipPRComments keeps each comment as read by the Run, and so never
+// sends it to the Run (until an edit).
+func (s *store) skipPRComments(runID string, comments []forge.Comment, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := markPRComments(tx, runID, comments, at); err != nil {
+		return err
+	}
+	return s.commit(tx)
 }
 
 // readPRComments gives the edit of each comment that the Run read.

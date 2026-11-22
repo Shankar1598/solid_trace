@@ -211,11 +211,17 @@ func TestACommentOnAPublicRepositoryDoesNothing(t *testing.T) {
 	sendComment(t, env, path, pr.ID, c.ID)
 	nothingHappened(t, env, ana, id, pr.ID, "after a second comment on a public repository")
 
-	// The repository is private again: the comment, which the Run never
-	// got, now continues it.
+	// The repository is private again: the comments from the time when
+	// it was public never go to the Run. A new trigger comment continues
+	// it, with no comment from that time.
 	env.Forge.SetPublic(shop, false)
 	sendComment(t, env, path, pr.ID, c.ID)
-	acceptedMessages(t, env, id, 1)
+	nothingHappened(t, env, ana, id, pr.ID, "after the repository is private again")
+	prComment(t, env, path, pr.ID, fakeforge.Comment{Author: "Asha", Body: "/agent now"})
+	text, _ := acceptedMessages(t, env, id, 1)[0]["message.text"].(string)
+	if strings.Contains(text, "push my change") || strings.Contains(text, "Rename this") {
+		t.Errorf("the message has comments from the time when the repository was public:\n%s", text)
+	}
 }
 
 func TestACommentByTheDispatchersIdentityOrABotDoesNothing(t *testing.T) {
