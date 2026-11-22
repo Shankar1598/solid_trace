@@ -169,6 +169,30 @@ func TestTheEndOfAStoppedExecutionLeavesTheRunThatAMessageQueued(t *testing.T) {
 	}
 }
 
+// A running Run whose wrapper already agreed to end has no Execution that
+// takes a message, and its end cannot continue a Run whose PR has an
+// outcome: the message is refused, not kept with no delivery.
+func TestAMessageToARunningRunWhosePRHasAnOutcomeAndWhoseEndIsAgreedIsRefusedAsClosed(t *testing.T) {
+	w := newAdminWorld(t)
+	d := w.d
+	startedExecution(t, w)
+	if err := d.store.savePROutcome("r-1", dispatcherapi.PRMerged, w.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if answer, err := d.store.compareEnd("e-1", 0); err != nil || !answer.Agreed {
+		t.Fatalf("compare-and-end: %+v %v", answer, err)
+	}
+	_, err := d.store.acceptMessage("7", "r-1", messenger, "One more test", w.clock())
+	var refused *notMessageable
+	if !errors.As(err, &refused) || !refused.closed {
+		t.Fatalf("a message after the agreed end: %v, want the closed refusal", err)
+	}
+	var kept int
+	if err := d.store.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE run_id = 'r-1'`).Scan(&kept); err != nil || kept != 0 {
+		t.Errorf("%d messages kept on the Run (%v), want none", kept, err)
+	}
+}
+
 func TestAMessageToADoneRunWhosePRHasAnOutcomeIsRefusedAsClosed(t *testing.T) {
 	w := newAdminWorld(t)
 	d := w.d
