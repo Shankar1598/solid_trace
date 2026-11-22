@@ -255,6 +255,23 @@ class FactoryRoutesAndSchedulesTest < ActionDispatch::IntegrationTest
     assert_not_requested calls
   end
 
+  test "a Project of another Organization gets 404 for a route change and a pause through this Organization's path" do
+    other = create(:project, organization: create(:organization), name: "Billing")
+    calls = stub_request(:any, /:8080/)
+    sign_in_as(@admin)
+
+    post "/#{@organization.slug}/projects/#{other.slug}/factory/routes", params: { route: { connection: "linear", match: "Billing" } }
+    assert_response :not_found
+    delete "/#{@organization.slug}/projects/#{other.slug}/factory/routes", params: { route: { connection: "linear", match: "Billing" } }
+    assert_response :not_found
+    post "/#{@organization.slug}/projects/#{other.slug}/factory/schedules/sc1/pause"
+    assert_response :not_found
+    post "/#{@organization.slug}/projects/#{other.slug}/factory/schedules/sc1/continue"
+    assert_response :not_found
+
+    assert_not_requested calls
+  end
+
   private
 
   def routes_url
