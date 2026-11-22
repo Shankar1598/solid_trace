@@ -303,7 +303,13 @@ func (s *store) acceptPRComments(run closingRun, r review, more map[string]any, 
 		return got, err
 	}
 	got.sent = len(in)
-	for _, c := range append(triggers, in...) {
+	// An older trigger that did not fit stays unread: the next trigger
+	// gives it.
+	done := append([]forge.Comment{got.trigger}, in...)
+	if got.refused != nil {
+		done = triggers
+	}
+	for _, c := range done {
 		if _, err := tx.Exec(`INSERT INTO pr_comments (run_id, comment_id, edit, read_at) VALUES (?, ?, ?, ?)
 			ON CONFLICT (run_id, comment_id) DO UPDATE SET edit = excluded.edit, read_at = excluded.read_at`,
 			run.id, c.ID, c.Edited, at.UnixMicro()); err != nil {

@@ -330,3 +330,27 @@ func TestOnAClosedRunOneAnswerCommentADay(t *testing.T) {
 		t.Errorf("the Closed Run is %s, closed at %v", run.State, run.ClosedAt)
 	}
 }
+
+// An older trigger comment that did not fit in the message stays unread:
+// the next trigger comment gives it, as the message says.
+func TestAnOlderTriggerCommentThatDidNotFitInTheMessageComesWithTheNextTrigger(t *testing.T) {
+	env, _, path, id, pr := doneRunWithPR(t)
+	// 30 KiB each: the newest trigger and one other comment fit in 64 KiB.
+	big := strings.Repeat("x", 30<<10)
+	env.Forge.PersonComments(shop, pr.ID, fakeforge.Comment{Author: "Ravi", Body: "Rename " + big})
+	// Its webhook did not arrive.
+	older := env.Forge.PersonComments(shop, pr.ID, fakeforge.Comment{Author: "Asha", Body: "/agent first " + big})
+	prComment(t, env, path, pr.ID, fakeforge.Comment{Author: "Asha", Body: "/agent second " + big})
+	text, _ := acceptedMessages(t, env, id, 1)[0]["message.text"].(string)
+	if strings.Contains(text, "/agent first") || !strings.Contains(text, "1 more comments did not fit") {
+		t.Fatalf("the first message has the older trigger, or does not say that it did not fit:\n%.300s",
+			text[len(text)-300:])
+	}
+
+	prComment(t, env, path, pr.ID, fakeforge.Comment{Author: "Ravi", Body: "/agent go on"})
+	text, _ = acceptedMessages(t, env, id, 2)[1]["message.text"].(string)
+	if !strings.Contains(text, fmt.Sprintf("Comment %d by Asha, a general comment, in thread %d:\n/agent first",
+		older.ID, older.ID)) {
+		t.Errorf("the next message does not have the older trigger that did not fit:\n%.500s", text)
+	}
+}
