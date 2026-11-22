@@ -241,6 +241,22 @@ func TestAnErrorResultWithTheLimitTextAloneIsAUsageLimit(t *testing.T) {
 	}
 }
 
+// A rejected rate_limit_event before a turn that works (the account uses
+// its overage) is not a usage limit: the result is not an error.
+func TestARejectedRateLimitEventBeforeASuccessfulResultIsNotAUsageLimit(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), rejected(env.Clock.Now().Add(time.Hour)), done("Fixed"), reply, result, waitForEnd)
+
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if e := onlyExecution(t, run); e.EndReason == dispatcherapi.EndUsageLimit {
+		t.Errorf("the Execution ended with %q", e.EndReason)
+	}
+	if got := limitOf(t, env, factorytest.DefaultAccount); got != "-" {
+		t.Errorf("pool-1 is at its limit until %q after a turn that worked", got)
+	}
+}
+
 func TestAReportBeforeTheUsageLimitSetsTheOutcomeAndTheAccountIsAtItsLimit(t *testing.T) {
 	env, ana := newEnv(t)
 	reset := env.Clock.Now().Add(time.Hour)

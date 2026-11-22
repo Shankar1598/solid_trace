@@ -13,8 +13,8 @@ import (
 // (resetsAt, Unix seconds), an assistant message with the error
 // "rate_limit", and an error result whose text names the usage limit
 // (older versions end the text with "|<reset time in Unix seconds>").
-// The result ends the turn: at it, the Execution ends with the reason
-// EndUsageLimit.
+// An error result ends the turn: at it, the Execution ends with the
+// reason EndUsageLimit.
 type usageLimit struct {
 	// seen is true after a rejected rate_limit_event or an assistant
 	// rate_limit error.
@@ -73,10 +73,17 @@ func (u *usageLimit) text(text string) {
 	}
 }
 
-// result is true when the result ends the turn at the usage limit.
+// result is true when the result ends the turn at the usage limit. Only
+// an error result can: a result that is not an error shows that the turn
+// worked (for example on the account's overage) after a rejected
+// rate_limit_event, so the signals before it do not count.
 func (u *usageLimit) result(ev map[string]any) bool {
+	if ev["is_error"] != true {
+		*u = usageLimit{}
+		return false
+	}
 	text, _ := ev["result"].(string)
-	if !u.seen && ev["is_error"] == true {
+	if !u.seen {
 		lower := strings.ToLower(text)
 		for _, w := range limitWords {
 			u.seen = u.seen || strings.Contains(lower, w)
