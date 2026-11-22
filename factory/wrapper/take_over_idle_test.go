@@ -159,6 +159,32 @@ func TestATakeOverOfARunThatWaitsOnAnAccountLimitIsRefusedWithTheResetTime(t *te
 	}
 }
 
+// With the operator's wait setting, the Run waits on its own account: the
+// refusal names that account's reset time, not an earlier reset time of
+// another account.
+func TestWithTheWaitSettingATakeOverIsRefusedWithTheResetTimeOfTheRunsOwnAccount(t *testing.T) {
+	env, ana := newEnv(t)
+	waitAtLimit(t, env)
+	env.AddAccount("pool-2", secondToken)
+	env.Runner.Agent(script(takeTask, initLine(t), usageLimit(env.Clock.Now().Add(2*time.Hour)))...)
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnAccountLimit)
+	own := onlyExecution(t, run).Account
+	other := "pool-2"
+	if own == other {
+		other = factorytest.DefaultAccount
+	}
+	env.MarkAtLimit(other, env.Clock.Now().Add(time.Hour))
+
+	got := ana.CLI("take-over", "--dispatcher", env.URL(), id)
+	if got.Code != 1 || !strings.Contains(got.Stderr, "waits on an account limit until 2026-11-14 11:00 UTC") {
+		t.Errorf("a take-over of a Run that waits on its own account %s: exit %d\n%s%s", own, got.Code, got.Stdout, got.Stderr)
+	}
+	if run := getRun(t, ana, id); run.State != dispatcherapi.StateWaitingOnAccountLimit || len(run.Executions) != 1 {
+		t.Errorf("the refused take-over changed the Run: %s %+v", run.State, run.Executions)
+	}
+}
+
 func TestATakeOverOfAClosedRunIsRefused(t *testing.T) {
 	env, ana := newEnv(t)
 	id := idleRun(t, env, ana, dispatcherapi.StateDone)
