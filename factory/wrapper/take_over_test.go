@@ -280,6 +280,45 @@ func TestATakeOverOfAnIssueRunKeepsSolidTracesMCPServerWithTheTakeOversToken(t *
 	}
 }
 
+// A take-over during the headless Execution's setup stops that setup: the
+// take-over does the full setup again, with the setup command, and does
+// not take the checkout that the stopped setup left.
+func TestATakeOverDuringTheSetupDoesTheFullSetupWithTheSetupCommand(t *testing.T) {
+	env, ana := newEnv(t)
+	shared := env.Runner.SharedDir("setup-" + filepath.Base(t.TempDir()))
+	runs, waiting := filepath.Join(shared, "runs"), filepath.Join(shared, "waiting")
+	// The first run of the setup command waits until the take-over stops it.
+	env.Forge.Push("example/shop", "main", map[string]string{
+		factoryFile(""): `setup = "echo run >> ` + runs + ` && test $(wc -l < ` + runs + `) -gt 1 || { touch ` + waiting +
+			` && sleep 300; }"`,
+	}, "A setup command")
+	ran := filepath.Join(shared, "harness-ran")
+	env.Runner.Agent(takeTask, shell("touch "+ran), reportStep("--outcome", "done", "--summary", "Done"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitUntil(t, "the setup command", func() bool {
+		_, err := os.Stat(waiting)
+		return err == nil
+	})
+
+	takeOverCLI(t, env, ana, id)
+	run, terminal := takeOverTerminal(t, env, ana, id)
+
+	b, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(b), "run\n"); n != 2 {
+		t.Errorf("the setup command ran %d times, want once in each Execution\nwrapper output:\n%s", n,
+			env.Runner.Fake.Output(run.Executions[0].ID))
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("the headless harness started after the take-over stopped its setup")
+	}
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+}
+
 func TestAReportDuringTheTakeOverSetsTheRunsStateWhenTheAgentSessionEnds(t *testing.T) {
 	env, ana := newEnv(t)
 	id := inToolCallRun(t, env, ana)
