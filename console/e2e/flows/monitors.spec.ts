@@ -69,6 +69,21 @@ test.afterAll(async () => {
 })
 
 const status = (page: Page) => page.locator('[data-monitor-status]').first()
+
+/**
+ * Opens a new Monitor on the seed's Project, whose Logs fill the hours the
+ * previews read. The form opens on the first Project by name, which can be
+ * another one, such as the Agent Project when Agent sessions are on.
+ */
+async function newMonitor(page: Page) {
+  await page.goto(`/${ORG}/monitors/new`)
+  await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  const project = page.getByRole('combobox', { name: 'Project' }).first()
+  await project.click()
+  await page.getByRole('option', { name: 'SolidTrace Project', exact: true }).click()
+  await expect(project).toHaveText('SolidTrace Project')
+}
+
 const REFUSED_PREVIEW = /status of 422 \(Unprocessable Content\)/
 
 test('a member makes a Threshold monitor from the explorer; Run now fires it into Slack, and a higher threshold resolves it', async ({ page }) => {
@@ -176,8 +191,7 @@ test('a member makes a Monitor comparing the change from the range just before; 
   const errors = watchErrors(page, [REFUSED_PREVIEW])
   const name = `Flow change monitor ${Date.now()}`
 
-  await page.goto(`/${ORG}/monitors/new`)
-  await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  await newMonitor(page)
   await page.getByLabel('Name').fill(name)
   await page.getByLabel('Over the last (minutes)').fill('1440')
   await page.getByLabel('Run every (minutes)').fill('60')
@@ -251,8 +265,7 @@ test('a 1-day Baseline with a 2-day range is refused beside the Baseline; one fa
   const errors = watchErrors(page, [REFUSED_PREVIEW])
   const name = `Flow daily change monitor ${Date.now()}`
 
-  await page.goto(`/${ORG}/monitors/new`)
-  await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  await newMonitor(page)
   await page.getByLabel('Name').fill(name)
   await page.getByLabel('Over the last (minutes)').fill('2880')
   await page.getByLabel('Run every (minutes)').fill('60')

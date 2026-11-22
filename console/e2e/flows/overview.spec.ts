@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import { ORG, PROJECT } from '../support/data'
 import { watchErrors } from '../support/screens'
@@ -47,8 +48,15 @@ test.afterAll(() => {
 test('Logs sent to two Projects show in the band and the rates, over Today and 7 days', async ({ page, request }) => {
   const errors = watchErrors(page)
   const now = new Date().toISOString()
-  for (const [slug, n] of [[PROJECT, 3], [secondSlug, 2]] as const) {
-    const logs = Array.from({ length: n }, (_, i) => ({ message: `overview flow ${i}`, time: now, service: 'overview-flow', file }))
+  // The second Project's file sends 20 Logs of 2 KB of random text each, so
+  // that it is among the 10 biggest sources by Logs and by bytes over the
+  // other sources of the dev data, such as the Runs of 10 Logs and 9 KiB each
+  // that the factory flows send to the Agent Project.
+  for (const [slug, n] of [[PROJECT, 3], [secondSlug, 20]] as const) {
+    const logs = Array.from({ length: n }, (_, i) => ({
+      message: `overview flow ${i}`, time: now, service: 'overview-flow', file,
+      ...(slug === secondSlug ? { padding: randomBytes(1024).toString('hex') } : {}),
+    }))
     const sent = await request.post(`${ingest}/api/logs`, { headers: { Authorization: `Bearer ${keyOf(slug)}` }, data: logs })
     expect(sent.ok()).toBe(true)
   }
