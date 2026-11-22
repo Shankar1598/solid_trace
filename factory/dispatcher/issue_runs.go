@@ -175,16 +175,29 @@ func queueIssueComment(tx *sql.Tx, at time.Time, runID, kind string, details map
 }
 
 // commentOnIssue posts a write-back step's comment on the Issue, with the
-// Dispatcher's token. An Issue that SolidTrace does not have (404), or a
-// comment that it refuses (422), is given up.
+// Dispatcher's token, on the Project's slug of now. A Project or an Issue
+// that SolidTrace does not have (404), or a comment that it refuses (422),
+// is given up.
 func (d *Dispatcher) commentOnIssue(ctx context.Context, w ticketWrite) error {
 	number, err := strconv.Atoi(w.ticketID)
 	if err != nil {
 		return fmt.Errorf("%w: the Issue number %q is not a number", errGiveUp, w.ticketID)
 	}
-	project, causeReport, err := d.store.issueCommentParts(w.runID, w.executionID)
+	org, projectID, causeReport, err := d.store.issueCommentParts(w.runID, w.executionID)
 	if err != nil {
 		return err
+	}
+	call, cancel := context.WithTimeout(ctx, writeBackTimeout)
+	defer cancel()
+	// Console finds the Project by its slug of now, and a person can rename
+	// the Project while the Run works: the Run keeps the slug of its start.
+	projects, err := d.listProjects(call, org)
+	if err != nil {
+		return fmt.Errorf("read the Run's Project at SolidTrace: %w", err)
+	}
+	project, ok := slugOf(projects, projectID)
+	if !ok {
+		return fmt.Errorf("%w: SolidTrace has no Project %s in the Organization %s now", errGiveUp, projectID, org.slug)
 	}
 	run := "Run: " + d.config.SolidTraceURL + "/" + w.organizationSlug + "/runs/" + w.runID
 	var body string
@@ -208,8 +221,6 @@ func (d *Dispatcher) commentOnIssue(ctx context.Context, w ticketWrite) error {
 		return fmt.Errorf("%w: the step %s has no Issue comment", errGiveUp, w.step)
 	}
 	request, _ := json.Marshal(map[string]any{"project": project, "issue": number, "body": body, "run_id": w.runID})
-	call, cancel := context.WithTimeout(ctx, writeBackTimeout)
-	defer cancel()
 	resp, err := d.children.send(call, http.MethodPost, d.children.url+issueCommentsPath, request)
 	if err != nil {
 		return fmt.Errorf("post the comment on the Issue: %w", err)
@@ -225,13 +236,16 @@ func (d *Dispatcher) commentOnIssue(ctx context.Context, w ticketWrite) error {
 	return fmt.Errorf("SolidTrace answered %d: %s", resp.StatusCode, bytes.TrimSpace(answer))
 }
 
-// issueCommentParts are the Run's Project (its slug) and the cause report
-// of the Execution's last valid report ("" is none).
-func (s *store) issueCommentParts(runID, executionID string) (project, causeReport string, err error) {
-	err = s.db.QueryRow(`SELECT r.project, COALESCE((SELECT report_cause FROM executions WHERE id = ?), '')
-		FROM runs r WHERE r.id = ?`, executionID, runID).Scan(&project, &causeReport)
+// issueCommentParts are the Run's Organization, the SolidTrace id of its
+// Project, and the cause report of the Execution's last valid report (""
+// is none).
+func (s *store) issueCommentParts(runID, executionID string) (org organization, projectID, causeReport string,
+	err error) {
+	err = s.db.QueryRow(`SELECT r.organization_id, r.organization_slug, r.project_id,
+		COALESCE((SELECT report_cause FROM executions WHERE id = ?), '') FROM runs r WHERE r.id = ?`,
+		executionID, runID).Scan(&org.id, &org.slug, &projectID, &causeReport)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", fmt.Errorf("%w: the Run is gone", errGiveUp)
+		return org, "", "", fmt.Errorf("%w: the Run is gone", errGiveUp)
 	}
-	return project, causeReport, err
+	return org, projectID, causeReport, err
 }

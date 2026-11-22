@@ -89,6 +89,57 @@ func TestTheCauseReportCommentIsSentAgainWhileSolidTraceIsDown(t *testing.T) {
 	}
 }
 
+func TestTheCauseReportCommentNamesTheProjectByItsSlugAtTheTimeOfTheComment(t *testing.T) {
+	env := factorytest.New(t, factorytest.Executions)
+	shop := env.Project("shop")
+	ana := env.Member("Ana")
+	sender, path := env.Sender("Factory")
+	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
+	env.Runner.Agent(takeTask, initLine(t),
+		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	waitUntil(t, "the Dispatcher tried to comment", func() bool {
+		return len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath)) >= 1
+	})
+	// A person renames the Project in SolidTrace before the comment goes:
+	// Console finds the Project by its slug of now only.
+	shop.Slug = "store"
+	env.SolidTrace.SetProject(factorytest.Organization.Slug, shop)
+	env.SolidTrace.RefuseIssueComments(0)
+	if c := oneIssueComment(t, env); c.Project != "store" || c.Issue != 7 || c.RunID != id {
+		t.Errorf("the comment after the rename is on %s#%d for Run %q, want store#7 for %s", c.Project, c.Issue, c.RunID, id)
+	}
+}
+
+func TestACommentOnAnIssueWhoseProjectIsGoneIsGivenUpWithAWarning(t *testing.T) {
+	env := factorytest.New(t, factorytest.Executions)
+	shop := env.Project("shop")
+	ana := env.Member("Ana")
+	sender, path := env.Sender("Factory")
+	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
+	env.Runner.Agent(takeTask, initLine(t),
+		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	waitUntil(t, "the Dispatcher tried to comment", func() bool {
+		return len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath)) >= 1
+	})
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, shop.ID)
+	calls := len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath))
+	env.SolidTrace.RefuseIssueComments(0)
+	if warning := env.WaitForWarning("gave it up"); warning["factory.run_id"] != id {
+		t.Errorf("the warning names the Run %v, not %s: %v", warning["factory.run_id"], id, warning)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath)); got > calls+1 {
+		t.Errorf("a comment on a Project that is gone was sent %d more times", got-calls)
+	}
+	if comments := env.SolidTrace.IssueComments(); len(comments) != 0 {
+		t.Errorf("a comment on a Project that is gone was added: %+v", comments)
+	}
+}
+
 func TestACommentOnAnIssueThatIsGoneIsGivenUpWithAWarning(t *testing.T) {
 	env, ana := newEnv(t)
 	sender, path := env.Sender("Factory")
