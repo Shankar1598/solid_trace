@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Model-checks the Monitor and Notification models with TLC, one rule at a
+# time, and compares each result with specs/expected.txt.
+#
+#   bin/check                 every config in specs/
+#   bin/check Delivery ...    only these configs (names without .cfg)
+#
+# Exit 0: every result is as expected.txt records it.
+# Exit 1: a rule breaks that expected.txt says holds, or holds that it says
+#         breaks (a finding is fixed: update expected.txt and SKILL.md).
+# Exit 2: TLC could not run, or a model has an error (parse, deadlock, type).
+#
+# TLC's output for each rule goes to $MODEL_CHECK_OUT (default
+# ~/.cache/solid-trace/model-check-monitors/<time>/), and the path is printed.
+set -uo pipefail
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+specs=$here/specs
+out=${MODEL_CHECK_OUT:-$HOME/.cache/solid-trace/model-check-monitors/$(date -u +%Y%m%dT%H%M%SZ)}
+mkdir -p "$out"
+
+# Pinned tools, installed by mise on the first run (network needed once).
+tlc_tool='http:tla2tools[url=https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar,checksum=sha256:936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88]@1.7.4'
+java_tool='java@temurin-25'
+export MISE_CEILING_PATHS=$here
+if ! jar_dir=$(mise where "$tlc_tool" 2>/dev/null) || ! java=$(mise which java --tool "$java_tool" 2>/dev/null); then
+  mise install "$java_tool" "$tlc_tool" >&2 || { echo "check: mise could not install TLC and Java" >&2; exit 2; }
+  jar_dir=$(mise where "$tlc_tool"); java=$(mise which java --tool "$java_tool")
+fi
+jar=$jar_dir/tla2tools.jar
+
+if [ $# -gt 0 ]; then configs=("$@"); else
+  configs=(); for f in "$specs"/*.cfg; do configs+=("$(basename "$f" .cfg)"); done
+fi
+
+status=0
+for cfg in "${configs[@]}"; do
+  file=$specs/$cfg.cfg
+  [ -f "$file" ] || { echo "check: no config $file" >&2; exit 2; }
+  # The first line of each config names its module: \* spec: <Module>
+  module=$(sed -n '1s/^\\\* spec: *//p' "$file")
+  [ -n "$module" ] || { echo "check: $cfg.cfg has no '\\* spec:' first line" >&2; exit 2; }
+  rules=$(awk '/^INVARIANTS/{on=1; next} /^[A-Z_]+/{on=0} on && NF {print $1}' "$file")
+  for rule in $rules; do
+    work=$out/$cfg-$rule
+    mkdir -p "$work"
+    cp "$specs/$module.tla" "$work/"
+    # The same config with only this rule.
+    awk -v rule="$rule" '/^INVARIANTS/{print; print "  " rule; skip=1; next} /^[A-Z_]+/{skip=0} !skip' "$file" > "$work/$cfg.cfg"
+    (cd "$work" && "$java" -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers 1 -fp 0 \
+      -metadir "$work/states" -config "$cfg.cfg" "$module.tla") > "$work/tlc.out" 2>&1
+    code=$?
+    rm -rf "$work/states"
+    case $code in
+      0) got=holds ;;
+      12) grep -q "Invariant $rule is violated" "$work/tlc.out" && got=breaks || got=error ;;
+      *) got=error ;;
+    esac
+    want=$(awk -v c="$cfg" -v r="$rule" '!/^#/ && $1 == c && $2 == r {print $3}' "$specs/expected.txt")
+    states=$(sed -n 's/^\([0-9,]*\) states generated, \([0-9,]*\) distinct states found.*/\2 distinct states/p' "$work/tlc.out" | tail -1)
+    if [ "$got" = error ]; then
+      printf '%-22s %-20s ERROR (TLC exit %s): %s\n' "$cfg" "$rule" "$code" "$work/tlc.out"
+      status=2
+    elif [ "$got" = "$want" ]; then
+      printf '%-22s %-20s %-6s as expected  (%s)\n' "$cfg" "$rule" "$got" "$states"
+    else
+      printf '%-22s %-20s %-6s NOT AS EXPECTED (expected.txt: %s): %s\n' "$cfg" "$rule" "$got" "${want:-nothing}" "$work/tlc.out"
+      [ $status -eq 0 ] && status=1
+    fi
+  done
+done
+echo "TLC output: $out"
+exit $status

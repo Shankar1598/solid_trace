@@ -1,0 +1,36 @@
+# The result of each rule in each config at the sync commit (SKILL.md).
+# config  rule  holds|breaks  [finding]
+# A "breaks" line is a finding in the current code, not a goal. When a fix
+# makes it hold, bin/check reports NOT AS EXPECTED: change the line to holds.
+MonitorRuns         TypeOK               holds
+MonitorRuns         NoLogMatchedTwice    breaks  F1
+MonitorRuns         NoLogMissed          holds
+MonitorRuns         NoStaleWrite         breaks  F1
+MonitorRuns         NoWriteOverASave     holds
+MonitorRuns         OneRunAtATime        holds
+MonitorRunsSlow     TypeOK               holds
+MonitorRunsSlow     NoLogMatchedTwice    breaks  F1
+MonitorRunsSlow     NoLogMissed          holds
+MonitorRunsSlow     NoStaleWrite         breaks  F1
+MonitorRunsSlow     NoWriteOverASave     holds
+MonitorRunsSlow     OneRunAtATime        breaks  F1
+Delivery            TypeOK               holds
+Delivery            SentAtMostOnce       holds
+Delivery            ResolveAfterTrigger  holds
+Delivery            NoRowLeftBehind      holds
+DeliveryLong        TypeOK               holds
+DeliveryLong        SentAtMostOnce       breaks  F2
+DeliveryLong        ResolveAfterTrigger  breaks  F2
+DeliveryLong        NoRowLeftBehind      holds
+DeliveryTickDies    TypeOK               holds
+DeliveryTickDies    SentAtMostOnce       holds
+DeliveryTickDies    ResolveAfterTrigger  breaks  F3
+DeliveryTickDies    NoRowLeftBehind      breaks  F3
+DeliveryWriterDies  TypeOK               holds
+DeliveryWriterDies  SentAtMostOnce       holds
+DeliveryWriterDies  ResolveAfterTrigger  holds
+DeliveryWriterDies  NoRowLeftBehind      breaks  F4
+EventThreshold      TypeOK               holds
+EventThreshold      OneThresholdRow      holds
+EventThresholdLong  TypeOK               holds
+EventThresholdLong  OneThresholdRow      breaks  F5

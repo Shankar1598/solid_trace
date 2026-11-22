@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Shows that each rule that holds can break: for each broken variant of the
+code below, it changes a copy of the model the same way and expects TLC to
+find the rule broken.
+
+    bin/mutants            every variant
+    bin/mutants M3 M5      only these
+
+Exit 0: each variant breaks its rule. Exit 1: a rule held on its broken
+variant, so it checks nothing there: fix the model or the rule. Exit 2: TLC
+could not run. Run it after each change to a model or a rule.
+"""
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SPECS = os.path.join(HERE, "specs")
+TLC_TOOL = ("http:tla2tools[url=https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar,"
+            "checksum=sha256:936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88]@1.7.4")
+JAVA_TOOL = "java@temurin-25"
+
+# id, module, config, rule, the broken code, the same change in the model (old, new).
+MUTANTS = [
+    ("M1", "MonitorRuns", "MonitorRuns", "NoWriteOverASave",
+     "MonitorEvaluation#record writes without its `elsif version != @version` check",
+     "LET writes == version = snap[r].version", "LET writes == TRUE"),
+    ("M2", "MonitorRuns", "MonitorRuns", "OneRunAtATime",
+     "MonitorEvaluation.take updates run_started_at with no WHERE on the lease",
+     "IF lease = None \\/ expired", "IF TRUE"),
+    ("M3", "MonitorRuns", "MonitorRuns", "NoLogMissed",
+     "run_match keeps the newest batch at commit time, not the ingest_cursor that EventStore answered",
+     "/\\ cursor' = readTo[r]", "/\\ cursor' = head"),
+    ("M4", "Delivery", "Delivery", "SentAtMostOnce",
+     "IntegrationNotificationProcessorJob without limits_concurrency",
+     "IF sem \\in {\"none\", \"free\"}", "IF TRUE"),
+    ("M5", "Delivery", "Delivery", "ResolveAfterTrigger",
+     "deliver_monitor_rows goes on with the chain after a row fails (no `break unless`)",
+     "/\\ queue' = [queue EXCEPT ![t] = <<>>]\n           /\\ tpc' = [tpc EXCEPT ![t] = \"deliver\"]\n           /\\ UNCHANGED <<sends, early>>",
+     "/\\ queue' = [queue EXCEPT ![t] = Tail(queue[t])]\n           /\\ tpc' = [tpc EXCEPT ![t] = \"deliver\"]\n           /\\ UNCHANGED <<sends, early>>"),
+    ("M6", "Delivery", "Delivery", "NoRowLeftBehind",
+     "deliver_pending schedules no follow-up tick when rows are still deliverable",
+     "IF \\E i \\in Rows : Deliverable(i)", "IF FALSE"),
+    ("M7", "EventThreshold", "EventThreshold", "OneThresholdRow",
+     "EventThresholdJob without limits_concurrency",
+     "  /\\ IF Acquirable", "  /\\ IF TRUE"),
+]
+
+
+def tools():
+    env = dict(os.environ, MISE_CEILING_PATHS=HERE)
+    def run(*args):
+        return subprocess.run(["mise", *args], env=env, capture_output=True, text=True)
+    where, java = run("where", TLC_TOOL), run("which", "java", "--tool", JAVA_TOOL)
+    if where.returncode or java.returncode:
+        if run("install", JAVA_TOOL, TLC_TOOL).returncode:
+            sys.exit("mutants: mise could not install TLC and Java")
+        where, java = run("where", TLC_TOOL), run("which", "java", "--tool", JAVA_TOOL)
+    return os.path.join(where.stdout.strip(), "tla2tools.jar"), java.stdout.strip()
+
+
+def config_for(config, rule):
+    lines, skip = [], False
+    for line in open(os.path.join(SPECS, config + ".cfg")):
+        if line.startswith("INVARIANTS"):
+            lines += [line, "  " + rule + "\n"]
+            skip = True
+            continue
+        if skip and line[:1].isupper():
+            skip = False
+        if not skip:
+            lines.append(line)
+    return "".join(lines)
+
+
+def main():
+    jar, java = tools()
+    wanted = set(sys.argv[1:])
+    status = 0
+    for mid, module, config, rule, code, old, new in MUTANTS:
+        if wanted and mid not in wanted:
+            continue
+        text = open(os.path.join(SPECS, module + ".tla")).read()
+        if text.count(old) != 1:
+            print(f"{mid}  the model no longer has the text this variant changes, once: update MUTANTS in bin/mutants")
+            status = max(status, 1)
+            continue
+        work = tempfile.mkdtemp(prefix=f"mutant-{mid}-")
+        try:
+            with open(os.path.join(work, module + ".tla"), "w") as f:
+                f.write(text.replace(old, new))
+            with open(os.path.join(work, config + ".cfg"), "w") as f:
+                f.write(config_for(config, rule))
+            out = subprocess.run([java, "-XX:+UseParallelGC", "-cp", jar, "tlc2.TLC", "-workers", "1", "-fp", "0",
+                                  "-metadir", os.path.join(work, "states"), "-config", config + ".cfg", module + ".tla"],
+                                 cwd=work, capture_output=True, text=True)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        if out.returncode == 12 and f"Invariant {rule} is violated" in out.stdout:
+            print(f"{mid}  {rule:<20} breaks, as it must: {code}")
+        elif out.returncode == 0:
+            print(f"{mid}  {rule:<20} HOLDS on a broken variant, so it checks nothing there: {code}")
+            status = max(status, 1)
+        else:
+            print(f"{mid}  TLC error {out.returncode}:\n{out.stdout[-2000:]}")
+            status = 2
+    sys.exit(status)
+
+
+if __name__ == "__main__":
+    main()
