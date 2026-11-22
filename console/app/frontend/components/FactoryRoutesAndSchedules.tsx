@@ -89,9 +89,6 @@ export function FactoryRoutes({ routes, trackerConnections, path, canEdit, hasSe
               placeholder="notion-main"
               required
             />
-            <datalist id="factory-tracker-connections">
-              {trackerConnections.map((name) => <option key={name} value={name} />)}
-            </datalist>
           </div>
           <div className="space-y-2">
             <Label htmlFor="factory-route-match">Match value</Label>
@@ -105,6 +102,10 @@ export function FactoryRoutes({ routes, trackerConnections, path, canEdit, hasSe
           <Button type="submit" variant="outline" disabled={form.processing} data-action="add-route">
             {form.processing ? 'Adding…' : 'Add route'}
           </Button>
+          {/* Not in the field's box: space-y adds a bottom margin to the input above it, and the input then sits higher than its neighbour. */}
+          <datalist id="factory-tracker-connections">
+            {trackerConnections.map((name) => <option key={name} value={name} />)}
+          </datalist>
         </form>
       )}
       {canEdit && !hasSettings && (
