@@ -77,6 +77,34 @@ func TestAgentAuthors(t *testing.T) {
 	}
 }
 
+// A take-over that starts the Agent session gives the Run's task as its
+// first person message. The interactive harness gives that line a uuid of
+// its own, so the hash of the text on the started event decides: the task
+// is the factory's, and each other line of the take-over is the person's.
+func TestAgentAuthorsGivesTheFactoryTheTaskOfATakeOverThatStartsTheAgentSession(t *testing.T) {
+	events := []models.Log{
+		authorsEvent(1189, "take_over", "x3", "", "", "person", "Cy"),
+		authorsEvent(1190, "execution_started", "x3", "task-x3", "Fix the cart total", "person", "Cy"),
+	}
+	task := authorsPerson(1191, "own-uuid", "", "Fix the cart total")
+	typed := authorsPerson(1200, "k1", "", "Show me the diff")
+	same := authorsPerson(1210, "k2", "", "Fix the cart total")
+	authors := AgentAuthors(events, []AgentTimelineStep{task, typed, same})
+	for _, c := range []struct {
+		what string
+		step AgentTimelineStep
+		want string
+	}{
+		{"the task", task, "factory:the factory"},
+		{"a line that the person typed", typed, "person:Cy"},
+		{"a second line with the task's text", same, "person:Cy"},
+	} {
+		if got := authorOf(authors, c.step); got != c.want {
+			t.Errorf("%s: expected %q, got %q", c.what, c.want, got)
+		}
+	}
+}
+
 func TestAgentAuthorsGivesTheAuthorOfAnEventThatArrivesLate(t *testing.T) {
 	step := authorsPerson(10, "m-late", "", "One more thing")
 	if got := authorOf(AgentAuthors(nil, []AgentTimelineStep{step}), step); got != "not from a person:" {

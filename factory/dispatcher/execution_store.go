@@ -286,9 +286,20 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 		}
 		if interactive {
 			// Each person message of the take-over Execution is from the
-			// person who took the Run over.
+			// person who took the Run over. The task, which the take-over
+			// gives when it starts the Agent session, is the factory's: the
+			// harness gives its line a uuid of its own, so the hash is of the
+			// text that the wrapper passes.
 			details = actor{kind: actorPerson, id: takenOverByID, name: takenOverByName}.details()
 			details["execution.id"] = id
+			if run.prompt != "" {
+				text := run.prompt
+				if run.cause.any() {
+					text = run.cause.withStandingTask(text)
+				}
+				details["message.id"] = dispatcherapi.TaskMessageID(id)
+				details["message.sha256"] = dispatcherapi.TextSHA256(text)
+			}
 		}
 		if err := addPlace(tx, id, details); err != nil {
 			return run, err
