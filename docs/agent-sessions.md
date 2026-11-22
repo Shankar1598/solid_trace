@@ -91,7 +91,7 @@ Click the person or the Run in the list to open the Agent session page.
 - Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
 - A subagent shows inside the tool call that started it. Click it to open its steps.
 - A long Agent session loads in pages: click **Load more steps** at the end of the timeline.
-- A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. A value marked **cut** was cut at the Log limits; the raw line has all of it.
+- A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. When a Run's next Execution finds its current Agent session so, it does not resume it: a new Agent session joins the Run, starts with the task and the messages, and becomes the Run's current Agent session. A value marked **cut** was cut at the Log limits; the raw line has all of it.
 - Click **Show full** on a cut value to read its raw line, as the record keeps it: with the secrets redacted.
 - To find a step, type in the search box above the timeline. The search shows the steps of this Agent session, and of its subagents, that have the text, with any case. Click **Clear** to see the timeline again.
 
