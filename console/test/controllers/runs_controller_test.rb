@@ -178,4 +178,22 @@ class RunsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :not_found
   end
+
+  test "each Organization with an Agent Project reads the Runs of its own, never another Organization's" do
+    acme_project = turn_on
+    other = create(:organization, slug: "other")
+    other_admin = create(:user)
+    create(:organization_user, organization: other, user: other_admin, role: :admin)
+    other_project = AgentSessionsSettings.turn_on(organization: other, user: other_admin, entries: [ "github.com/other/app" ], confirmed: "1").project
+    acme_asked = stub_runs(acme_project, {})
+    other_asked = stub_runs(other_project, {}, runs: [ run_row("run_other", state: "running", active: true) ])
+    sign_in_as(other_admin)
+
+    get runs_path(org_slug: "other"), headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+
+    assert_response :success
+    assert_equal [ "run_other" ], response.parsed_body.dig("props", "runs", "rows").map { |row| row["id"] }
+    assert_requested other_asked
+    assert_not_requested acme_asked
+  end
 end
