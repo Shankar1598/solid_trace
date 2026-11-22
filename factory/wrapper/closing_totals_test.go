@@ -360,3 +360,23 @@ func TestAnAutomaticRestartIsCountedApartFromTheExecutions(t *testing.T) {
 	expectNumbers(t, closed, map[string]float64{"run.executions": 2, "totals.restarts": 1})
 	expectInterventions(t, closed, 0, nil)
 }
+
+// A machine that went with no notice to the wrapper sends the machine_lost
+// event with restart true: it counts as an automatic restart too.
+func TestARestartAfterALostMachineIsCountedApartFromTheExecutions(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	env.Runner.Agent(takeTask, initLine(t), done("Fixed"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, 1)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	env.Clock.Advance(closeAfter)
+	env.CheckClosedRuns()
+
+	closed := closedEvent(t, env, id, dispatcherapi.StateDone, "", "no_activity")
+	expectNumbers(t, closed, map[string]float64{"run.executions": 2, "totals.restarts": 1})
+	expectInterventions(t, closed, 0, nil)
+}
