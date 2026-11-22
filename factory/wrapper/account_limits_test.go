@@ -223,6 +223,24 @@ func TestTheResetTimeComesFromTheRateLimitEventOrIsOneHourWhenTheHarnessGivesNon
 	}
 }
 
+// The third limit signal: an error result whose text names the limit, with
+// no rate_limit_event and no assistant rate_limit error before it.
+func TestAnErrorResultWithTheLimitTextAloneIsAUsageLimit(t *testing.T) {
+	env, ana := newEnv(t)
+	limited, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "is_error": true, "num_turns": 1,
+		"result": "You've hit your limit · resets 1pm (UTC)", "session_id": "", "uuid": "", "total_cost_usd": 0})
+	env.Runner.Agent(takeTask, initLine(t), string(limited), `{"fake":"exit","code":1}`)
+
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnAccountLimit)
+	if !strings.Contains(run.Reason, factorytest.DefaultAccount) {
+		t.Errorf("reason %q, want the account", run.Reason)
+	}
+	if got := limitOf(t, env, factorytest.DefaultAccount); got != "2026-11-14 10:00 UTC" {
+		t.Errorf("pool-1 is at its limit until %q, want the one-hour default", got)
+	}
+}
+
 func TestAReportBeforeTheUsageLimitSetsTheOutcomeAndTheAccountIsAtItsLimit(t *testing.T) {
 	env, ana := newEnv(t)
 	reset := env.Clock.Now().Add(time.Hour)
