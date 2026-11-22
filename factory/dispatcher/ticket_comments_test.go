@@ -307,3 +307,31 @@ func TestTheLinearBackstopFindsATriggerCommentThatNoWebhookAnnounced(t *testing.
 		t.Errorf("the warning is %v, want the ticket issue-1", w)
 	}
 }
+
+// In poll mode, the poll every 30 seconds reads the comments of the
+// tickets whose Run is Active. A Run that is not Active and not Closed
+// (done, failed or stopped) still continues on a trigger comment, but
+// the Dispatcher reads its ticket's comments only every 5 minutes, so
+// that the poll keeps in Notion's rate limit.
+func TestInPollModeTheCommentsOfATicketWhoseRunIsNotActiveAreReadEvery5Minutes(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	page := readyPage(env, db, "Fix the cart total")
+	env.Clock.Advance(dispatcher.NotionPoll)
+	id := waitForRuns(t, env, 1)[0].ID
+	if got := env.Member("Ana").CLI("stop", "--dispatcher", env.URL(), id); got.Code != 0 {
+		t.Fatalf("solidtrace stop: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	env.Notion.AddComment(page, "/agent Use the second fix", rosaN)
+	settle()
+	before := notionCalls(env, "GET /v1/comments")
+	// 4 minutes and 30 seconds after the first step of the connection.
+	for range 8 {
+		env.Clock.Advance(dispatcher.NotionPoll)
+		settle()
+	}
+	if n := notionCalls(env, "GET /v1/comments") - before; n != 0 {
+		t.Errorf("the polls read the comments of a stopped Run's ticket %d times in 4 minutes", n)
+	}
+	env.Clock.Advance(dispatcher.NotionPoll)
+	wantMessage(t, waitForAccepted(t, env, id, 1)[0], "/agent Use the second fix", rosaN.ID, "Rosa")
+}

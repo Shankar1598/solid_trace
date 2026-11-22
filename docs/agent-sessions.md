@@ -133,7 +133,8 @@ A comment on a Run's ticket that starts with the trigger word, `/agent` (for exa
 - **Who can steer:** a member of the tracker's team, and a guest whom the team invited. Never the connection's own identity (the Notion integration or the Linear app), another bot or integration, a Linear external user (such as a customer from a support tool), or anyone on a Notion page that is published to the web. The Dispatcher writes such a comment in its own log and does nothing.
 - **Notion** gives the type of a comment's author only to an integration with the capability "Read user information without email addresses". With none, no comment can steer a Run, and the Dispatcher's log says why.
 - Each comment goes to the Run one time, and again when its author edits it. A comment from before the Run (before its first minute) is not for it.
-- Linear's **Comment** webhook and Notion's comment events make the Dispatcher read the ticket's comments at once. The backstop (and the poll of a Notion connection with no webhook) reads the comments of each ticket whose Run is not Closed.
+- Linear's **Comment** webhook and Notion's comment events make the Dispatcher read the ticket's comments at once. The poll of a Notion connection with no webhook (every 30 seconds) reads the comments of each ticket whose Run is an Active Run. At most every 5 minutes, the backstop or the poll also reads the comments of each ticket whose Run is done, failed or stopped, so a comment on such a ticket with no webhook can take up to 5 minutes.
+- On Notion, write the `/agent` comment as a comment on the page (the comments at the top of the page). The Dispatcher reads only the page's own comments: an inline comment on a block of the page does nothing.
 - The operator changes the trigger word with `DISPATCHER_TRIGGER_WORD` (one word with no spaces).
 
 ### Connect Linear
