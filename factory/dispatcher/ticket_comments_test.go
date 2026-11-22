@@ -146,7 +146,14 @@ func TestATriggerCommentFromBeforeTheRunIsNotForIt(t *testing.T) {
 	env.Tracker.Put("board", faketracker.Ticket{ID: "T-1", Title: "Fix the cart total", Status: "Backlog"}, rosa)
 	env.Tracker.AddComment("board", "T-1", "/agent an old note", rosa)
 	env.Clock.Advance(2 * time.Minute)
-	id := boardRun(t, env, path)
+	// The ticket goes to the ready status with SetStatus, which keeps its
+	// comments: boardRun's Put makes a new ticket with none, and the old
+	// note would then not be there for the test to refuse.
+	env.Tracker.SetStatus("board", "T-1", faketracker.ReadyStatus, rosa)
+	if a := env.TrackerWebhook(path, secret, "d-ready", "T-1"); a.Status != http.StatusOK {
+		t.Fatalf("the webhook: %d %s", a.Status, a.Body)
+	}
+	id := waitForRuns(t, env, 1)[0].ID
 	env.Tracker.AddComment("board", "T-1", "/agent a new note", rosa)
 	env.TrackerWebhook(path, secret, "d-c1", "T-1")
 	wantMessage(t, waitForAccepted(t, env, id, 1)[0], "/agent a new note", "u-7", "Rosa")
