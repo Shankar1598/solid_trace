@@ -106,11 +106,17 @@ func IsSubagentFile(path string) bool {
 	return strings.HasPrefix(path, "subagents/") || strings.Contains(path, "/subagents/")
 }
 
+// isTranscript is true for a .jsonl file: it has lines, and so it has the
+// times of its lines.
+func isTranscript(path string) bool {
+	return strings.HasSuffix(path, ".jsonl")
+}
+
 // isMainTranscript is true for a .jsonl file at the top of the Agent
 // session's folder: the transcript of the person's conversation, with its
 // model and its cost-state lines.
 func isMainTranscript(path string) bool {
-	return strings.HasSuffix(path, ".jsonl") && !strings.Contains(path, "/")
+	return isTranscript(path) && !strings.Contains(path, "/")
 }
 
 // insertAgentSessions inserts the rows of one range of the parse, in the
@@ -261,7 +267,9 @@ func (s *ClickHouseLogs) AgentSessionList(ctx context.Context, projectID uint32,
 	}
 	// Grouped by the key of the table, so that the times of a row are its
 	// merged times, when its parts are not merged yet too.
-	selected += ` GROUP BY session_id, day, path, version HAVING max(last_time) >= ? AND min(first_time) <= ?`
+	// Only a transcript has the times of its lines: a side file has the
+	// time when the server stored it, which is not activity.
+	selected += ` AND endsWith(path, '.jsonl') GROUP BY session_id, day, path, version HAVING max(last_time) >= ? AND min(first_time) <= ?`
 	args = append(args, f.From, f.To)
 	return s.agentSessionTotals(ctx, projectID, ` AND session_id IN (`+selected+`)`, args...)
 }
@@ -351,12 +359,18 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 func sumAgentFiles(t *AgentSessionTotals, files []agentFileTotals, flags uint8) {
 	highest := map[string]uint32{}
 	subagents := map[string]bool{}
+	// A file that is not .jsonl has no lines, so its times are the times
+	// when the server stored it. The Agent session's times are those of its
+	// transcripts, unless it has none.
+	transcripts := slices.ContainsFunc(files, func(f agentFileTotals) bool { return isTranscript(f.path) })
 	for i, f := range files {
-		if i == 0 || f.first.Before(t.First) {
-			t.First = f.first
-		}
-		if f.last.After(t.Last) {
-			t.Last = f.last
+		if !transcripts || isTranscript(f.path) {
+			if t.First.IsZero() || f.first.Before(t.First) {
+				t.First = f.first
+			}
+			if f.last.After(t.Last) {
+				t.Last = f.last
+			}
 		}
 		if i == 0 || f.firstDay.Before(t.FirstDay) {
 			t.FirstDay = f.firstDay

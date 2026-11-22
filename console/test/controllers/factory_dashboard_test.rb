@@ -189,6 +189,16 @@ class FactoryDashboardTest < ActionDispatch::IntegrationTest
     assert_equal [ "Factory" ], other.dashboards.reload.map(&:name)
   end
 
+  test "two reads that load the Organization before either makes the Dashboard make one Dashboard" do
+    first = Organization.find(@organization.id)
+    second = Organization.find(@organization.id)
+
+    FactoryDashboard.make_once(organization: first, user: @admin)
+    FactoryDashboard.make_once(organization: second, user: @admin)
+
+    assert_equal 1, factory_dashboards.size
+  end
+
   test "a Dashboard that cannot be made does not fail the page and is tried again at the next read" do
     stub_dispatcher(settings: settings_row)
     sign_in_as(@member)

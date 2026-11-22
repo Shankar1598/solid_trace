@@ -180,6 +180,17 @@ class FactorySectionTest < ActionDispatch::IntegrationTest
     assert_not_requested calls
   end
 
+  test "a Project of another Organization gets 404 through this Organization's path, with no call to the Dispatcher" do
+    other = create(:project, organization: create(:organization), name: "Billing")
+    calls = stub_request(:any, /:8080/)
+    sign_in_as(@admin)
+
+    patch "/#{@organization.slug}/projects/#{other.slug}/factory", params: { factory: { repository: "bitbucket.org/example/billing" } }
+
+    assert_response :not_found
+    assert_not_requested calls
+  end
+
   private
 
   def factory_url
