@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -140,5 +141,25 @@ func TestAnInterruptSignalWhoseMessageTheResultReleasedDoesNotEndTheExecution(t 
 	}
 	if end, ending := e.endedEarly(); ending {
 		t.Errorf("the Execution ends with %q, after two interrupts that each had a message", end.Reason)
+	}
+}
+
+// After the preempting marker, a person's interrupt writes nothing to
+// stdin: the halt writes the interrupt request of the preemption.
+func TestAPersonsInterruptAfterTheMarkerWritesNothing(t *testing.T) {
+	e, _ := executionWithDispatcher(t, &fakeBoundary{emptyAfter: 1})
+	path := filepath.Join(t.TempDir(), "stdin")
+	stdin, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	e.stdin = stdin
+	e.setMarker(dispatcherapi.EndPreempted)
+
+	e.writeInterrupt()
+
+	if b, _ := os.ReadFile(path); len(b) != 0 {
+		t.Errorf("stdin got %s after the marker", b)
 	}
 }

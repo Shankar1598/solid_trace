@@ -1,7 +1,6 @@
 package wrapper
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -67,21 +66,18 @@ func (e *execution) takeInterrupt(c dispatcherapi.Command) {
 	}
 }
 
-// writeInterrupt writes the interrupt control request to stdin, under
-// writing, as each message: a write that blocks ends at the end's write
-// deadline.
+// writeInterrupt writes the interrupt control request to stdin through
+// writeStdin, as each message: a write that blocks ends at the end's
+// write deadline. After the end started or after the preempting marker,
+// it writes nothing: the end's own interrupt request goes.
 func (e *execution) writeInterrupt() {
-	request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": newUUID(),
-		"request": map[string]any{"subtype": "interrupt"}})
-	e.writing.Lock()
-	defer e.writing.Unlock()
 	e.mu.Lock()
-	stdin, ending := e.stdin, e.ending
+	started, ending := e.stdin != nil, e.ending
 	e.mu.Unlock()
-	if ending || stdin == nil {
+	if ending || !started {
 		return
 	}
-	if _, err := stdin.Write(append(request, '\n')); err != nil {
+	if err := e.writeStdin(interruptRequest(), e.isMarked); err != nil {
 		fmt.Fprintln(e.log, "wrapper: write the interrupt:", err)
 	}
 }
