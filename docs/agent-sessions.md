@@ -70,6 +70,7 @@ Each engineer must still install the CLI and sign in (steps 1 and 3 below).
 - The plugin's hooks upload the new part of an Agent session when a turn ends (`Stop`, `SubagentStop`) and when the Agent session ends (`SessionEnd`). `SessionStart` uploads the Agent sessions that a crash or a closed terminal left. So an Agent session shows in Console after its first turn ends.
 - A hook never makes Claude Code wait: it starts the upload in the background. A failure goes to `capture.log` in the solidtrace config directory only.
 - An Agent session uploads when the folder where Claude Code started is in a git repository (or a worktree of one) with a remote that matches a captured repository. An Agent session that starts in a folder that is not a repository does not upload, also when it works in a captured repository below that folder.
+- The SSH and HTTPS remotes of a repository give the same name. The SSH-only hosts of a service give the name of its web host: `git@ssh.bitbucket.org:ws/repo.git` is `bitbucket.org/ws/repo`, and `ssh://git@ssh.github.com:443/acme/shop.git` is `github.com/acme/shop`.
 - The CLI gets the list from SolidTrace and keeps it for at most 10 minutes. With no list, it uploads nothing.
 - SolidTrace removes the credentials that its Redaction patterns match before it stores an Agent session.
 
