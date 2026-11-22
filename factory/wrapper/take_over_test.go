@@ -251,7 +251,7 @@ func TestATakeOverOfARunningRunContinuesTheAgentSessionInATerminalOnTheSameMachi
 // Execution's own MCP token in a file that the run user reads.
 func TestATakeOverOfAnIssueRunKeepsSolidTracesMCPServerWithTheTakeOversToken(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	here, reached := agentShell(t, env, "true")
 	env.Runner.Agent(takeTask, initLine(t), here, inToolCall, interrupted, thenEOF)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
