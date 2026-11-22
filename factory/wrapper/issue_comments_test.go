@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/internal/factorytest"
@@ -27,7 +28,7 @@ func oneIssueComment(t *testing.T, env *factorytest.Env) recorder.IssueComment {
 
 func TestAnIssueRunsCauseReportIsACommentOnTheIssueByFactory(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
@@ -46,7 +47,7 @@ func TestAnIssueRunsCauseReportIsACommentOnTheIssueByFactory(t *testing.T) {
 
 func TestAMonitorRunsCauseReportIsOnTheRunsPageOnly(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", monitorAttributes("12"))
@@ -62,7 +63,7 @@ func TestAMonitorRunsCauseReportIsOnTheRunsPageOnly(t *testing.T) {
 
 func TestAnIssueRunWithNoCauseReportAndNoPRAddsNoComment(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Looked"), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
 	waitFor(t, env, ana, id, dispatcherapi.StateDone)
@@ -74,7 +75,7 @@ func TestAnIssueRunWithNoCauseReportAndNoPRAddsNoComment(t *testing.T) {
 
 func TestTheCauseReportCommentIsSentAgainWhileSolidTraceIsDown(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
@@ -89,9 +90,60 @@ func TestTheCauseReportCommentIsSentAgainWhileSolidTraceIsDown(t *testing.T) {
 	}
 }
 
+func TestTheCauseReportCommentNamesTheProjectByItsSlugAtTheTimeOfTheComment(t *testing.T) {
+	env := factorytest.New(t, factorytest.Executions)
+	shop := env.Project("shop")
+	ana := env.Member("Ana")
+	sender, path := env.FactorySender("Factory")
+	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
+	env.Runner.Agent(takeTask, initLine(t),
+		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	waitUntil(t, "the Dispatcher tried to comment", func() bool {
+		return len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath)) >= 1
+	})
+	// A person renames the Project in SolidTrace before the comment goes:
+	// Console finds the Project by its slug of now only.
+	shop.Slug = "store"
+	env.SolidTrace.SetProject(factorytest.Organization.Slug, shop)
+	env.SolidTrace.RefuseIssueComments(0)
+	if c := oneIssueComment(t, env); c.Project != "store" || c.Issue != 7 || c.RunID != id {
+		t.Errorf("the comment after the rename is on %s#%d for Run %q, want store#7 for %s", c.Project, c.Issue, c.RunID, id)
+	}
+}
+
+func TestACommentOnAnIssueWhoseProjectIsGoneIsGivenUpWithAWarning(t *testing.T) {
+	env := factorytest.New(t, factorytest.Executions)
+	shop := env.Project("shop")
+	ana := env.Member("Ana")
+	sender, path := env.FactorySender("Factory")
+	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
+	env.Runner.Agent(takeTask, initLine(t),
+		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	waitUntil(t, "the Dispatcher tried to comment", func() bool {
+		return len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath)) >= 1
+	})
+	env.SolidTrace.DeleteProject(factorytest.Organization.Slug, shop.ID)
+	calls := len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath))
+	env.SolidTrace.RefuseIssueComments(0)
+	if warning := env.WaitForWarning("gave it up"); warning["factory.run_id"] != id {
+		t.Errorf("the warning names the Run %v, not %s: %v", warning["factory.run_id"], id, warning)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := len(env.SolidTrace.CallsTo(recorder.IssueCommentsPath)); got > calls+1 {
+		t.Errorf("a comment on a Project that is gone was sent %d more times", got-calls)
+	}
+	if comments := env.SolidTrace.IssueComments(); len(comments) != 0 {
+		t.Errorf("a comment on a Project that is gone was added: %+v", comments)
+	}
+}
+
 func TestACommentOnAnIssueThatIsGoneIsGivenUpWithAWarning(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.SolidTrace.RefuseIssueComments(http.StatusNotFound)
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
@@ -107,9 +159,91 @@ func TestACommentOnAnIssueThatIsGoneIsGivenUpWithAWarning(t *testing.T) {
 	}
 }
 
+// cutNote is the line of a comment that the Dispatcher cut to Console's
+// limit.
+const cutNote = "The full text is on the Run's page: "
+
+// issueRunWithLongReport starts an Issue Run whose agent reports done with
+// the summary and the cause report, and gives the Run's comment.
+func issueRunWithLongReport(t *testing.T, summary, causeReport string) (dispatcherapi.Run, recorder.IssueComment) {
+	t.Helper()
+	env, ana := newEnv(t)
+	sender, path := env.FactorySender("Factory")
+	env.Runner.Agent(takeTask, initLine(t),
+		reportStep("--outcome", "done", "--summary", summary, "--cause-report", causeReport), reply, result, waitForEnd)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	return run, oneIssueComment(t, env)
+}
+
+// checkFits checks that the comment is in Console's limit, in characters,
+// and that each cut is at a character boundary.
+func checkFits(t *testing.T, body string) {
+	t.Helper()
+	if n := utf8.RuneCountInString(body); n > recorder.MaxIssueCommentBody {
+		t.Errorf("the comment has %d characters, more than Console's %d", n, recorder.MaxIssueCommentBody)
+	}
+	if strings.ContainsRune(body, utf8.RuneError) {
+		t.Errorf("the comment has a character that is cut in two")
+	}
+}
+
+func TestALongIssueCommentIsCutToConsolesLimitAtTheSummaryFirst(t *testing.T) {
+	// 64 KiB of a 2-byte character, then a cause report that fits alone.
+	summary := strings.Repeat("é", 32<<10)
+	causeReport := "CAUSE " + strings.Repeat("c", 40_000) + " END"
+	run, c := issueRunWithLongReport(t, summary, causeReport)
+
+	checkFits(t, c.Body)
+	if !strings.Contains(c.Body, causeReport) {
+		t.Errorf("the cause report is cut, but a cut of the summary was enough")
+	}
+	if !strings.Contains(c.Body, "Summary:\néé") || strings.Contains(c.Body, summary) {
+		t.Errorf("the summary is not cut, or it is gone")
+	}
+	if !strings.HasSuffix(c.Body, cutNote+run.URL) {
+		t.Errorf("the comment does not end with the link to the full text: ...%s", c.Body[len(c.Body)-200:])
+	}
+}
+
+func TestAnIssueCommentIsMeasuredInCharactersNotBytes(t *testing.T) {
+	// 124,000 bytes, but 62,000 characters: Console takes it.
+	summary := strings.Repeat("é", 32_000)
+	causeReport := strings.Repeat("ü", 30_000)
+	_, c := issueRunWithLongReport(t, summary, causeReport)
+
+	if !strings.Contains(c.Body, summary) || !strings.Contains(c.Body, causeReport) || strings.Contains(c.Body, cutNote) {
+		t.Errorf("a comment in Console's limit is cut")
+	}
+}
+
+func TestALongPROpenedCommentOnTheIssueCutsTheCauseReportWhenTheSummaryIsNotEnough(t *testing.T) {
+	summary := strings.Repeat("S", 64<<10)
+	causeReport := "CAUSE " + strings.Repeat("c", 64<<10-6)
+	env, run := issueRunWithPRAndReport(t, "true", summary, causeReport)
+	c := oneIssueComment(t, env)
+
+	checkFits(t, c.Body)
+	for _, want := range []string{run.PRURL, "passed: cart-test", "Cause report:\nCAUSE ccc", cutNote + run.URL} {
+		if !strings.Contains(c.Body, want) {
+			t.Errorf("the cut PR-opened comment has no %q", want)
+		}
+	}
+	if strings.Contains(c.Body, "Summary:") {
+		t.Errorf("the summary is in the comment, but the cause report goes before it")
+	}
+}
+
 // issueRunWithPR starts an Issue Run whose agent commits, opens a PR, runs
 // the check command, and reports done with a cause report.
 func issueRunWithPR(t *testing.T, check string) (*factorytest.Env, dispatcherapi.Run) {
+	t.Helper()
+	return issueRunWithPRAndReport(t, check, "Fixed the rounding", cause)
+}
+
+// issueRunWithPRAndReport is issueRunWithPR with the report's summary and
+// cause report.
+func issueRunWithPRAndReport(t *testing.T, check, summary, causeReport string) (*factorytest.Env, dispatcherapi.Run) {
 	t.Helper()
 	env, ana := newEnv(t)
 	env.Forge.Push("example/shop", "main", map[string]string{factoryFile(""): `
@@ -117,12 +251,12 @@ func issueRunWithPR(t *testing.T, check string) (*factorytest.Env, dispatcherapi
 name = "cart-test"
 command = "` + check + `"
 `}, "A factory file")
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	out := t.TempDir()
 	env.Runner.Agent(takeTask, initLine(t), commitStep,
 		recorded(out, "open", `solidtrace pr --title "Fix the cart" --description "Round the sum."`),
 		checkStep(out, "check"),
-		reportStep("--outcome", "done", "--summary", "Fixed the rounding", "--cause-report", cause),
+		reportStep("--outcome", "done", "--summary", summary, "--cause-report", causeReport),
 		reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
 	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)

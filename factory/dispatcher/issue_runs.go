@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
@@ -30,8 +31,11 @@ import (
 // Issue as 'Factory'. A Monitor has no comments: its cause report is on
 // the Run's page only.
 //
-// Only a sender sets attributes, and an Admin makes each sender: a
-// sender's delivery with these attributes is an Issue or a Monitor Run.
+// Only a sender sets attributes, and only the sender of a 'Factory'
+// Integration (SaveSender.Factory, which an Admin's call sets) can send
+// these: the Dispatcher refuses them from each other sender
+// (factoryAttribute). So a sender's delivery with these attributes is an
+// Issue or a Monitor Run.
 
 // The attributes of a delivery from Console's 'Factory' Integration.
 const (
@@ -175,41 +179,59 @@ func queueIssueComment(tx *sql.Tx, at time.Time, runID, kind string, details map
 }
 
 // commentOnIssue posts a write-back step's comment on the Issue, with the
-// Dispatcher's token. An Issue that SolidTrace does not have (404), or a
-// comment that it refuses (422), is given up.
+// Dispatcher's token, on the Project's slug of now. A Project or an Issue
+// that SolidTrace does not have (404), or a comment that it refuses (422),
+// is given up.
 func (d *Dispatcher) commentOnIssue(ctx context.Context, w ticketWrite) error {
 	number, err := strconv.Atoi(w.ticketID)
 	if err != nil {
 		return fmt.Errorf("%w: the Issue number %q is not a number", errGiveUp, w.ticketID)
 	}
-	project, causeReport, err := d.store.issueCommentParts(w.runID, w.executionID)
+	org, projectID, causeReport, err := d.store.issueCommentParts(w.runID, w.executionID)
 	if err != nil {
 		return err
 	}
-	run := "Run: " + d.config.SolidTraceURL + "/" + w.organizationSlug + "/runs/" + w.runID
-	var body string
+	call, cancel := context.WithTimeout(ctx, writeBackTimeout)
+	defer cancel()
+	// Console finds the Project by its slug of now, and a person can rename
+	// the Project while the Run works: the Run keeps the slug of its start.
+	projects, err := d.listProjects(call, org)
+	if err != nil {
+		return fmt.Errorf("read the Run's Project at SolidTrace: %w", err)
+	}
+	project, ok := slugOf(projects, projectID)
+	if !ok {
+		return fmt.Errorf("%w: SolidTrace has no Project %s in the Organization %s now", errGiveUp, projectID, org.slug)
+	}
+	runURL := d.config.SolidTraceURL + "/" + w.organizationSlug + "/runs/" + w.runID
+	run := "Run: " + runURL
+	var build func(summary, causeReport string) string
 	switch w.step {
 	case stepCauseReport:
-		body = "SolidTrace Factory found the cause of this Issue, and opened no PR.\n" + run + "\n\n"
-		if w.text != "" {
-			body += "Summary:\n" + w.text + "\n\n"
+		build = func(summary, causeReport string) string {
+			body := "SolidTrace Factory found the cause of this Issue, and opened no PR.\n" + run + "\n\n"
+			if summary != "" {
+				body += "Summary:\n" + summary + "\n\n"
+			}
+			return body + "Cause report:\n" + causeReport
 		}
-		body += "Cause report:\n" + causeReport
 	case stepPROpened:
 		checks, err := d.store.reportChecks(w.executionID)
 		if err != nil {
 			return err
 		}
-		body = prOpenedComment("this Issue", w.prURL, run, w.text, checks)
-		if causeReport != "" {
-			body += "\n\nCause report:\n" + causeReport
+		build = func(summary, causeReport string) string {
+			body := prOpenedComment("this Issue", w.prURL, run, summary, checks)
+			if causeReport != "" {
+				body += "\n\nCause report:\n" + causeReport
+			}
+			return body
 		}
 	default:
 		return fmt.Errorf("%w: the step %s has no Issue comment", errGiveUp, w.step)
 	}
+	body := fitIssueComment(build, w.text, causeReport, runURL)
 	request, _ := json.Marshal(map[string]any{"project": project, "issue": number, "body": body, "run_id": w.runID})
-	call, cancel := context.WithTimeout(ctx, writeBackTimeout)
-	defer cancel()
 	resp, err := d.children.send(call, http.MethodPost, d.children.url+issueCommentsPath, request)
 	if err != nil {
 		return fmt.Errorf("post the comment on the Issue: %w", err)
@@ -225,13 +247,49 @@ func (d *Dispatcher) commentOnIssue(ctx context.Context, w ticketWrite) error {
 	return fmt.Errorf("SolidTrace answered %d: %s", resp.StatusCode, bytes.TrimSpace(answer))
 }
 
-// issueCommentParts are the Run's Project (its slug) and the cause report
-// of the Execution's last valid report ("" is none).
-func (s *store) issueCommentParts(runID, executionID string) (project, causeReport string, err error) {
-	err = s.db.QueryRow(`SELECT r.project, COALESCE((SELECT report_cause FROM executions WHERE id = ?), '')
-		FROM runs r WHERE r.id = ?`, executionID, runID).Scan(&project, &causeReport)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", fmt.Errorf("%w: the Run is gone", errGiveUp)
+// maxIssueComment is the longest body of a comment on an Issue that
+// Console takes, in characters (IssueCommentsController::MAX_BODY). The
+// summary and the cause report can each have 64 KiB, so one comment can be
+// longer.
+const maxIssueComment = 65_536
+
+// fitIssueComment is the comment that build makes from the summary and the
+// cause report, cut to maxIssueComment characters: first the end of the
+// summary, then the end of the cause report. A cut comment ends with a line
+// that gives the Run's page, which has the full text.
+func fitIssueComment(build func(summary, causeReport string) string, summary, causeReport, runURL string) string {
+	body := build(summary, causeReport)
+	n := utf8.RuneCountInString(body)
+	if n <= maxIssueComment {
+		return body
 	}
-	return project, causeReport, err
+	note := "\n\nThe comment is cut to fit SolidTrace's limit. The full text is on the Run's page: " + runURL
+	over := n + utf8.RuneCountInString(note) - maxIssueComment
+	summary, over = cutRunes(summary, over)
+	causeReport, _ = cutRunes(causeReport, over)
+	return build(summary, causeReport) + note
+}
+
+// cutRunes takes n characters from the end of s. It gives what stays of s,
+// and the number of characters that it could not take.
+func cutRunes(s string, n int) (string, int) {
+	runes := []rune(s)
+	if n >= len(runes) {
+		return "", n - len(runes)
+	}
+	return string(runes[:len(runes)-n]), 0
+}
+
+// issueCommentParts are the Run's Organization, the SolidTrace id of its
+// Project, and the cause report of the Execution's last valid report (""
+// is none).
+func (s *store) issueCommentParts(runID, executionID string) (org organization, projectID, causeReport string,
+	err error) {
+	err = s.db.QueryRow(`SELECT r.organization_id, r.organization_slug, r.project_id,
+		COALESCE((SELECT report_cause FROM executions WHERE id = ?), '') FROM runs r WHERE r.id = ?`,
+		executionID, runID).Scan(&org.id, &org.slug, &projectID, &causeReport)
+	if errors.Is(err, sql.ErrNoRows) {
+		return org, "", "", fmt.Errorf("%w: the Run is gone", errGiveUp)
+	}
+	return org, projectID, causeReport, err
 }

@@ -413,3 +413,40 @@ func TestAGenericWebhookPathOfNoSenderOrAnotherMethodGets404AndABigBodyGets413(t
 		t.Errorf("the private listener with no signature: %d, want 401", a.Status)
 	}
 }
+
+func TestOnlyTheFactoryIntegrationsSenderCanSendTheAttributesOfAnIssueOrAMonitorRun(t *testing.T) {
+	env := factorytest.New(t)
+	env.Project("shop")
+	alerts, alertsPath := env.Sender("Alerts")
+	for name, attributes := range map[string]map[string]string{
+		"an Issue":           {"solidtrace.notification": "issue_created", "solidtrace.issue_number": "7"},
+		"a Monitor":          {"solidtrace.notification": "monitor_firing", "solidtrace.monitor_id": "12"},
+		"another solidtrace": {"solidtrace.x": "y", "ticket": "T-1"},
+	} {
+		b := dispatcherapi.GenericWebhook{Project: "shop", Prompt: "Fix it", Attributes: attributes}
+		a := sendGeneric(t, env, alertsPath, alerts.Secret, "d-"+name, b)
+		if a.Status != http.StatusBadRequest || !strings.Contains(string(a.Body), "Factory") {
+			t.Errorf("%s from another sender: %d %s, want 400 that names the Factory Integration", name, a.Status, a.Body)
+		}
+	}
+	if n := runCount(t, env); n != 0 {
+		t.Fatalf("another sender started %d Runs with the attributes of the Factory Integration", n)
+	}
+	// Its other attributes are as before.
+	accepted(t, sendGeneric(t, env, alertsPath, alerts.Secret, "d-other", dispatcherapi.GenericWebhook{
+		Project: "shop", Prompt: "Fix it", Attributes: map[string]string{"ticket": "T-1", "solidtrace": "x"}}))
+
+	factory, factoryPath := env.FactorySender("Factory")
+	accepted(t, sendGeneric(t, env, factoryPath, factory.Secret, "d-issue", dispatcherapi.GenericWebhook{
+		Project: "shop", Prompt: "Fix it", Attributes: map[string]string{
+			"solidtrace.notification": "issue_created", "solidtrace.issue_number": "7"}}))
+}
+
+func TestOnlyAnAdminMakesTheFactoryIntegrationsSender(t *testing.T) {
+	env := factorytest.New(t)
+	member := env.Member("Ana")
+	a := member.API("POST", "/api/v1/senders", dispatcherapi.SaveSender{Name: "Factory", Factory: true})
+	if a.Status != http.StatusForbidden {
+		t.Errorf("a member made the Factory Integration's sender: %d %s, want 403", a.Status, a.Body)
+	}
+}

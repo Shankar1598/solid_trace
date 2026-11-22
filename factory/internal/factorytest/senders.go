@@ -18,10 +18,24 @@ import (
 // such as /webhooks/generic/<id>.
 func (e *Env) Sender(name string, projects ...string) (dispatcherapi.NewSender, string) {
 	e.t.Helper()
+	return e.makeSender(dispatcherapi.SaveSender{Name: name, Projects: projects})
+}
+
+// FactorySender makes the sender of a 'Factory' Integration with name, as
+// Console does for an Admin: it can start Issue and Monitor Runs in each
+// Project. It returns the sender and the path of its webhook URL.
+func (e *Env) FactorySender(name string) (dispatcherapi.NewSender, string) {
+	e.t.Helper()
+	return e.makeSender(dispatcherapi.SaveSender{Name: name, Factory: true})
+}
+
+func (e *Env) makeSender(save dispatcherapi.SaveSender) (dispatcherapi.NewSender, string) {
+	e.t.Helper()
+	name := save.Name
 	if e.admin == nil {
 		e.admin = e.PersonIn("factorytest-admin", Organization, "admin")
 	}
-	a := e.admin.API("POST", "/api/v1/senders", dispatcherapi.SaveSender{Name: name, Projects: projects})
+	a := e.admin.API("POST", "/api/v1/senders", save)
 	if a.Status != http.StatusCreated {
 		e.t.Fatalf("make the sender %s: %d %s", name, a.Status, a.Body)
 	}

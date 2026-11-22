@@ -61,7 +61,7 @@ func TestAnIssueOrAMonitorDeliveryStartsARunWhoseFirstMessageHasTheStandingTask(
 	} {
 		t.Run(name, func(t *testing.T) {
 			env, ana := newEnv(t)
-			sender, path := env.Sender("Factory")
+			sender, path := env.FactorySender("Factory")
 			env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Looked"), reply, result,
 				waitForEnd)
 			id := factoryDelivery(t, env, path, sender.Secret, "d-1", attributes)
@@ -76,7 +76,7 @@ func TestAnIssueOrAMonitorDeliveryStartsARunWhoseFirstMessageHasTheStandingTask(
 
 func TestADeliveryWithNoIssueOrMonitorGetsNoStandingTask(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Alerts")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result, waitForEnd)
 	// The notification attribute alone names no Issue and no Monitor.
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", map[string]string{"solidtrace.notification": "issue_created"})
@@ -131,7 +131,7 @@ func TestAnIssueOrAMonitorRunsMCPTokenReadsOnlyItsProjectAndStopsAtTheEndOfTheEx
 			env := factorytest.New(t, factorytest.Executions)
 			shop := env.Project("shop")
 			ana := env.Member("Ana")
-			sender, path := env.Sender("Factory")
+			sender, path := env.FactorySender("Factory")
 			kept := filepath.Join(t.TempDir(), "kept")
 			env.Runner.Agent(takeTask, initLine(t), keepMCPToken(kept),
 				reportStep("--outcome", "done", "--summary", "Looked"), reply, result, waitForEnd)
@@ -190,7 +190,7 @@ func TestAnIssueOrAMonitorRunsMCPTokenReadsOnlyItsProjectAndStopsAtTheEndOfTheEx
 
 func TestEachExecutionOfAnIssueRunGetsItsOwnMCPToken(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	// The second Execution resumes the Agent session on the same machine.
 	env.Runner.KeepAgentSessions()
 	here, reached := marker(t)
@@ -246,7 +246,7 @@ func TestADoneIssueOrMonitorRunWithACauseReportAndNoPRShowsCauseReportAndNeither
 	} {
 		t.Run(name, func(t *testing.T) {
 			env, ana := newEnv(t)
-			sender, path := env.Sender("Factory")
+			sender, path := env.FactorySender("Factory")
 			env.Runner.Agent(takeTask, initLine(t),
 				reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
 			id := factoryDelivery(t, env, path, sender.Secret, "d-1", attributes)
@@ -268,7 +268,7 @@ func TestADoneIssueOrMonitorRunWithACauseReportAndNoPRShowsCauseReportAndNeither
 
 func TestADoneIssueRunWithNoCauseReportKeepsTheUsualFlags(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Looked"), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
 	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
@@ -299,7 +299,7 @@ func TestTheDispatcherRefusesACauseReportThatDoesNotFit(t *testing.T) {
 				reply, result, waitForEnd)
 			var id string
 			if c.issue {
-				sender, path := env.Sender("Factory")
+				sender, path := env.FactorySender("Factory")
 				id = factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
 			} else {
 				id = start(t, env, ana, "Fix the cart")
@@ -320,7 +320,7 @@ func TestTheDispatcherRefusesACauseReportThatDoesNotFit(t *testing.T) {
 
 func TestAnIssueRunFailsWhenSolidTraceRefusesItsMCPToken(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.SolidTrace.RefuseChildTokensWith("mcp:read", http.StatusUnprocessableEntity)
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Looked"), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))

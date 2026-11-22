@@ -426,6 +426,10 @@ var migrations = []string{
 	// ends the count of lost machines in a row: only a person continues
 	// that Run.
 	`ALTER TABLE executions ADD COLUMN lost_restarted INTEGER NOT NULL DEFAULT 0;`,
+
+	// The sender of a 'Factory' Integration (deferred ticket 06): only its
+	// deliveries can have the attributes of an Issue or a Monitor Run.
+	`ALTER TABLE senders ADD COLUMN factory INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.
