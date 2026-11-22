@@ -320,6 +320,10 @@ _Avoid_: factory config, factory.yaml
 The file `.solidtrace/factory.toml` in a repository that says how the **Factory** works on it: the machine kind, the setup command, the named check commands, the extra hosts that agents can reach, the time limits of an **Execution** and more patterns that a work-in-progress save leaves out. The **Dispatcher** reads it from the default branch only, from the **Project**'s folder first and then from the root, when it starts each Execution, so a change applies after a person merges it. A file with an error fails the **Run** with the reason.
 _Avoid_: factory config, factory.yaml, Factory settings (those are in the Dispatcher)
 
+**Checkpoint**:
+The work-in-progress save of an **Execution** that the wrapper pushes to the **Run**'s WIP ref at an interval (5 minutes unless the operator sets another), only when the work changed. A machine lost with no notice loses only the work after the last checkpoint, and a new Execution restores it.
+_Avoid_: autosave, backup
+
 **Webhook sender**:
 A tool that starts **Runs** with signed requests to the **Dispatcher**'s generic webhook, with the secret that an Admin got when they made it. It belongs to one **Organization**, can be limited to some of its **Projects**, and is the actor of the Runs that it starts. A Log sender is not a Webhook sender.
 _Avoid_: webhook client, integration (alone)
@@ -388,3 +392,4 @@ _Avoid_: command, mention, slash command
 - "derived columns" from `message` were asked for; resolved: they are ordinary **Attributes** that a **Log transform** sets. And "editable in the dashboard" meant a Console page in the **Project**'s settings, not a **Dashboard**.
 - "session" was being used for a coding agent's conversation as well as a signed-in browser; resolved: **Session** stays the signed-in browser, and an agent's conversation is an **Agent session**.
 - "run" was being used for one time an agent works on a machine and for the whole piece of work across stops; resolved: the whole piece of work is a **Run**, and each time it works on a machine is an **Execution**. A **Monitor**'s run and a **Chart** run are plain verbs, not a **Run**.
+- "checkpoint" was being used for a **Processing cursor** and for the factory's save on an interval; resolved: a **Checkpoint** is only the factory's save, and EventStore's position in its stored Events stays the **Processing cursor**.
