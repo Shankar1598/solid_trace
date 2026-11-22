@@ -329,6 +329,26 @@ func TestALinearTriggerCommentByAMemberOrAGuestIsAMessageAndByAnAppABotOrAnExter
 	}
 }
 
+// The connection is of one team. An issue that moved to another team is
+// not a ticket of the connection, so a person of the other team cannot
+// steer its Run with a comment.
+func TestATriggerCommentOnALinearIssueThatMovedToAnotherTeamDoesNothing(t *testing.T) {
+	env, path := linearEnv(t)
+	id := linearRun(t, env, path)
+	env.Linear.AddTeam(design)
+	env.Linear.Put(fakelinear.Issue{ID: "issue-1", Identifier: "DES-1", Team: "DES", Title: "Fix issue-1",
+		Status: "Ready for agent"}, rosaOnLinear)
+	env.Linear.AddComment("issue-1", "/agent Use the second fix", fakelinear.By{User: &rosaOnLinear})
+	// No webhook: the step of the whole connection (the backstop) reads
+	// the comments of each ticket of a Run. A webhook for the issue
+	// finds no ticket of the connection, and reads no comment.
+	env.Clock.Advance(5*time.Minute + time.Second)
+	settle()
+	if list := acceptedMessages(env, id); len(list) != 0 {
+		t.Errorf("the Run got %d messages from a comment on an issue of another team: %v", len(list), list)
+	}
+}
+
 func TestTheLinearBackstopFindsATriggerCommentThatNoWebhookAnnounced(t *testing.T) {
 	env, path := linearEnv(t)
 	id := linearRun(t, env, path)
