@@ -3,6 +3,7 @@ package wrapper_test
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -317,6 +318,65 @@ func TestATakeOverDuringTheSetupDoesTheFullSetupWithTheSetupCommand(t *testing.T
 	}
 	leave(t, env, terminal)
 	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+}
+
+// The take-over keeps the interrupted agent's work that is not committed:
+// when the Dispatcher cannot be reached, or fails, the take-over's task
+// call goes again, as the end call does.
+func TestATakeOverSendsItsTaskCallAgainAndKeepsTheAgentsWork(t *testing.T) {
+	env, ana := newEnv(t)
+	work, reached := agentShell(t, env, "echo 'the agent work' > wip.txt")
+	env.Runner.Agent(takeTask, initLine(t), work, inToolCall, interrupted, thenEOF)
+	id := start(t, env, ana, "Fix the cart")
+	reached()
+	// A 5xx answer, then no connection.
+	env.FailExecutionCalls("task", http.StatusServiceUnavailable, 0)
+
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	if n := env.FailingCalls("task"); n != 0 {
+		t.Errorf("%d failed task calls did not go", n)
+	}
+	typeLine(t, env, terminal, "!cat wip.txt", "the agent work")
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+}
+
+// A 4xx answer to the take-over's task call does not change when the call
+// goes again, and the last of the tries is the end: then the wrapper
+// deletes the kept work, and the take-over Execution does not start.
+func TestATakeOverWhoseTaskCallFailsDeletesTheKeptWork(t *testing.T) {
+	for name, c := range map[string]struct {
+		statuses []int
+		left     int
+	}{
+		"a 4xx answer":   {[]int{http.StatusForbidden, http.StatusForbidden}, 1},
+		"each try fails": {[]int{500, 502, 503, 504, 0, 503}, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env, ana := newEnv(t)
+			id := inToolCallRun(t, env, ana)
+			first := getRun(t, ana, id).Executions[0]
+			env.FailExecutionCalls("task", c.statuses...)
+
+			takeOverCLI(t, env, ana, id)
+
+			run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+			if !strings.HasPrefix(run.Reason, "the take-over ended: ") {
+				t.Errorf("the reason is %q", run.Reason)
+			}
+			if e := run.Executions[1]; e.StartedAt != nil {
+				t.Errorf("the take-over Execution started: %+v", e)
+			}
+			if n := env.FailingCalls("task"); n != c.left {
+				t.Errorf("%d of the %d failed task calls did not go, want %d", n, len(c.statuses), c.left)
+			}
+			if _, err := os.Stat(env.Runner.Workspace(first.ID)); !os.IsNotExist(err) {
+				t.Errorf("the kept workspace is there after the take-over's task call failed: %v", err)
+			}
+		})
+	}
 }
 
 func TestAReportDuringTheTakeOverSetsTheRunsStateWhenTheAgentSessionEnds(t *testing.T) {

@@ -84,13 +84,12 @@ func (a answer) err(verb string) error {
 }
 
 // task is the task and secrets call. place names the machine, and the
-// command that attaches a person to a take-over there.
-func (c *client) task(ctx context.Context, place dispatcherapi.TaskRequest) (dispatcherapi.Task, error) {
+// command that attaches a person to a take-over there. It sends the call
+// tries times at most: again when the Dispatcher cannot be reached or
+// answers 5xx. A second task call of a started Execution changes nothing.
+func (c *client) task(ctx context.Context, place dispatcherapi.TaskRequest, tries int) (dispatcherapi.Task, error) {
 	var task dispatcherapi.Task
-	a, err := c.call(ctx, "task", place)
-	if err == nil {
-		err = a.err("task")
-	}
+	a, err := c.callAgain(ctx, "task", place, tries)
 	if err == nil {
 		err = json.Unmarshal(a.body, &task)
 	}
@@ -98,39 +97,48 @@ func (c *client) task(ctx context.Context, place dispatcherapi.TaskRequest) (dis
 }
 
 // endTries is how many times the wrapper sends its end call when the
-// Dispatcher cannot be reached or fails.
+// Dispatcher cannot be reached or fails. A take-over's task call goes as
+// many times: it keeps the work of the Execution before it.
 const endTries = 5
 
 // end is the end call. It tries again when the Dispatcher cannot be
 // reached or answers 5xx. It gives the take-over Execution that follows
 // on this machine ("" is none).
 func (c *client) end(ctx context.Context, end dispatcherapi.ExecutionEnd) (string, error) {
+	a, err := c.callAgain(ctx, "end", end, endTries)
+	if err != nil {
+		return "", err
+	}
+	var next dispatcherapi.EndAnswer
+	if len(a.body) > 0 {
+		if err := json.Unmarshal(a.body, &next); err != nil {
+			return "", fmt.Errorf("read the end call's answer: %w", err)
+		}
+	}
+	return next.TakeOver, nil
+}
+
+// callAgain sends a call tries times at most, with a longer wait before
+// each try: again when the Dispatcher cannot be reached or answers 5xx.
+// It gives the first 2xx answer, or the error.
+func (c *client) callAgain(ctx context.Context, verb string, body any, tries int) (answer, error) {
 	var last error
-	for try := 0; try < endTries; try++ {
+	for try := 0; try < tries; try++ {
 		if try > 0 {
 			select {
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return answer{}, ctx.Err()
 			case <-time.After(time.Duration(try) * time.Second):
 			}
 		}
-		a, err := c.call(ctx, "end", end)
+		a, err := c.call(ctx, verb, body)
 		if err == nil && a.status/100 != 5 {
-			if err := a.err("end"); err != nil {
-				return "", err
-			}
-			var next dispatcherapi.EndAnswer
-			if len(a.body) > 0 {
-				if err := json.Unmarshal(a.body, &next); err != nil {
-					return "", fmt.Errorf("read the end call's answer: %w", err)
-				}
-			}
-			return next.TakeOver, nil
+			return a, a.err(verb)
 		}
 		if err == nil {
-			err = a.err("end")
+			err = a.err(verb)
 		}
 		last = err
 	}
-	return "", last
+	return answer{}, last
 }

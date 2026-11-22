@@ -117,18 +117,16 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 // keptWork is what an Execution that a take-over follows leaves on the
 // machine for it: the checkout and the run user's home stay, and the
 // project directory stays open (it was opened before the run user's
-// first process, so a link that the agent made does not move it).
+// first process, so a link that the agent made does not move it). With
+// no project directory, nothing is kept: the take-over does the full
+// setup.
 type keptWork struct {
 	projectDir *os.Root
 }
 
 // cleanUp deletes what a take-over did not use: the workspace and the
-// run user's home. With nothing kept (nil), the Execution before deleted
-// them.
+// run user's home.
 func (k *keptWork) cleanUp(cfg config, log io.Writer) {
-	if k == nil {
-		return
-	}
 	if k.projectDir != nil {
 		k.projectDir.Close()
 	}
@@ -142,7 +140,14 @@ func (k *keptWork) cleanUp(cfg config, log io.Writer) {
 func execute(ctx context.Context, cfg *config, boundary killBoundary, runUser runUser, environ []string, stderr io.Writer,
 	kept *keptWork) (int, string, *keptWork) {
 	c := newClient(*cfg)
-	task, err := c.task(ctx, dispatcherapi.TaskRequest{VM: cfg.vm, Attach: cfg.attachCommand(runUser.name)})
+	// The first Execution's task call goes once: the Runner sees the
+	// wrapper's exit. A take-over's goes again, as the end call does, so
+	// that the work that it keeps is not lost.
+	tries := 1
+	if kept != nil {
+		tries = endTries
+	}
+	task, err := c.task(ctx, dispatcherapi.TaskRequest{VM: cfg.vm, Attach: cfg.attachCommand(runUser.name)}, tries)
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
 		boundary.Remove(emptyWait)
@@ -208,7 +213,10 @@ func execute(ctx context.Context, cfg *config, boundary killBoundary, runUser ru
 				if err != nil || e.left != nil {
 					return 1, "", nil
 				}
-				return 0, next, nil
+				if next == "" {
+					return 0, "", nil
+				}
+				return 0, next, &keptWork{}
 			}
 			return 0, next, &keptWork{projectDir: e.uploads.root()}
 		}
