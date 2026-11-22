@@ -187,7 +187,7 @@ Scan ==
   /\ scans < MaxScans
   /\ LET c == Pebble.cursor
      IN /\ matched' = [b \in Ids |-> IF mc < b /\ b <= c THEN matched[b] + Copies(b) ELSE matched[b]]
-        /\ mc' = c
+        /\ mc' = IF mc >= c THEN mc ELSE c   \* a cursor behind after answers after
   /\ scans' = scans + 1
   /\ UNCHANGED <<wal, durable, next, accepted, up, pc, rng, parts, made, forgotten, onDisk, fails, crashes, losses>>
 

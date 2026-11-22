@@ -13,13 +13,13 @@ LogIngestPowerLoss        TypeOK                 holds
 LogIngestPowerLoss        NoLogStoredTwice       holds
 LogIngestPowerLoss        NoLoggedLogLost        breaks  L1
 LogIngestPowerLoss        NoAcceptedLogLost      breaks  D1
-LogIngestPowerLoss        MatchReadsEachLogOnce  breaks  L2
+LogIngestPowerLoss        MatchReadsEachLogOnce  holds
 LogIngestPowerLoss        MatchMissesNoLog       breaks  L1
 LogIngestPowerLossSynced  TypeOK                 holds
 LogIngestPowerLossSynced  NoLogStoredTwice       holds
 LogIngestPowerLossSynced  NoLoggedLogLost        holds
 LogIngestPowerLossSynced  NoAcceptedLogLost      breaks  D1
-LogIngestPowerLossSynced  MatchReadsEachLogOnce  breaks  L2
+LogIngestPowerLossSynced  MatchReadsEachLogOnce  holds
 LogIngestPowerLossSynced  MatchMissesNoLog       holds
 LogIngestWindowPassed     TypeOK                 holds
 LogIngestWindowPassed     NoLogStoredTwice       breaks  D2

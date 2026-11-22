@@ -12,7 +12,7 @@ A test runs the crash points that someone wrote down. This model lets TLC try **
 Use it when a change touches a file or function in the coverage record below. To see what changed since the sync commit, committed or not:
 
 ```sh
-git diff --stat 3c96a93e -- event_store/logprocessing/processor.go event_store/storage/pebble_logs.go event_store/storage/logs_clickhouse.go event_store/storage/logs_clickhouse_read.go event_store/handler/logs.go event_store/ingest/logs.go
+git diff --stat 0f95dbb5 -- event_store/logprocessing/processor.go event_store/storage/pebble_logs.go event_store/storage/logs_clickhouse.go event_store/storage/logs_clickhouse_read.go event_store/handler/logs.go event_store/ingest/logs.go
 ```
 
 Changes to normalising, the Log transform, Attributes, the key counts and the reads other than `ScanLogsIngestedAfter` are outside the model.
@@ -23,7 +23,7 @@ From the repo root:
 
 ```sh
 .claude/skills/model-check-log-ingest/bin/check      # 4 configs x 6 rules: about 1 minute
-.claude/skills/model-check-log-ingest/bin/mutants    # each rule breaks on a broken variant: about 10 s
+.claude/skills/model-check-log-ingest/bin/mutants    # each rule breaks on a broken variant: about 15 s
 ```
 
 - **`bin/check`:** checks each rule of each `specs/*.cfg` alone, and compares the results with `specs/expected.txt`.
@@ -31,7 +31,7 @@ From the repo root:
   - Exit 1: a result is different.
   - Exit 2: TLC could not run, or the model has an error.
   - TLC's output for each rule is in `~/.cache/solid-trace/model-check-log-ingest/<time>/<config>-<rule>/tlc.out`. `bin/check LogIngest` checks only that config.
-- **`bin/mutants`:** for 5 broken variants of the code, it changes a copy of the model in the same way. Each variant must break its rule. Run it after each change to the model or a rule.
+- **`bin/mutants`:** for 6 broken variants of the code, it changes a copy of the model in the same way. Each variant must break its rule. Run it after each change to the model or a rule.
 - **`COVERAGE=1 bin/check`:** also names each action that TLC never takes in a config. Only an action that the config turns off may be in that list, such as `Expire` where nothing can expire. Any other action in it is a model error, such as an `UNCHANGED` that conflicts with the action's own change. Run it after each change to a model.
 
 The first run installs Java (`java@temurin-25`) and TLC (`tla2tools.jar` 1.7.4, pinned by its sha256) with mise. Only that first run needs the network. The model-check-monitors skill uses the same tools.
@@ -70,21 +70,15 @@ The 4 configs set the environment that the code can meet:
     3. The power fails: ClickHouse loses the part.
     4. `Prepare` deletes the batch at or below the cursor. The Logs are then in neither store (`NoLoggedLogLost`), and a Match monitor misses them (`MatchMissesNoLog`).
   - In `LogIngestPowerLossSynced`, both rules hold. So a ClickHouse that syncs its parts closes this loss. Check the ClickHouse 26.8 settings, and measure the insert cost, before you act on it.
-- **L2. After a power loss, a Match monitor can read Logs again. Runs: `LogIngestPowerLoss`, `LogIngestPowerLossSynced`.**
-  - `ScanLogsIngestedAfter` answers the Log processing cursor as `ingest_cursor`, also when the cursor is behind `after` (`handler/logs.go`). Console keeps it.
-  - The cursor write is NoSync, so a power loss can move it back after a scan already gave it to Console.
-  - Path:
-    1. A scan answers cursor 1, and Console keeps it.
-    2. The power fails, and the cursor is back at 0.
-    3. The next scan answers 0, and Console keeps it.
-    4. The range goes again (dropped by its token).
-    5. The next scan reads batch 1 again (`MatchReadsEachLogOnce`).
-  - ClickHouse's sync does not change this. Never moving a Match cursor back closes it in the model's terms: answer `after` when the cursor is behind it.
 - **D1. A power loss can lose a Log after its 200. Runs: both power-loss configs.** `WriteLogBatch` writes with `pebble.NoSync`, and its comment says: "a process crash loses nothing". A Log that is not on disk yet is lost on a power loss. This is the code's choice, so it is not a finding.
 - **D2. If a range goes again after its dedup entry left the window, its Logs are stored twice. Run: `LogIngestWindowPassed`.**
   - This needs more than 10,000 blocks inserted into `logs` between a try and its retry.
   - The `logsDedupWindow` comment gives the reason that this does not happen: "A range is inserted again within seconds, while each Project inserts about once a second." That holds while the retry backoff (at most 30 s) times the busy Projects stays well below 10,000.
   - Keep that true when you change `maxBackoff`, `logsDedupWindow`, or how often each Project inserts.
+
+L1 and D1 are accepted: they are the cost of no fsync, which the code chooses for its insert and ingest speed.
+
+**Fixed: L2, in `0f95dbb5`.** After a power loss, the Log processing cursor's NoSync write can go back after a scan gave it to Console. `ScanLogsIngestedAfter` then answered that older cursor as `ingest_cursor`, and the next run read the batches between again. It now answers `after` when the cursor is behind it, and `MatchReadsEachLogOnce` holds in both power-loss configs. Variant M6 in `bin/mutants` puts the old answer back, and the rule must break. The Go test is `TestAMatchMonitorsCursorNeverMovesBackWhenTheProcessingCursorDoes`.
 
 ## When a result is not as expected
 
@@ -103,7 +97,7 @@ The 4 configs set the environment that the code can meet:
 
 ## Coverage record
 
-**Sync commit:** `3c96a93e` (main, 2026-11-22). At that commit, each action below describes the code that it names.
+**Sync commit:** `0f95dbb5` (2026-11-22). At that commit, each action below describes the code that it names.
 
 | Model action | Code |
 | --- | --- |
@@ -113,7 +107,7 @@ The 4 configs set the environment that the code can meet:
 | `SetCursor` | `PebbleWriter.SetLogProcessingCursor` (`pebble.NoSync`) |
 | `Delete` | `PebbleWriter.DeleteLogBatchesUpTo` (`pebble.NoSync`) |
 | `Restart` | `Processor.Prepare` |
-| `Scan` | `ClickHouseLogs.ScanLogsIngestedAfter`, `handler/logs.go` (`ingest_cursor`), and Console's `MonitorEvaluation#run_match`, which keeps it |
+| `Scan` | `ClickHouseLogs.ScanLogsIngestedAfter` (it answers `after` when the cursor is behind it), `handler/logs.go` (`ingest_cursor`), and Console's `MonitorEvaluation#run_match`, which keeps it |
 | `Forget` | `logsDedupWindow` (`non_replicated_deduplication_window` of `logs`) |
 | `PowerLoss`, `WritebackWal`, `WritebackPart` | Pebble's WAL replay up to the first missing record; ClickHouse's parts without `fsync_after_insert` |
 

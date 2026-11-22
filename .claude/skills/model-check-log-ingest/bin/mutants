@@ -39,7 +39,11 @@ MUTANTS = [
      "IF mc < b /\\ b <= c THEN", "IF mc <= b /\\ b <= c THEN"),
     ("M5", "LogIngest", "LogIngest", "MatchMissesNoLog",
      "the scan answers the newest Log batch in Pebble as ingest_cursor, not the Log processing cursor",
-     "        /\\ mc' = c\n", "        /\\ mc' = IF Pebble.batches = {} THEN c ELSE Max(Pebble.batches \\cup {c})\n"),
+     "        /\\ mc' = IF mc >= c THEN mc ELSE c   \\* a cursor behind after answers after\n", "        /\\ mc' = IF Pebble.batches = {} THEN c ELSE Max(Pebble.batches \\cup {c})\n"),
+    ("M6", "LogIngest", "LogIngestPowerLossSynced", "MatchReadsEachLogOnce",
+     "ScanLogsIngestedAfter answers a cursor behind after (L2 before 0f95dbb5)",
+     "        /\\ mc' = IF mc >= c THEN mc ELSE c   \\* a cursor behind after answers after\n",
+     "        /\\ mc' = c\n"),
 ]
 
 
