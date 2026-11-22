@@ -495,12 +495,15 @@ func AccountsCommand(args []string, getenv func(string) string, now func() time.
 	if verb == "add" {
 		// Read to the end of the first line only: an operator pastes the
 		// token and presses Enter, and stdin stays open.
-		line, err := bufio.NewReader(io.LimitReader(stdin, 64<<10)).ReadString('\n')
+		const maxLine = 64 << 10
+		line, err := bufio.NewReader(io.LimitReader(stdin, maxLine+1)).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return fail("read the token from stdin: %v", err)
 		}
 		token = strings.TrimSpace(line)
 		switch {
+		case len(line) > maxLine:
+			return fail("the first line on stdin is longer than 64 KB: give only the token that 'claude setup-token' prints")
 		case token == "":
 			return fail("give the account's token on stdin: the token that 'claude setup-token' prints")
 		case strings.HasPrefix(token, "sk-ant-api"):
@@ -554,7 +557,8 @@ func AccountsCommand(args []string, getenv func(string) string, now func() time.
 		if !removed {
 			return fail("there is no account %s in the pool", name)
 		}
-		fmt.Fprintf(stdout, "The account %s is out of the pool. Its live Executions keep their token.\n", name)
+		fmt.Fprintf(stdout, "The account %s is out of the pool. Its running Executions keep their token; "+
+			"the Run of an Execution that has not taken its task yet goes back in the queue.\n", name)
 	case "list":
 		list, err := s.accounts(now())
 		if err != nil {
