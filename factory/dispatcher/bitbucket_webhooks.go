@@ -76,7 +76,8 @@ func (k bitbucketWebhooks) Delivery(header http.Header, body []byte, _ time.Time
 			ID int `json:"id"`
 		} `json:"pullrequest"`
 		Repository struct {
-			FullName string `json:"full_name"`
+			FullName  string `json:"full_name"`
+			IsPrivate *bool  `json:"is_private"`
 		} `json:"repository"`
 		Comment struct {
 			Content struct {
@@ -97,6 +98,11 @@ func (k bitbucketWebhooks) Delivery(header http.Header, body []byte, _ time.Time
 		// reconcile reads the comments from Bitbucket.
 		if !triggers(payload.Comment.Content.Raw, k.d.config.triggerWord()) {
 			return Delivery{ID: delivery.ID, Ignored: true}, nil
+		}
+		// The signed body says that the repository was public when the
+		// comment came: each try of the step, a retry too, takes it so.
+		if p := payload.Repository.IsPrivate; p != nil && !*p {
+			delivery.Entity = publicPrefix + delivery.Entity
 		}
 		delivery.Entity = commentsEntityPrefix + delivery.Entity
 	}

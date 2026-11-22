@@ -535,6 +535,32 @@ func TestALostMachineRestartsTheRunFromTheLastCheckpoint(t *testing.T) {
 	}
 }
 
+// A machine lost before any upload: the next Execution starts a new Agent
+// session, and its first message names the factory's commands once,
+// before the task, with the note of the lost machine after the task.
+func TestTheFirstMessageAfterALostMachineWithNoUploadNamesTheFactorysCommands(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, 1)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	session := sessionOf(t, env, id)
+	transcript := string(env.SolidTrace.Stored(session, session+".jsonl"))
+	if n := strings.Count(transcript, "solidtrace pr --title"); n != 1 {
+		t.Fatalf("the transcript names 'solidtrace pr --title' %d times, want 1:\n%s", n, transcript)
+	}
+	tools, task, lost := strings.Index(transcript, "solidtrace pr --title"), strings.Index(transcript, "Fix the cart"),
+		strings.Index(transcript, "was lost with no notice")
+	if tools > task || lost < task {
+		t.Errorf("want the commands, then the task, then the note of the lost machine:\n%s", transcript)
+	}
+}
+
 // A preemption during a take-over gives waiting on a person with the
 // reason, and no restart, also with a kept message (V8).
 func TestAPreemptionDuringATakeOverWaitsOnAPersonAndDoesNotRestart(t *testing.T) {

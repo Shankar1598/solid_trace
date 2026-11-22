@@ -255,7 +255,8 @@ const maxIssueComment = 65_536
 
 // fitIssueComment is the comment that build makes from the summary and the
 // cause report, cut to maxIssueComment characters: first the end of the
-// summary, then the end of the cause report. A cut comment ends with a line
+// summary, then the end of the cause report, then the end of what stays
+// (such as the check list of a PR-opened comment). A cut comment ends with a line
 // that gives the Run's page, which has the full text.
 func fitIssueComment(build func(summary, causeReport string) string, summary, causeReport, runURL string) string {
 	body := build(summary, causeReport)
@@ -267,7 +268,12 @@ func fitIssueComment(build func(summary, causeReport string) string, summary, ca
 	over := n + utf8.RuneCountInString(note) - maxIssueComment
 	summary, over = cutRunes(summary, over)
 	causeReport, _ = cutRunes(causeReport, over)
-	return build(summary, causeReport) + note
+	body = build(summary, causeReport)
+	// The rest, such as a long check list, is cut at its end.
+	if over := utf8.RuneCountInString(body) + utf8.RuneCountInString(note) - maxIssueComment; over > 0 {
+		body, _ = cutRunes(body, over)
+	}
+	return body + note
 }
 
 // cutRunes takes n characters from the end of s. It gives what stays of s,

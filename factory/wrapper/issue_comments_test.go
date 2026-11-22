@@ -1,6 +1,7 @@
 package wrapper_test
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -234,6 +235,25 @@ func TestALongPROpenedCommentOnTheIssueCutsTheCauseReportWhenTheSummaryIsNotEnou
 	}
 }
 
+// The check list alone can be over Console's limit: each check's command
+// can have 64 KiB. The comment is then cut at the end of the check list,
+// and still ends with the link to the Run's page.
+func TestAPROpenedCommentWhoseCheckListIsOverTheLimitIsCutToFit(t *testing.T) {
+	env, run := issueRunWithPRAndChecks(t, "true", "Fixed", "The cause", "true "+strings.Repeat("x", 40_000),
+		"true "+strings.Repeat("y", 40_000))
+	c := oneIssueComment(t, env)
+
+	checkFits(t, c.Body)
+	for _, want := range []string{run.PRURL, "passed: cart-test", "passed: true xxx", "passed: true yyy"} {
+		if !strings.Contains(c.Body, want) {
+			t.Errorf("the cut PR-opened comment has no %q", want)
+		}
+	}
+	if !strings.HasSuffix(c.Body, cutNote+run.URL) {
+		t.Errorf("the comment does not end with the link to the full text: ...%s", c.Body[max(0, len(c.Body)-200):])
+	}
+}
+
 // issueRunWithPR starts an Issue Run whose agent commits, opens a PR, runs
 // the check command, and reports done with a cause report.
 func issueRunWithPR(t *testing.T, check string) (*factorytest.Env, dispatcherapi.Run) {
@@ -245,6 +265,14 @@ func issueRunWithPR(t *testing.T, check string) (*factorytest.Env, dispatcherapi
 // cause report.
 func issueRunWithPRAndReport(t *testing.T, check, summary, causeReport string) (*factorytest.Env, dispatcherapi.Run) {
 	t.Helper()
+	return issueRunWithPRAndChecks(t, check, summary, causeReport)
+}
+
+// issueRunWithPRAndChecks is issueRunWithPRAndReport with a 'solidtrace
+// check COMMAND' for each of commands after the factory file's check.
+func issueRunWithPRAndChecks(t *testing.T, check, summary, causeReport string, commands ...string) (*factorytest.Env,
+	dispatcherapi.Run) {
+	t.Helper()
 	env, ana := newEnv(t)
 	env.Forge.Push("example/shop", "main", map[string]string{factoryFile(""): `
 [[checks]]
@@ -253,11 +281,14 @@ command = "` + check + `"
 `}, "A factory file")
 	sender, path := env.FactorySender("Factory")
 	out := t.TempDir()
-	env.Runner.Agent(takeTask, initLine(t), commitStep,
+	steps := []string{takeTask, initLine(t), commitStep,
 		recorded(out, "open", `solidtrace pr --title "Fix the cart" --description "Round the sum."`),
-		checkStep(out, "check"),
-		reportStep("--outcome", "done", "--summary", summary, "--cause-report", causeReport),
-		reply, result, waitForEnd)
+		checkStep(out, "check")}
+	for i, command := range commands {
+		steps = append(steps, checkStep(out, fmt.Sprintf("check-%d", i), command))
+	}
+	env.Runner.Agent(append(steps, reportStep("--outcome", "done", "--summary", summary, "--cause-report", causeReport),
+		reply, result, waitForEnd)...)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
 	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
 	if run.PRURL == "" {

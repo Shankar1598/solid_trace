@@ -183,6 +183,12 @@ recipe_refuses_a_member_of_the_group_sudo() {
 }
 check "the recipe fails when another file in /etc/sudoers.d gives sudo" recipe_refuses_another_file_in_sudoers_d
 check "the recipe fails when the group sudo has a member" recipe_refuses_a_member_of_the_group_sudo
+# A user whose primary group is sudo is not in the member list of /etc/group, but sudo
+# gives that user the rule of the group too.
+recipe_refuses_a_user_whose_primary_group_is_sudo() {
+  recipe_refuses_another_sudo_rule 'useradd --gid sudo admin' 'userdel admin'
+}
+check "the recipe fails when a user's primary group is sudo" recipe_refuses_a_user_whose_primary_group_is_sudo
 
 # --- Each part at its pinned version -----------------------------------------------------
 

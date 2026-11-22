@@ -37,6 +37,11 @@ import (
 // commentsEntityPrefix is the start of the entity of a PR's comments.
 const commentsEntityPrefix = "comments:"
 
+// publicPrefix starts the PR entity of a comments step whose webhook says
+// that the repository is public: the step then skips the PR's comments,
+// whatever the repository is at the step.
+const publicPrefix = "public:"
+
 // actorForge is the actor kind of a forge account (actor.id is its
 // account id, actor.name its name).
 const actorForge = "forge"
@@ -124,9 +129,11 @@ func (k bitbucketWebhooks) retryComments(ctx context.Context, source WebhookSour
 	}
 }
 
-// prComments reconciles the comments of the PR entity "<workspace>/<slug>#<id>".
+// prComments reconciles the comments of the PR entity "<workspace>/<slug>#<id>"
+// (with publicPrefix, of a public repository).
 func (k bitbucketWebhooks) prComments(ctx context.Context, source WebhookSource, entity string) ([]string, error) {
 	d := k.d
+	entity, public := strings.CutPrefix(entity, publicPrefix)
 	fullName, id, err := splitPREntity(entity)
 	if err != nil {
 		return nil, err
@@ -138,11 +145,14 @@ func (k bitbucketWebhooks) prComments(ctx context.Context, source WebhookSource,
 	ctx, cancel := context.WithTimeout(ctx, forgeCallBudget)
 	defer cancel()
 	log := []any{"run", run.id, "repository", repository, "pr", id}
-	private, err := f.Private(ctx, repository)
-	if err != nil {
-		return nil, fmt.Errorf("the Run %s: %w", run.id, err)
+	if !public {
+		private, err := f.Private(ctx, repository)
+		if err != nil {
+			return nil, fmt.Errorf("the Run %s: %w", run.id, err)
+		}
+		public = !private
 	}
-	if !private {
+	if public {
 		// The comments of this time never go to the Run, also when the
 		// repository is private again.
 		comments, err := f.PRComments(ctx, repository, id)

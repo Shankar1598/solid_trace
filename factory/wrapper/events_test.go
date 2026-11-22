@@ -16,6 +16,19 @@ func kinds(events []map[string]any) []string {
 	return got
 }
 
+// placedReason is the reason of the Dispatcher's queued event when the
+// Runner places an Execution before its wrapper's task call.
+const placedReason = "starting on a machine: the Runner placed the Execution, and the wrapper has not started it yet"
+
+// withoutPlaced are the events with no placement event. The fake Runner
+// places each Execution as it starts its wrapper, so the placement event
+// comes before the task call nearly always, but not always.
+func withoutPlaced(events []map[string]any) []map[string]any {
+	return slices.DeleteFunc(slices.Clone(events), func(ev map[string]any) bool {
+		return ev["event.kind"] == "queued" && ev["run.reason"] == placedReason
+	})
+}
+
 func checkFields(t *testing.T, ev map[string]any, want map[string]any) {
 	t.Helper()
 	for k, v := range want {
@@ -39,21 +52,33 @@ func TestARunIsDoneWhileEventStoreIsDownAndItsEventsArriveInOrderWhenItIsBack(t 
 
 	env.SolidTrace.EventStoreDown(false)
 	// The second queued event is the Dispatcher's: it gives the Run the reason
-	// for the wait for a VM.
-	events := env.WaitForRunEvents(id, 6)
-	want := []string{"created", "queued", "queued", "execution_started", "report", "execution_ended"}
-	if got := kinds(events); len(got) != len(want) {
-		t.Fatalf("event kinds %v, want %v", got, want)
-	}
-	for i, kind := range want {
-		if events[i]["event.kind"] != kind || events[i]["run.seq"] != float64(i+1) {
-			t.Errorf("event %d: %v %v, want %s with run.seq %d", i, events[i]["event.kind"], events[i]["run.seq"], kind, i+1)
+	// for the wait for a VM. A third queued event, of the placement, gives
+	// the reason that it starts.
+	var all []map[string]any
+	waitUntil(t, "the execution_ended event", func() bool {
+		all = env.RunEvents(id)
+		return len(all) > 0 && all[len(all)-1]["event.kind"] == "execution_ended"
+	})
+	var seqs []int
+	for i, ev := range all {
+		if ev["run.seq"] != float64(i+1) {
+			t.Errorf("event %d: %v has run.seq %v, want %d", i, ev["event.kind"], ev["run.seq"], i+1)
 		}
+		seqs = append(seqs, i+1)
 	}
-	if got := env.ArrivalSeqs(id); !slices.Equal(got, []int{1, 2, 3, 4, 5, 6}) {
-		t.Errorf("the events arrived with run.seq %v, want 1 to 6 in order", got)
+	if got := env.ArrivalSeqs(id); !slices.Equal(got, seqs) {
+		t.Errorf("the events arrived with run.seq %v, want %v in order", got, seqs)
 	}
 	execution := onlyExecution(t, run).ID
+	if len(all) == 7 {
+		checkFields(t, all[3], map[string]any{"event.kind": "queued", "actor.kind": "dispatcher",
+			"execution.id": execution, "run.reason": placedReason})
+	}
+	events := withoutPlaced(all)
+	want := []string{"created", "queued", "queued", "execution_started", "report", "execution_ended"}
+	if got := kinds(events); !slices.Equal(got, want) {
+		t.Fatalf("event kinds %v, want %v and at most one placement event", kinds(all), want)
+	}
 	common := map[string]any{"run.id": id, "factory.project": "shop", "repository": "bitbucket.org/example/shop",
 		"run.title": "Fix the cart", "run.trigger": "person"}
 	person := map[string]any{"actor.kind": "person", "actor.name": ana.Answer.Username}
@@ -91,14 +116,21 @@ func TestALostMachineSendsTheMachineLostEventAndRestartsTheRun(t *testing.T) {
 	}
 
 	waitForRestart(t, env, ana, id)
-	events := env.WaitForRunEvents(id, 6)
+	var events []map[string]any
+	waitUntil(t, "the execution_ended event", func() bool {
+		events = withoutPlaced(env.RunEvents(id))
+		return len(events) >= 6
+	})
 	restarted := "machine lost: a new Execution continues the Run (1 of 3 lost machines in a row)"
-	checkFields(t, events[4], map[string]any{"event.kind": "machine_lost", "run.seq": float64(5),
-		"run.state": "queued", "run.reason": restarted, "machine_lost.reason": "machine lost",
-		"machine_lost.in_a_row": float64(1), "machine_lost.restart": true, "execution.id": run.Executions[0].ID})
-	checkFields(t, events[5], map[string]any{"event.kind": "execution_ended", "run.seq": float64(6),
-		"run.state": "queued", "run.reason": restarted, "execution.reason": "the machine was lost",
+	lost, ended := eventOf(t, events, "machine_lost"), eventOf(t, events, "execution_ended")
+	checkFields(t, lost, map[string]any{"run.state": "queued", "run.reason": restarted,
+		"machine_lost.reason": "machine lost", "machine_lost.in_a_row": float64(1), "machine_lost.restart": true,
 		"execution.id": run.Executions[0].ID})
+	checkFields(t, ended, map[string]any{"run.state": "queued", "run.reason": restarted,
+		"execution.reason": "the machine was lost", "execution.id": run.Executions[0].ID})
+	if seq, _ := lost["run.seq"].(float64); ended["run.seq"] != seq+1 {
+		t.Errorf("machine_lost has run.seq %v and execution_ended %v: want the end right after", seq, ended["run.seq"])
+	}
 	if warning := env.WaitForWarning("no end call"); warning["execution.id"] != run.Executions[0].ID {
 		t.Errorf("the warning: %v", warning)
 	}
@@ -111,7 +143,11 @@ func TestAWrapperThatExitsBeforeItsEndCallSendsItsExitCodeOnTheExecutionEndedEve
 
 	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
 	// The wrapper did not ask for its task, so the Execution never started.
-	events := env.WaitForRunEvents(id, 4)
+	var events []map[string]any
+	waitUntil(t, "the execution_ended event", func() bool {
+		events = withoutPlaced(env.RunEvents(id))
+		return len(events) >= 4
+	})
 	reason := "the wrapper exited with code 2 before the end of the Execution"
 	checkFields(t, events[3], map[string]any{"event.kind": "execution_ended", "run.state": "failed",
 		"run.reason": reason, "execution.reason": reason, "execution.exit_code": float64(2),

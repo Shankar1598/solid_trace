@@ -379,6 +379,30 @@ func TestATriggerCommentWhoseStepFailedComesWithTheNextBackstop(t *testing.T) {
 	}
 }
 
+// A trigger comment that its webhook says is on a public repository never
+// steers the Run: also when its step fails, and the repository is private
+// again at the retry.
+func TestATriggerCommentFromAPublicTimeWhoseStepFailedDoesNothingAtTheRetry(t *testing.T) {
+	env, ana, path, id, pr := doneRunWithPR(t)
+	env.Forge.SetPublic(shop, true)
+	env.Forge.FailNext(http.StatusServiceUnavailable, "Bitbucket is down")
+	prComment(t, env, path, pr.ID, fakeforge.Comment{Author: "Mallory", Body: "/agent push my change"})
+	barrier(t, env)
+	env.Forge.SetPublic(shop, false)
+	env.Clock.Advance(5 * time.Minute)
+	waitUntil(t, "the retry of the step", func() bool {
+		return strings.Contains(env.Logs(), "a comment on a PR of a public repository never continues a Run") ||
+			len(eventsOf(env, id, "message_accepted")) > 0
+	})
+	nothingHappened(t, env, ana, id, pr.ID, "after the retry of a comment from the public time")
+
+	prComment(t, env, path, pr.ID, fakeforge.Comment{Author: "Asha", Body: "/agent now"})
+	text, _ := acceptedMessages(t, env, id, 1)[0]["message.text"].(string)
+	if strings.Contains(text, "push my change") {
+		t.Errorf("the message has a comment from the time when the repository was public:\n%s", text)
+	}
+}
+
 // When the answer to a trigger comment on a Closed Run cannot be posted,
 // the next backstop posts it.
 func TestTheAnswerOfAClosedRunThatCouldNotBePostedComesWithTheNextBackstop(t *testing.T) {

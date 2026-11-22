@@ -1,6 +1,7 @@
 package wrapper_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -218,6 +219,55 @@ func TestATakeOverThatStartsTheAgentSessionGivesTheAgentTheRunsTask(t *testing.T
 	if !strings.Contains(string(transcript), `"content":"Fix the cart total"`) {
 		t.Errorf("the take-over's transcript has no Run's task:\n%s", transcript)
 	}
+}
+
+// The Run's task in a take-over that starts the Agent session is the
+// factory's message: the take-over's started event names it with its
+// message id and the SHA-256 of the text that the agent got (for an Issue
+// Run, with the standing task), so the Agent session page says that the
+// factory said it. The event's actor stays the person who took over.
+func TestTheTaskOfATakeOverThatStartsTheAgentSessionIsTheFactorysMessage(t *testing.T) {
+	env, ana := newEnv(t)
+	sender, path := env.FactorySender("Factory")
+	runs := filepath.Join(env.Runner.SharedDir("setup-"+filepath.Base(t.TempDir())), "runs")
+	env.Forge.Push("example/shop", "main", map[string]string{
+		factoryFile(""): `setup = "echo run >> ` + runs + ` && test $(wc -l < ` + runs + `) -gt 1"`,
+	}, "A setup command")
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+
+	takeOverIdleCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+	if _, err := env.Runner.TakeOver.WaitForScreen(terminal, "Done.", 30*time.Second); err != nil {
+		t.Fatalf("the agent did not answer the Run's task: %v", err)
+	}
+	leave(t, env, terminal)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+
+	session := sessionOf(t, env, id)
+	var task string
+	for line := range strings.SplitSeq(string(env.SolidTrace.Stored(session, session+".jsonl")), "\n") {
+		var l struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content any `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &l) == nil && l.Type == "user" {
+			task, _ = l.Message.Content.(string)
+			break
+		}
+	}
+	if !strings.Contains(task, "SolidTrace Issue #7") {
+		t.Fatalf("the transcript's first person message is %q, want the Run's task", task)
+	}
+	started := eventsOf(env, id, "execution_started")
+	if len(started) != 2 || len(run.Executions) != 2 {
+		t.Fatalf("want 2 Executions with a started event each, got %d events: %+v", len(started), run.Executions)
+	}
+	checkFields(t, started[1], map[string]any{"execution.id": run.Executions[1].ID,
+		"message.id": dispatcherapi.TaskMessageID(run.Executions[1].ID), "message.sha256": dispatcherapi.TextSHA256(task),
+		"actor.kind": "person", "actor.name": ana.Answer.Username})
 }
 
 func TestATakeOverOfAClosedRunIsRefused(t *testing.T) {

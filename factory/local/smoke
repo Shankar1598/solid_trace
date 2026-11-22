@@ -594,6 +594,8 @@ take_over_cases_pass_as_root_under_raw_exec() {
   ! grep -q -e '--- SKIP' -e '--- FAIL' <<<"$out" || want "no case skipped or failed, got: $(grep -e '--- SKIP' -e '--- FAIL' -A 3 <<<"$out")"
   grep -q '^--- PASS: TestATakeOverOnTheAgentMachineRunsTheRealHcCoreThatAPersonAttachesTo' <<<"$out" ||
     want "the real hc case ran, got: $(tail -n 30 <<<"$out")"
+  grep -q '^--- PASS: TestAnEarlyAttachOnTheAgentMachineLeavesNoHcCoreOutsideTheTakeOversCgroup' <<<"$out" ||
+    want "the real hc case of an early attach ran, got: $(tail -n 30 <<<"$out")"
 }
 
 # The restore and restart cases of factory/wrapper (ticket 66), as root in a raw_exec
