@@ -393,7 +393,9 @@ func (s *wipSaver) snapshot(ctx context.Context, git gitCommand, r *repoSave, de
 		return err
 	}
 	if len(keep) > 0 {
-		if _, err := run(keep, "add", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+		// The agent works during a checkpoint: with --remove, a file that
+		// went after the list is passed over, not an error as in git add.
+		if _, err := run(keep, "update-index", "--add", "--remove", "-z", "--stdin"); err != nil {
 			return err
 		}
 	}
