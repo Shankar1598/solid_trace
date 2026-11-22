@@ -605,6 +605,99 @@ func connectAsPerson(t *testing.T, connect, method string, params map[string]any
 	return reply.Result, nil
 }
 
+// runUserHCOutside are the hc processes of the user uid that are not in
+// the boundary.
+func runUserHCOutside(t *testing.T, uid string, boundary *killboundary.Boundary) []string {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		var st syscall.Stat_t
+		cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if syscall.Stat(fmt.Sprintf("/proc/%d", pid), &st) != nil || strconv.Itoa(int(st.Uid)) != uid || len(cmdline) == 0 {
+			continue
+		}
+		argv := strings.Split(string(cmdline), "\x00")
+		if base := filepath.Base(argv[0]); !strings.Contains(base, "hc") && !strings.Contains(base, "herdr") {
+			continue
+		}
+		if boundary != nil {
+			if in, err := boundary.Holds(pid); err != nil || in {
+				continue
+			}
+		}
+		found = append(found, fmt.Sprintf("%d %s", pid, strings.Join(argv, " ")))
+	}
+	return found
+}
+
+// A person's 'sudo -u <run user> hc connect' before the take-over starts
+// a core of the run user outside each Execution's cgroup, with the
+// person's SUDO_ names. The take-over kills it before it starts its own
+// core in its cgroup: no hc process of the run user is outside that
+// cgroup during the take-over, and none stays after it.
+func TestAnEarlyAttachOnTheAgentMachineLeavesNoHcCoreOutsideTheTakeOversCgroup(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.UseRealHC()
+	runUser := env.Runner.RunUser()
+	connect := "sudo -u " + runUser.Username + " hc connect"
+	id := inToolCallRun(t, env, ana)
+	if _, err := connectAsPerson(t, connect, "server.status", map[string]any{}); err != nil {
+		t.Fatalf("the early attach: %v", err)
+	}
+	if stray := runUserHCOutside(t, runUser.Uid, nil); len(stray) == 0 {
+		t.Fatal("the early attach started no hc core of the run user")
+	}
+	takeOverCLI(t, env, ana, id)
+	run := takeOverRuns(t, env, ana, id)
+	boundary, err := killboundary.Reopen(wrapper.CgroupName(run.Executions[1].ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The person attaches again, and finds the take-over's terminal.
+	var terminal string
+	for deadline := time.Now().Add(30 * time.Second); terminal == ""; time.Sleep(200 * time.Millisecond) {
+		result, err := connectAsPerson(t, connect, "terminal.list", map[string]any{})
+		var list struct {
+			Terminals []struct {
+				Address string  `json:"address"`
+				Name    *string `json:"name"`
+			} `json:"terminals"`
+		}
+		if err == nil {
+			if json.Unmarshal(result, &list) != nil {
+				json.Unmarshal(result, &list.Terminals)
+			}
+			for _, x := range list.Terminals {
+				if x.Name != nil && *x.Name == "take-over" {
+					terminal = x.Address
+				}
+			}
+		}
+		if terminal == "" && time.Now().After(deadline) {
+			t.Fatalf("no take-over terminal after 30 s: %v %s\n%s", err, result, env.Runner.Fake.Output(run.Executions[0].ID))
+		}
+	}
+	if outside := runUserHCOutside(t, runUser.Uid, boundary); len(outside) != 0 {
+		t.Errorf("during the take-over, hc processes of the run user are outside its cgroup: %v", outside)
+	}
+	if _, err := connectAsPerson(t, connect, "terminal.send", map[string]any{"terminal": terminal, "text": "/exit"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	waitUntil(t, "no hc process of the run user after the take-over", func() bool {
+		return len(runUserHCOutside(t, runUser.Uid, nil)) == 0
+	})
+}
+
 // Cluster check 6: on the agent machine (the local factory stack), the
 // wrapper starts the real hc core as the run user in the take-over
 // Execution's cgroup, with no SUDO_ variable, and a person attaches with

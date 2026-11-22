@@ -1,6 +1,8 @@
 package dispatcher
 
 import (
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -82,9 +84,9 @@ func (s *store) markVMWaitWarned(id string, at time.Time) (bool, error) {
 const reasonPlaced = "starting on a machine: the Runner placed the Execution, and the wrapper has not started it yet"
 
 // markPlaced records that the Runner gave the Execution a machine. A Run
-// that waits for a VM for it is then queued with reasonPlaced. No run
-// event: the wrapper's task call comes soon after, and its
-// execution_started event carries the next state.
+// that waits for a VM for it is then queued with reasonPlaced, and a
+// queued run event carries that reason: the Console pages read the
+// reason from the last run event.
 func (s *store) markPlaced(id string, at time.Time) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -98,10 +100,20 @@ func (s *store) markPlaced(id string, at time.Time) error {
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE runs SET reason = ? WHERE id = (SELECT run_id FROM executions WHERE id = ? AND state = ?)
-		AND state = ? AND reason = ?`, reasonPlaced, id, dispatcherapi.ExecutionDispatched,
-		dispatcherapi.StateQueued, reasonWaitingForVM); err != nil {
+	var runID string
+	err = tx.QueryRow(`UPDATE runs SET reason = ? WHERE id = (SELECT run_id FROM executions WHERE id = ? AND state = ?)
+		AND state = ? AND reason = ? RETURNING id`, reasonPlaced, id, dispatcherapi.ExecutionDispatched,
+		dispatcherapi.StateQueued, reasonWaitingForVM).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tx.Commit()
+	}
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	details := actor{kind: actorDispatcher, name: "Dispatcher"}.details()
+	details["execution.id"] = id
+	if err := recordEvent(tx, at, runID, eventQueued, details); err != nil {
+		return err
+	}
+	return s.commit(tx)
 }

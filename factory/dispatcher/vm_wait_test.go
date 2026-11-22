@@ -191,3 +191,27 @@ func TestTheRunEventOfADispatchedExecutionCarriesTheReasonForTheWait(t *testing.
 		t.Errorf("the last run event has state %v and reason %q, want queued with a reason that says waiting for a VM", last["run.state"], reason)
 	}
 }
+
+// The Console pages read a Run's state and reason from its last run
+// event: when the Runner places the Execution, a queued event carries the
+// reason that it starts. A second event of the same placement adds none.
+func TestTheRunEventOfAPlacedExecutionCarriesTheReasonThatItStarts(t *testing.T) {
+	env, runner, id, execution := vmWaitEnv(t)
+	before := len(env.WaitForRunEvents(id, 3))
+	runner.place(execution)
+
+	events := env.WaitForRunEvents(id, before+1)
+	last := events[len(events)-1]
+	reason, _ := last["run.reason"].(string)
+	if last["event.kind"] != "queued" || last["run.state"] != dispatcherapi.StateQueued ||
+		!strings.Contains(reason, "placed the Execution") || last["execution.id"] != execution ||
+		last["actor.kind"] != "dispatcher" {
+		t.Errorf("the last run event is %v, want a queued event of the Dispatcher for Execution %s whose reason says "+
+			"the Runner placed it", last, execution)
+	}
+	runner.place(execution)
+	loopLooks()
+	if n := len(env.RunEvents(id)); n != before+1 {
+		t.Errorf("%d run events after a second placement event, want %d", n, before+1)
+	}
+}

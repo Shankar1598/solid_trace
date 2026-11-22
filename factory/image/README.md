@@ -62,7 +62,7 @@ A member of the access group runs exactly `sudo -u agent hc connect`, with no pa
 The rule is the one sudoers rule only when two more things are true:
 
 - Give the Google group the role `roles/compute.osLogin` on the agent VMs, and never `roles/compute.osAdminLogin`. OS Login gives general sudo to each person with the admin role, through sudoers files of its own.
-- The base image has no other sudoers rule. At the end of its sudoers step, the recipe fails with a message that starts "no general sudo" when `/etc/sudoers.d` has a file other than `README` and `factory-take-over` (for example, a rule that a cloud guest agent wrote for the user of the image build), or when the group `sudo` has a member (Debian's `/etc/sudoers` gives that group all commands). Remove that file or member from the base image, and run the recipe again.
+- The base image has no other sudoers rule. At the end of its sudoers step, the recipe fails with a message that starts "no general sudo" when `/etc/sudoers.d` has a file other than `README` and `factory-take-over` (for example, a rule that a cloud guest agent wrote for the user of the image build), or when the group `sudo` has a member, in its member list or as a user's primary group (Debian's `/etc/sudoers` gives that group all commands). Remove that file or member from the base image, and run the recipe again.
 
 ## Test it
 

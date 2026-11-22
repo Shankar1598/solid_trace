@@ -916,7 +916,7 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	if e.lostNote != "" {
 		text = e.lostNote
 		if !e.resumed {
-			text = e.task.Prompt + "\n\n" + e.lostNote
+			text = commandsNote + e.task.Prompt + "\n\n" + e.lostNote
 		}
 	}
 	message, _ := json.Marshal(map[string]any{"type": "user", "uuid": taskUUID, "session_id": "",
