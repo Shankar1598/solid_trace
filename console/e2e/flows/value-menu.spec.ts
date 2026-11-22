@@ -14,9 +14,14 @@ const chart = (page: Page) => page.getByRole('figure')
 /** The Query that ran, from the URL. */
 const ranQuery = (page: Page) => new URL(page.url()).searchParams.get('q') ?? ''
 
-/** Opens the value menu of the first stream row's cell in `column`, from the button its hover shows. */
+/**
+ * Opens the value menu of the cell in `column` of the first stream row that
+ * has a value there, from the button its hover shows. Another flow's Logs,
+ * such as the Traces flow's, can be newer and have no value in the column.
+ */
 async function openCellMenu(page: Page, column: string) {
-  const button = streamRows(page).first().locator(`[aria-label="Menu for ${column}"]`)
+  const menu = `[aria-label="Menu for ${column}"]`
+  const button = streamRows(page).filter({ has: page.locator(menu) }).first().locator(menu)
   await button.locator('..').hover()
   await button.click()
 }
