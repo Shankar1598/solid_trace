@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -125,6 +126,37 @@ func TestTheResetTimeOfALimitIsInTheFutureAndAtMostAWeekAway(t *testing.T) {
 		if got := limitResetTime(c.given, now); !got.Equal(c.want) {
 			t.Errorf("%s: %v, want %v", name, got, c.want)
 		}
+	}
+}
+
+// With the wait setting, only a queued Run that waits for its own account
+// switches: a queued Run with a dispatched Execution (it waits for a VM)
+// does not.
+func TestWithTheWaitSettingAQueuedRunWithADispatchedExecutionDoesNotSwitch(t *testing.T) {
+	w := newAdminWorld(t)
+	d := w.d
+	d.store.waitAtLimit = true
+	if _, err := d.store.addAccount("pool-2", "sk-ant-oat01-test-pool-2", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	now := w.clock()
+	run := storedRun{Run: dispatcherapi.Run{ID: "r-1", Organization: "example", Project: "shop", Prompt: "Fix the cart",
+		State: dispatcherapi.StateQueued, CreatedAt: now}, organizationID: "7", projectID: "42"}
+	if err := d.store.insertRun(run); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.store.addExecution("r-1", "e-1", now); !ok || err != nil {
+		t.Fatalf("add the Execution: %v %v", ok, err)
+	}
+	if err := d.MarkAtLimit("pool-1", now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var refused *notSwitchable
+	if _, _, err := d.store.switchAccount("7", "r-1", messenger, now); !errors.As(err, &refused) {
+		t.Errorf("switch a Run that waits for a VM: %v, want a refusal", err)
+	}
+	if e, err := d.store.execution("e-1"); err != nil || e.account != "pool-1" {
+		t.Errorf("the Execution is on %q (%v)", e.account, err)
 	}
 }
 

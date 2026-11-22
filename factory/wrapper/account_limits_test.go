@@ -344,6 +344,45 @@ func TestSwitchAccountMovesAWaitingRunToAFreeAccount(t *testing.T) {
 	}
 }
 
+// With the wait setting, a queued Run whose own account is at its limit
+// stays queued and waits for it; a person can still switch its account.
+func TestWithTheWaitSettingSwitchAccountMovesAQueuedRunThatWaitsForItsAccount(t *testing.T) {
+	env, ana := newEnv(t)
+	waitAtLimit(t, env)
+	env.AddAccount("pool-2", secondToken)
+	env.Runner.Agent(takeTask, initLine(t), done("Fixed"), reply, result, waitForEnd)
+	env.Runner.Agent(takeTask, done("Fixed the tax on pool-2"), reply, result, waitForEnd)
+
+	id := start(t, env, ana, "Fix the cart")
+	if got := onlyExecution(t, waitFor(t, env, ana, id, dispatcherapi.StateDone)).Account; got != factorytest.DefaultAccount {
+		t.Fatalf("the Run is on %q", got)
+	}
+	env.MarkAtLimit(factorytest.DefaultAccount, env.Clock.Now().Add(time.Hour))
+	if got := ana.CLI("message", "--dispatcher", env.URL(), id, "Also fix the tax"); got.Code != 0 {
+		t.Fatalf("solidtrace message: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	time.Sleep(300 * time.Millisecond)
+	run := getRun(t, ana, id)
+	if run.State != dispatcherapi.StateQueued || len(run.Executions) != 1 || !strings.Contains(run.Reason, "waits for it") {
+		t.Fatalf("the Run is %s (%s) with %d Executions, want queued for its account", run.State, run.Reason,
+			len(run.Executions))
+	}
+	env.Clock.Advance(time.Second)
+
+	got := switchAccount(env, ana, id)
+	if got.Code != 0 || !strings.Contains(got.Stdout, "pool-2") {
+		t.Fatalf("solidtrace switch-account: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	run = waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 || run.Executions[1].Account != "pool-2" || run.Summary != "Fixed the tax on pool-2" {
+		t.Fatalf("the Run is done with %q in %+v", run.Summary, run.Executions)
+	}
+	switched := waitForEvent(t, env, id, "account_switched")
+	if switched["account.old"] != factorytest.DefaultAccount || switched["account.new"] != "pool-2" {
+		t.Errorf("the account_switched event: %v", switched)
+	}
+}
+
 func TestSwitchAccountWithNoOtherAccountFreeIsRefused(t *testing.T) {
 	env, ana := newEnv(t)
 	waitAtLimit(t, env)

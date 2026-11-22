@@ -275,7 +275,7 @@ Each Execution gets one subscription account of the pool: the free account with 
 - **No account is free:** the Run waits on an account limit. Its reason names the account and the reset time. It continues in a new Execution when an account is free again. A message waits on the Run, and the agent gets it when the Run continues. Stop works on a Run that waits.
 - **A report before the limit** sets the outcome: for example, a Run that reported done is done.
 - **Switch by hand:** `solidtrace switch-account RUN_ID` moves a Run that waits on an account limit to another free account. With no other account free, it is refused with the first reset time.
-- **The fallback of cluster check 5:** with `DISPATCHER_AT_ACCOUNT_LIMIT=wait` (the default is `switch`), a Run stays on its account: at the usage limit it waits for that account's reset time, also when another account is free, and later Executions of the Run use the same account. A person can still switch its account. When the operator removes the account from the pool, the Run continues on a free account.
+- **The fallback of cluster check 5:** with `DISPATCHER_AT_ACCOUNT_LIMIT=wait` (the default is `switch`), a Run stays on its account: at the usage limit it waits for that account's reset time, also when another account is free, and later Executions of the Run use the same account. A person can still switch its account, also when the Run is queued and waits for its account. When the operator removes the account from the pool, the Run continues on a free account.
 
 ## Read the Runs
 

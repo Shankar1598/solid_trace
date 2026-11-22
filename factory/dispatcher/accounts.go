@@ -344,7 +344,8 @@ type notSwitchable struct{ why string }
 func (e *notSwitchable) Error() string { return e.why }
 
 // switchAccount moves a Run of the Organization that waits on an account
-// limit to another free account, in one transaction: the Run is queued,
+// limit (with the wait setting, also a queued Run that waits for its own
+// account) to another free account, in one transaction: the Run is queued,
 // and its next Execution gets that account. It gives the old and the new
 // account, errNotFound or a *notSwitchable.
 func (s *store) switchAccount(organizationID, runID string, by actor, at time.Time) (old, next string, err error) {
@@ -363,7 +364,16 @@ func (s *store) switchAccount(organizationID, runID string, by actor, at time.Ti
 	if err != nil {
 		return "", "", err
 	}
-	if state != dispatcherapi.StateWaitingOnAccountLimit || closed {
+	waits := state == dispatcherapi.StateWaitingOnAccountLimit
+	if state == dispatcherapi.StateQueued && s.waitAtLimit {
+		// With the wait setting, a queued Run waits for its own account
+		// at its limit (accountFor holds it): it also waits on an account
+		// limit.
+		if waits, err = s.heldForAccount(tx, runID, at); err != nil {
+			return "", "", err
+		}
+	}
+	if !waits || closed {
 		return "", "", &notSwitchable{"the Run is " + state + ": only a Run that waits on an account limit can switch " +
 			"its account"}
 	}
@@ -387,6 +397,18 @@ func (s *store) switchAccount(organizationID, runID string, by actor, at time.Ti
 		return "", "", err
 	}
 	return old, next, s.commit(tx)
+}
+
+// heldForAccount is true when the queued Run has no Execution that has
+// not ended, and accountFor gives it no account at at.
+func (s *store) heldForAccount(tx *sql.Tx, runID string, at time.Time) (bool, error) {
+	var live bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM executions WHERE run_id = ? AND state != ?)`, runID,
+		dispatcherapi.ExecutionEnded).Scan(&live); err != nil || live {
+		return false, err
+	}
+	account, _, err := s.accountFor(tx, runID, at)
+	return account == "", err
 }
 
 // switchAccount is a person's switch of the account of a Run that waits
