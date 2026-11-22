@@ -12,7 +12,9 @@ import (
 // The restart after a lost machine (the spec's V7). A preempted, a
 // stopped and a lost machine queue the Run again, at most
 // dispatcherapi.MaxLostInARow times in a row; the next one fails the
-// Run. An Execution that ends for another reason starts the count again.
+// Run. An Execution that ends for another reason starts the count again,
+// and so does a person's continue of a Run that a lost machine did not
+// restart.
 // The new Execution gets a Restore in its task (V6), so that its wrapper
 // puts the saved work back. The limits of an Execution count from its
 // start, so the wait for a machine in the queue is not in them.
@@ -47,7 +49,10 @@ type lostMachines struct {
 }
 
 // lostMachinesOf reads the Run's ended Executions but except, newest
-// first. A lost machine counts, and its save can be restored. An Execution that did
+// first. A lost machine counts, and its save can be restored. A lost
+// machine that did not restart the Run (a take-over, too many lost
+// machines, or a stop) ends the count: a person continued the Run after
+// it. An Execution that did
 // not start did nothing to the work, and is passed over. A setup that
 // failed (such as a restore that could not fetch the save) changed no
 // saved work, so its Run's save can still be restored; but it ends the
@@ -55,9 +60,9 @@ type lostMachines struct {
 // that the Run lost.
 func lostMachinesOf(tx *sql.Tx, runID, except string) (lostMachines, error) {
 	var l lostMachines
-	rows, err := tx.Query(`SELECT id, started_at IS NOT NULL, machine_lost, end_reason, COALESCE(ended_at, 0)
-		FROM executions WHERE run_id = ? AND id != ? AND state = ? ORDER BY dispatched_at DESC, rowid DESC`, runID, except,
-		dispatcherapi.ExecutionEnded)
+	rows, err := tx.Query(`SELECT id, started_at IS NOT NULL, machine_lost, lost_restarted, end_reason,
+		COALESCE(ended_at, 0) FROM executions WHERE run_id = ? AND id != ? AND state = ?
+		ORDER BY dispatched_at DESC, rowid DESC`, runID, except, dispatcherapi.ExecutionEnded)
 	if err != nil {
 		return l, err
 	}
@@ -65,13 +70,14 @@ func lostMachinesOf(tx *sql.Tx, runID, except string) (lostMachines, error) {
 	counting := true
 	for rows.Next() {
 		var id, lost, endReason string
-		var started bool
+		var started, restarted bool
 		var ended int64
-		if err := rows.Scan(&id, &started, &lost, &endReason, &ended); err != nil {
+		if err := rows.Scan(&id, &started, &lost, &restarted, &endReason, &ended); err != nil {
 			return l, err
 		}
 		switch {
 		case lost != "":
+			counting = counting && restarted
 			if counting {
 				l.inARow++
 			}
@@ -119,5 +125,12 @@ func restart(tx *sql.Tx, runID, id, lost string) (state, reason string, n int, e
 // markLost keeps why the machine of the ended Execution id went.
 func markLost(tx *sql.Tx, id, lost string) error {
 	_, err := tx.Exec(`UPDATE executions SET machine_lost = ? WHERE id = ?`, lost, id)
+	return err
+}
+
+// markRestarted keeps that the lost machine of the ended Execution id
+// queued its Run again by itself.
+func markRestarted(tx *sql.Tx, id string) error {
+	_, err := tx.Exec(`UPDATE executions SET lost_restarted = 1 WHERE id = ?`, id)
 	return err
 }

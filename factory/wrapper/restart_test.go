@@ -362,6 +362,68 @@ func TestTheFourthLostMachineInARowFailsTheRun(t *testing.T) {
 	}
 }
 
+// A person's message continues a Run that lost too many machines: the
+// count starts again, so its next lost machine restarts it.
+func TestAPersonsContinueAfterTooManyLostMachinesStartsTheCountAgain(t *testing.T) {
+	env, ana := newEnv(t)
+	for range 5 {
+		env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	}
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	for i := 1; i <= 4; i++ {
+		if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, i)); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, fmt.Sprintf("machine_lost event %d", i), func() bool { return len(lostEvents(env, id)) == i })
+	}
+	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+
+	send(t, env, ana, id, "Try again")
+	fifth := runningExecution(t, ana, id, 5)
+	if err := env.Runner.Fake.LoseMachine(fifth); err != nil {
+		t.Fatal(err)
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 6 {
+		t.Fatalf("want 6 Executions, got %+v", run.Executions)
+	}
+	lost := lostEvents(env, id)
+	if len(lost) != 5 {
+		t.Fatalf("want 5 machine_lost events, got %v", lost)
+	}
+	checkFields(t, lost[4], map[string]any{"execution.id": fifth, "machine_lost.in_a_row": float64(1),
+		"machine_lost.restart": true})
+}
+
+// A preemption that restarts the Run counts: the lost machine after it
+// is the second in a row.
+func TestAPreemptionAndALostMachineCountInARow(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := agentShell(t, env, `printf 'the cart total is right' >"$SOLIDTRACE_EVIDENCE_DIR/notes.txt"`)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	second := runningExecution(t, ana, id, 2)
+	if err := env.Runner.Fake.LoseMachine(second); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	lost := lostEvents(env, id)
+	if len(lost) != 1 {
+		t.Fatalf("want 1 machine_lost event, got %v", lost)
+	}
+	checkFields(t, lost[0], map[string]any{"execution.id": second, "machine_lost.in_a_row": float64(2),
+		"machine_lost.restart": true})
+}
+
 func TestAnExecutionThatEndsForAnotherReasonStartsTheCountAgain(t *testing.T) {
 	env, ana := newEnv(t)
 	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
