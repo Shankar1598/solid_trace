@@ -171,6 +171,32 @@ func TestARepositoryOrFolderThatIsNotAPlainPathIsRefused(t *testing.T) {
 	}
 }
 
+// The path of the secrets directory goes into shell commands in single
+// quotes (the MCP token helper, the Git credential helper): a path with a
+// quote or a new line fails the setup before it writes a file there.
+func TestSetupRefusesASecretsDirectoryWithAQuoteOrANewLine(t *testing.T) {
+	for _, name := range []string{"it's", "two\nlines"} {
+		dir := filepath.Join(t.TempDir(), name)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		remote, _ := seedRemote(t, dir)
+		cfg := testConfig(dir)
+		var log bytes.Buffer
+		e := setupExecution(t, cfg, &log, dispatcherapi.Task{RunID: "r-1", Repository: "bitbucket.org/example/shop",
+			CloneURL: remote, Branch: dispatcherapi.RunBranch("r-1")})
+
+		err := e.setup(context.Background(), os.Environ())
+
+		if err == nil || !strings.Contains(err.Error(), "the secrets directory") {
+			t.Errorf("setup with the directory %q: %v, want a refusal of the secrets directory", name, err)
+		}
+		if _, err := os.Stat(cfg.secrets()); !os.IsNotExist(err) {
+			t.Errorf("setup with the directory %q made the secrets directory (%v)", name, err)
+		}
+	}
+}
+
 // The wrapper's push reads no git configuration of the agent: no global
 // file, and no GIT_ variable of the agent's environment.
 func TestThePushEnvironmentHasNoGitConfigurationOfTheAgent(t *testing.T) {
