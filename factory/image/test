@@ -6,8 +6,9 @@
 #   factory/image/test
 #   TEST_ONLY='<regex>' factory/image/test   only the checks whose names match
 #
-# The recipe runs here with a run user and an access group that are not the defaults,
-# so that each name in the sudoers rule comes from the recipe's settings. The local
+# The recipe runs here with the run user agent (fixed: the wrapper's default) and an
+# access group that is not the default, so that the group's name in the sudoers rule
+# comes from the recipe's settings. The local
 # factory stack's smoke check (factory/local/smoke) checks the default names, on a
 # container that the same recipe made. It needs Docker, Go and the internet (apt, and
 # the downloads of Claude Code and hc). The downloads stay in the Docker volume
@@ -55,7 +56,7 @@ want() { echo "want: $*" >&2; return 1; }
 as() { local user="$1"; shift; docker exec -i -u "$user" -w / "$container" "$@"; }
 
 # The settings of this test's run of the recipe.
-settings=(-e FACTORY_RUN_USER=runner -e FACTORY_ACCESS_GROUP=eng-team
+settings=(-e FACTORY_ACCESS_GROUP=eng-team
   -e FACTORY_PROXY_URL=http://10.100.0.3:3128 -e FACTORY_DISPATCHER_HOST=10.100.0.3
   -e FACTORY_BIN_DIR=/bins -e FACTORY_DOWNLOAD_CACHE=/var/cache/factory-image)
 # Runs the recipe (a copy of it, with $1 as its path in the container) with the settings
@@ -75,7 +76,7 @@ refused() {
   grep -q -F -- "$message" <<<"$out" || want "the message '$message', got: $(tail -n 5 <<<"$out")"
   as root sh -c '! ls /etc/sudoers.d/factory-take-over /usr/local/bin/factory-wrapper /etc/factory 2>/dev/null' ||
     want "no change after a refusal"
-  ! as root getent passwd runner >/dev/null || want "no run user after a refusal"
+  ! as root getent passwd agent >/dev/null || want "no run user after a refusal"
 }
 
 echo "test: building the wrapper and the agent CLI ($version)"
@@ -91,12 +92,15 @@ docker run -d --name "$container" -m 1g --cpus 2 \
 
 recipe_refuses_bad_settings() {
   refused "must run as root" docker exec -i -u nobody "${settings[@]}" "$container" /recipe/agent-vm.sh
+  # The run user is agent, the wrapper's default: nothing gives another name to the
+  # wrapper (WRAPPER_RUN_USER), so the recipe refuses another name.
+  refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e FACTORY_RUN_USER=runner
   refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e FACTORY_RUN_USER=root
-  refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e 'FACTORY_RUN_USER=runner ALL=(ALL) NOPASSWD: ALL'
+  refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e 'FACTORY_RUN_USER=agent ALL=(ALL) NOPASSWD: ALL'
   refused "FACTORY_RUN_USER" run_recipe /recipe/agent-vm.sh -e FACTORY_RUN_USER=
   refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e 'FACTORY_ACCESS_GROUP=eng,ALL'
   refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e FACTORY_ACCESS_GROUP=sudo
-  refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e FACTORY_ACCESS_GROUP=runner
+  refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e FACTORY_ACCESS_GROUP=agent
   refused "FACTORY_ACCESS_GROUP" run_recipe /recipe/agent-vm.sh -e FACTORY_ACCESS_GROUP=docker
   refused "FACTORY_PROXY_URL" run_recipe /recipe/agent-vm.sh -e FACTORY_PROXY_URL=
   refused "FACTORY_PROXY_URL" run_recipe /recipe/agent-vm.sh -e "FACTORY_PROXY_URL=http://10.100.0.3:3128
@@ -106,6 +110,19 @@ LD_PRELOAD=/tmp/x.so"
   refused "FACTORY_DISPATCHER_HOST" run_recipe /recipe/agent-vm.sh -e 'FACTORY_DISPATCHER_HOST=a b'
   refused "FACTORY_BIN_DIR" run_recipe /recipe/agent-vm.sh -e FACTORY_BIN_DIR=/nowhere
   refused "no phase" docker exec -i -u root "${settings[@]}" "$container" /recipe/agent-vm.sh other
+}
+
+# A user agent that is already on the machine with the user id 0 is not the run user: the
+# harness never runs as root. The run stops before it changes anything.
+recipe_refuses_a_run_user_with_the_user_id_0() {
+  local out status=0
+  as root useradd --non-unique --uid 0 --no-create-home agent
+  out="$(run_recipe /recipe/agent-vm.sh 2>&1)" || status=$?
+  as root sh -c 'sed -i "/^agent:/d" /etc/passwd /etc/shadow /etc/group /etc/gshadow'
+  [ "$status" != 0 ] || want "the recipe to refuse a run user with the user id 0, but it ran: $(tail -n 3 <<<"$out")"
+  grep -q -F "has the user id 0" <<<"$out" || want "the message 'has the user id 0', got: $(tail -n 5 <<<"$out")"
+  as root sh -c '! ls /etc/sudoers.d/factory-take-over /usr/local/bin/factory-wrapper /etc/factory 2>/dev/null' ||
+    want "no change after a refusal"
 }
 
 # A download whose SHA-256 is not the pinned one is not installed. The run stops there.
@@ -124,6 +141,7 @@ recipe_refuses_a_download_with_another_sha256() {
 }
 
 check "the recipe refuses bad settings, and changes nothing" recipe_refuses_bad_settings
+check "the recipe refuses a run user agent with the user id 0, and changes nothing" recipe_refuses_a_run_user_with_the_user_id_0
 check "the recipe does not install a download whose SHA-256 is not the pinned one" recipe_refuses_a_download_with_another_sha256
 
 # The run of the recipe. A second run changes nothing and does not fail.
@@ -136,9 +154,9 @@ fi
 
 recipe_runs_a_second_time() {
   local before after
-  before="$(as root sh -c 'getent passwd runner; getent group docker eng-team; sha256sum /etc/sudoers.d/factory-take-over /etc/factory/* /etc/environment')"
+  before="$(as root sh -c 'getent passwd agent; getent group docker eng-team; sha256sum /etc/sudoers.d/factory-take-over /etc/factory/* /etc/environment')"
   run_recipe /recipe/agent-vm.sh >/dev/null 2>&1 || want "a second run of the recipe"
-  after="$(as root sh -c 'getent passwd runner; getent group docker eng-team; sha256sum /etc/sudoers.d/factory-take-over /etc/factory/* /etc/environment')"
+  after="$(as root sh -c 'getent passwd agent; getent group docker eng-team; sha256sum /etc/sudoers.d/factory-take-over /etc/factory/* /etc/environment')"
   [ "$before" = "$after" ] || want "the same files and users after a second run: $(diff <(echo "$before") <(echo "$after"))"
 }
 check "a second run of the recipe changes nothing" recipe_runs_a_second_time
@@ -147,13 +165,13 @@ check "a second run of the recipe changes nothing" recipe_runs_a_second_time
 
 each_part_is_at_its_pinned_version() {
   local got
-  got="$(as runner claude --version)"
+  got="$(as agent claude --version)"
   [ "$got" = "$(pinned CLAUDE_CODE_VERSION) (Claude Code)" ] || want "Claude Code $(pinned CLAUDE_CODE_VERSION), got: $got"
-  got="$(as runner hc --version)"
+  got="$(as agent hc --version)"
   [ "$got" = "hc $(pinned HC_VERSION)" ] || want "hc $(pinned HC_VERSION), got: $got"
-  got="$(as runner factory-wrapper version)"
+  got="$(as agent factory-wrapper version)"
   [ "$got" = "$version" ] || want "the wrapper $version, got: $got"
-  got="$(as runner solidtrace --version)"
+  got="$(as agent solidtrace --version)"
   [[ $got == *" $version" ]] || want "the agent CLI $version, got: $got"
   # Where the Nomad Runner's job starts the wrapper (dispatcher.DefaultWrapperCommand).
   as root test -x /usr/local/bin/factory-wrapper || want "the wrapper at /usr/local/bin/factory-wrapper"
@@ -167,7 +185,7 @@ parts_are_roots_and_the_run_user_cannot_change_them() {
     /etc/systemd/system/docker.service.d/factory-proxy.conf /etc/systemd/system/nomad.service.d/factory-proxy.conf; do
     owner="$(as root stat -c '%U:%G' "$path")" || want "$path"
     [ "$owner" = root:root ] || want "root:root for $path, got: $owner"
-    ! as runner test -w "$path" || want "$path not writable by the run user"
+    ! as agent test -w "$path" || want "$path not writable by the run user"
   done
   [ "$(as root stat -c %a /etc/sudoers.d/factory-take-over)" = 440 ] || want "mode 440 for the sudoers rule"
   [ "$(as root stat -c '%a %U' /var/lib/factory/executions)" = "711 root" ] || want "the Executions directory 711 root"
@@ -181,14 +199,13 @@ check "root owns each part, and the run user cannot change one" parts_are_roots_
 
 run_user_is_not_root_and_is_in_the_docker_group() {
   local groups
-  [ "$(as root id -u runner)" != 0 ] || want "the run user is not root"
-  groups=" $(as root id -nG runner) "
+  [ "$(as root id -u agent)" != 0 ] || want "the run user is not root"
+  groups=" $(as root id -nG agent) "
   [[ $groups == *" docker "* ]] || want "the run user in the docker group, got:$groups"
   [[ $groups != *" eng-team "* && $groups != *" sudo "* ]] || want "the run user not in the access or sudo group, got:$groups"
-  [[ "$(as root getent shadow runner | cut -d: -f2)" =~ ^[*!] ]] || want "no password for the run user"
+  [[ "$(as root getent shadow agent | cut -d: -f2)" =~ ^[*!] ]] || want "no password for the run user"
   as root getent group eng-team >/dev/null || want "the access group"
   [ -z "$(as root getent group eng-team | cut -d: -f4)" ] || want "no member of the access group"
-  ! as root getent passwd agent >/dev/null || want "no user agent (the run user is runner here)"
 }
 
 access_group_member_has_exactly_one_rule() {
@@ -197,7 +214,7 @@ access_group_member_has_exactly_one_rule() {
   # A person of the Google group: OS Login gives the access group on a VM.
   as root sh -c 'getent passwd person >/dev/null || useradd --create-home --groups eng-team person'
   rules="$(as person sudo -n -l | sed -n '/may run the following commands/,$p' | sed 1d | sed 's/^ *//' | grep -v '^$')"
-  [ "$rules" = "(runner) NOPASSWD: /usr/local/bin/hc connect" ] || want "one rule, got: $rules"
+  [ "$rules" = "(agent) NOPASSWD: /usr/local/bin/hc connect" ] || want "one rule, got: $rules"
   [ "$(as root ls /etc/sudoers.d | tr '\n' ' ')" = "README factory-take-over " ] || want "only the take-over rule in /etc/sudoers.d"
 }
 
@@ -213,20 +230,20 @@ sudo_refused() {
 }
 
 take_over_rule_refuses_everything_else() {
-  sudo_refused person -u runner hc ls
-  sudo_refused person -u runner /usr/local/bin/hc connect extra
-  sudo_refused person -u runner /bin/sh -c 'echo RAN'
-  sudo_refused person -u runner factory-wrapper version
+  sudo_refused person -u agent hc ls
+  sudo_refused person -u agent /usr/local/bin/hc connect extra
+  sudo_refused person -u agent /bin/sh -c 'echo RAN'
+  sudo_refused person -u agent factory-wrapper version
   sudo_refused person -u root /usr/local/bin/hc connect
   sudo_refused person -u person /usr/local/bin/hc connect
-  sudo_refused person -E -u runner hc connect
+  sudo_refused person -E -u agent hc connect
   sudo_refused person -i
-  sudo_refused runner -u runner hc connect
-  sudo_refused runner /bin/sh -c 'echo RAN'
-  sudo_refused nobody -u runner hc connect
+  sudo_refused agent -u agent hc connect
+  sudo_refused agent /bin/sh -c 'echo RAN'
+  sudo_refused nobody -u agent hc connect
   # The rule names the access group of the settings only.
   as root sh -c 'getent passwd other >/dev/null || useradd --create-home --groups docker other'
-  sudo_refused other -u runner hc connect
+  sudo_refused other -u agent hc connect
 }
 
 check "the run user is not root, is in the docker group and has no password" run_user_is_not_root_and_is_in_the_docker_group
@@ -256,7 +273,7 @@ no_proxy=localhost,127.0.0.1,169.254.169.254,metadata.google.internal,10.100.0.3
   got="$(as root cat /etc/factory/proxy.env | grep -v '^#')"
   [ "$got" = "$want_env" ] || want "the proxy settings in /etc/factory/proxy.env, got: $got"
   # A login (ssh, su) reads /etc/environment through PAM.
-  got="$(as root su -l runner -c env)"
+  got="$(as root su -l agent -c env)"
   while IFS= read -r line; do
     grep -q -x -F -- "$line" <<<"$got" || want "$line in a login of the run user"
   done <<<"$want_env"
@@ -271,9 +288,9 @@ no_proxy=localhost,127.0.0.1,169.254.169.254,metadata.google.internal,10.100.0.3
 git_has_no_credential_helper_and_uses_https() {
   local got
   ! as root git config --system --get-all credential.helper || want "no credential helper in the system's git configuration"
-  got="$(as runner git ls-remote --get-url git@github.com:example/repo.git)"
+  got="$(as agent git ls-remote --get-url git@github.com:example/repo.git)"
   [ "$got" = https://github.com/example/repo.git ] || want "git over ssh rewritten to HTTPS, got: $got"
-  got="$(as runner git ls-remote --get-url ssh://git@bitbucket.org/example/repo.git)"
+  got="$(as agent git ls-remote --get-url ssh://git@bitbucket.org/example/repo.git)"
   [ "$got" = https://bitbucket.org/example/repo.git ] || want "git over ssh rewritten to HTTPS for Bitbucket, got: $got"
 }
 

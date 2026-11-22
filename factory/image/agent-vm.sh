@@ -6,7 +6,7 @@
 # - the wrapper (/usr/local/bin/factory-wrapper) and the agent CLI (solidtrace), from
 #   FACTORY_BIN_DIR (factory/image/build makes them);
 # - Claude Code's first-run dialogs, accepted in files that root owns;
-# - the run user (not root, in the docker group) and the access group;
+# - the run user agent (not root, in the docker group) and the access group;
 # - the one sudoers rule: members of the access group run exactly "hc connect" as the
 #   run user, with no password;
 # - git: no credential helper of the system (the wrapper gives each Execution its
@@ -23,7 +23,6 @@
 #                            reach direct, not through the proxy (required)
 #   FACTORY_BIN_DIR          the directory with factory-wrapper and solidtrace (required
 #                            for the phases all and factory)
-#   FACTORY_RUN_USER         the run user (default agent)
 #   FACTORY_ACCESS_GROUP     the access group, which OS Login gives to each person of
 #                            the Google group (default factory-access)
 #   FACTORY_DOWNLOAD_CACHE   a directory that keeps the downloads for the next run
@@ -31,6 +30,9 @@
 # The phase "system" does all but the two binaries of this repository; the phase
 # "factory" installs them. "all" (the default) does both. An image pipeline runs "all";
 # the local stack's Dockerfile runs the two phases in two layers.
+#
+# The run user is agent, the wrapper's default (WRAPPER_RUN_USER, WRAPPER_HOME
+# /home/agent): nothing gives another name to the wrapper, so it is not a setting.
 #
 # The recipe checks each setting before it changes anything. A second run changes
 # nothing. The image has no credential of any kind: a Run gets its tokens from the
@@ -44,7 +46,7 @@ HC_SHA256=78424755c10a40dde38a0bdb55c20ac19706e9ae05ed68fc2acf1fcff0d941c1
 
 here="$(cd "$(dirname "$0")" && pwd)"
 phase="${1:-all}"
-run_user="${FACTORY_RUN_USER-agent}"
+run_user=agent
 access_group="${FACTORY_ACCESS_GROUP-factory-access}"
 proxy_url="${FACTORY_PROXY_URL:-}"
 dispatcher_host="${FACTORY_DISPATCHER_HOST:-}"
@@ -69,12 +71,11 @@ esac
 is_name() {
   printf '%s' "$1" | grep -q -x -E '[a-z_][a-z0-9_-]{0,31}' && [ "$(printf '%s' "$1" | wc -l)" = 0 ]
 }
-is_name "$run_user" || die "FACTORY_RUN_USER '$run_user' is not a user name"
-case "$run_user" in
-  root | docker | sudo | nobody) die "FACTORY_RUN_USER must not be $run_user" ;;
-esac
+if [ -n "${FACTORY_RUN_USER+set}" ] && [ "$FACTORY_RUN_USER" != "$run_user" ]; then
+  die "FACTORY_RUN_USER is not a setting: the run user is $run_user, the wrapper's default (WRAPPER_RUN_USER)"
+fi
 if getent passwd "$run_user" >/dev/null && [ "$(id -u "$run_user")" = 0 ]; then
-  die "FACTORY_RUN_USER $run_user has the user id 0"
+  die "the run user $run_user has the user id 0"
 fi
 is_name "$access_group" || die "FACTORY_ACCESS_GROUP '$access_group' is not a group name"
 case "$access_group" in
