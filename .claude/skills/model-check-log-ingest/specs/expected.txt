@@ -1,0 +1,29 @@
+# The result of each rule in each config at the sync commit (SKILL.md).
+# config  rule  holds|breaks  [finding or assumption]
+# A "breaks" line marked L is a finding in the current code, not a goal; one
+# marked D is a cost the code accepts by design. When a fix makes a line
+# hold, bin/check reports NOT AS EXPECTED: change the line to holds.
+LogIngest                 TypeOK                 holds
+LogIngest                 NoLogStoredTwice       holds
+LogIngest                 NoLoggedLogLost        holds
+LogIngest                 NoAcceptedLogLost      holds
+LogIngest                 MatchReadsEachLogOnce  holds
+LogIngest                 MatchMissesNoLog       holds
+LogIngestPowerLoss        TypeOK                 holds
+LogIngestPowerLoss        NoLogStoredTwice       holds
+LogIngestPowerLoss        NoLoggedLogLost        breaks  L1
+LogIngestPowerLoss        NoAcceptedLogLost      breaks  D1
+LogIngestPowerLoss        MatchReadsEachLogOnce  breaks  L2
+LogIngestPowerLoss        MatchMissesNoLog       breaks  L1
+LogIngestPowerLossSynced  TypeOK                 holds
+LogIngestPowerLossSynced  NoLogStoredTwice       holds
+LogIngestPowerLossSynced  NoLoggedLogLost        holds
+LogIngestPowerLossSynced  NoAcceptedLogLost      breaks  D1
+LogIngestPowerLossSynced  MatchReadsEachLogOnce  breaks  L2
+LogIngestPowerLossSynced  MatchMissesNoLog       holds
+LogIngestWindowPassed     TypeOK                 holds
+LogIngestWindowPassed     NoLogStoredTwice       breaks  D2
+LogIngestWindowPassed     NoLoggedLogLost        holds
+LogIngestWindowPassed     NoAcceptedLogLost      holds
+LogIngestWindowPassed     MatchReadsEachLogOnce  breaks  D2
+LogIngestWindowPassed     MatchMissesNoLog       holds

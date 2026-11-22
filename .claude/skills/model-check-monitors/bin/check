@@ -10,6 +10,10 @@
 #         breaks (a finding is fixed: update expected.txt and SKILL.md).
 # Exit 2: TLC could not run, or a model has an error (parse, deadlock, type).
 #
+# COVERAGE=1 bin/check also names each action that TLC never takes in a
+# config. Only an action that the config turns off may be in that list;
+# any other is a model error, such as a conflicting UNCHANGED.
+#
 # TLC's output for each rule goes to $MODEL_CHECK_OUT (default
 # ~/.cache/solid-trace/model-check-monitors/<time>/), and the path is printed.
 set -uo pipefail
@@ -47,7 +51,7 @@ for cfg in "${configs[@]}"; do
     cp "$specs/$module.tla" "$work/"
     # The same config with only this rule.
     awk -v rule="$rule" '/^INVARIANTS/{print; print "  " rule; skip=1; next} /^[A-Z_]+/{skip=0} !skip' "$file" > "$work/$cfg.cfg"
-    (cd "$work" && "$java" -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers 1 -fp 0 \
+    (cd "$work" && "$java" -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers 1 -fp 0 ${COVERAGE:+-coverage 60} \
       -metadir "$work/states" -config "$cfg.cfg" "$module.tla") > "$work/tlc.out" 2>&1
     code=$?
     rm -rf "$work/states"
@@ -56,6 +60,10 @@ for cfg in "${configs[@]}"; do
       12) grep -q "Invariant $rule is violated" "$work/tlc.out" && got=breaks || got=error ;;
       *) got=error ;;
     esac
+    if [ -n "${COVERAGE:-}" ] && [ "$rule" = TypeOK ]; then
+      never=$(sed -n 's/^<\([A-Za-z]*\) line .*>: 0:0$/\1/p' "$work/tlc.out" | sort -u | tr '\n' ' ')
+      [ -n "$never" ] && printf '%-22s never takes: %s\n' "$cfg" "$never"
+    fi
     want=$(awk -v c="$cfg" -v r="$rule" '!/^#/ && $1 == c && $2 == r {print $3}' "$specs/expected.txt")
     states=$(sed -n 's/^\([0-9,]*\) states generated, \([0-9,]*\) distinct states found.*/\2 distinct states/p' "$work/tlc.out" | tail -1)
     if [ "$got" = error ]; then

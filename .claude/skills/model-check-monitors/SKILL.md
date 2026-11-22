@@ -33,6 +33,7 @@ From the repo root:
   - TLC's output for each rule is in `~/.cache/solid-trace/model-check-monitors/<time>/<config>-<rule>/tlc.out`. The last line of the run gives that folder.
   - `bin/check DeliveryLong` checks only that config.
 - **`bin/mutants`:** for 7 broken variants of the code, it changes a copy of the model in the same way. Each variant must break its rule, or the rule checks nothing. Run it after each change to a model or a rule.
+- **`COVERAGE=1 bin/check`:** also names each action that TLC never takes in a config. Only an action that the config turns off may be in that list, such as `Expire` where nothing can expire. Any other action in it is a model error, such as an `UNCHANGED` that conflicts with the action's own change. Run it after each change to a model.
 
 The first run installs Java (`java@temurin-25`) and TLC (`tla2tools.jar` 1.7.4, pinned by its sha256) with mise. Only that first run needs the network.
 
