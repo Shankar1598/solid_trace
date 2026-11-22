@@ -348,3 +348,32 @@ func TestTheAgentSessionsListGivesAnAgentSessionStoredOnTheDayBeforeItsLines(t *
 		t.Errorf("Expected the Agent session stored on the day before its lines, got %v", got)
 	}
 }
+
+// An old Agent session that uploads late, with a side file as a tool
+// result: the side file has no lines, so only its stored time is known. The
+// Agent session's times and its place in a range are the times of its
+// lines, never the upload time.
+func TestAnOldAgentSessionUploadedLateKeepsItsOwnTimesWithASideFile(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	env.Clock.Set(time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(
+		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
+		replyAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", `{"type":"text","text":"Done."}`),
+	)}), 200)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "tool-results/toolu_01.txt",
+		contentHash: "sha256:aa", body: []byte("the output")}), 200)
+	env.ProcessAgentFiles(t)
+
+	october := listAgentSessions(t, env, o.project, map[string]any{"from": "2026-10-01T00:00:00Z", "to": "2026-10-04T00:00:00Z"})
+	if len(october.AgentSessions) != 1 || october.AgentSessions[0].Last != "2026-10-02T11:00:05Z" ||
+		october.AgentSessions[0].First != "2026-10-02T11:00:00Z" {
+		t.Errorf("Expected the times of the lines, got %+v", october.AgentSessions)
+	}
+	upload := listAgentSessions(t, env, o.project, map[string]any{"from": "2026-10-19T00:00:00Z", "to": "2026-10-21T00:00:00Z"})
+	if got := listedIDs(upload); len(got) != 0 {
+		t.Errorf("Expected no Agent session in the range of the upload day, got %v", got)
+	}
+}
