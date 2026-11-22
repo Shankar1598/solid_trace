@@ -294,6 +294,34 @@ func TestAnEvidenceFileThatTheLastUploadDidNotSendIsAProblem(t *testing.T) {
 	}
 }
 
+// A transcript that SolidTrace has only in part, after the last upload, is
+// a problem in the preemption event: the saved state is not complete.
+func TestATranscriptThatTheLastUploadDidNotSendIsAProblem(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := ready(t)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	execution := getRun(t, ana, id).Executions[0].ID
+	session := firstToken(t, env).AgentSessionIDs[0]
+	env.SolidTrace.RefusePath(session + ".jsonl")
+
+	env.Runner.HoldMachines()
+	env.Runner.Preempt(execution)
+
+	run := waitForRestart(t, env, ana, id)
+	if run.Executions[0].EndReason != dispatcherapi.EndPreempted {
+		t.Errorf("end reason %q", run.Executions[0].EndReason)
+	}
+	preemption := eventOf(t, env.WaitForRunEvents(id, 5), "preemption")
+	problems, _ := preemption["preemption.problems"].([]any)
+	if !slices.ContainsFunc(problems, func(p any) bool {
+		return strings.Contains(p.(string), "the last upload") && strings.Contains(p.(string), "of the transcript")
+	}) {
+		t.Errorf("the problems do not tell that SolidTrace has only a part of the transcript: %v", problems)
+	}
+}
+
 // The preemption event has each part of the wrapper's report: what was
 // saved (a work-in-progress commit, the files left out, the transcript
 // offset), the age of the last checkpoint and the times.

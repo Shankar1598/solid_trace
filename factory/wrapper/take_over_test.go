@@ -281,6 +281,27 @@ func TestATakeOverOfAnIssueRunKeepsSolidTracesMCPServerWithTheTakeOversToken(t *
 	}
 }
 
+// The file with the interactive harness's environment (it has the account
+// token) is the wrapper's: the run user's group reads it, and no other
+// user does.
+func TestTheTakeOversHarnessEnvironmentFileIsForTheRunUserOnly(t *testing.T) {
+	env, ana := newEnv(t)
+	id := inToolCallRun(t, env, ana)
+	takeOverCLI(t, env, env.Member("Ben"), id)
+	run, terminal := takeOverTerminal(t, env, ana, id)
+
+	path := filepath.Join(filepath.Dir(env.Runner.Socket(run.Executions[0].ID)), "secrets", "harness-env")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o440 {
+		t.Errorf("harness-env has mode %o, want 440", got)
+	}
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+}
+
 // A take-over during the headless Execution's setup stops that setup: the
 // take-over does the full setup again, with the setup command, and does
 // not take the checkout that the stopped setup left.
