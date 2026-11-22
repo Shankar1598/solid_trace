@@ -115,6 +115,8 @@ export interface RunExecution {
   /** The command that attaches to a take-over's terminal. */
   attach: string | null
   duration_seconds: number | null
+  /** Started, not ended, and its machine is not lost. */
+  live: boolean
 }
 
 /** The take-over of a Run that is taken over. */
@@ -159,9 +161,14 @@ export interface RunReport {
   report_md_error: string | null
 }
 
-/** How long an Execution took; 'Live' while it has no end. */
-export function durationText(seconds: number | null): string {
-  if (seconds === null) return 'Live'
+/** How long an Execution took; 'Live' while it runs, and '-' when it has no end (as a lost machine). */
+export function executionDurationText(e: Pick<RunExecution, 'duration_seconds' | 'live'>): string {
+  if (e.live) return 'Live'
+  return e.duration_seconds === null ? '-' : durationText(e.duration_seconds)
+}
+
+/** How long, in seconds, as 1h 2m. */
+export function durationText(seconds: number): string {
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
   const s = seconds % 60
@@ -177,6 +184,11 @@ export function eventKindText(kind: string): string {
   if (Object.hasOwn(KIND_TEXT, kind)) return KIND_TEXT[kind]
   const text = kind.replaceAll('_', ' ')
   return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/** An event's detail: a report's outcome (needs_a_person) in sentence case; other details as they are. */
+export function eventDetailText(kind: string, detail: string): string {
+  return kind === 'report' ? eventKindText(detail) : detail
 }
 
 /** A check's result: pass, or fail with its exit status. */

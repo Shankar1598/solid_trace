@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actorText, checkText, durationText, eventKindText, runsSearch, stateText, stateTone, waitingOnPersonFilters } from './runs'
+import { actorText, checkText, durationText, eventDetailText, eventKindText, executionDurationText, runsSearch, stateText, stateTone, waitingOnPersonFilters } from './runs'
 
 describe('durationText', () => {
   it('gives hours, minutes and seconds, leaving out the larger parts that are zero', () => {
@@ -10,7 +10,17 @@ describe('durationText', () => {
   })
 
   it('says that an Execution with no end is still live', () => {
-    expect(durationText(null)).toBe('Live')
+    expect(executionDurationText({ duration_seconds: null, live: true })).toBe('Live')
+    expect(executionDurationText({ duration_seconds: null, live: false })).toBe('-')
+    expect(executionDurationText({ duration_seconds: 42, live: false })).toBe('42s')
+  })
+})
+
+describe('eventDetailText', () => {
+  it('writes the outcome of a report in sentence case and leaves other details as they are', () => {
+    expect(eventDetailText('report', 'needs_a_person')).toBe('Needs a person')
+    expect(eventDetailText('report', 'done')).toBe('Done')
+    expect(eventDetailText('message_accepted', 'fix_this_now')).toBe('fix_this_now')
   })
 })
 

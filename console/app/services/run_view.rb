@@ -17,15 +17,18 @@ class RunView
   # How long Console waits for EventStore, in seconds.
   TIMEOUT_SECONDS = 10
   # The event kinds that are a person's (or a sender's) intervention, each
-  # with its actor (story 90).
+  # with its actor (story 90). An event that the Dispatcher itself makes, as
+  # the switch to a free account, is not an intervention: the closing totals
+  # (totals.interventions) do not count it.
   INTERVENTIONS = %w[message_accepted interrupt stop take_over account_switched continue].freeze
+  DISPATCHER = "dispatcher"
   # The states from which a stop applies (the Run model's transitions).
   STOPPABLE = %w[queued running taken_over waiting_on_person waiting_on_account_limit].freeze
   REPORT_FILE = "evidence/report.md"
   IMAGE_TYPES = %w[.png .jpg .jpeg .gif .webp].freeze
   # The event Attribute that names the event's detail on the page.
   DETAILS = {
-    "message_accepted" => "message.text", "execution_ended" => "execution.reason",
+    "message_accepted" => "message.text", "interrupt" => "message.text", "execution_ended" => "execution.reason",
     "report" => "report.outcome", "pr_opened" => "run.pr.url", "pr_outcome" => "run.pr.outcome",
   }.freeze
 
@@ -81,7 +84,7 @@ class RunView
       kind = a["event.kind"].to_s
       {
         seq: a["run.seq"]&.to_i, time: log["time"], kind: kind, state: a["run.state"], reason: a["run.reason"].presence,
-        actor: actor(a), intervention: INTERVENTIONS.include?(kind), detail: DETAILS[kind] && a[DETAILS[kind]].presence,
+        actor: actor(a), intervention: INTERVENTIONS.include?(kind) && a["actor.kind"] != DISPATCHER, detail: detail(kind, a),
       }
     end
   end
@@ -116,15 +119,20 @@ class RunView
     raw_events.each do |log|
       a = log["attributes"] || {}
       kind = a["event.kind"]
-      next unless %w[execution_started execution_ended].include?(kind) && a["execution.id"].present?
+      next unless %w[execution_started execution_ended machine_lost].include?(kind) && a["execution.id"].present?
 
       e = by_id[a["execution.id"]] ||= { id: a["execution.id"], start: nil, end: nil, reason: nil, exit_code: nil,
-                                         account: nil, vm: nil, form: "headless", attach: nil, duration_seconds: nil }
+                                         account: nil, vm: nil, form: "headless", attach: nil, duration_seconds: nil,
+                                         lost: false }
       e[:account] = a["execution.account"].presence || e[:account]
       e[:vm] = a["execution.vm"].presence || e[:vm]
       e[:form] = a["execution.form"].presence || e[:form]
       e[:attach] = a["execution.attach"].presence || e[:attach]
-      if kind == "execution_started"
+      if kind == "machine_lost"
+        # The machine went with no notice: the Execution has no end event.
+        e[:lost] = true
+        e[:reason] ||= a["machine_lost.reason"].presence
+      elsif kind == "execution_started"
         e[:start] = log["time"]
       else
         e[:end] = log["time"]
@@ -134,6 +142,8 @@ class RunView
     end
     by_id.values.each do |e|
       e[:duration_seconds] = (Time.iso8601(e[:end]) - Time.iso8601(e[:start])).round if e[:start] && e[:end]
+      # Live: it started, has not ended, and its machine is not lost.
+      e[:live] = !!e[:start] && e[:end].nil? && !e[:lost] && !run["closed"]
     end
   end
 
@@ -157,6 +167,14 @@ class RunView
 
   def raw_events
     Array(answer&.dig("events"))
+  end
+
+  # The detail of an event: the Attribute that DETAILS names, or for a
+  # switch of account, "<old> to <new>".
+  def detail(kind, attributes)
+    return "#{attributes['account.old']} to #{attributes['account.new']}" if kind == "account_switched" && attributes["account.new"].present?
+
+    DETAILS[kind] && attributes[DETAILS[kind]].presence
   end
 
   def actor(attributes)
