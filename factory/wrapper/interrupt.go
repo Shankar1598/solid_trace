@@ -86,6 +86,15 @@ func (e *execution) writeInterrupt() {
 	}
 }
 
+// holds tells if an interrupt is out. Each interrupt sets it before its
+// signal, and only releaseHeld clears it: a signal that finds it clear is
+// of an interrupt that a result already settled.
+func (in *inbox) holds() bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.held
+}
+
 // releaseHeld ends the inbox's wait for an interrupt's result: it writes
 // each message that waited, in order, and gives their count.
 func (e *execution) releaseHeld() int {

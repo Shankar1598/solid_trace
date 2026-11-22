@@ -965,6 +965,9 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 		select {
 		case <-e.interrupts:
 			switch {
+			case !e.inbox.holds():
+				// A signal whose interrupt an earlier result settled:
+				// that result released its message too.
 			case pending != "":
 				// The turn ended before the interrupt: no turn stops, and
 				// no result comes.
