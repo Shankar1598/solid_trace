@@ -103,6 +103,17 @@ func rejected(log string) bool {
 		strings.Contains(log, "error getting the target for the policy handler") || strings.Contains(log, "failed to setup plugins")
 }
 
+// checkPolicies checks each policy with the static check (policyProblems), which needs no
+// Docker: the Autoscaler's binary below checks the rest only at the first evaluation.
+func checkPolicies(t *testing.T, config string, policies map[string]string) {
+	t.Helper()
+	for name, text := range policies {
+		for _, problem := range policyProblems(config, name, text) {
+			t.Errorf("%s: %s", name, problem)
+		}
+	}
+}
+
 func TestTheReferenceScalingPolicyPassesTheAutoscalersOwnValidation(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("reference", "autoscaler", "policies", "*.hcl"))
 	if err != nil || len(files) == 0 {
@@ -112,6 +123,7 @@ func TestTheReferenceScalingPolicyPassesTheAutoscalersOwnValidation(t *testing.T
 	for _, f := range files {
 		policies[filepath.Base(f)] = reference(t, "autoscaler", "policies", filepath.Base(f))
 	}
+	checkPolicies(t, reference(t, "autoscaler", "autoscaler.hcl"), policies)
 
 	log := autoscalerLogs(t, reference(t, "autoscaler", "autoscaler.hcl"), policies,
 		func(log string) bool { return handlers(log) >= len(policies) || rejected(log) })
@@ -130,6 +142,7 @@ func TestTheFallbackScalingPolicyPassesTheAutoscalersOwnValidation(t *testing.T)
 	for _, f := range files {
 		policies[filepath.Base(f)] = reference(t, "autoscaler", "fallback", filepath.Base(f))
 	}
+	checkPolicies(t, reference(t, "autoscaler", "autoscaler.hcl")+prometheusBlock, policies)
 
 	log := autoscalerLogs(t, reference(t, "autoscaler", "autoscaler.hcl")+prometheusBlock, policies,
 		func(log string) bool { return handlers(log) >= len(policies) || rejected(log) })
