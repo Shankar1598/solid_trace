@@ -36,11 +36,13 @@
 # RAILS_MAX_THREADS so the pool matches. ConsoleEnvironment::DEFAULT_WEB_THREADS
 # copies the 10 for Settings → Instance.
 #
-# Development keeps Rails' 3, not 1: the Stop button and the Factory section
-# call the Dispatcher, which checks Console's token with Console's
-# introspection during the same request. One thread would wait on itself
-# until the Dispatcher call times out (the Seam 5 flows, e2e/flows/runs.spec.ts).
-threads_count = Rails.env.development? ? 3 : ENV.fetch("RAILS_MAX_THREADS", 10)
+# Development uses the same count. With 1 thread, the Stop button and the
+# Factory section wait on themselves: they call the Dispatcher, which checks
+# Console's token with Console's introspection during the same request (the
+# Seam 5 flows, e2e/flows/runs.spec.ts). With fewer than 9, the cap is under
+# one Dashboard's and one explorer run's runs, so the explorer's Query and
+# histogram, or a Dashboard's charts, get Busy (503) from one viewer.
+threads_count = ENV.fetch("RAILS_MAX_THREADS", 10)
 threads threads_count, threads_count
 
 # Specifies the `port` that Puma will listen on to receive requests; default is 3000.
