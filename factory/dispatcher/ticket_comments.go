@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -17,8 +18,10 @@ import (
 // bot, an integration, an external user, or a page that the public can
 // see). The comments go to the ticket's newest Run, and to no Run when
 // that Run is Closed. The reconcile step of a ticket reads its comments
-// when the ticket's newest Run is not Closed; the step of the whole connection
-// (the poll and the backstop) reads the comments of each such ticket. A
+// when the ticket's newest Run is not Closed. The step of the whole
+// connection (the poll and the backstop) reads the comments of each
+// ticket with an Active Run, and, at most every commentsAllEvery, of each
+// ticket with a Run that is not Closed. A
 // comment goes to a Run one time, and again after an edit.
 
 // commentRun is the Run that a ticket's comments go to.
@@ -45,11 +48,45 @@ func (s *store) commentRun(connectionID, ticketID string) (commentRun, bool, err
 	return r, err == nil, err
 }
 
+// commentsAllEvery is the shortest time between two steps of a whole
+// connection that read the comments of each ticket whose Run is not
+// Closed. The steps between them (Notion's poll every 30 seconds) read
+// only the tickets whose Run is Active, so that the poll keeps in the
+// tracker's rate limit.
+const commentsAllEvery = 5 * time.Minute
+
+// commentPasses holds the time when each connection's step last read the
+// comments of each ticket whose Run is not Closed.
+type commentPasses struct {
+	mu sync.Mutex
+	at map[string]time.Time
+}
+
+// due is true when the connection's step reads the comments of each
+// ticket whose Run is not Closed at now; it then keeps now.
+func (p *commentPasses) due(connectionID string, now time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if last, ok := p.at[connectionID]; ok && now.Sub(last) < commentsAllEvery {
+		return false
+	}
+	if p.at == nil {
+		p.at = map[string]time.Time{}
+	}
+	p.at[connectionID] = now
+	return true
+}
+
 // commentTickets are the tickets of the connection that have a Run that
-// is not Closed.
-func (s *store) commentTickets(connectionID string) ([]string, error) {
+// is not Closed, or, when all is false, that have an Active Run.
+func (s *store) commentTickets(connectionID string, all bool) ([]string, error) {
+	where, args := `closed_at IS NULL`, []any{connectionID}
+	if !all {
+		where = activeRunSQL()
+		args = append(args, activeRunArgs()...)
+	}
 	rows, err := s.db.Query(`SELECT DISTINCT ticket_id FROM runs WHERE ticket_connection_id = ? AND ticket_id != ''
-		AND closed_at IS NULL ORDER BY ticket_id`, connectionID)
+		AND `+where+` ORDER BY ticket_id`, args...)
 	if err != nil {
 		return nil, err
 	}

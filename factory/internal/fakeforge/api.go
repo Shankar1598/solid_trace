@@ -86,6 +86,10 @@ func (f *Forge) api(h func(r *http.Request, repo string) (int, any, *apiError)) 
 			writeAnswer(w, e.status, e.body())
 			return
 		}
+		if e := f.failAll; e != nil {
+			writeAnswer(w, e.status, e.body())
+			return
+		}
 		status, body, e := h(r, repo)
 		if e != nil {
 			status, body = e.status, e.body()
@@ -101,6 +105,26 @@ func (f *Forge) FailNext(status int, message string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failNext = &apiError{status: status, message: message}
+}
+
+// FailAll makes each API call get this status and Bitbucket's error body
+// with this message, as when Bitbucket is down for a long time. Status 0
+// stops it.
+func (f *Forge) FailAll(status int, message string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failAll = nil
+	if status != 0 {
+		f.failAll = &apiError{status: status, message: message}
+	}
+}
+
+// FailCommentPosts makes each post of a PR comment get this status, as
+// when Bitbucket fails only that call. Status 0 stops it.
+func (f *Forge) FailCommentPosts(status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failPosts = status
 }
 
 // HoldNextAPI makes the next API call wait until release, as a slow
@@ -356,6 +380,9 @@ func (f *Forge) listComments(r *http.Request, repo string) (int, any, *apiError)
 }
 
 func (f *Forge) postComment(r *http.Request, repo string) (int, any, *apiError) {
+	if f.failPosts != 0 {
+		return 0, nil, &apiError{status: f.failPosts, message: "Bitbucket refuses new comments"}
+	}
 	p, e := f.prFrom(r, repo)
 	if e != nil {
 		return 0, nil, e

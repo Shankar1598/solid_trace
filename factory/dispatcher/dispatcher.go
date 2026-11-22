@@ -109,6 +109,11 @@ type Dispatcher struct {
 	// request), which are not verified, apart from the verified webhooks.
 	setupLimits *webhookLimits
 	reconciles  *reconcileQueue
+	// commentRetries are the PRs whose comments step failed.
+	commentRetries commentRetries
+	// commentPasses holds when each tracker connection last read the
+	// comments of all its tickets.
+	commentPasses commentPasses
 	// commandsAdded wakes the waiting commands calls.
 	commandsAdded signal
 	backstopEvery time.Duration

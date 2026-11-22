@@ -133,7 +133,8 @@ A comment on a Run's ticket that starts with the trigger word, `/agent` (for exa
 - **Who can steer:** a member of the tracker's team, and a guest whom the team invited. Never the connection's own identity (the Notion integration or the Linear app), another bot or integration, a Linear external user (such as a customer from a support tool), or anyone on a Notion page that is published to the web. The Dispatcher writes such a comment in its own log and does nothing.
 - **Notion** gives the type of a comment's author only to an integration with the capability "Read user information without email addresses". With none, no comment can steer a Run, and the Dispatcher's log says why.
 - Each comment goes to the Run one time, and again when its author edits it. A comment from before the Run (before its first minute) is not for it.
-- Linear's **Comment** webhook and Notion's comment events make the Dispatcher read the ticket's comments at once. The backstop (and the poll of a Notion connection with no webhook) reads the comments of each ticket whose Run is not Closed.
+- Linear's **Comment** webhook and Notion's comment events make the Dispatcher read the ticket's comments at once. The poll of a Notion connection with no webhook (every 30 seconds) reads the comments of each ticket whose Run is an Active Run. At most every 5 minutes, the backstop or the poll also reads the comments of each ticket whose Run is done, failed or stopped, so a comment on such a ticket with no webhook can take up to 5 minutes.
+- On Notion, write the `/agent` comment as a comment on the page (the comments at the top of the page). The Dispatcher reads only the page's own comments: an inline comment on a block of the page does nothing.
 - The operator changes the trigger word with `DISPATCHER_TRIGGER_WORD` (one word with no spaces).
 
 ### Connect Linear
@@ -195,9 +196,10 @@ A comment on a Run's PR that starts with the trigger word (`/agent`; the operato
 
 - The Dispatcher reads the PR's comments from Bitbucket with the Run's connection. The message has the trigger comment first, then each other comment that is not resolved, with its author, file, line and thread. A comment goes to the Run one time; after an edit, the next trigger comment gives it again.
 - Each person who can comment on the PR of a private repository can continue the Run, also a reviewer who is not a SolidTrace member. The message's event has the Bitbucket account id and name (`actor.kind` `forge`).
-- These comments do nothing: a comment on a public repository, a comment by a bot, an app or an access token, a comment by the account that opened the PR (the factory's own identity), and a resolved or deleted comment. The comments of such accounts are not in the message.
+- These comments do nothing: a comment on a public repository (when a trigger comment comes while the repository is public, each comment on the PR at that time never goes to the Run, also after the repository becomes private again), a comment by a bot, an app or an access token, a comment by the account that opened the PR (the factory's own identity), and a resolved or deleted comment. The comments of such accounts are not in the message.
 - On a Closed Run, the Dispatcher answers the trigger comment one time: the Run is closed, and a new Run continues the work. A PR gets at most one such answer in a day.
 - With no webhook, a comment does nothing: write a new trigger comment when the webhook works again.
+- When the Dispatcher cannot read the PR's comments (for example, Bitbucket is down) or cannot post the answer of a Closed Run, it tries again at each PR check (every 5 minutes). After 4 failed tries it stops and writes a warning Log that names the repository and the PR: write a new trigger comment when the cause is fixed. A restart of the Dispatcher forgets these tries.
 
 ## Start Runs on a schedule
 

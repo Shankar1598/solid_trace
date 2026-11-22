@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/factorytest"
 	"github.com/solidtrace/factory/internal/fakelinear"
@@ -109,6 +110,34 @@ func TestABotsTriggerCommentDoesNothing(t *testing.T) {
 	wantMessage(t, waitForAccepted(t, env, id, 1)[0], "/agent Use the second fix", "u-7", "Rosa")
 	if !strings.Contains(env.Logs(), "cannot steer its Run") || !strings.Contains(env.Logs(), "a bot wrote it") {
 		t.Errorf("no log of the refused comment:\n%s", env.Logs())
+	}
+}
+
+// A Closed Run does not continue: a trigger comment on its ticket is no
+// message, and the Run stays Closed.
+func TestATriggerCommentOnTheTicketOfAClosedRunDoesNothing(t *testing.T) {
+	env, path := trackerEnv(t)
+	id := boardRun(t, env, path)
+	ana := env.Member("Ana")
+	if got := ana.CLI("stop", "--dispatcher", env.URL(), id); got.Code != 0 {
+		t.Fatalf("solidtrace stop: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	env.Clock.Advance(31 * 24 * time.Hour)
+	env.CheckClosedRuns()
+
+	env.Tracker.AddComment("board", "T-1", "/agent Use the second fix", rosa)
+	if a := env.TrackerWebhook(path, secret, "d-c1", "T-1"); a.Status != http.StatusOK {
+		t.Fatalf("the comment's webhook: %d %s", a.Status, a.Body)
+	}
+	env.Clock.Advance(faketracker.Backstop + time.Second)
+	settle()
+	if got := acceptedMessages(env, id); len(got) != 0 {
+		t.Errorf("the Closed Run accepted the messages %v", got)
+	}
+	var run dispatcherapi.Run
+	ana.API("GET", "/api/v1/runs/"+id, nil).JSON(t, &run)
+	if run.State != dispatcherapi.StateStopped || run.ClosedAt == nil {
+		t.Errorf("the Run is %s, closed at %v; want stopped and Closed", run.State, run.ClosedAt)
 	}
 }
 
@@ -306,4 +335,32 @@ func TestTheLinearBackstopFindsATriggerCommentThatNoWebhookAnnounced(t *testing.
 	if w := env.WaitForWarning("found a change that no webhook announced"); w["factory.entities"] != "issue-1" {
 		t.Errorf("the warning is %v, want the ticket issue-1", w)
 	}
+}
+
+// In poll mode, the poll every 30 seconds reads the comments of the
+// tickets whose Run is Active. A Run that is not Active and not Closed
+// (done, failed or stopped) still continues on a trigger comment, but
+// the Dispatcher reads its ticket's comments only every 5 minutes, so
+// that the poll keeps in Notion's rate limit.
+func TestInPollModeTheCommentsOfATicketWhoseRunIsNotActiveAreReadEvery5Minutes(t *testing.T) {
+	env, db, _ := notionEnv(t, "")
+	page := readyPage(env, db, "Fix the cart total")
+	env.Clock.Advance(dispatcher.NotionPoll)
+	id := waitForRuns(t, env, 1)[0].ID
+	if got := env.Member("Ana").CLI("stop", "--dispatcher", env.URL(), id); got.Code != 0 {
+		t.Fatalf("solidtrace stop: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	env.Notion.AddComment(page, "/agent Use the second fix", rosaN)
+	settle()
+	before := notionCalls(env, "GET /v1/comments")
+	// 4 minutes and 30 seconds after the first step of the connection.
+	for range 8 {
+		env.Clock.Advance(dispatcher.NotionPoll)
+		settle()
+	}
+	if n := notionCalls(env, "GET /v1/comments") - before; n != 0 {
+		t.Errorf("the polls read the comments of a stopped Run's ticket %d times in 4 minutes", n)
+	}
+	env.Clock.Advance(dispatcher.NotionPoll)
+	wantMessage(t, waitForAccepted(t, env, id, 1)[0], "/agent Use the second fix", rosaN.ID, "Rosa")
 }

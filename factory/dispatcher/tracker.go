@@ -182,11 +182,11 @@ func (d *Dispatcher) reconcileTickets(ctx context.Context, t Tracker, source Web
 			acted = append(acted, ticket.ID)
 		}
 	}
-	// The comments: of the ticket, or of each ticket with a Run that is
-	// not Closed.
+	// The comments: of the ticket, or of each ticket with an Active Run
+	// (and at most every commentsAllEvery, with a Run that is not Closed).
 	commented := []string{entity}
 	if entity == "" {
-		if commented, err = d.store.commentTickets(c.ID); err != nil {
+		if commented, err = d.store.commentTickets(c.ID, d.commentPasses.due(c.ID, d.now())); err != nil {
 			errs = append(errs, err)
 		}
 	}

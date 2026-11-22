@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
@@ -44,6 +45,85 @@ const actorForge = "forge"
 // the PR of a Closed Run.
 const closedAnswerEvery = 24 * time.Hour
 
+// commentTries is the number of tries of a PR's comments step that
+// fails: the webhook's step, then one at each backstop.
+const commentTries = 4
+
+// commentRetries are the PRs whose comments step failed, with the number
+// of failed tries. They are in memory only: after a restart, a new
+// trigger comment is necessary.
+type commentRetries struct {
+	mu    sync.Mutex
+	tries map[[2]string]int
+}
+
+// record counts the result of a comments step of the connection's PR
+// entity. It gives the number of failed tries, and forgets the PR after
+// a step that did not fail or after commentTries tries.
+func (r *commentRetries) record(sourceID, pr string, err error) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := [2]string{sourceID, pr}
+	if err == nil {
+		delete(r.tries, key)
+		return 0
+	}
+	if r.tries == nil {
+		r.tries = map[[2]string]int{}
+	}
+	r.tries[key]++
+	tries := r.tries[key]
+	if tries >= commentTries {
+		delete(r.tries, key)
+	}
+	return tries
+}
+
+// of gives the connection's PR entities whose comments step failed.
+func (r *commentRetries) of(sourceID string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var prs []string
+	for key := range r.tries {
+		if key[0] == sourceID {
+			prs = append(prs, key[1])
+		}
+	}
+	slices.Sort(prs)
+	return prs
+}
+
+// commentsStep runs the comments step of the PR entity, and counts a
+// failure: a failed step runs again at the connection's next backstop,
+// and after commentTries failed tries a warning says that the trigger
+// comment did not reach its Run.
+func (k bitbucketWebhooks) commentsStep(ctx context.Context, source WebhookSource, pr string) ([]string, error) {
+	changed, err := k.prComments(ctx, source, pr)
+	if ctx.Err() != nil {
+		// The Dispatcher stops: this is no failure of the step.
+		return changed, err
+	}
+	if tries := k.d.commentRetries.record(source.ID, pr, err); tries >= commentTries {
+		fullName, id, _ := splitPREntity(pr)
+		k.d.warn(fmt.Sprintf("a trigger comment on a PR did not reach its Run: the step that reads the PR's "+
+			"comments failed %d times; write a new trigger comment when the cause is fixed", tries),
+			"organization", source.organizationSlug, "factory.connection", source.Name,
+			"factory.repository", fullName, "factory.pr", strconv.Itoa(id), "error", err.Error())
+	}
+	return changed, err
+}
+
+// retryComments runs again each comments step of the connection that
+// failed.
+func (k bitbucketWebhooks) retryComments(ctx context.Context, source WebhookSource) {
+	for _, pr := range k.d.commentRetries.of(source.ID) {
+		if _, err := k.commentsStep(ctx, source, pr); err != nil && ctx.Err() == nil {
+			k.d.log.Warn("a reconcile step of a PR's comments failed again", "connection", source.Name,
+				"entity", commentsEntityPrefix+pr, "error", err)
+		}
+	}
+}
+
 // prComments reconciles the comments of the PR entity "<workspace>/<slug>#<id>".
 func (k bitbucketWebhooks) prComments(ctx context.Context, source WebhookSource, entity string) ([]string, error) {
 	d := k.d
@@ -63,6 +143,15 @@ func (k bitbucketWebhooks) prComments(ctx context.Context, source WebhookSource,
 		return nil, fmt.Errorf("the Run %s: %w", run.id, err)
 	}
 	if !private {
+		// The comments of this time never go to the Run, also when the
+		// repository is private again.
+		comments, err := f.PRComments(ctx, repository, id)
+		if err == nil {
+			err = d.store.skipPRComments(run.id, comments, d.now().UTC())
+		}
+		if err != nil {
+			return nil, fmt.Errorf("the Run %s: %w", run.id, err)
+		}
 		d.log.Info("a comment on a PR of a public repository never continues a Run", log...)
 		return nil, nil
 	}
@@ -303,14 +392,42 @@ func (s *store) acceptPRComments(run closingRun, r review, more map[string]any, 
 		return got, err
 	}
 	got.sent = len(in)
-	for _, c := range append(triggers, in...) {
-		if _, err := tx.Exec(`INSERT INTO pr_comments (run_id, comment_id, edit, read_at) VALUES (?, ?, ?, ?)
-			ON CONFLICT (run_id, comment_id) DO UPDATE SET edit = excluded.edit, read_at = excluded.read_at`,
-			run.id, c.ID, c.Edited, at.UnixMicro()); err != nil {
-			return got, err
-		}
+	// An older trigger that did not fit stays unread: the next trigger
+	// gives it.
+	done := append([]forge.Comment{got.trigger}, in...)
+	if got.refused != nil {
+		done = triggers
+	}
+	if err := markPRComments(tx, run.id, done, at); err != nil {
+		return got, err
 	}
 	return got, s.commit(tx)
+}
+
+// markPRComments keeps the edit of each comment as read by the Run.
+func markPRComments(tx *sql.Tx, runID string, comments []forge.Comment, at time.Time) error {
+	for _, c := range comments {
+		if _, err := tx.Exec(`INSERT INTO pr_comments (run_id, comment_id, edit, read_at) VALUES (?, ?, ?, ?)
+			ON CONFLICT (run_id, comment_id) DO UPDATE SET edit = excluded.edit, read_at = excluded.read_at`,
+			runID, c.ID, c.Edited, at.UnixMicro()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// skipPRComments keeps each comment as read by the Run, and so never
+// sends it to the Run (until an edit).
+func (s *store) skipPRComments(runID string, comments []forge.Comment, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := markPRComments(tx, runID, comments, at); err != nil {
+		return err
+	}
+	return s.commit(tx)
 }
 
 // readPRComments gives the edit of each comment that the Run read.
@@ -333,8 +450,8 @@ func readPRComments(tx *sql.Tx, runID string) (map[int]string, error) {
 }
 
 // answerClosed posts the answer comment of a Closed Run, as a reply to
-// the trigger comment. When the post fails, the next trigger comment can
-// get the answer.
+// the trigger comment. When the post fails, the trigger comment is unread
+// again, and the next try of the step answers it.
 func (d *Dispatcher) answerClosed(ctx context.Context, f forge.Forge, repository string, id int, runID string,
 	got acceptedComments, log []any) error {
 	link, err := d.store.runLink(d.config, runID)
@@ -347,9 +464,14 @@ func (d *Dispatcher) answerClosed(ctx context.Context, f forge.Forge, repository
 		"at most one time a day on this PR.\n\nThe Run: " + link
 	_, err = f.PostPRComment(ctx, repository, id, forge.NewComment{Text: text, Parent: got.trigger.ID})
 	if err != nil {
+		// The trigger is unread again, so that the next try answers it.
 		if _, undo := d.store.db.Exec(`UPDATE runs SET closed_answer_at = ? WHERE id = ? AND closed_answer_at = ?`,
 			got.lastAnswer, runID, got.answeredAt); undo != nil {
 			d.log.Error("could not undo the time of an answer comment", "run", runID, "error", undo)
+		}
+		if _, undo := d.store.db.Exec(`DELETE FROM pr_comments WHERE run_id = ? AND comment_id = ? AND edit = ?`,
+			runID, got.trigger.ID, got.trigger.Edited); undo != nil {
+			d.log.Error("could not undo the read of a trigger comment", "run", runID, "error", undo)
 		}
 		return fmt.Errorf("the Run %s: %w", runID, err)
 	}
