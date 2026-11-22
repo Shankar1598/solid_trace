@@ -184,9 +184,13 @@ func (d *Dispatcher) reconcileTickets(ctx context.Context, t Tracker, source Web
 	}
 	// The comments: of the ticket, or of each ticket with an Active Run
 	// (and at most every commentsAllEvery, with a Run that is not Closed).
+	// A connection whose backstop is not more frequent than that reads
+	// each ticket with a Run that is not Closed at each step: the gate
+	// would only skip passes there.
 	commented := []string{entity}
 	if entity == "" {
-		if commented, err = d.store.commentTickets(c.ID, d.commentPasses.due(c.ID, d.now())); err != nil {
+		all := t.Backstop(source) >= commentsAllEvery || d.commentPasses.due(c.ID, d.now())
+		if commented, err = d.store.commentTickets(c.ID, all); err != nil {
 			errs = append(errs, err)
 		}
 	}
