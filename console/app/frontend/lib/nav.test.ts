@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { navSection, orgSwitchUrl } from './nav'
+import { navSection, orgSwitchUrl, sidebarItems } from './nav'
 
 describe('the sidebar entry of a page', () => {
   it('is Issues for the list and each Issue', () => {
@@ -104,5 +104,19 @@ describe('where switching Organization lands', () => {
   it('is the other Organization\'s Issues from a page with no section', () => {
     expect(orgSwitchUrl('/acme/mentions', 'meta')).toBe('/meta/issues')
     expect(orgSwitchUrl('/', 'meta')).toBe('/meta/issues')
+  })
+})
+
+describe('the sidebar entries', () => {
+  it('have no Runs entry on an install with no Dispatcher URL', () => {
+    const labels = sidebarItems('acme', false).map(i => i.label)
+    expect(labels).not.toContain('Runs')
+    expect(labels).toEqual(['Overview', 'Issues', 'Logs', 'Performance', 'Dashboards', 'Monitors', 'Agent sessions', 'Projects', 'Settings'])
+  })
+
+  it('have the Runs entry after Agent sessions when the Factory is on', () => {
+    const items = sidebarItems('acme', true)
+    expect(items.map(i => i.label).slice(6, 9)).toEqual(['Agent sessions', 'Runs', 'Projects'])
+    expect(items.find(i => i.label === 'Runs')).toEqual({ section: 'runs', label: 'Runs', href: '/acme/runs' })
   })
 })

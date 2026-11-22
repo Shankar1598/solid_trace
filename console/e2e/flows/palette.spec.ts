@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { ORG } from '../support/data'
+import { rails } from '../support/factoryFlow'
 import { expectEditorText, last24h, openLogs, runBy, settled } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
@@ -7,6 +8,17 @@ import { watchErrors } from '../support/screens'
 // Project's Logs, the pages, recent Queries and actions.
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
+
+// The Dispatcher URL is shared dev state: the test of the pages needs it empty
+// (no Factory), so the file sets it empty and puts back what it read.
+let dispatcherUrl = ''
+test.beforeAll(() => {
+  dispatcherUrl = rails('print InstanceSetting.current.dispatcher_url.to_s')
+  rails('InstanceSetting.current.update!(dispatcher_url: nil)')
+})
+test.afterAll(() => {
+  rails(`InstanceSetting.current.update!(dispatcher_url: ${dispatcherUrl ? JSON.stringify(dispatcherUrl) : 'nil'})`)
+})
 
 const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText())
 

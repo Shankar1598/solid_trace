@@ -33,7 +33,7 @@ const ISSUE_CAUSE = `The cart rounds each line before the sum. Cause ${RUN}.`
 const OTHER = `flow-other-${RUN}`
 
 /** What the flow reads from Console before it changes anything, and what it makes. */
-let facts: { project_id: string; agent_slug: string; dashboard_before: boolean }
+let facts: { project_id: string; agent_slug: string; dashboard_before: boolean; made_at: string | null }
 let origin = ''
 
 const admin = () => flow.machine('admin')
@@ -77,8 +77,13 @@ test.beforeAll(async ({ baseURL }) => {
     org = Organization.find_by!(slug: ${JSON.stringify(ORG)})
     project = org.projects.find_by!(slug: ${JSON.stringify(PROJECT)})
     org.projects.create!(name: ${JSON.stringify(OTHER)})
+    dashboard_before = org.dashboards.where(name: "Factory").exists?
+    made_at = org.factory_dashboard_made_at
+    # Console makes the Dashboard once. With the time set and no Dashboard (a member deleted
+    # it, or an earlier run left the time), the flow clears the time so that Console makes it.
+    org.update_columns(factory_dashboard_made_at: nil) if made_at && !dashboard_before
     print({ project_id: project.id.to_s, agent_slug: org.agent_project.slug,
-            dashboard_before: org.dashboards.where(name: "Factory").exists? }.to_json)
+            dashboard_before: dashboard_before, made_at: made_at&.iso8601(6) }.to_json)
   `))
 })
 
@@ -93,7 +98,7 @@ test.afterAll(async () => {
       org.integrations.where(name: ${JSON.stringify(INTEGRATION)}).each { |i| Notification.where(integration_id: i.id).delete_all; i.destroy }
       Issue.where(title: ${JSON.stringify(ISSUE)}).destroy_all
       org.projects.where(name: ${JSON.stringify(OTHER)}).destroy_all
-      ${facts?.dashboard_before === false ? 'org.dashboards.where(name: "Factory").destroy_all; org.update_columns(factory_dashboard_made_at: nil)' : ''}
+      ${facts?.dashboard_before === false ? `org.dashboards.where(name: "Factory").destroy_all; org.update_columns(factory_dashboard_made_at: ${facts.made_at ? `Time.iso8601(${JSON.stringify(facts.made_at)})` : 'nil'})` : ''}
     `)
   } finally {
     await flow.stop()
@@ -258,9 +263,12 @@ test('an Issue Run reads only its Project over MCP, and its cause report is a co
     { message: 'the Dispatcher revokes the MCP token in the end step', timeout: 30_000 }).toBe(401)
 
   // The cause report is a comment on the Issue, by Factory, with a link to the Run.
-  await page.goto(`/${ORG}/projects/${PROJECT}/issues/${number}`)
-  await page.getByRole('tab', { name: /^Comments/ }).click()
-  await expect(page.getByText(ISSUE_CAUSE)).toBeVisible({ timeout: 60_000 })
+  // The Issue page does not update by itself: each try loads it again.
+  await expect(async () => {
+    await page.goto(`/${ORG}/projects/${PROJECT}/issues/${number}`)
+    await page.getByRole('tab', { name: /^Comments/ }).click()
+    await expect(page.getByText(ISSUE_CAUSE)).toBeVisible({ timeout: 1_000 })
+  }).toPass({ timeout: 60_000, intervals: [2_000, 3_000] })
   const factory = page.getByRole('link', { name: 'Factory', exact: true })
   await expect(factory).toHaveAttribute('href', new RegExp(`/${ORG}/runs/${runId}$`))
 

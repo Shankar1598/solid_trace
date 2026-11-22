@@ -297,7 +297,7 @@ The factory's service that queues **Runs**, starts their **Executions** and hold
 _Avoid_: orchestrator, scheduler
 
 **Factory**:
-The part of SolidTrace that gives work to coding agents on the team's own machines, lets people steer them, and records each **Run** in SolidTrace. It is off until the operator turns it on: with no Dispatcher URL in the Instance settings, Console shows no part of it, and a SolidTrace install runs no **Dispatcher**.
+The part of SolidTrace that gives work to coding agents on the team's own machines, lets people steer them, and records each **Run** in SolidTrace. It is off until the operator turns it on: with no Dispatcher URL in the Instance settings, Console has no Runs link in the sidebar or the palette, no Runs page, no Factory section in a **Project**, no Factory provider for an **Integration** and no Stop button, and a SolidTrace install runs no **Dispatcher**.
 _Avoid_: agent platform, orchestrator
 
 **Agent Project**:
