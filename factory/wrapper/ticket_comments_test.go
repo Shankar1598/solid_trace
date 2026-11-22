@@ -62,3 +62,37 @@ func TestATriggerCommentOnTheTicketContinuesARunThatWaitsOnAPersonAndTheDispatch
 		t.Errorf("the accepted event is %v, want Rosa's text from the tracker, continued from waiting on a person", ev)
 	}
 }
+
+// A Run whose PR has an outcome is Closed: a trigger comment on its
+// ticket is no message, and it starts no Execution.
+func TestATriggerCommentOnTheTicketOfARunWhosePRIsMergedDoesNothing(t *testing.T) {
+	env, ana := trackerEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), commitStep, shell(`solidtrace pr --title "Fix the cart total"`),
+		reportStep("--outcome", "done", "--summary", "The total now takes the discount."),
+		reply, result, waitForEnd)
+	id := ticketRun(t, env, ana)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	prs := env.Forge.PRs("example/shop")
+	if len(prs) != 1 || run.PRURL == "" {
+		t.Fatalf("want one PR, got %+v (the Run's PR %q)", prs, run.PRURL)
+	}
+	env.CheckClosedRuns()
+	env.Forge.SetState("example/shop", prs[0].ID, "MERGED")
+	env.Clock.Advance(prCheckEvery)
+	env.CheckClosedRuns()
+	closedEvent(t, env, id, dispatcherapi.StateDone, "merged", "pr_merged")
+
+	env.Tracker.AddComment("board", "T-1", "/agent One more fix", rosa)
+	if a := env.TrackerWebhook(boardPath, trackerSecret, "d-rosa", "T-1"); a.Status != http.StatusOK {
+		t.Fatalf("the webhook: %d %s", a.Status, a.Body)
+	}
+	time.Sleep(300 * time.Millisecond)
+	run = getRun(t, ana, id)
+	if got := eventsOf(env, id, "message_accepted"); len(got) != 0 {
+		t.Errorf("the Run with a merged PR accepted the messages %v", got)
+	}
+	if run.State != dispatcherapi.StateDone || run.ClosedAt == nil || len(run.Executions) != 1 {
+		t.Errorf("the Run is %s, closed at %v, with %d Executions; want done, Closed, 1", run.State, run.ClosedAt,
+			len(run.Executions))
+	}
+}
