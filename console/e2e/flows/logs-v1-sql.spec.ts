@@ -2,6 +2,9 @@ import { test, expect, type Locator } from '@playwright/test'
 import { builderRow, expectEditorText, holdSqlQueries, last24h, logCount, openLogs, releaseSqlQueries, runBy, settled } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
 
+// The ClickHouse database of the stack's EventStore, which a refusal names.
+const clickhouseDatabase = process.env.E2E_CLICKHOUSE_DATABASE ?? 'solidtrace'
+
 // SQL mode, on an instance with SQL queries on: the Query's readable SQL,
 // run only on Run, answering a table; leaving with edited SQL asks first.
 
@@ -116,13 +119,13 @@ test('SQL that would change anything or read beyond its Project\'s logs and even
   await box.fill('DROP TABLE log_key_counts')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Not enough privileges')
-  await expect(page.getByRole('alert')).toContainText('DROP TABLE ON solidtrace.log_key_counts')
+  await expect(page.getByRole('alert')).toContainText(`DROP TABLE ON ${clickhouseDatabase}.log_key_counts`)
 
   // SQL reads only the Project's logs and events, not EventStore's other tables.
   await box.fill('SELECT count(*) FROM log_key_counts')
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Not enough privileges')
-  await expect(page.getByRole('alert')).toContainText('SELECT ON solidtrace.log_key_counts')
+  await expect(page.getByRole('alert')).toContainText(`SELECT ON ${clickhouseDatabase}.log_key_counts`)
 
   // A SELECT of logs still runs.
   await box.fill('SELECT count(*) AS log_count FROM logs')
