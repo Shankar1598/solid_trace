@@ -19,6 +19,14 @@ import (
 // forge's git URL). It gives the Execution, the remote and lib's remote.
 func submoduleExecution(t *testing.T) (e *execution, remote, lib string) {
 	t.Helper()
+	return nestedSubmoduleExecution(t, 0)
+}
+
+// nestedSubmoduleExecution is submoduleExecution where lib has a
+// submodule vendor/lib of its own, and so on for the given number of
+// levels: each commit of lib has the one before it as its submodule.
+func nestedSubmoduleExecution(t *testing.T, levels int) (e *execution, remote, lib string) {
+	t.Helper()
 	dir := t.TempDir()
 	lib = filepath.Join(dir, "lib.git")
 	libSeed := filepath.Join(dir, "lib-seed")
@@ -27,6 +35,14 @@ func submoduleExecution(t *testing.T) (e *execution, remote, lib string) {
 	commitFiles(t, libSeed, map[string]string{"lib.txt": "one\n"}, "The lib")
 	gitRun(t, "-C", libSeed, "push", "-q", lib, "main")
 	libCommit := gitRun(t, "-C", libSeed, "rev-parse", "HEAD")
+	for range levels {
+		writeFiles(t, libSeed, map[string]string{".gitmodules": "[submodule \"lib\"]\n\tpath = vendor/lib\n\turl = ../lib.git\n"})
+		gitRun(t, "-C", libSeed, "add", ".gitmodules")
+		gitRun(t, "-C", libSeed, "update-index", "--add", "--cacheinfo", "160000,"+libCommit+",vendor/lib")
+		gitRun(t, "-C", libSeed, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "Nest the lib")
+		gitRun(t, "-C", libSeed, "push", "-q", lib, "main")
+		libCommit = gitRun(t, "-C", libSeed, "rev-parse", "HEAD")
+	}
 
 	remote, seed := seedRemote(t, dir)
 	writeFiles(t, seed, map[string]string{".gitmodules": "[submodule \"lib\"]\n\tpath = vendor/lib\n\turl = ../lib.git\n"})
@@ -101,6 +117,25 @@ func TestAnUnchangedSubmoduleIsNotPushed(t *testing.T) {
 	}
 	if refs := gitRun(t, "--git-dir", remote, "for-each-ref"); !strings.Contains(refs, "refs/agent-wip/"+saveRunID) {
 		t.Errorf("the checkout is not saved: %s", refs)
+	}
+}
+
+// The save goes down three submodules: a fourth is listed as not saved.
+func TestASubmoduleDeeperThanThreeLevelsIsListedAsNotSaved(t *testing.T) {
+	e, _, _ := nestedSubmoduleExecution(t, 4)
+	deep := filepath.Join(e.checkout, "vendor", "lib", "vendor", "lib", "vendor", "lib", "vendor", "lib")
+	if _, err := os.Stat(filepath.Join(deep, ".git")); err != nil {
+		t.Fatalf("the setup did not check out the fourth submodule: %v", err)
+	}
+
+	saved, err := e.saver.save(context.Background(), dispatcherapi.EndPreempted)
+	if err != nil {
+		t.Fatalf("the save: %v", err)
+	}
+
+	if len(saved.Skipped) != 1 || !strings.HasPrefix(saved.Skipped[0], "vendor/lib/vendor/lib/vendor/lib/vendor/lib (a submodule that is not saved: ") ||
+		!strings.Contains(saved.Skipped[0], "it is deeper than 3 submodules") {
+		t.Errorf("the save names as left out %q, want the fourth submodule as deeper than 3 submodules", saved.Skipped)
 	}
 }
 
