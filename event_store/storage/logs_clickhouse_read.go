@@ -375,7 +375,9 @@ type IngestedLogs struct {
 	// Cursor is the Project's Log processing cursor when the scan began:
 	// the scan read the batches after After up to it, and the next scan
 	// starts after it. It is the nil UUID while Log processing has stored
-	// nothing for the Project.
+	// nothing for the Project. It is never behind After: a cursor behind it
+	// went back, as when a power loss lost its NoSync write, and the batches
+	// between go again with Logs the scan's caller has read.
 	Cursor uuid.UUID
 }
 
@@ -397,6 +399,7 @@ func (s *ClickHouseLogs) ScanLogsIngestedAfter(ctx context.Context, scan Ingeste
 	}
 	found := IngestedLogs{Logs: []models.Log{}, Cursor: cursor}
 	if bytes.Compare(scan.After[:], cursor[:]) >= 0 {
+		found.Cursor = scan.After
 		return found, nil
 	}
 	conditions := []string{

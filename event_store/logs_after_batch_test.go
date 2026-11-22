@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // nilBatch is the ingest_cursor of a Project Log processing has stored
@@ -315,6 +317,41 @@ func TestLogsNotYetProcessedAreReadByTheNextRun(t *testing.T) {
 	env.ProcessLogs(t)
 	if got := monitor.run(nil); !slices.Equal(got, []string{"waiting"}) {
 		t.Errorf("Expected the Log processed since, got %v", got)
+	}
+}
+
+// A power loss can lose the Log processing cursor's NoSync write after a run
+// was given it. The cursor is then behind the Monitor's, and the batches
+// between go again: the Monitor read their Logs already, so its cursor
+// stays where it is.
+func TestAMatchMonitorsCursorNeverMovesBackWhenTheProcessingCursorDoes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	monitor := armMonitor(t, env, "")
+	armed, err := uuid.Parse(monitor.cursor)
+	if err != nil {
+		t.Fatalf("Parse the armed cursor %q: %v", monitor.cursor, err)
+	}
+
+	postAndProcess(t, env, logJSON(t, "one", testNow.Add(-2*time.Minute), nil))
+	if got := monitor.run(nil); !slices.Equal(got, []string{"one"}) {
+		t.Fatalf("Expected the run to read %v, got %v", []string{"one"}, got)
+	}
+	read := monitor.cursor
+
+	if err := env.PebbleWriter.SetLogProcessingCursor(123, armed); err != nil {
+		t.Fatalf("Move the cursor back: %v", err)
+	}
+	if got := monitor.run(nil); len(got) != 0 {
+		t.Errorf("Expected a run behind its own cursor to read none, got %v", got)
+	}
+	if monitor.cursor != read {
+		t.Errorf("Expected the Monitor's cursor kept at %q, got %q", read, monitor.cursor)
+	}
+
+	postAndProcess(t, env, logJSON(t, "two", testNow.Add(-time.Minute), nil))
+	if got := monitor.run(nil); !slices.Equal(got, []string{"two"}) {
+		t.Errorf("Expected only the new Log, got %v", got)
 	}
 }
 
