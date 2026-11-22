@@ -176,7 +176,9 @@ sudoers() {
   others="$(ls -A /etc/sudoers.d | grep -v -x -e README -e factory-take-over | tr '\n' ' ')"
   [ -z "$others" ] ||
     die "no general sudo: remove the other files in /etc/sudoers.d from the base image: $others"
-  members="$(getent group sudo | cut -d: -f4)"
+  # A member is in the group's member list, or has the group as its primary group.
+  gid="$(getent group sudo | cut -d: -f3)"
+  members="$(getent group sudo | cut -d: -f4)$(getent passwd | awk -F: -v g="$gid" 'g != "" && $4 == g { printf " %s", $1 }')"
   [ -z "$members" ] ||
     die "no general sudo: remove the members of the group sudo from the base image: $members"
 }
