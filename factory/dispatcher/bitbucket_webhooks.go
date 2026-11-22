@@ -119,8 +119,9 @@ func splitPREntity(entity string) (string, int, error) {
 	return fullName, id, nil
 }
 
-// Backstop: the whole connection's step does nothing (the close loop
-// checks the PRs every prCheckEvery), so its interval is that check's.
+// Backstop: the whole connection's step runs again each PR's comments
+// step that failed (the close loop checks the PRs every prCheckEvery),
+// so its interval is that check's.
 func (bitbucketWebhooks) Backstop(WebhookSource) time.Duration { return prCheckEvery }
 
 // Reconcile reads the state of the PR from Bitbucket for each Run of the
@@ -131,10 +132,11 @@ func (bitbucketWebhooks) Backstop(WebhookSource) time.Duration { return prCheckE
 // Bitbucket gives, with the Run's own connection.
 func (k bitbucketWebhooks) Reconcile(ctx context.Context, source WebhookSource, entity string) ([]string, error) {
 	if entity == "" {
+		k.retryComments(ctx, source)
 		return nil, nil
 	}
 	if pr, ok := strings.CutPrefix(entity, commentsEntityPrefix); ok {
-		return k.prComments(ctx, source, pr)
+		return k.commentsStep(ctx, source, pr)
 	}
 	fullName, id, err := splitPREntity(entity)
 	if err != nil {

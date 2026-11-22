@@ -109,6 +109,8 @@ type Dispatcher struct {
 	// request), which are not verified, apart from the verified webhooks.
 	setupLimits *webhookLimits
 	reconciles  *reconcileQueue
+	// commentRetries are the PRs whose comments step failed.
+	commentRetries commentRetries
 	// commandsAdded wakes the waiting commands calls.
 	commandsAdded signal
 	backstopEvery time.Duration

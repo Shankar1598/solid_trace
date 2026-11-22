@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -358,5 +359,91 @@ func TestAnOlderTriggerCommentThatDidNotFitInTheMessageComesWithTheNextTrigger(t
 	if !strings.Contains(text, fmt.Sprintf("Comment %d by Asha, a general comment, in thread %d:\n/agent first",
 		older.ID, older.ID)) {
 		t.Errorf("the next message does not have the older trigger that did not fit:\n%.500s", text)
+	}
+}
+
+// A trigger comment whose step fails (Bitbucket is down) is not lost: the
+// next backstop of the connection runs the step again.
+func TestATriggerCommentWhoseStepFailedComesWithTheNextBackstop(t *testing.T) {
+	env, _, path, id, pr := doneRunWithPR(t)
+	env.Forge.FailNext(http.StatusServiceUnavailable, "Bitbucket is down")
+	prComment(t, env, path, pr.ID, fakeforge.Comment{Author: "Ravi", Body: "/agent fix the review"})
+	barrier(t, env)
+	if got := eventsOf(env, id, "message_accepted"); len(got) != 0 {
+		t.Fatalf("the failed step gave the messages %v", got)
+	}
+	env.Clock.Advance(5 * time.Minute)
+	text, _ := acceptedMessages(t, env, id, 1)[0]["message.text"].(string)
+	if !strings.HasPrefix(text, "/agent fix the review") {
+		t.Errorf("the message after the backstop:\n%s", text)
+	}
+}
+
+// When the answer to a trigger comment on a Closed Run cannot be posted,
+// the next backstop posts it.
+func TestTheAnswerOfAClosedRunThatCouldNotBePostedComesWithTheNextBackstop(t *testing.T) {
+	env, _, path, id, pr := doneRunWithPR(t)
+	env.CheckClosedRuns()
+	env.Forge.SetState(shop, pr.ID, "MERGED")
+	env.ForgeWebhook(path, forgeSecret, "{merged}", fakeforge.EventPRFulfilled, env.Forge.PRWebhook(shop, pr.ID))
+	closedEvent(t, env, id, dispatcherapi.StateDone, "merged", "pr_merged")
+
+	c := env.Forge.PersonComments(shop, pr.ID, fakeforge.Comment{Author: "Ravi", Body: "/agent one more fix"})
+	env.Forge.FailCommentPosts(http.StatusServiceUnavailable)
+	sendComment(t, env, path, pr.ID, c.ID)
+	barrier(t, env)
+	env.Forge.FailCommentPosts(0)
+	answers := func() int {
+		n := 0
+		for _, got := range env.Forge.Comments(shop, pr.ID) {
+			if got.Author == fakeforge.FactoryAuthor && got.Parent == c.ID {
+				n++
+			}
+		}
+		return n
+	}
+	if n := answers(); n != 0 {
+		t.Fatalf("the failed post gave %d answers", n)
+	}
+	env.Clock.Advance(5 * time.Minute)
+	waitUntil(t, "the backstop posts the answer", func() bool { return answers() == 1 })
+}
+
+// A trigger comment whose step fails each time is given up after the
+// fourth try, with a warning: someone hears of it.
+func TestATriggerCommentWhoseStepFailsEachTimeIsGivenUpWithAWarning(t *testing.T) {
+	env, _, path, id, pr := doneRunWithPR(t)
+	env.Forge.FailAll(http.StatusServiceUnavailable, "Bitbucket is down")
+	prComment(t, env, path, pr.ID, fakeforge.Comment{Author: "Ravi", Body: "/agent fix the review"})
+	barrier(t, env)
+	var warning map[string]any
+	for range 10 {
+		env.Clock.Advance(5 * time.Minute)
+		for deadline := time.Now().Add(time.Second); warning == nil && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			for _, ev := range env.SolidTrace.RunEvents() {
+				if message, _ := ev["message"].(string); ev["run.id"] == nil &&
+					strings.Contains(message, "a trigger comment on a PR did not reach its Run") {
+					warning = ev
+				}
+			}
+		}
+		if warning != nil {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("no warning after 10 backstops\nDispatcher log:\n%s", env.Logs())
+	}
+	if warning["factory.repository"] != shop || warning["factory.pr"] != fmt.Sprint(pr.ID) {
+		t.Errorf("the warning: %v; want the PR %d of %s", warning, pr.ID, shop)
+	}
+	// Given up: Bitbucket is up again, and the backstop does not run it.
+	env.Forge.FailAll(0, "")
+	env.Clock.Advance(5 * time.Minute)
+	env.CheckClosedRuns()
+	barrier(t, env)
+	time.Sleep(200 * time.Millisecond)
+	if got := eventsOf(env, id, "message_accepted"); len(got) != 0 {
+		t.Errorf("a step that was given up gave the messages %v", got)
 	}
 }

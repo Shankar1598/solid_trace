@@ -99,6 +99,10 @@ type Forge struct {
 	comments map[string]map[int][]*Comment
 	nextID   int
 	failNext *apiError
+	// failAll is the answer of each API call until FailAll(0, "").
+	failAll *apiError
+	// failPosts is the status of each post of a PR comment, or 0.
+	failPosts int
 	// hanging are the repositories whose git requests get no answer, with
 	// the channel that the first request closes.
 	hanging map[string]*hang
