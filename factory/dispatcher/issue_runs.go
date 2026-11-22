@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/dispatcherapi"
 )
@@ -199,27 +200,34 @@ func (d *Dispatcher) commentOnIssue(ctx context.Context, w ticketWrite) error {
 	if !ok {
 		return fmt.Errorf("%w: SolidTrace has no Project %s in the Organization %s now", errGiveUp, projectID, org.slug)
 	}
-	run := "Run: " + d.config.SolidTraceURL + "/" + w.organizationSlug + "/runs/" + w.runID
-	var body string
+	runURL := d.config.SolidTraceURL + "/" + w.organizationSlug + "/runs/" + w.runID
+	run := "Run: " + runURL
+	var build func(summary, causeReport string) string
 	switch w.step {
 	case stepCauseReport:
-		body = "SolidTrace Factory found the cause of this Issue, and opened no PR.\n" + run + "\n\n"
-		if w.text != "" {
-			body += "Summary:\n" + w.text + "\n\n"
+		build = func(summary, causeReport string) string {
+			body := "SolidTrace Factory found the cause of this Issue, and opened no PR.\n" + run + "\n\n"
+			if summary != "" {
+				body += "Summary:\n" + summary + "\n\n"
+			}
+			return body + "Cause report:\n" + causeReport
 		}
-		body += "Cause report:\n" + causeReport
 	case stepPROpened:
 		checks, err := d.store.reportChecks(w.executionID)
 		if err != nil {
 			return err
 		}
-		body = prOpenedComment("this Issue", w.prURL, run, w.text, checks)
-		if causeReport != "" {
-			body += "\n\nCause report:\n" + causeReport
+		build = func(summary, causeReport string) string {
+			body := prOpenedComment("this Issue", w.prURL, run, summary, checks)
+			if causeReport != "" {
+				body += "\n\nCause report:\n" + causeReport
+			}
+			return body
 		}
 	default:
 		return fmt.Errorf("%w: the step %s has no Issue comment", errGiveUp, w.step)
 	}
+	body := fitIssueComment(build, w.text, causeReport, runURL)
 	request, _ := json.Marshal(map[string]any{"project": project, "issue": number, "body": body, "run_id": w.runID})
 	resp, err := d.children.send(call, http.MethodPost, d.children.url+issueCommentsPath, request)
 	if err != nil {
@@ -234,6 +242,39 @@ func (d *Dispatcher) commentOnIssue(ctx context.Context, w ticketWrite) error {
 		return fmt.Errorf("%w: SolidTrace answered %d: %s", errGiveUp, resp.StatusCode, bytes.TrimSpace(answer))
 	}
 	return fmt.Errorf("SolidTrace answered %d: %s", resp.StatusCode, bytes.TrimSpace(answer))
+}
+
+// maxIssueComment is the longest body of a comment on an Issue that
+// Console takes, in characters (IssueCommentsController::MAX_BODY). The
+// summary and the cause report can each have 64 KiB, so one comment can be
+// longer.
+const maxIssueComment = 65_536
+
+// fitIssueComment is the comment that build makes from the summary and the
+// cause report, cut to maxIssueComment characters: first the end of the
+// summary, then the end of the cause report. A cut comment ends with a line
+// that gives the Run's page, which has the full text.
+func fitIssueComment(build func(summary, causeReport string) string, summary, causeReport, runURL string) string {
+	body := build(summary, causeReport)
+	n := utf8.RuneCountInString(body)
+	if n <= maxIssueComment {
+		return body
+	}
+	note := "\n\nThe comment is cut to fit SolidTrace's limit. The full text is on the Run's page: " + runURL
+	over := n + utf8.RuneCountInString(note) - maxIssueComment
+	summary, over = cutRunes(summary, over)
+	causeReport, _ = cutRunes(causeReport, over)
+	return build(summary, causeReport) + note
+}
+
+// cutRunes takes n characters from the end of s. It gives what stays of s,
+// and the number of characters that it could not take.
+func cutRunes(s string, n int) (string, int) {
+	runes := []rune(s)
+	if n >= len(runes) {
+		return "", n - len(runes)
+	}
+	return string(runes[:len(runes)-n]), 0
 }
 
 // issueCommentParts are the Run's Organization, the SolidTrace id of its
