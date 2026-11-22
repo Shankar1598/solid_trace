@@ -772,6 +772,19 @@ func writeProblem(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(dispatcherapi.Problem{Error: message})
 }
 
+// commandsNote starts the first message of each Agent session that an
+// Execution starts (not of a resume, which has it): the factory's commands
+// that the agent uses in each Run, from the CLI, a ticket, a schedule or a
+// webhook.
+const commandsNote = "You work in a SolidTrace factory Run. Use these commands:\n" +
+	"- 'solidtrace check' runs the checks of the repository's factory file; 'solidtrace check COMMAND' runs " +
+	"COMMAND as a check. Each check is Evidence of the Run.\n" +
+	"- 'solidtrace pr --title TEXT --description TEXT' pushes the commits of the Run's branch and opens its PR; " +
+	"a later call changes the title or the description. Commit your changes first. Open the PR only in this way.\n" +
+	"- 'solidtrace report --outcome done|needs-a-person|failed --summary TEXT' reports the end of your work. " +
+	"With needs-a-person, also give --question TEXT.\n\n" +
+	"The task:\n\n"
+
 // headless is the command line of the headless form of Claude Code.
 func (e *execution) headless() []string {
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -877,6 +890,9 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 	// After a lost machine, the first message says what is back: in
 	// place of the prompt when the Agent session resumes, else after it.
 	text := e.task.Prompt
+	if !e.resumed {
+		text = commandsNote + text
+	}
 	if e.lostNote != "" {
 		text = e.lostNote
 		if !e.resumed {

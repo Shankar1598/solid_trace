@@ -277,6 +277,10 @@ Each Execution gets one subscription account of the pool: the free account with 
 - **Switch by hand:** `solidtrace switch-account RUN_ID` moves a Run that waits on an account limit to another free account. With no other account free, it is refused with the first reset time.
 - **The fallback of cluster check 5:** with `DISPATCHER_AT_ACCOUNT_LIMIT=wait` (the default is `switch`), a Run stays on its account: at the usage limit it waits for that account's reset time, also when another account is free, and later Executions of the Run use the same account. A person can still switch its account, also when the Run is queued and waits for its account. When the operator removes the account from the pool, the Run continues on a free account.
 
+## The first message of a Run's Agent session
+
+The wrapper puts the factory's commands before the task in the first message of each Agent session that an Execution starts, for each Run: `solidtrace check` (the checks of the factory file, or `solidtrace check COMMAND`), `solidtrace pr --title TEXT --description TEXT` (push the Run's branch and open its PR) and `solidtrace report --outcome done|needs-a-person|failed --summary TEXT`. A resume of the Agent session does not give them again. An Issue or a Monitor Run also gets its standing task.
+
 ## Read the Runs
 
 Each member opens **Runs** in the Organization's navigation. The page shows each Run of the factory with an event in the time range (30 days if you set no range), as its last run event shows it: the state and its reason, the title and the Run id, the Project, the repository, the trigger, who started it and the time of the last event. Active Runs come first, then the latest event first.
