@@ -61,3 +61,33 @@ func TestAnAgentSessionIdThatIsNotInTheHarnessFormIsRefused(t *testing.T) {
 		})
 	}
 }
+
+const oneByteGapSession = "2d9f4b60-7a1c-4e35-8c92-3b5e0a6d7f18"
+
+// The server stores a unit only at its end offset. A gap of one byte is a
+// gap, and a file that is not .jsonl with another hash at the same version
+// is not stored, even when its size is the same.
+func TestAnUploadWithAGapOfOneByteOrAnotherHashAtTheSameVersionIsRefused(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	first, second := lines("Add a cart page"), lines("Now the checkout")
+
+	expectStatus(t, uploadUnit(t, env, o.secret, oneByteGapSession, unitUpload{path: "session.jsonl", body: first}), 200)
+	answer := uploadUnit(t, env, o.secret, oneByteGapSession, unitUpload{path: "session.jsonl", offset: len(first) + 1, body: second})
+	expectStatus(t, answer, 409)
+	if msg, _ := answer.body["error"].(string); !strings.HasPrefix(msg, "A gap") || answer.body["end_offset"] != float64(len(first)) {
+		t.Errorf("Expected a gap at the end offset %d, got %s", len(first), answer.raw)
+	}
+
+	expectStatus(t, uploadUnit(t, env, o.secret, oneByteGapSession, unitUpload{path: "tool-results/r1.txt", contentHash: "sha256:aa", body: []byte("first output")}), 200)
+	answer = uploadUnit(t, env, o.secret, oneByteGapSession, unitUpload{path: "tool-results/r1.txt", contentHash: "sha256:bb", body: []byte("other output")})
+	expectStatus(t, answer, 409)
+	if msg, _ := answer.body["error"].(string); !strings.HasPrefix(msg, "Another hash") {
+		t.Errorf("Expected a refusal that names the other hash, got %s", answer.raw)
+	}
+	_, files := offsetsOf(t, env, o.secret, oneByteGapSession)
+	if _, _, hash := fileOf(files, "tool-results/r1.txt"); hash != "sha256:aa" {
+		t.Errorf("Expected the first hash to stay, got %q", hash)
+	}
+}
