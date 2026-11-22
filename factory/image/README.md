@@ -11,7 +11,7 @@
 | The wrapper | `/usr/local/bin/factory-wrapper` (the Nomad Runner's default command) | the version that `build` gives it (`factory-wrapper version`) |
 | The agent CLI | `/usr/local/bin/solidtrace` | the version that `build` gives it (`solidtrace --version`) |
 | Claude Code's first-run dialogs, accepted | `/etc/claude-code/managed-settings.json` and the template `/etc/factory/claude.json`, owned by root | |
-| The run user (default `agent`): not root, in the `docker` group, with no password | | |
+| The run user `agent`: not root, in the `docker` group, with no password | | |
 | The access group (default `factory-access`), with no member | | |
 | The one sudoers rule | `/etc/sudoers.d/factory-take-over` | |
 | git: no credential helper of the system, and git over ssh to GitHub and Bitbucket rewritten to HTTPS | `/etc/gitconfig` | |
@@ -40,9 +40,10 @@ FACTORY_ACCESS_GROUP=factory-access \
 | `FACTORY_PROXY_URL` | Squid on the server VM, as `http://<host>:<port>`. Required. No user name or password. |
 | `FACTORY_DISPATCHER_HOST` | The host of the Dispatcher's private listener. Tools reach it direct, not through the proxy (Squid refuses its port). Required. |
 | `FACTORY_BIN_DIR` | The directory with `factory-wrapper` and `solidtrace`. Required. |
-| `FACTORY_RUN_USER` | The run user. Default `agent`, as the wrapper's default (`WRAPPER_RUN_USER`). |
 | `FACTORY_ACCESS_GROUP` | The POSIX group that OS Login gives to each person of your Google group. Default `factory-access`. |
 | `FACTORY_DOWNLOAD_CACHE` | A directory that keeps the downloads for the next run. |
+
+The run user is always `agent`, the wrapper's default (`WRAPPER_RUN_USER`, and `WRAPPER_HOME` `/home/agent`). Nothing gives another name to the wrapper, so the recipe refuses `FACTORY_RUN_USER` with another name, and a user `agent` with the user id 0.
 
 The recipe checks each setting before it changes anything, and refuses a name or a value that could change the sudoers rule or an environment file. A second run changes nothing. An argument `system` or `factory` runs only one part: `system` is all but the two binaries of this repository, and `factory` installs them.
 
@@ -58,6 +59,11 @@ To change a pinned version, change the version and its SHA-256 at the top of `ag
 
 A member of the access group runs exactly `sudo -u agent hc connect`, with no password, and nothing else: no other command, no other argument, no other user, no `-E`, no shell. The run user and each other user have no sudo rule. This gives the person the run user's rights, and root on that VM through the `docker` group; that is accepted, because the VM holds one Run. Attach only to a core that the wrapper started: when no core runs, `hc connect` starts one of its own, and that core gets the `SUDO_*` variables.
 
+The rule is the one sudoers rule only when two more things are true:
+
+- Give the Google group the role `roles/compute.osLogin` on the agent VMs, and never `roles/compute.osAdminLogin`. OS Login gives general sudo to each person with the admin role, through sudoers files of its own.
+- The base image has no other sudoers rule. At the end of its sudoers step, the recipe fails with a message that starts "no general sudo" when `/etc/sudoers.d` has a file other than `README` and `factory-take-over` (for example, a rule that a cloud guest agent wrote for the user of the image build), or when the group `sudo` has a member (Debian's `/etc/sudoers` gives that group all commands). Remove that file or member from the base image, and run the recipe again.
+
 ## Test it
 
 ```sh
@@ -65,4 +71,4 @@ factory/image/test        # the recipe in a clean Debian container
 factory/local/smoke       # the local stack, whose agent machine the recipe made
 ```
 
-`test` builds the wrapper and the agent CLI, runs the recipe in a clean Debian container with a run user and an access group that are not the defaults, and checks the refusals of bad settings and of a download with another SHA-256, a second run, the versions, the owners and modes, the sudoers rule and what it refuses, the dialogs, the proxy settings and git. It keeps the downloads in the Docker volume `factory-image-test-downloads`; `FACTORY_IMAGE_TEST_CLEAN=1` deletes it. An agent runs each of the two through `~/.cache/solid-trace/software-factory-notes/slot.sh exclusive`.
+`test` builds the wrapper and the agent CLI, runs the recipe in a clean Debian container with the run user `agent` and an access group that is not the default, and checks the refusals of bad settings and of a download with another SHA-256, a second run, the versions, the owners and modes, the sudoers rule and what it refuses, the refusal of a base image with another sudo rule, the dialogs, the proxy settings and git. It keeps the downloads in the Docker volume `factory-image-test-downloads`; `FACTORY_IMAGE_TEST_CLEAN=1` deletes it. An agent runs each of the two through `~/.cache/solid-trace/software-factory-notes/slot.sh exclusive`.
