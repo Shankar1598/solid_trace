@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"fmt"
 	"math"
 	"net/url"
 	"strings"
@@ -158,4 +159,41 @@ func TestAgentSessionTotalsOfARun(t *testing.T) {
 			map[string]string{"Authorization": "Bearer " + secret}), 400)
 		expectStatus(t, sessionTotalsAnswer(t, env, secret, "not-a-uuid"), 400)
 	})
+
+	t.Run("a call has at most 100 different ids, and an id sent again counts once", func(t *testing.T) {
+		var ids []string
+		for i := 0; i < maxTotalsIDs+1; i++ {
+			ids = append(ids, fmt.Sprintf("00000000-0000-4000-8000-%012d", i))
+		}
+		secret := child(read, ids...)
+		expectStatus(t, sessionTotalsAnswer(t, env, secret, ids[:maxTotalsIDs]...), 200)
+		expectStatus(t, sessionTotalsAnswer(t, env, secret, ids...), 400)
+
+		again := make([]string, maxTotalsIDs+1)
+		for i := range again {
+			again[i] = runSession
+		}
+		answer := sessionTotalsAnswer(t, env, child(read, runSession), again...)
+		expectStatus(t, answer, 200)
+		if numberIn(t, answer, "agent_sessions") != 1 || numberIn(t, answer, "input_tokens") != 20 {
+			t.Errorf("Expected the headless Agent session once, got %s", answer.raw)
+		}
+	})
+
+	t.Run("the totals are not complete while the parse is behind on any one of the ids", func(t *testing.T) {
+		more := jsonl(personAt("u4", "2026-10-02T11:31:00Z", "And the footer"))
+		expectStatus(t, uploadUnit(t, env, upload, takeOverSession, unitUpload{path: "session.jsonl", offset: len(interactive),
+			runID: "run-0193", project: "shop", body: more}), 200)
+		secret := child(read, runSession, takeOverSession)
+		for _, ids := range [][]string{{runSession, takeOverSession}, {takeOverSession, runSession}} {
+			answer := sessionTotalsAnswer(t, env, secret, ids...)
+			expectStatus(t, answer, 200)
+			if answer.body["complete"] != false {
+				t.Errorf("Expected complete false for %v while one id is not parsed, got %s", ids, answer.raw)
+			}
+		}
+	})
 }
+
+// maxTotalsIDs is the most Agent session ids of one totals call.
+const maxTotalsIDs = 100
