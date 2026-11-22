@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# An isolated SolidTrace stack (Console, Vite, jobs and EventStore) from the
+# checkout this script is in, on its own ports and data, for an agent to
+# drive and prove behaviour with. See ../SKILL.md.
+#
+#   verify up [--slot N]                 start a stack; prints its run dir when it is usable
+#   verify doctor [--run DIR]            read-only: is this stack worth driving?
+#   verify run [--run DIR] -- CMD...     run CMD in console/ with the stack's environment
+#   verify flow [--run DIR] -- SPEC...   run Playwright flows against the stack, traces kept
+#   verify snap [--run DIR] --path P --name N [--as admin|member]
+#                                        sign in, open P, save N.png and N.aria.txt
+#   verify down [--run DIR]              stop the stack and delete its data; the evidence stays
+#   verify list                          every run, and if its stack is up
+#   verify prune [--days N]              delete stopped runs older than N days (7) and all but
+#                                        the 2 newest EventStore builds; up runs it first
+#
+# --run defaults to $SOLIDTRACE_VERIFY_RUN, then to the newest run of this
+# checkout whose stack is up. Each run is $VERIFY_HOME/runs/<id>, with
+# stack/ (data and logs, deleted by down) and evidence/ (kept).
+set -euo pipefail
+
+SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT=$(git -C "$SKILL_DIR" rev-parse --show-toplevel)
+VERIFY_HOME=${SOLIDTRACE_VERIFY_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/solid-trace/verify}
+CH_HTTP=http://127.0.0.1:4201
+MIN_FREE_MB=3000
+MIN_DISK_MB=3000
+KEEP_BUILDS=2
+KEEP_DAYS=7
+
+die() { echo "verify: $*" >&2; exit 1; }
+say() { echo "verify: $*" >&2; }
+ch() { curl -fsS "$CH_HTTP/?user=solidtrace" --data-binary "$1"; }
+
+ports_for() { # slot -> ingest console query vite
+  local n=$1
+  echo "$((4500 + 10 * n)) $((4501 + 10 * n)) $((4502 + 10 * n)) $((3506 + 10 * n))"
+}
+listening() { ss -ltn "( sport = :$1 )" | grep -q LISTEN; }
+sid_alive() { [[ -n ${1:-} ]] && pgrep -s "$1" >/dev/null 2>&1; }
+
+load_run() { # sets RUN and reads its meta
+  local want=${1:-${SOLIDTRACE_VERIFY_RUN:-}}
+  if [[ -z $want ]]; then
+    local d
+    for d in $(ls -1dr "$VERIFY_HOME"/runs/*/ 2>/dev/null); do
+      d=${d%/}
+      [[ -f $d/meta ]] || continue
+      # shellcheck disable=SC1091
+      if (source "$d/meta"; [[ $CHECKOUT == "$ROOT" ]] && sid_alive "${SID:-}"); then want=$d; break; fi
+    done
+    [[ -n $want ]] || die "no running stack of $ROOT; start one with: verify up"
+  fi
+  [[ -f $want/meta ]] || die "$want is not a run dir"
+  RUN=$want
+  # shellcheck disable=SC1091
+  source "$RUN/meta"
+}
+
+parse_run_flag() { # leaves the other args in ARGS
+  RUN_ARG=""
+  ARGS=()
+  while (($#)); do
+    case $1 in
+      --run) RUN_ARG=$2; shift 2 ;;
+      --) shift; ARGS+=("$@"); break ;;
+      *) ARGS+=("$1"); shift ;;
+    esac
+  done
+}
+
+# EventStore's binary for this checkout. A clean event_store/ is built once
+# per tree and kept in $VERIFY_HOME/bin; a changed one is built for each run.
+event_store_binary() {
+  local out key
+  if [[ -z $(git -C "$ROOT" status --porcelain -- event_store) ]]; then
+    key=$(git -C "$ROOT" rev-parse HEAD:event_store)
+    out=$VERIFY_HOME/bin/event_store-$key
+    [[ -x $out ]] && { echo "$out"; return; }
+  else
+    out=$1/event_store
+  fi
+  mkdir -p "$(dirname "$out")"
+  say "building EventStore into $out (a few minutes on a cold Go cache)"
+  (
+    cd "$ROOT/event_store"
+    ls vrl/lib/*/libst_vrl.a >/dev/null 2>&1 || mise exec -- vrl/build
+    mise exec -- go build -o "$out.tmp" .
+  ) >&2 || die "EventStore did not build"
+  mv "$out.tmp" "$out"
+  echo "$out"
+}
+
+ready() { # every part answers as usable
+  curl -fsS "http://localhost:$CONSOLE_PORT/health" 2>/dev/null | grep -q '"status":"healthy"' &&
+    curl -fsS "http://127.0.0.1:$INGEST_PORT/health" 2>/dev/null | grep -q '"status":"healthy"' &&
+    curl -fsS -o /dev/null "http://127.0.0.1:$QUERY_PORT/health" 2>/dev/null &&
+    curl -fsS -o /dev/null "http://localhost:$VITE_PORT/vite-dev/@vite/client" 2>/dev/null
+}
+
+cmd_up() {
+  local slot=""
+  while (($#)); do
+    case $1 in
+      --slot) slot=$2; shift 2 ;;
+      *) die "up: unknown argument $1" ;;
+    esac
+  done
+  curl -fsS -o /dev/null "$CH_HTTP/ping" 2>/dev/null ||
+    die "the dev ClickHouse does not answer on $CH_HTTP. Start it from the main checkout: bin/clickhouse-dev"
+  [[ -d $ROOT/console/node_modules ]] || die "$ROOT/console has no node_modules: run 'mise trust' in $ROOT and 'bun install' in console/"
+  local free
+  free=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
+  ((free >= MIN_FREE_MB)) || die "only $free MB of memory is free; a stack needs $MIN_FREE_MB MB. Stop a stack (verify list) first"
+  cmd_prune "$KEEP_DAYS"
+  mkdir -p "$VERIFY_HOME"
+  free=$(df -Pm "$VERIFY_HOME" | awk 'NR == 2 {print $4}')
+  ((free >= MIN_DISK_MB)) || die "only $free MB of disk is free; a stack and its build need $MIN_DISK_MB MB"
+
+  mkdir -p "$VERIFY_HOME/runs" "$VERIFY_HOME/slots"
+  local n
+  for n in ${slot:-1 2 3 4}; do
+    if [[ -f $VERIFY_HOME/slots/$n ]]; then
+      local owner
+      owner=$(cat "$VERIFY_HOME/slots/$n")
+      # shellcheck disable=SC1091
+      if [[ -f $owner/meta ]] && (source "$owner/meta"; sid_alive "${SID:-}"); then continue; fi
+      rm -f "$VERIFY_HOME/slots/$n" # a stack that died without down
+    fi
+    local p busy=0
+    for p in $(ports_for "$n"); do listening "$p" && busy=1; done
+    ((busy)) && continue
+    slot=$n
+    break
+  done
+  [[ -n $slot && ! -f $VERIFY_HOME/slots/$slot ]] || die "no free slot (1-4): see verify list"
+
+  read -r INGEST_PORT CONSOLE_PORT QUERY_PORT VITE_PORT <<<"$(ports_for "$slot")"
+  RUN=$VERIFY_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-s$slot
+  local S=$RUN/stack
+  mkdir -p "$S/sqlite" "$S/pebble" "$RUN/evidence"
+  echo "$RUN" >"$VERIFY_HOME/slots/$slot"
+  local db=solidtrace_verify_s$slot
+
+  cat >"$RUN/env" <<EOF
+export SOLIDTRACE_VERIFY_RUN=$RUN
+export RAILS_ENV=development
+export DATABASE_URL=sqlite3:$S/sqlite/solid_trace.sqlite3
+export QUEUE_DATABASE_URL=sqlite3:$S/sqlite/queue.sqlite3
+export CACHE_DATABASE_URL=sqlite3:$S/sqlite/cache.sqlite3
+export MESSAGE_QUEUE_DATABASE_URL=sqlite3:$S/sqlite/message_queue.sqlite3
+export VITE_RUBY_PORT=$VITE_PORT
+export EVENT_STORE_URL=http://127.0.0.1:$QUERY_PORT
+export EVENT_STORE_INGEST_URL=http://127.0.0.1:$INGEST_PORT
+export INGEST_URL=http://localhost:$INGEST_PORT
+export E2E_BASE_URL=http://localhost:$CONSOLE_PORT
+export E2E_INGEST_URL=http://localhost:$INGEST_PORT
+export PORT=$CONSOLE_PORT
+export CHOKIDAR_USEPOLLING=1
+EOF
+  cat >"$S/event_store.yml" <<EOF
+ingest_port: "$INGEST_PORT"
+query_port: "$QUERY_PORT"
+pebble_path: $S/pebble
+sqlite_path: $S/sqlite/solid_trace.sqlite3
+message_queue_path: $S/sqlite/message_queue.sqlite3
+logs_parquet_path: $S/logs_parquet
+clickhouse:
+  database: $db
+EOF
+
+  write_meta() { # $1 = the stack's session id, empty until it starts
+    cat >"$RUN/meta" <<EOF
+SLOT=$slot
+SID=$1
+CHECKOUT=$ROOT
+COMMIT=$(git -C "$ROOT" rev-parse HEAD)
+DIRTY=$([[ -n $(git -C "$ROOT" status --porcelain) ]] && echo yes || echo no)
+CONSOLE_PORT=$CONSOLE_PORT
+VITE_PORT=$VITE_PORT
+INGEST_PORT=$INGEST_PORT
+QUERY_PORT=$QUERY_PORT
+CH_DATABASE=$db
+EVENT_STORE_BIN=${bin:-}
+EOF
+  }
+  local bin=""
+  write_meta "" # so that down can clean up a run that fails before the stack starts
+  bin=$(event_store_binary "$S")
+  cat >"$S/Procfile" <<EOF
+web: cd console && exec bin/rails server -p $CONSOLE_PORT -P $S/puma.pid
+vite: cd console && exec bin/vite dev
+event_store: cd event_store && EVENT_STORE_CONFIG=$S/event_store.yml exec $bin
+jobs: cd console && exec bin/jobs start
+EOF
+
+  # shellcheck disable=SC1091
+  source "$RUN/env"
+  say "preparing the databases and the seed data"
+  (cd "$ROOT/console" && mise exec -- bin/rails db:prepare >"$S/db-prepare.log" 2>&1) ||
+    { cat "$S/db-prepare.log" >&2; die "db:prepare failed; run verify down --run $RUN"; }
+  # Install settings an Instance admin would set on Settings → Instance, so
+  # pages and the CLI give this stack's URLs and not the default ports.
+  (cd "$ROOT/console" && mise exec -- bin/rails runner \
+    "InstanceSetting.current.update!(console_url: '$E2E_BASE_URL', ingest_url: '$INGEST_URL')" >>"$S/db-prepare.log" 2>&1) ||
+    { cat "$S/db-prepare.log" >&2; die "setting the install's URLs failed; run verify down --run $RUN"; }
+
+  (cd "$ROOT" && exec setsid mise exec -- foreman start -f "$S/Procfile" -d "$ROOT" >"$S/stack.log" 2>&1 </dev/null) &
+  local leader=$! sid=""
+  sleep 1
+  sid=$(ps -o sid= -p "$leader" | tr -d ' ')
+  write_meta "$sid"
+  say "waiting for Console :$CONSOLE_PORT, Vite :$VITE_PORT, ingest :$INGEST_PORT and query :$QUERY_PORT"
+  local i
+  for i in $(seq 1 240); do
+    ready && break
+    sid_alive "$sid" || { tail -40 "$S/stack.log" >&2; die "the stack stopped while starting; run verify down --run $RUN"; }
+    sleep 1
+  done
+  ready || { tail -40 "$S/stack.log" >&2; die "not usable after 240 s; see $S/stack.log, then verify down --run $RUN"; }
+  say "up: Console at http://localhost:$CONSOLE_PORT (admin@solidtrace.local / password123)"
+  echo "$RUN"
+}
+
+cmd_doctor() {
+  load_run "${1:-}"
+  local bad=0
+  check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; bad=1; fi; }
+  owned() { # the port's listener is in this stack's session
+    local pid
+    pid=$(ss -ltnpH "( sport = :$1 )" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+    [[ -n $pid && $(ps -o sid= -p "$pid" | tr -d ' ') == "$SID" ]]
+  }
+  echo "run   $RUN"
+  echo "tree  $CHECKOUT at ${COMMIT:0:8} (dirty at start: $DIRTY)"
+  check "stack processes alive (session $SID)" 'sid_alive "$SID"'
+  check "Console :$CONSOLE_PORT is this stack's" 'owned "$CONSOLE_PORT"'
+  check "Vite :$VITE_PORT is this stack's" 'owned "$VITE_PORT"'
+  check "ingest :$INGEST_PORT is this stack's" 'owned "$INGEST_PORT"'
+  check "query :$QUERY_PORT is this stack's" 'owned "$QUERY_PORT"'
+  check "Console /health is healthy (database, EventStore)" \
+    'curl -fsS "http://localhost:$CONSOLE_PORT/health" | grep -q "\"status\":\"healthy\""'
+  check "EventStore /health is healthy (ClickHouse, Pebble)" \
+    'curl -fsS "http://127.0.0.1:$INGEST_PORT/health" | grep -q "\"status\":\"healthy\""'
+  check "Vite serves its client" 'curl -fsS -o /dev/null "http://localhost:$VITE_PORT/vite-dev/@vite/client"'
+  check "the login page renders (Inertia Sessions/New)" 'curl -fsS "http://localhost:$CONSOLE_PORT/login" | grep -q "Sessions/New"'
+  check "ClickHouse has $CH_DATABASE" '[[ $(ch "EXISTS DATABASE $CH_DATABASE") == 1 ]]'
+  check "the seed admin and Project exist" \
+    '(source "$RUN/env"; cd "$CHECKOUT/console" && mise exec -- bin/rails runner "exit(User.exists?(email: %q(admin@solidtrace.local)) && Project.exists?(slug: %q(solid-trace-project)) ? 0 : 1)" >/dev/null 2>&1)'
+  local head
+  head=$(git -C "$CHECKOUT" rev-parse HEAD)
+  if [[ $head != "$COMMIT" ]]; then
+    echo "warn  HEAD is ${head:0:8} now: Rails and Vite reload code, EventStore does not. Restart the stack (down, up) after an event_store/ change"
+  fi
+  return $bad
+}
+
+cmd_run() {
+  parse_run_flag "$@"
+  load_run "$RUN_ARG"
+  ((${#ARGS[@]})) || die "run: give a command after --"
+  # shellcheck disable=SC1091
+  source "$RUN/env"
+  cd "$CHECKOUT/console"
+  exec mise exec -- "${ARGS[@]}"
+}
+
+cmd_flow() {
+  parse_run_flag "$@"
+  load_run "$RUN_ARG"
+  ((${#ARGS[@]})) || die "flow: give one or more spec files after --, such as e2e/flows/runs.spec.ts"
+  # A dead stack would make Playwright's webServer start Procfile.dev on the
+  # default ports, so the stack must be healthy first.
+  cmd_doctor "$RUN" >"$RUN/evidence/doctor-before-flow.txt" || { cat "$RUN/evidence/doctor-before-flow.txt"; die "the stack is not healthy"; }
+  local stamp out code
+  stamp=$(date -u +%H%M%S)
+  out=$RUN/evidence/flow-$stamp
+  mkdir -p "$out"
+  # shellcheck disable=SC1091
+  source "$RUN/env"
+  set +e
+  (cd "$CHECKOUT/console" && mise exec -- bun run e2e "${ARGS[@]}" --reporter=line --trace=on --output="$out/playwright") 2>&1 |
+    tee "$out/output.txt"
+  code=${PIPESTATUS[0]}
+  set -e
+  echo "$code" >"$out/exit-code"
+  say "flow exit $code; evidence in $out"
+  return "$code"
+}
+
+cmd_snap() {
+  parse_run_flag "$@"
+  load_run "$RUN_ARG"
+  # shellcheck disable=SC1091
+  source "$RUN/env"
+  cd "$CHECKOUT/console"
+  exec mise exec -- node "$SKILL_DIR/bin/snap.mjs" --base "$E2E_BASE_URL" --out "$RUN/evidence" "${ARGS[@]}"
+}
+
+cmd_down() {
+  load_run "${1:-}"
+  if sid_alive "$SID"; then
+    pkill -TERM -s "$SID" || true
+    local i
+    for i in $(seq 1 15); do sid_alive "$SID" || break; sleep 1; done
+    pkill -KILL -s "$SID" 2>/dev/null || true
+  fi
+  if curl -fsS -o /dev/null "$CH_HTTP/ping" 2>/dev/null; then
+    local u
+    for u in $(ch "SELECT name FROM system.users WHERE startsWith(name, '${CH_DATABASE}_sql_')"); do ch "DROP USER IF EXISTS \`$u\`" || true; done
+    ch "DROP SETTINGS PROFILE IF EXISTS \`${CH_DATABASE}_sql\`" || true
+    ch "DROP DATABASE IF EXISTS \`$CH_DATABASE\`" || true
+  fi
+  # The stack's logs are evidence of what it did; its data is not.
+  [[ -f $RUN/stack/stack.log ]] && cp "$RUN/stack/stack.log" "$RUN/evidence/stack.log"
+  rm -rf "$RUN/stack"
+  [[ $(cat "$VERIFY_HOME/slots/$SLOT" 2>/dev/null) == "$RUN" ]] && rm -f "$VERIFY_HOME/slots/$SLOT"
+  sed -i 's/^SID=.*/SID=/' "$RUN/meta"
+  say "down; the evidence stays in $RUN/evidence"
+}
+
+cmd_list() {
+  local d
+  for d in $(ls -1d "$VERIFY_HOME"/runs/*/ 2>/dev/null); do
+    d=${d%/}
+    [[ -f $d/meta ]] || continue
+    # shellcheck disable=SC1091
+    (source "$d/meta"; printf '%-4s %-34s slot %s  :%s  %s\n' "$(sid_alive "${SID:-}" && echo up || echo down)" "$(basename "$d")" "$SLOT" "$CONSOLE_PORT" "$CHECKOUT")
+  done
+}
+
+# Deletes stopped runs older than $1 days, evidence too, and the cached
+# EventStore builds except the newest $KEEP_BUILDS and those a running
+# stack uses. A run that is up is never touched.
+cmd_prune() {
+  local days=$1 d used=" " f kept=0
+  for d in $(ls -1d "$VERIFY_HOME"/runs/*/ 2>/dev/null); do
+    d=${d%/}
+    # shellcheck disable=SC1091
+    if [[ -f $d/meta ]] && (source "$d/meta"; sid_alive "${SID:-}"); then
+      used+="$(grep '^EVENT_STORE_BIN=' "$d/meta" | cut -d= -f2) "
+    elif [[ -n $(find "$d" -maxdepth 0 -mtime +"$days") ]]; then
+      rm -rf "$d" && say "pruned run $(basename "$d")"
+    fi
+  done
+  for f in $(ls -1t "$VERIFY_HOME"/bin/event_store-* 2>/dev/null); do
+    [[ $f == *.tmp ]] && continue
+    if ((kept < KEEP_BUILDS)) || [[ $used == *" $f "* ]]; then kept=$((kept + 1)); continue; fi
+    rm -f "$f" && say "pruned build $(basename "$f")"
+  done
+}
+
+case ${1:-} in
+  up) shift; cmd_up "$@" ;;
+  prune)
+    shift
+    days=$KEEP_DAYS
+    [[ ${1:-} == --days ]] && { days=$2; shift 2; }
+    [[ $days =~ ^[0-9]+$ ]] || die "prune: --days takes a whole number"
+    cmd_prune "$days"
+    ;;
+  doctor) shift; parse_run_flag "$@"; cmd_doctor "$RUN_ARG" ;;
+  run) shift; cmd_run "$@" ;;
+  flow) shift; cmd_flow "$@" ;;
+  snap) shift; cmd_snap "$@" ;;
+  down) shift; parse_run_flag "$@"; cmd_down "$RUN_ARG" ;;
+  list) cmd_list ;;
+  *) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
