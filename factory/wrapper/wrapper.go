@@ -117,7 +117,9 @@ func Main(ctx context.Context, getenv func(string) string, environ []string, std
 // keptWork is what an Execution that a take-over follows leaves on the
 // machine for it: the checkout and the run user's home stay, and the
 // project directory stays open (it was opened before the run user's
-// first process, so a link that the agent made does not move it).
+// first process, so a link that the agent made does not move it). With
+// no project directory, nothing is kept: the take-over does the full
+// setup.
 type keptWork struct {
 	projectDir *os.Root
 }
@@ -138,7 +140,14 @@ func (k *keptWork) cleanUp(cfg config, log io.Writer) {
 func execute(ctx context.Context, cfg *config, boundary killBoundary, runUser runUser, environ []string, stderr io.Writer,
 	kept *keptWork) (int, string, *keptWork) {
 	c := newClient(*cfg)
-	task, err := c.task(ctx, dispatcherapi.TaskRequest{VM: cfg.vm, Attach: cfg.attachCommand(runUser.name)})
+	// The first Execution's task call goes once: the Runner sees the
+	// wrapper's exit. A take-over's goes again, as the end call does, so
+	// that the work that it keeps is not lost.
+	tries := 1
+	if kept != nil {
+		tries = endTries
+	}
+	task, err := c.task(ctx, dispatcherapi.TaskRequest{VM: cfg.vm, Attach: cfg.attachCommand(runUser.name)}, tries)
 	if err != nil {
 		fmt.Fprintln(stderr, "wrapper:", err)
 		boundary.Remove(emptyWait)
@@ -196,14 +205,19 @@ func execute(ctx context.Context, cfg *config, boundary killBoundary, runUser ru
 			}
 			// After the end call: no workspace and no home of the run
 			// user, unless a take-over follows on this machine. Then the
-			// project directory stays open for it.
-			if err != nil || e.left != nil || next == "" {
+			// project directory stays open for it. A take-over that
+			// stopped the setup does the full setup again: what the setup
+			// left is not a checkout that the setup command ran in.
+			if err != nil || e.left != nil || next == "" || !e.setupDone {
 				e.uploads.close()
 				e.cleanUp()
 				if err != nil || e.left != nil {
 					return 1, "", nil
 				}
-				return 0, "", nil
+				if next == "" {
+					return 0, "", nil
+				}
+				return 0, next, &keptWork{}
 			}
 			return 0, next, &keptWork{projectDir: e.uploads.root()}
 		}
@@ -369,6 +383,9 @@ type execution struct {
 	// kept is what the Execution that this take-over follows left on the
 	// machine (nil: this is the allocation's first Execution).
 	kept *keptWork
+	// setupDone is true when the setup ended with no error: only then does
+	// a take-over that follows keep the checkout (execute).
+	setupDone bool
 	// stopTerminal ends the interactive form's terminal (nil: the
 	// headless form, or no terminal yet). The end calls it, under mu.
 	stopTerminal func()
@@ -537,6 +554,7 @@ func (e *execution) work(ctx context.Context, environ []string) dispatcherapi.Ex
 		}
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}
 	}
+	e.setupDone = true
 	server, err := e.serveSocket(environ)
 	if err != nil {
 		return dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndSetupFailed, Error: err.Error()}

@@ -2,6 +2,7 @@ package fakeharness
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +12,10 @@ import (
 
 // The interactive form: `claude` with no -p, in a terminal where a person
 // types (a take-over). The Harness writes its screen to stdout as lines:
-// first the init event as JSON (with its tools, the permission mode and
-// the Agent session id), then the text of each turn. Each line on stdin
-// is what the person types, and ends a turn:
+// first the init event as JSON (with its tools, the permission mode, the
+// Agent session id and the MCP servers of --mcp-config), then the text of
+// each turn. The prompt of the command line, if any, is the first person
+// message. Each line on stdin is what the person types, and ends a turn:
 //
 //	!COMMAND   runs COMMAND with sh -c in the working directory, as Claude
 //	           Code's bash mode does (such as !solidtrace report ...)
@@ -40,22 +42,19 @@ func interactive(f flags, stdin io.Reader, stdout, stderr io.Writer, getenv func
 		}
 	}
 	h.write(map[string]any{"type": "system", "subtype": "init", "form": "interactive", "session_id": h.sessionID,
-		"cwd": cwd, "permissionMode": f.permissionMode, "tools": tools, "resumed": f.resume != ""})
+		"cwd": cwd, "permissionMode": f.permissionMode, "tools": tools, "resumed": f.resume != "",
+		"mcp_servers": mcpServers(f.mcpConfig)})
 	screen := func(text string) {
 		h.outMu.Lock()
 		defer h.outMu.Unlock()
 		fmt.Fprintln(stdout, text)
 	}
-	sc := bufio.NewScanner(stdin)
-	sc.Buffer(make([]byte, 1<<20), 16<<20)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	// turn is one turn of the person: false when the Agent session ends.
+	turn := func(line string, typed bool) bool {
 		switch {
-		case line == "":
-			continue
-		case line == "/exit":
-			return 0
-		case strings.HasPrefix(line, "!"):
+		case typed && line == "/exit":
+			return false
+		case typed && strings.HasPrefix(line, "!"):
 			cmd := exec.Command("sh", "-c", line[1:])
 			cmd.Dir = cwd
 			out, err := cmd.CombinedOutput()
@@ -80,6 +79,42 @@ func interactive(f flags, stdin io.Reader, stdout, stderr io.Writer, getenv func
 			h.writeTranscript(map[string]any{"type": "user", "isMeta": true, "message": map[string]any{"role": "user",
 				"content": "Stop hook feedback:\n" + reason}, "uuid": newUUID()})
 		}
+		return true
+	}
+	// The prompt of the command line is the first person message.
+	if f.prompt != "" {
+		turn(f.prompt, false)
+	}
+	sc := bufio.NewScanner(stdin)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		if line := strings.TrimSpace(sc.Text()); line != "" && !turn(line, true) {
+			return 0
+		}
 	}
 	return 0
+}
+
+// mcpServers are the servers of the MCP configuration file, as Claude
+// Code's init event names them: "connected" for each server of the file,
+// and "failed" for a file that the harness cannot read.
+func mcpServers(file string) []any {
+	servers := []any{}
+	if file == "" {
+		return servers
+	}
+	var config struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	b, err := os.ReadFile(file)
+	if err == nil {
+		err = json.Unmarshal(b, &config)
+	}
+	if err != nil {
+		return append(servers, map[string]any{"name": file, "status": "failed"})
+	}
+	for name := range config.MCPServers {
+		servers = append(servers, map[string]any{"name": name, "status": "connected"})
+	}
+	return servers
 }

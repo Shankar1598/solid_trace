@@ -259,11 +259,13 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
 	run.limits.IdleSeconds = limits.IdleSeconds
-	// A take-over Execution gets no prompt and no message: the person
-	// types in the terminal, and the Run keeps its messages until the
-	// take-over ends.
+	// A take-over Execution gets no message: the person types in the
+	// terminal, and the Run keeps its messages until the take-over ends.
+	// It gets the prompt, which its wrapper gives the harness only when the
+	// take-over starts the Agent session (no Execution before it started
+	// the harness).
 	if interactive {
-		run.prompt, run.resume = "", true
+		run.resume = true
 	} else if run.messages, err = takeKeptMessages(tx, runID, id, state == dispatcherapi.ExecutionDispatched); err != nil {
 		return run, err
 	}
@@ -629,11 +631,23 @@ func (s *store) endWithNoCall(id, reason string, exitCode *int, lost string, at 
 		// A take-over that ends with no end call (the machine went, or
 		// the wrapper failed) does not start again by itself: the Run
 		// waits on a person, with the reason (V8). So does a Run that a
-		// take-over queued, when its take-over Execution did not start.
+		// take-over queued, when its take-over Execution did not start:
+		// then no agent ran and no person attached, so the messages that
+		// the Run kept while queued start a new Execution, as after the
+		// end of a take-over.
+		runState, runReason := dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+reason
+		if !started {
+			again, err := continueForMessages(tx, runID, id, dispatcherapi.StateQueued, runState, returned, at)
+			if err != nil {
+				return false, err
+			}
+			if again {
+				runState, runReason = dispatcherapi.StateQueued, reasonMessagesAfterTakeOver
+			}
+		}
 		if _, err := tx.Exec(`UPDATE runs SET state = ?, reason = ?, question = '', summary = '', take_over_by_id = '',
 			take_over_by_name = '' WHERE id = ? AND (state = ? OR (state = ? AND NOT ?))`,
-			dispatcherapi.StateWaitingOnPerson, reasonTakeOverEnded+reason, runID, dispatcherapi.StateTakenOver,
-			dispatcherapi.StateQueued, started); err != nil {
+			runState, runReason, runID, dispatcherapi.StateTakenOver, dispatcherapi.StateQueued, started); err != nil {
 			return false, err
 		}
 	} else {

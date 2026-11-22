@@ -146,10 +146,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(
 type flags struct {
 	sessionID, resume, permissionMode string
 	settings                          string
-	replay                            bool
-	disallowed                        map[string]bool
+	// mcpConfig is the file of --mcp-config ("": none).
+	mcpConfig  string
+	replay     bool
+	disallowed map[string]bool
 	// print is the headless form (-p); with no -p, the interactive form.
 	print bool
+	// prompt is the prompt of the command line ("": none).
+	prompt string
 }
 
 func parseFlags(args []string) (flags, error) {
@@ -193,8 +197,15 @@ func parseFlags(args []string) (flags, error) {
 			}
 		case "--settings":
 			f.settings = get()
-		case "--model", "--setting-sources", "--mcp-config", "--append-system-prompt", "--allowedTools", "--allowed-tools", "--add-dir":
+		case "--mcp-config":
+			f.mcpConfig = get()
+		case "--model", "--setting-sources", "--append-system-prompt", "--allowedTools", "--allowed-tools", "--add-dir":
 			get()
+		default:
+			// The first argument that is not an option is the prompt.
+			if !strings.HasPrefix(args[i], "-") && f.prompt == "" {
+				f.prompt = args[i]
+			}
 		}
 	}
 	switch {

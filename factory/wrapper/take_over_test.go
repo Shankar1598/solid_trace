@@ -3,6 +3,7 @@ package wrapper_test
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -245,6 +246,139 @@ func TestATakeOverOfARunningRunContinuesTheAgentSessionInATerminalOnTheSameMachi
 	}
 }
 
+// The take-over of an Issue or a Monitor Run keeps SolidTrace's MCP
+// server: the harness gets the MCP configuration, and the take-over
+// Execution's own MCP token in a file that the run user reads.
+func TestATakeOverOfAnIssueRunKeepsSolidTracesMCPServerWithTheTakeOversToken(t *testing.T) {
+	env, ana := newEnv(t)
+	sender, path := env.Sender("Factory")
+	here, reached := agentShell(t, env, "true")
+	env.Runner.Agent(takeTask, initLine(t), here, inToolCall, interrupted, thenEOF)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	reached()
+
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	init := screenInit(t, env.Runner.TakeOver.Screen(terminal))
+	servers, _ := init["mcp_servers"].([]any)
+	if len(servers) != 1 || fmt.Sprint(servers[0]) != "map[name:solidtrace status:connected]" {
+		t.Errorf("the interactive harness has the MCP servers %v, want solidtrace", init["mcp_servers"])
+	}
+	mcp := mcpTokens(env)
+	if len(mcp) != 2 {
+		t.Fatalf("want an MCP token for the headless and the take-over Execution, got %+v", mcp)
+	}
+	screen := typeLine(t, env, terminal, `!f="$`+dispatcherapi.EnvMCPTokenFile+`" && test ! -w "$f" && echo "mcp $`+
+		dispatcherapi.EnvMCPURL+` $(cat "$f")"`, "mcp http")
+	if want := "mcp " + env.SolidTrace.URL() + "/mcp " + mcp[1].Secret; !strings.Contains(screen, want) {
+		t.Errorf("the take-over's harness has no MCP token of its own: %q, want %q", screen, want)
+	}
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if tokens := mcpTokens(env); !tokens[1].Revoked {
+		t.Error("the end step did not revoke the take-over's MCP token")
+	}
+}
+
+// A take-over during the headless Execution's setup stops that setup: the
+// take-over does the full setup again, with the setup command, and does
+// not take the checkout that the stopped setup left.
+func TestATakeOverDuringTheSetupDoesTheFullSetupWithTheSetupCommand(t *testing.T) {
+	env, ana := newEnv(t)
+	shared := env.Runner.SharedDir("setup-" + filepath.Base(t.TempDir()))
+	runs, waiting := filepath.Join(shared, "runs"), filepath.Join(shared, "waiting")
+	// The first run of the setup command waits until the take-over stops it.
+	env.Forge.Push("example/shop", "main", map[string]string{
+		factoryFile(""): `setup = "echo run >> ` + runs + ` && test $(wc -l < ` + runs + `) -gt 1 || { touch ` + waiting +
+			` && sleep 300; }"`,
+	}, "A setup command")
+	ran := filepath.Join(shared, "harness-ran")
+	env.Runner.Agent(takeTask, shell("touch "+ran), reportStep("--outcome", "done", "--summary", "Done"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitUntil(t, "the setup command", func() bool {
+		_, err := os.Stat(waiting)
+		return err == nil
+	})
+
+	takeOverCLI(t, env, ana, id)
+	run, terminal := takeOverTerminal(t, env, ana, id)
+
+	b, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(b), "run\n"); n != 2 {
+		t.Errorf("the setup command ran %d times, want once in each Execution\nwrapper output:\n%s", n,
+			env.Runner.Fake.Output(run.Executions[0].ID))
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("the headless harness started after the take-over stopped its setup")
+	}
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+}
+
+// The take-over keeps the interrupted agent's work that is not committed:
+// when the Dispatcher cannot be reached, or fails, the take-over's task
+// call goes again, as the end call does.
+func TestATakeOverSendsItsTaskCallAgainAndKeepsTheAgentsWork(t *testing.T) {
+	env, ana := newEnv(t)
+	work, reached := agentShell(t, env, "echo 'the agent work' > wip.txt")
+	env.Runner.Agent(takeTask, initLine(t), work, inToolCall, interrupted, thenEOF)
+	id := start(t, env, ana, "Fix the cart")
+	reached()
+	// A 5xx answer, then no connection.
+	env.FailExecutionCalls("task", http.StatusServiceUnavailable, 0)
+
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	if n := env.FailingCalls("task"); n != 0 {
+		t.Errorf("%d failed task calls did not go", n)
+	}
+	typeLine(t, env, terminal, "!cat wip.txt", "the agent work")
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+}
+
+// A 4xx answer to the take-over's task call does not change when the call
+// goes again, and the last of the tries is the end: then the wrapper
+// deletes the kept work, and the take-over Execution does not start.
+func TestATakeOverWhoseTaskCallFailsDeletesTheKeptWork(t *testing.T) {
+	for name, c := range map[string]struct {
+		statuses []int
+		left     int
+	}{
+		"a 4xx answer":   {[]int{http.StatusForbidden, http.StatusForbidden}, 1},
+		"each try fails": {[]int{500, 502, 503, 504, 0, 503}, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env, ana := newEnv(t)
+			id := inToolCallRun(t, env, ana)
+			first := getRun(t, ana, id).Executions[0]
+			env.FailExecutionCalls("task", c.statuses...)
+
+			takeOverCLI(t, env, ana, id)
+
+			run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+			if !strings.HasPrefix(run.Reason, "the take-over ended: ") {
+				t.Errorf("the reason is %q", run.Reason)
+			}
+			if e := run.Executions[1]; e.StartedAt != nil {
+				t.Errorf("the take-over Execution started: %+v", e)
+			}
+			if n := env.FailingCalls("task"); n != c.left {
+				t.Errorf("%d of the %d failed task calls did not go, want %d", n, len(c.statuses), c.left)
+			}
+			if _, err := os.Stat(env.Runner.Workspace(first.ID)); !os.IsNotExist(err) {
+				t.Errorf("the kept workspace is there after the take-over's task call failed: %v", err)
+			}
+		})
+	}
+}
+
 func TestAReportDuringTheTakeOverSetsTheRunsStateWhenTheAgentSessionEnds(t *testing.T) {
 	env, ana := newEnv(t)
 	id := inToolCallRun(t, env, ana)
@@ -396,9 +530,10 @@ func TestALostMachineDuringTheTakeOverMakesTheRunWaitOnAPersonWithTheReason(t *t
 // A core that is not in the Execution's cgroup (a person's hc connect
 // started it before the wrapper's) would run the take-over's harness
 // outside the kill boundary, with the account's token: the wrapper kills
-// that core before it starts a terminal, and the take-over does not
-// start.
-func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.T) {
+// that core before it starts a terminal, and starts its own core in the
+// cgroup. The early connection drops; the take-over goes on, and no
+// stray core stays.
+func TestAnHcCoreOutsideTheExecutionsCgroupIsKilledAndTheTakeOverStartsItsOwnCore(t *testing.T) {
 	env, ana := newEnv(t)
 	var attr *syscall.SysProcAttr
 	if os.Geteuid() == 0 {
@@ -419,21 +554,32 @@ func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.
 	id := inToolCallRun(t, env, ana)
 	takeOverCLI(t, env, ana, id)
 
-	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
-	if !strings.Contains(run.Reason, "take-over ended") || !strings.Contains(run.Reason, "not in the Execution's cgroup") {
-		t.Errorf("the reason is %q", run.Reason)
-	}
-	if e := run.Executions[1]; !strings.HasPrefix(e.EndReason, dispatcherapi.EndSetupFailed) {
-		t.Errorf("the take-over Execution ended with %q, want the setup failure", e.EndReason)
+	run, terminal := takeOverTerminal(t, env, ana, id)
+	if run.State != dispatcherapi.StateTakenOver {
+		t.Errorf("the Run is %s (%s), want taken over", run.State, run.Reason)
 	}
 	select {
 	case <-ended:
 	case <-time.After(10 * time.Second):
 		t.Error("the core outside the cgroup still runs")
 	}
-	// No harness started: the core outside would have run it.
-	if terminals := env.Runner.TakeOver.Terminals(); len(terminals) != 0 {
-		t.Errorf("the wrapper started a terminal in the core outside the cgroup: %v", terminals)
+	// The terminal's holder is a child of the wrapper's core: it is in the
+	// take-over Execution's cgroup.
+	holder, err := os.ReadFile(filepath.Join(env.Runner.TakeOver.Dir(), terminal, "holder"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := killboundary.Reopen(wrapper.CgroupName(run.Executions[1].ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(holder)))
+	if in, err := boundary.Holds(pid); err != nil || !in {
+		t.Errorf("the take-over's terminal (holder %d) is not in the take-over Execution's cgroup (%v)", pid, err)
+	}
+	leave(t, env, terminal)
+	if run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson); run.Reason != dispatcherapi.ReasonTakeOverNoReport {
+		t.Errorf("the reason is %q, want %q", run.Reason, dispatcherapi.ReasonTakeOverNoReport)
 	}
 }
 

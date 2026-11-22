@@ -23,6 +23,7 @@ import (
 
 	"github.com/solidtrace/cli/command"
 	"github.com/solidtrace/cli/credentials"
+	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/fakelinear"
@@ -152,6 +153,55 @@ type Env struct {
 	closeChecked atomic.Pointer[time.Time]
 	// squid is the folder of the Squid allowlist and its reloads.
 	squid string
+	// fails are the answers that the next wrapper calls of each verb get
+	// in place of the Dispatcher's (FailExecutionCalls).
+	failsMu sync.Mutex
+	fails   map[string][]int
+}
+
+// FailExecutionCalls gives the next wrapper calls of verb (such as "task")
+// the statuses, one for each call, in place of the Dispatcher's answer.
+// Status 0 closes the connection: the wrapper cannot reach the
+// Dispatcher. The calls after them reach the Dispatcher.
+func (e *Env) FailExecutionCalls(verb string, statuses ...int) {
+	e.failsMu.Lock()
+	defer e.failsMu.Unlock()
+	if e.fails == nil {
+		e.fails = map[string][]int{}
+	}
+	e.fails[verb] = append(e.fails[verb], statuses...)
+}
+
+// FailingCalls gives how many statuses of FailExecutionCalls for verb no
+// call got yet.
+func (e *Env) FailingCalls(verb string) int {
+	e.failsMu.Lock()
+	defer e.failsMu.Unlock()
+	return len(e.fails[verb])
+}
+
+// failCall answers a wrapper call with the next status of
+// FailExecutionCalls for its verb, and tells if it did.
+func (e *Env) failCall(w http.ResponseWriter, r *http.Request) bool {
+	rest, ok := strings.CutPrefix(r.URL.Path, dispatcherapi.Path+"/executions/")
+	_, verb, _ := strings.Cut(rest, "/")
+	if !ok || verb == "" {
+		return false
+	}
+	e.failsMu.Lock()
+	statuses := e.fails[verb]
+	if len(statuses) == 0 {
+		e.failsMu.Unlock()
+		return false
+	}
+	status := statuses[0]
+	e.fails[verb] = statuses[1:]
+	e.failsMu.Unlock()
+	if status == 0 {
+		panic(http.ErrAbortHandler)
+	}
+	http.Error(w, `{"error":"the test fails this call"}`, status)
+	return true
 }
 
 // MachineKinds are the operator's machine kinds in the environment's
@@ -433,6 +483,9 @@ func New(t testing.TB, options ...Option) *Env {
 		SquidReload:      "echo reload >> " + filepath.Join(squid, "reloads"),
 	}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if e.failCall(w, r) {
+			return
+		}
 		e.current.Load().Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(e.server.Close)

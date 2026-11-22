@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -159,6 +160,66 @@ func TestATakeOverOfARunThatWaitsOnAnAccountLimitIsRefusedWithTheResetTime(t *te
 	}
 }
 
+// With the operator's wait setting, the Run waits on its own account: the
+// refusal names that account's reset time, not an earlier reset time of
+// another account.
+func TestWithTheWaitSettingATakeOverIsRefusedWithTheResetTimeOfTheRunsOwnAccount(t *testing.T) {
+	env, ana := newEnv(t)
+	waitAtLimit(t, env)
+	env.AddAccount("pool-2", secondToken)
+	env.Runner.Agent(script(takeTask, initLine(t), usageLimit(env.Clock.Now().Add(2*time.Hour)))...)
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnAccountLimit)
+	own := onlyExecution(t, run).Account
+	other := "pool-2"
+	if own == other {
+		other = factorytest.DefaultAccount
+	}
+	env.MarkAtLimit(other, env.Clock.Now().Add(time.Hour))
+
+	got := ana.CLI("take-over", "--dispatcher", env.URL(), id)
+	if got.Code != 1 || !strings.Contains(got.Stderr, "waits on an account limit until 2026-11-14 11:00 UTC") {
+		t.Errorf("a take-over of a Run that waits on its own account %s: exit %d\n%s%s", own, got.Code, got.Stdout, got.Stderr)
+	}
+	if run := getRun(t, ana, id); run.State != dispatcherapi.StateWaitingOnAccountLimit || len(run.Executions) != 1 {
+		t.Errorf("the refused take-over changed the Run: %s %+v", run.State, run.Executions)
+	}
+}
+
+// A Run whose Agent session never started (its first setup failed): the
+// take-over starts the Agent session with the Run's task, so the agent
+// has the task, also in the Executions after the take-over.
+func TestATakeOverThatStartsTheAgentSessionGivesTheAgentTheRunsTask(t *testing.T) {
+	env, ana := newEnv(t)
+	runs := filepath.Join(env.Runner.SharedDir("setup-"+filepath.Base(t.TempDir())), "runs")
+	// The first run of the setup command fails.
+	env.Forge.Push("example/shop", "main", map[string]string{
+		factoryFile(""): `setup = "echo run >> ` + runs + ` && test $(wc -l < ` + runs + `) -gt 1"`,
+	}, "A setup command")
+	id := start(t, env, ana, "Fix the cart total")
+	if run := waitFor(t, env, ana, id, dispatcherapi.StateFailed); !strings.Contains(run.Reason, "the setup command") {
+		t.Fatalf("the first Execution failed with %q, want the setup command", run.Reason)
+	}
+
+	takeOverIdleCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	if init := screenInit(t, env.Runner.TakeOver.Screen(terminal)); init["resumed"] != false ||
+		init["session_id"] != sessionOf(t, env, id) {
+		t.Errorf("the take-over's Agent session is %v (resumed %v), want %v started", init["session_id"], init["resumed"],
+			sessionOf(t, env, id))
+	}
+	if _, err := env.Runner.TakeOver.WaitForScreen(terminal, "Done.", 30*time.Second); err != nil {
+		t.Errorf("the agent did not answer the Run's task: %v", err)
+	}
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	transcript := env.SolidTrace.Stored(sessionOf(t, env, id), sessionOf(t, env, id)+".jsonl")
+	if !strings.Contains(string(transcript), `"content":"Fix the cart total"`) {
+		t.Errorf("the take-over's transcript has no Run's task:\n%s", transcript)
+	}
+}
+
 func TestATakeOverOfAClosedRunIsRefused(t *testing.T) {
 	env, ana := newEnv(t)
 	id := idleRun(t, env, ana, dispatcherapi.StateDone)
@@ -239,6 +300,31 @@ func TestATakeOverExecutionThatDoesNotStartMakesTheRunWaitOnAPersonWithTheReason
 	if len(run.Executions) != 3 || run.Executions[2].Form != dispatcherapi.FormHeadless || run.Summary != "Fixed again." {
 		t.Errorf("after the message the Run is %s (%q) with %+v, want a third, headless Execution", run.State,
 			run.Summary, run.Executions)
+	}
+}
+
+// The take-over Execution ran no agent and no person attached: the
+// messages that the Run kept while it was queued start a new Execution,
+// as they do after any end of the take-over.
+func TestMessagesKeptForATakeOverThatDoesNotStartStartANewExecution(t *testing.T) {
+	env, ana := newEnv(t)
+	id := idleRun(t, env, ana, dispatcherapi.StateDone)
+	env.MarkAtLimit(factorytest.DefaultAccount, env.Clock.Now().Add(time.Hour))
+	takeOverIdleCLI(t, env, ana, id)
+	message := send(t, env, ana, id, "Add a test for the cart")
+	env.Runner.BreakWrapper()
+
+	// The take-over Execution's dispatch, then the Execution after it.
+	env.Runner.Agent(takeTask)
+	env.Runner.Agent(takeTask, done("Added the test."), reply, result, waitForEnd)
+	env.Clock.Advance(time.Hour)
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 3 || run.Executions[1].StartedAt != nil || run.Executions[2].Form != dispatcherapi.FormHeadless {
+		t.Fatalf("want a take-over Execution that did not start, then a headless Execution: %+v", run.Executions)
+	}
+	if delivered := waitForMessageEvent(t, env, id, message, "message_delivered"); delivered["execution.id"] != run.Executions[2].ID {
+		t.Errorf("the message was delivered in %v, want the Execution after the take-over", delivered["execution.id"])
 	}
 }
 
