@@ -36,8 +36,9 @@ type Forge interface {
 	// SaveWIP force-pushes commit, from the checkout at dir, to the Run's
 	// work-in-progress ref, and gives the ref.
 	SaveWIP(ctx context.Context, dir, repository, runID, commit string) (string, error)
-	// DeleteWIP deletes the Run's work-in-progress ref. A ref that is not
-	// there is not an error.
+	// DeleteWIP deletes the Run's work-in-progress ref, and the ref
+	// <WIP ref>-kept that keeps a save after a person's push. A ref that
+	// is not there is not an error.
 	DeleteWIP(ctx context.Context, repository, runID string) error
 	// DefaultBranchFile reads the first of paths that is on the
 	// repository's default branch, all at the branch's one commit. It

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -146,5 +147,38 @@ func TestTheWIPCommitMessageHasTheTimeTheRunTheExecutionTheReasonAndSkipCI(t *te
 				t.Fatalf("the WIP commit message %q, want reason %s", message, reason)
 			}
 		})
+	}
+}
+
+// The agent works while a checkpoint runs: an untracked file that goes
+// after the save listed it does not stop the save.
+func TestAnUntrackedFileThatGoesDuringTheSaveDoesNotStopTheSave(t *testing.T) {
+	e, remote := savingExecution(t, nil, nil)
+	writeFiles(t, e.checkout, map[string]string{"kept.txt": "kept\n", "gone.txt": "gone\n"})
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A git that deletes gone.txt right after the save lists the
+	// untracked files.
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" + shellQuote(real) + " \"$@\"; code=$?\n" +
+		"case \" $* \" in *\" --others \"*) case \" $* \" in *\" --ignored \"*) ;; *) rm -f " +
+		shellQuote(filepath.Join(e.checkout, "gone.txt")) + ";; esac;; esac\nexit $code\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	saved, err := e.saver.save(context.Background(), dispatcherapi.EndPreempted)
+	if err != nil {
+		t.Fatalf("the save: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(e.checkout, "gone.txt")); !os.IsNotExist(err) {
+		t.Fatalf("the test's git did not delete gone.txt: %v", err)
+	}
+	if files := gitRun(t, "--git-dir", remote, "ls-tree", "-r", "--name-only", saved.Commit); files != "kept.txt" {
+		t.Errorf("the save has %q, want only kept.txt", files)
 	}
 }

@@ -231,8 +231,8 @@ func gitValue(s string) string {
 // did not answer), the commits go to the Run's work-in-progress ref
 // (e.wipRef), which cannot conflict. The text that push gives then goes
 // on the end call. saved is the parent of the work-in-progress save that
-// the WIP ref holds now ("": none). When it is the branch's tip, the save
-// has these commits already, and the WIP ref keeps the save.
+// the WIP ref holds now ("": none). When there is a save, the WIP ref
+// keeps it, and the text tells if the save has the branch's commits.
 func (e *execution) push(environ []string, saved string) string {
 	// A pr call that pushes now ends first.
 	e.prMu.Lock()
@@ -270,8 +270,12 @@ func (e *execution) push(environ []string, saved string) string {
 		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v); %v", err, errRestoring))
 	}
 	wip, werr := e.wipRef()
-	if werr == nil && saved == tip {
-		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v); its commits are in the work-in-progress save in %s", err, wip))
+	if werr == nil && saved != "" {
+		// The WIP ref keeps the save: a push of the tip would replace it.
+		if saved == tip || run("merge-base", "--is-ancestor", tip, saved) == nil {
+			return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v); its commits are in the work-in-progress save in %s", err, wip))
+		}
+		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v), and the work-in-progress save in %s does not have its commits: the agent's HEAD was not on the branch", err, wip))
 	}
 	if werr != nil {
 		return e.pushFailed(fmt.Sprintf("the push of the Run's branch before the end failed (%v), and its commits cannot go to a work-in-progress ref: %v", err, werr))

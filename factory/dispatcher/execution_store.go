@@ -465,6 +465,11 @@ func (s *store) endExecution(id string, end dispatcherapi.ExecutionEnd, at time.
 	if changed == 0 {
 		nextAccount = ""
 	}
+	if lost != "" && changed > 0 && runState == dispatcherapi.StateQueued {
+		if err := markRestarted(tx, id); err != nil {
+			return err
+		}
+	}
 	if end.Preemption != nil || lost != "" {
 		p := dispatcherapi.Preemption{Reason: end.Reason}
 		if end.Preemption != nil {
@@ -662,6 +667,11 @@ func (s *store) endWithNoCall(id, reason string, exitCode *int, lost string, at 
 			return false, err
 		}
 		restarted = changed > 0 && lost != "" && runState == dispatcherapi.StateQueued
+		if restarted {
+			if err := markRestarted(tx, id); err != nil {
+				return false, err
+			}
+		}
 	}
 	if lost != "" {
 		details := map[string]any{"execution.id": id, "machine_lost.reason": lost, "machine_lost.restart": restarted}

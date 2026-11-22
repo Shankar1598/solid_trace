@@ -31,6 +31,11 @@ import (
 // restore does not put it in the working tree.
 const savedWorkRef = "refs/factory/saved-work"
 
+// keptSuffix makes the ref, after the WIP ref's name, that keeps the save
+// of a lost Execution when a person's push wins over it. The Forge's
+// DeleteWIP deletes it with the WIP ref.
+const keptSuffix = "-kept"
+
 // wipSubject is the first line of a WIP commit's message (see
 // wipSaver.run).
 var wipSubject = regexp.MustCompile(`^WIP \[skip ci\]: saved by the factory at (\S+), Run (\S+), Execution (\S+), ` +
@@ -76,7 +81,13 @@ func (e *execution) restoreWork(ctx context.Context, environ []string, pushed bo
 		_, code, err := e.git(ctx, environ, e.checkout, "merge-base", "--is-ancestor", e.startTip, save.parent)
 		if code == 1 {
 			fmt.Fprintf(e.log, "wrapper: a person pushed to %s after the save %s: no restore\n", e.task.Branch, save.commit)
-			e.lostNote = lostNote(r, e.personPushed(save, ref))
+			// The next save replaces the WIP ref, so the save goes to a ref
+			// that no save replaces.
+			kept := ref + keptSuffix
+			if err := e.keepSave(ctx, environ, save.commit, kept); err != nil {
+				return fmt.Errorf("keep the save %s in %s: %w", save.commit, kept, err)
+			}
+			e.lostNote = lostNote(r, e.personPushed(save, kept))
 			return nil
 		}
 		if err != nil {
@@ -100,6 +111,27 @@ func (e *execution) restoreWork(ctx context.Context, environ []string, pushed bo
 	fmt.Fprintf(e.log, "wrapper: restored the save %s: the Run's branch is at %s\n", save.commit, save.parent)
 	e.lostNote = lostNote(r, e.restored(save, ref))
 	return nil
+}
+
+// keepSave pushes the fetched save commit to the ref kept, in the same way
+// as the push before the end (as the wrapper's user, with no
+// configuration of the checkout), and a second time after a failure.
+func (e *execution) keepSave(ctx context.Context, environ []string, commit, kept string) error {
+	run, done, err := e.pushRepository(ctx, environ)
+	if err != nil {
+		return err
+	}
+	defer done()
+	push := []string{"push", "--quiet", "--no-verify", "--force", "--", e.task.CloneURL, commit + ":" + kept}
+	if err = run(push...); err == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return err
+	case <-time.After(restoreRetryWait):
+	}
+	return run(push...)
 }
 
 // findSave finds the save on the forge, fetches it to savedWorkRef, and
@@ -220,12 +252,12 @@ func (e *execution) restored(s *foundSave, ref string) string {
 	return text
 }
 
-func (e *execution) personPushed(s *foundSave, ref string) string {
+func (e *execution) personPushed(s *foundSave, kept string) string {
 	return fmt.Sprintf("Your saved work is not back: a person pushed to the branch %s after the save, and a "+
 		"person's push wins. The checkout is the branch as it is on the remote. The saved work (from %s) is the "+
-		"commit %s: the ref %s in this checkout, and %s on the remote until the next save. Look at it with "+
+		"commit %s: the ref %s in this checkout, and %s on the remote. Look at it with "+
 		"'git diff HEAD %s', and take what is still necessary.", e.task.Branch, s.at, s.commit, savedWorkRef,
-		ref, savedWorkRef)
+		kept, savedWorkRef)
 }
 
 func (e *execution) notRestored(why string) string {

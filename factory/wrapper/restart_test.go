@@ -129,6 +129,21 @@ func transcriptHas(t *testing.T, env *factorytest.Env, text string) bool {
 	return strings.Contains(string(env.SolidTrace.Stored(session, session+".jsonl")), text)
 }
 
+// goneWords are the words of the first message after a lost machine that
+// tell what did not come back with the machine.
+const goneWords = "Containers, background processes, caches and the files that .gitignore excludes are gone"
+
+// wentAt is the part of the first message after a lost machine that
+// tells when the machine of the Run's first Execution went (RFC 3339,
+// UTC). The save's time can be the same, so the words around it count.
+func wentAt(t *testing.T, run dispatcherapi.Run) string {
+	t.Helper()
+	if run.Executions[0].EndedAt == nil {
+		t.Fatal("the first Execution has no end time")
+	}
+	return " at " + run.Executions[0].EndedAt.UTC().Format(time.RFC3339) + ". This is a new Execution"
+}
+
 func TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork(t *testing.T) {
 	env, ana := newEnv(t)
 	change, changed := changeStep(t, env)
@@ -175,7 +190,8 @@ func TestAPreemptedRunRestartsAndTheNewExecutionRestoresTheSavedWork(t *testing.
 			t.Errorf("%s after the restore: %q, want %q", name, got, want)
 		}
 	}
-	for _, text := range []string{"preempted", "is back", "not finish"} {
+	for _, text := range []string{"preempted", "is back", "not finish", wentAt(t, run), "Changes after the save are not back",
+		goneWords} {
 		if !transcriptHas(t, env, text) {
 			t.Errorf("the first message of the new Execution does not say %q", text)
 		}
@@ -221,16 +237,67 @@ func TestAPersonsPushAfterTheSaveWinsOverTheSavedWork(t *testing.T) {
 	if saved := strings.TrimSpace(seen("saved")); saved != wip {
 		t.Errorf("the checkout's refs/factory/saved-work is %q, want the save %s", saved, wip)
 	}
-	for _, text := range []string{"a person pushed", ref, wip} {
+	// A checkpoint of the new Execution replaces the WIP ref: the save
+	// stays in a ref that no save replaces.
+	kept := ref + "-kept"
+	if got, _ := env.Forge.Ref("example/shop", kept); got != wip {
+		t.Errorf("%s on the Forge is %q, want the save %s", kept, got, wip)
+	}
+	for _, text := range []string{"a person pushed", kept, wip} {
 		if !transcriptHas(t, env, text) {
 			t.Errorf("the first message does not say %q", text)
 		}
+	}
+	if transcriptHas(t, env, "until the next save") {
+		t.Error("the first message says that the save stays only until the next save")
 	}
 	if tip, _ := env.Forge.Ref("example/shop", "refs/heads/agent/"+id); tip != pushed {
 		t.Errorf("the Run's branch on the Forge is at %s, want the person's push %s", tip, pushed)
 	}
 	if now, _ := env.Forge.Ref("example/shop", ref); now != wip {
 		t.Errorf("%s moved from %s to %s", ref, wip, now)
+	}
+}
+
+// After a person's push, a save that cannot go to its kept ref fails the
+// setup: a checkpoint of the new Execution would replace the only save.
+func TestASaveThatCannotBeKeptAfterAPersonsPushFailsTheSetup(t *testing.T) {
+	env, ana := newEnv(t)
+	change, changed := changeStep(t, env)
+	env.Runner.Agent(interruptedTurn(t, change)...)
+	// The second Execution fails its setup: the harness does not start.
+	env.Runner.Agent(takeTask)
+	id := start(t, env, ana, "Fix the cart")
+	changed()
+	// The next Execution's git cannot push to the kept ref.
+	dir := env.Runner.SharedDir("no-kept-ref")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$*\" in *-kept*) echo 'fatal: the forge does not answer' >&2; exit 128;; esac\nexec " +
+		real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.PathFirst(dir)
+	env.Runner.HoldMachines()
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	waitForRestart(t, env, ana, id)
+	ref := "refs/agent-wip/" + id
+	wip, _ := env.Forge.Ref("example/shop", ref)
+	env.Forge.Push("example/shop", "agent/"+id, map[string]string{"person.txt": "mine\n"}, "A person's fix")
+	env.Runner.GiveMachines()
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if len(run.Executions) != 2 || !strings.Contains(run.Reason, "keep the save") {
+		t.Fatalf("the Run is %s (%s): %+v", run.State, run.Reason, run.Executions)
+	}
+	if now, _ := env.Forge.Ref("example/shop", ref); now != wip {
+		t.Errorf("%s moved from %s to %s", ref, wip, now)
+	}
+	if got, ok := env.Forge.Ref("example/shop", ref+"-kept"); ok {
+		t.Errorf("%s-kept is on the Forge: %s", ref, got)
 	}
 }
 
@@ -293,6 +360,68 @@ func TestTheFourthLostMachineInARowFailsTheRun(t *testing.T) {
 		checkFields(t, ev, map[string]any{"execution.id": run.Executions[i].ID, "machine_lost.reason": "machine lost",
 			"machine_lost.in_a_row": float64(i + 1), "machine_lost.restart": i < 3})
 	}
+}
+
+// A person's message continues a Run that lost too many machines: the
+// count starts again, so its next lost machine restarts it.
+func TestAPersonsContinueAfterTooManyLostMachinesStartsTheCountAgain(t *testing.T) {
+	env, ana := newEnv(t)
+	for range 5 {
+		env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	}
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	for i := 1; i <= 4; i++ {
+		if err := env.Runner.Fake.LoseMachine(runningExecution(t, ana, id, i)); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, fmt.Sprintf("machine_lost event %d", i), func() bool { return len(lostEvents(env, id)) == i })
+	}
+	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+
+	send(t, env, ana, id, "Try again")
+	fifth := runningExecution(t, ana, id, 5)
+	if err := env.Runner.Fake.LoseMachine(fifth); err != nil {
+		t.Fatal(err)
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 6 {
+		t.Fatalf("want 6 Executions, got %+v", run.Executions)
+	}
+	lost := lostEvents(env, id)
+	if len(lost) != 5 {
+		t.Fatalf("want 5 machine_lost events, got %v", lost)
+	}
+	checkFields(t, lost[4], map[string]any{"execution.id": fifth, "machine_lost.in_a_row": float64(1),
+		"machine_lost.restart": true})
+}
+
+// A preemption that restarts the Run counts: the lost machine after it
+// is the second in a row.
+func TestAPreemptionAndALostMachineCountInARow(t *testing.T) {
+	env, ana := newEnv(t)
+	step, working := agentShell(t, env, `printf 'the cart total is right' >"$SOLIDTRACE_EVIDENCE_DIR/notes.txt"`)
+	env.Runner.Agent(interruptedTurn(t, step)...)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	working()
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	second := runningExecution(t, ana, id, 2)
+	if err := env.Runner.Fake.LoseMachine(second); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	lost := lostEvents(env, id)
+	if len(lost) != 1 {
+		t.Fatalf("want 1 machine_lost event, got %v", lost)
+	}
+	checkFields(t, lost[0], map[string]any{"execution.id": second, "machine_lost.in_a_row": float64(2),
+		"machine_lost.restart": true})
 }
 
 func TestAnExecutionThatEndsForAnotherReasonStartsTheCountAgain(t *testing.T) {
@@ -395,7 +524,8 @@ func TestALostMachineRestartsTheRunFromTheLastCheckpoint(t *testing.T) {
 	if status := seen("status"); status != "?? work.txt\n" {
 		t.Errorf("the status after the restore:\n%s", status)
 	}
-	for _, text := range []string{"was lost with no notice", "at the last checkpoint", "big.bin", "not finish"} {
+	for _, text := range []string{"was lost with no notice", "at the last checkpoint", "big.bin", "not finish",
+		wentAt(t, run), goneWords} {
 		if !transcriptHas(t, env, text) {
 			t.Errorf("the first message does not say %q", text)
 		}

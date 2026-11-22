@@ -401,8 +401,8 @@ func (b *Bitbucket) SaveWIP(ctx context.Context, dir, repository, runID, commit 
 	return ref, nil
 }
 
-// DeleteWIP pushes a delete of the Run's work-in-progress ref, from an
-// empty repository in a temp directory.
+// DeleteWIP pushes a delete of the Run's work-in-progress ref and of its
+// kept save, from an empty repository in a temp directory.
 func (b *Bitbucket) DeleteWIP(ctx context.Context, repository, runID string) error {
 	ref, err := b.WIPRef(runID)
 	if err != nil {
@@ -418,8 +418,9 @@ func (b *Bitbucket) DeleteWIP(ctx context.Context, repository, runID string) err
 	}
 	// git sends the delete of a full ref name also when the ref is not
 	// there, and the server only warns: a Run with no saved work is not
-	// an error.
-	out, err := b.push(ctx, dir, repository, ":"+ref)
+	// an error. The wrapper keeps a lost Execution's save in
+	// <ref>-kept when a person's push wins over it: that ref goes too.
+	out, err := b.push(ctx, dir, repository, ":"+ref, ":"+ref+"-kept")
 	if err != nil {
 		return b.gitError("delete the work-in-progress ref "+ref, repository, out, err, gitHint(out))
 	}

@@ -421,6 +421,11 @@ var migrations = []string{
 	// and its start clears them.
 	`ALTER TABLE runs ADD COLUMN take_over_by_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN take_over_by_name TEXT NOT NULL DEFAULT '';`,
+	// lost_restarted is 1 when the lost machine of the Execution queued
+	// its Run again by itself (a restart). A lost machine with no restart
+	// ends the count of lost machines in a row: only a person continues
+	// that Run.
+	`ALTER TABLE executions ADD COLUMN lost_restarted INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.

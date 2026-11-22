@@ -209,7 +209,9 @@ func (s *wipSaver) run(ctx context.Context, reason string, checkpoint bool) (sav
 	if err := s.commitAndPush(ctx, git, root, message+leftOutText(skipped), ref, now); err != nil {
 		return savedWork{}, false, err
 	}
-	s.last = key
+	// The key after the pushes has each submodule push that failed, so
+	// that the next checkpoint tries it again.
+	s.last = root.key()
 	if checkpoint {
 		s.atMu.Lock()
 		s.at = e.clock.Now()
@@ -393,7 +395,9 @@ func (s *wipSaver) snapshot(ctx context.Context, git gitCommand, r *repoSave, de
 		return err
 	}
 	if len(keep) > 0 {
-		if _, err := run(keep, "add", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+		// The agent works during a checkpoint: with --remove, a file that
+		// went after the list is passed over, not an error as in git add.
+		if _, err := run(keep, "update-index", "--add", "--remove", "-z", "--stdin"); err != nil {
 			return err
 		}
 	}
@@ -530,11 +534,12 @@ func (s *wipSaver) submodules(ctx context.Context, git gitCommand, r *repoSave, 
 			sub.notSaved = fmt.Sprintf("it is deeper than %d submodules", submoduleDepth)
 			continue
 		}
-		if sub.pushURL, err = s.e.submoduleURL(m.url, r.pushURL); err != nil {
-			sub.notSaved = err.Error()
-			continue
-		}
-		if err := s.snapshot(ctx, git, sub, depth+1); err != nil {
+		// A URL that is not on the forge (such as a public dependency)
+		// stops only the save of a submodule that changed.
+		sub.pushURL, err = s.e.submoduleURL(m.url, r.pushURL)
+		if snapErr := s.snapshot(ctx, git, sub, depth+1); snapErr != nil {
+			sub.notSaved = snapErr.Error()
+		} else if err != nil && sub.changed() {
 			sub.notSaved = err.Error()
 		}
 	}
