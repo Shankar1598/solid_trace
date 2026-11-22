@@ -25,17 +25,31 @@ apm "prometheus" {
 }
 `
 
+// autoscalerRequired is the environment variable that makes a skip of the Autoscaler's
+// tests (no Docker, or no image) a failure. The release run sets it (docs/agents/testing.md),
+// as KILLBOUNDARY_REQUIRED for the kill boundary.
+const autoscalerRequired = "AUTOSCALER_REFERENCE_REQUIRED"
+
+// skipAutoscaler skips the test with the reason, or fails it when autoscalerRequired is set.
+func skipAutoscaler(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv(autoscalerRequired) != "" {
+		t.Fatalf(format+", and "+autoscalerRequired+" is set", args...)
+	}
+	t.Skipf(format, args...)
+}
+
 // autoscalerLogs starts the Autoscaler agent with config and the policy files, with no
 // network (a Nomad that does not answer: the agent loads its policies before it needs
 // Nomad), and gives its debug log when the log has want lines (or after 30 seconds).
 func autoscalerLogs(t *testing.T, config string, policies map[string]string, want func(log string) bool) string {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker is not available")
+		skipAutoscaler(t, "docker is not available")
 	}
 	if err := exec.Command("docker", "image", "inspect", autoscalerImage).Run(); err != nil {
 		if out, err := exec.Command("docker", "pull", autoscalerImage).CombinedOutput(); err != nil {
-			t.Skipf("the image %s is not pulled, and docker pull fails: %v: %s", autoscalerImage, err, out)
+			skipAutoscaler(t, "the image %s is not pulled, and docker pull fails: %v: %s", autoscalerImage, err, out)
 		}
 	}
 	dir := t.TempDir()
