@@ -47,14 +47,16 @@ test.afterAll(() => {
 
 test('Logs sent to two Projects show in the band and the rates, over Today and 7 days', async ({ page, request }) => {
   const errors = watchErrors(page)
-  const now = new Date().toISOString()
+  const now = Date.now()
   // The second Project's file sends 20 Logs of 2 KB of random text each, so
   // that it is among the 10 biggest sources by Logs and by bytes over the
   // other sources of the dev data, such as the Runs of 10 Logs and 9 KiB each
   // that the factory flows send to the Agent Project.
   for (const [slug, n] of [[PROJECT, 3], [secondSlug, 20]] as const) {
     const logs = Array.from({ length: n }, (_, i) => ({
-      message: `overview flow ${i}`, time: now, service: 'overview-flow', file,
+      // A millisecond apart, so that the stream's newest Logs differ in time
+      // for the flows after this one (shortcuts.spec.ts steps by the time).
+      message: `overview flow ${i}`, time: new Date(now - i).toISOString(), service: 'overview-flow', file,
       ...(slug === secondSlug ? { padding: randomBytes(1024).toString('hex') } : {}),
     }))
     const sent = await request.post(`${ingest}/api/logs`, { headers: { Authorization: `Bearer ${keyOf(slug)}` }, data: logs })
