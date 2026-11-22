@@ -221,16 +221,67 @@ func TestAPersonsPushAfterTheSaveWinsOverTheSavedWork(t *testing.T) {
 	if saved := strings.TrimSpace(seen("saved")); saved != wip {
 		t.Errorf("the checkout's refs/factory/saved-work is %q, want the save %s", saved, wip)
 	}
-	for _, text := range []string{"a person pushed", ref, wip} {
+	// A checkpoint of the new Execution replaces the WIP ref: the save
+	// stays in a ref that no save replaces.
+	kept := ref + "-kept"
+	if got, _ := env.Forge.Ref("example/shop", kept); got != wip {
+		t.Errorf("%s on the Forge is %q, want the save %s", kept, got, wip)
+	}
+	for _, text := range []string{"a person pushed", kept, wip} {
 		if !transcriptHas(t, env, text) {
 			t.Errorf("the first message does not say %q", text)
 		}
+	}
+	if transcriptHas(t, env, "until the next save") {
+		t.Error("the first message says that the save stays only until the next save")
 	}
 	if tip, _ := env.Forge.Ref("example/shop", "refs/heads/agent/"+id); tip != pushed {
 		t.Errorf("the Run's branch on the Forge is at %s, want the person's push %s", tip, pushed)
 	}
 	if now, _ := env.Forge.Ref("example/shop", ref); now != wip {
 		t.Errorf("%s moved from %s to %s", ref, wip, now)
+	}
+}
+
+// After a person's push, a save that cannot go to its kept ref fails the
+// setup: a checkpoint of the new Execution would replace the only save.
+func TestASaveThatCannotBeKeptAfterAPersonsPushFailsTheSetup(t *testing.T) {
+	env, ana := newEnv(t)
+	change, changed := changeStep(t, env)
+	env.Runner.Agent(interruptedTurn(t, change)...)
+	// The second Execution fails its setup: the harness does not start.
+	env.Runner.Agent(takeTask)
+	id := start(t, env, ana, "Fix the cart")
+	changed()
+	// The next Execution's git cannot push to the kept ref.
+	dir := env.Runner.SharedDir("no-kept-ref")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$*\" in *-kept*) echo 'fatal: the forge does not answer' >&2; exit 128;; esac\nexec " +
+		real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.PathFirst(dir)
+	env.Runner.HoldMachines()
+	env.Runner.Preempt(getRun(t, ana, id).Executions[0].ID)
+	waitForRestart(t, env, ana, id)
+	ref := "refs/agent-wip/" + id
+	wip, _ := env.Forge.Ref("example/shop", ref)
+	env.Forge.Push("example/shop", "agent/"+id, map[string]string{"person.txt": "mine\n"}, "A person's fix")
+	env.Runner.GiveMachines()
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if len(run.Executions) != 2 || !strings.Contains(run.Reason, "keep the save") {
+		t.Fatalf("the Run is %s (%s): %+v", run.State, run.Reason, run.Executions)
+	}
+	if now, _ := env.Forge.Ref("example/shop", ref); now != wip {
+		t.Errorf("%s moved from %s to %s", ref, wip, now)
+	}
+	if got, ok := env.Forge.Ref("example/shop", ref+"-kept"); ok {
+		t.Errorf("%s-kept is on the Forge: %s", ref, got)
 	}
 }
 

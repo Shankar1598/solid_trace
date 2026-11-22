@@ -258,11 +258,18 @@ func TestASaveToTheWorkInProgressRefAndItsDelete(t *testing.T) {
 		t.Fatalf("after the second save the ref is %s; want %s", sha, again)
 	}
 
+	// The wrapper keeps a lost Execution's save in <WIP ref>-kept when a
+	// person's push wins over it.
+	f.Git(fakeRepo, "update-ref", "refs/agent-wip/r1-kept", commit)
+
 	if err := b.DeleteWIP(ctx, repository, "r1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := f.Ref(fakeRepo, "refs/agent-wip/r1"); ok {
 		t.Fatal("refs/agent-wip/r1 is still there after the delete")
+	}
+	if _, ok := f.Ref(fakeRepo, "refs/agent-wip/r1-kept"); ok {
+		t.Fatal("refs/agent-wip/r1-kept is still there after the delete")
 	}
 	// A Run with no saved work has no ref to delete: that is not an error.
 	if err := b.DeleteWIP(ctx, repository, "r1"); err != nil {

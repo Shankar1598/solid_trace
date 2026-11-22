@@ -352,7 +352,7 @@ When the machine of a headless Execution is preempted, stops, or goes with no no
 The new Execution restores the last save of the lost Execution before the agent starts:
 
 - The Run's branch is at the commit that was HEAD at the save, so commits that were not pushed come back, and the push at the end pushes them. The working tree is equal to the save, and the changes are not staged. No WIP commit is in the branch's history.
-- If a person pushed to the Run's branch after the save, the person's push wins: there is no restore, and the Execution starts from the branch. The save is then the ref `refs/factory/saved-work` in the checkout, and the agent takes what it still needs from it.
+- If a person pushed to the Run's branch after the save, the person's push wins: there is no restore, and the Execution starts from the branch. The save is then the ref `refs/factory/saved-work` in the checkout, and the agent takes what it still needs from it. The wrapper also pushes the save to `refs/agent-wip/<run id>-kept`, because the next save replaces the WIP ref; the Dispatcher deletes that ref with the WIP ref when the Run closes. If that push fails, the setup fails, and a message continues the Run.
 - The restore uses only a save of the lost Executions. A save of an Execution that ended for another reason is old work, and does not come back.
 - If the restore cannot fetch the save, the setup fails and the Run fails, with the save still on the forge. A message continues the Run, and that Execution restores the save.
 - Submodules are as the clone gives them: their saved changes stay in their own repositories' WIP refs.
