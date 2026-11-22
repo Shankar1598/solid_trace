@@ -111,9 +111,10 @@ func (e *execution) setupTakeOver(ctx context.Context, environ []string) error {
 
 // interactiveArgs is the command line of the interactive form: the same
 // Agent session, in bypass mode, with no Stop hook, with AskUserQuestion,
-// and with SolidTrace's MCP server for an Issue or a Monitor Run. With no transcript of the Agent session on the machine
-// (the Execution before ended before its harness started), the session
-// starts with its id.
+// and with SolidTrace's MCP server for an Issue or a Monitor Run. With no
+// transcript of the Agent session on the machine (no Execution before
+// started its harness), the session starts with its id and the Run's
+// task as its first message.
 func (e *execution) interactiveArgs() []string {
 	args := []string{"--permission-mode", "bypassPermissions"}
 	if e.task.MCP != nil {
@@ -122,7 +123,12 @@ func (e *execution) interactiveArgs() []string {
 	if _, err := e.uploads.root().Stat(e.task.SessionID + ".jsonl"); err == nil {
 		return append(args, "--resume", e.task.SessionID)
 	}
-	return append(args, "--session-id", e.task.SessionID)
+	// The Agent session starts here: its first message is the Run's task.
+	args = append(args, "--session-id", e.task.SessionID)
+	if e.task.Prompt != "" {
+		args = append(args, "--", e.task.Prompt)
+	}
+	return args
 }
 
 // runInteractive starts the hc core as the run user in the Execution's

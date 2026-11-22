@@ -259,11 +259,13 @@ func (s *store) startExecution(id string, at time.Time, limits dispatcherapi.Lim
 	}
 	run.startedAt = time.UnixMicro(started).UTC()
 	run.limits.IdleSeconds = limits.IdleSeconds
-	// A take-over Execution gets no prompt and no message: the person
-	// types in the terminal, and the Run keeps its messages until the
-	// take-over ends.
+	// A take-over Execution gets no message: the person types in the
+	// terminal, and the Run keeps its messages until the take-over ends.
+	// It gets the prompt, which its wrapper gives the harness only when the
+	// take-over starts the Agent session (no Execution before it started
+	// the harness).
 	if interactive {
-		run.prompt, run.resume = "", true
+		run.resume = true
 	} else if run.messages, err = takeKeptMessages(tx, runID, id, state == dispatcherapi.ExecutionDispatched); err != nil {
 		return run, err
 	}

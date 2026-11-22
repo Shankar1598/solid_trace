@@ -2,6 +2,7 @@ package wrapper_test
 
 import (
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -182,6 +183,40 @@ func TestWithTheWaitSettingATakeOverIsRefusedWithTheResetTimeOfTheRunsOwnAccount
 	}
 	if run := getRun(t, ana, id); run.State != dispatcherapi.StateWaitingOnAccountLimit || len(run.Executions) != 1 {
 		t.Errorf("the refused take-over changed the Run: %s %+v", run.State, run.Executions)
+	}
+}
+
+// A Run whose Agent session never started (its first setup failed): the
+// take-over starts the Agent session with the Run's task, so the agent
+// has the task, also in the Executions after the take-over.
+func TestATakeOverThatStartsTheAgentSessionGivesTheAgentTheRunsTask(t *testing.T) {
+	env, ana := newEnv(t)
+	runs := filepath.Join(env.Runner.SharedDir("setup-"+filepath.Base(t.TempDir())), "runs")
+	// The first run of the setup command fails.
+	env.Forge.Push("example/shop", "main", map[string]string{
+		factoryFile(""): `setup = "echo run >> ` + runs + ` && test $(wc -l < ` + runs + `) -gt 1"`,
+	}, "A setup command")
+	id := start(t, env, ana, "Fix the cart total")
+	if run := waitFor(t, env, ana, id, dispatcherapi.StateFailed); !strings.Contains(run.Reason, "the setup command") {
+		t.Fatalf("the first Execution failed with %q, want the setup command", run.Reason)
+	}
+
+	takeOverIdleCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	if init := screenInit(t, env.Runner.TakeOver.Screen(terminal)); init["resumed"] != false ||
+		init["session_id"] != sessionOf(t, env, id) {
+		t.Errorf("the take-over's Agent session is %v (resumed %v), want %v started", init["session_id"], init["resumed"],
+			sessionOf(t, env, id))
+	}
+	if _, err := env.Runner.TakeOver.WaitForScreen(terminal, "Done.", 30*time.Second); err != nil {
+		t.Errorf("the agent did not answer the Run's task: %v", err)
+	}
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	transcript := env.SolidTrace.Stored(sessionOf(t, env, id), sessionOf(t, env, id)+".jsonl")
+	if !strings.Contains(string(transcript), `"content":"Fix the cart total"`) {
+		t.Errorf("the take-over's transcript has no Run's task:\n%s", transcript)
 	}
 }
 

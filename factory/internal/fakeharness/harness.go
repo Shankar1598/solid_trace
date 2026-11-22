@@ -152,6 +152,8 @@ type flags struct {
 	disallowed map[string]bool
 	// print is the headless form (-p); with no -p, the interactive form.
 	print bool
+	// prompt is the prompt of the command line ("": none).
+	prompt string
 }
 
 func parseFlags(args []string) (flags, error) {
@@ -199,6 +201,11 @@ func parseFlags(args []string) (flags, error) {
 			f.mcpConfig = get()
 		case "--model", "--setting-sources", "--append-system-prompt", "--allowedTools", "--allowed-tools", "--add-dir":
 			get()
+		default:
+			// The first argument that is not an option is the prompt.
+			if !strings.HasPrefix(args[i], "-") && f.prompt == "" {
+				f.prompt = args[i]
+			}
 		}
 	}
 	switch {
