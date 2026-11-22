@@ -258,10 +258,12 @@ func TestWhenSolidTraceGivesNoTotalsTheRunClosesWithTotalsThatAreNotComplete(t *
 func TestInterventionsAreCountedByKindAlsoForARunWithATakeOver(t *testing.T) {
 	env, ana := newEnv(t)
 	ben := env.Member("Ben")
-	tool, pidFile := toolCall(t)
-	env.Runner.Agent(takeTask, initLine(t), tool, interrupted, thenEOF)
+	// The marks are where the run user can write: this case also runs as
+	// root on the local factory stack (cluster check 6).
+	working, inTool := agentShell(t, env, "true")
+	env.Runner.Agent(takeTask, initLine(t), working, inToolCall, interrupted, thenEOF)
 	id := start(t, env, ana, "Fix the cart")
-	toolPid(t, pidFile)
+	inTool()
 
 	// An interrupt, then a message that continues the Run.
 	interrupt(t, env, ben, id)
