@@ -90,6 +90,10 @@ func (e *execution) setupTakeOver(ctx context.Context, environ []string) error {
 	if err := e.writeGitConfig(secrets); err != nil {
 		return err
 	}
+	// The take-over Execution's own MCP token (an Issue or a Monitor Run).
+	if err := e.writeMCP(); err != nil {
+		return err
+	}
 	e.uploads.adopt(e.kept.projectDir)
 	e.checkout = checkout
 	tip, _, err := e.git(ctx, environ, checkout, "rev-parse", "HEAD")
@@ -105,12 +109,15 @@ func (e *execution) setupTakeOver(ctx context.Context, environ []string) error {
 }
 
 // interactiveArgs is the command line of the interactive form: the same
-// Agent session, in bypass mode, with no Stop hook and with
-// AskUserQuestion. With no transcript of the Agent session on the machine
+// Agent session, in bypass mode, with no Stop hook, with AskUserQuestion,
+// and with SolidTrace's MCP server for an Issue or a Monitor Run. With no transcript of the Agent session on the machine
 // (the Execution before ended before its harness started), the session
 // starts with its id.
 func (e *execution) interactiveArgs() []string {
 	args := []string{"--permission-mode", "bypassPermissions"}
+	if e.task.MCP != nil {
+		args = append(args, "--mcp-config", e.cfg.mcpConfig())
+	}
 	if _, err := e.uploads.root().Stat(e.task.SessionID + ".jsonl"); err == nil {
 		return append(args, "--resume", e.task.SessionID)
 	}
@@ -147,8 +154,8 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 	}
 	// The harness's environment is in a file of the secrets directory,
 	// not on the terminal's command line.
-	harnessEnv := append(append(coreEnv(e.gitEnv(environ, e.cfg.socket())), e.uploads.claudeEnv(e.cfg)...),
-		EnvAccountToken+"="+e.task.AccountToken, EnvSubprocessScrub+"=0")
+	harnessEnv := append(append(append(coreEnv(e.gitEnv(environ, e.cfg.socket())), e.uploads.claudeEnv(e.cfg)...),
+		e.mcpEnv()...), EnvAccountToken+"="+e.task.AccountToken, EnvSubprocessScrub+"=0")
 	envFile := filepath.Join(e.cfg.secrets(), "harness-env")
 	if err := writeSecret(e.runUser, envFile, []byte(strings.Join(harnessEnv, "\x00")), 0o440); err != nil {
 		return failed(err)

@@ -245,6 +245,41 @@ func TestATakeOverOfARunningRunContinuesTheAgentSessionInATerminalOnTheSameMachi
 	}
 }
 
+// The take-over of an Issue or a Monitor Run keeps SolidTrace's MCP
+// server: the harness gets the MCP configuration, and the take-over
+// Execution's own MCP token in a file that the run user reads.
+func TestATakeOverOfAnIssueRunKeepsSolidTracesMCPServerWithTheTakeOversToken(t *testing.T) {
+	env, ana := newEnv(t)
+	sender, path := env.Sender("Factory")
+	here, reached := agentShell(t, env, "true")
+	env.Runner.Agent(takeTask, initLine(t), here, inToolCall, interrupted, thenEOF)
+	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
+	reached()
+
+	takeOverCLI(t, env, ana, id)
+	_, terminal := takeOverTerminal(t, env, ana, id)
+
+	init := screenInit(t, env.Runner.TakeOver.Screen(terminal))
+	servers, _ := init["mcp_servers"].([]any)
+	if len(servers) != 1 || fmt.Sprint(servers[0]) != "map[name:solidtrace status:connected]" {
+		t.Errorf("the interactive harness has the MCP servers %v, want solidtrace", init["mcp_servers"])
+	}
+	mcp := mcpTokens(env)
+	if len(mcp) != 2 {
+		t.Fatalf("want an MCP token for the headless and the take-over Execution, got %+v", mcp)
+	}
+	screen := typeLine(t, env, terminal, `!f="$`+dispatcherapi.EnvMCPTokenFile+`" && test ! -w "$f" && echo "mcp $`+
+		dispatcherapi.EnvMCPURL+` $(cat "$f")"`, "mcp http")
+	if want := "mcp " + env.SolidTrace.URL() + "/mcp " + mcp[1].Secret; !strings.Contains(screen, want) {
+		t.Errorf("the take-over's harness has no MCP token of its own: %q, want %q", screen, want)
+	}
+	leave(t, env, terminal)
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
+	if tokens := mcpTokens(env); !tokens[1].Revoked {
+		t.Error("the end step did not revoke the take-over's MCP token")
+	}
+}
+
 func TestAReportDuringTheTakeOverSetsTheRunsStateWhenTheAgentSessionEnds(t *testing.T) {
 	env, ana := newEnv(t)
 	id := inToolCallRun(t, env, ana)
