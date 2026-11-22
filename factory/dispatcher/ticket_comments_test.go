@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/solidtrace/cli/dispatcherapi"
 	"github.com/solidtrace/factory/dispatcher"
 	"github.com/solidtrace/factory/internal/factorytest"
 	"github.com/solidtrace/factory/internal/fakelinear"
@@ -109,6 +110,34 @@ func TestABotsTriggerCommentDoesNothing(t *testing.T) {
 	wantMessage(t, waitForAccepted(t, env, id, 1)[0], "/agent Use the second fix", "u-7", "Rosa")
 	if !strings.Contains(env.Logs(), "cannot steer its Run") || !strings.Contains(env.Logs(), "a bot wrote it") {
 		t.Errorf("no log of the refused comment:\n%s", env.Logs())
+	}
+}
+
+// A Closed Run does not continue: a trigger comment on its ticket is no
+// message, and the Run stays Closed.
+func TestATriggerCommentOnTheTicketOfAClosedRunDoesNothing(t *testing.T) {
+	env, path := trackerEnv(t)
+	id := boardRun(t, env, path)
+	ana := env.Member("Ana")
+	if got := ana.CLI("stop", "--dispatcher", env.URL(), id); got.Code != 0 {
+		t.Fatalf("solidtrace stop: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	env.Clock.Advance(31 * 24 * time.Hour)
+	env.CheckClosedRuns()
+
+	env.Tracker.AddComment("board", "T-1", "/agent Use the second fix", rosa)
+	if a := env.TrackerWebhook(path, secret, "d-c1", "T-1"); a.Status != http.StatusOK {
+		t.Fatalf("the comment's webhook: %d %s", a.Status, a.Body)
+	}
+	env.Clock.Advance(faketracker.Backstop + time.Second)
+	settle()
+	if got := acceptedMessages(env, id); len(got) != 0 {
+		t.Errorf("the Closed Run accepted the messages %v", got)
+	}
+	var run dispatcherapi.Run
+	ana.API("GET", "/api/v1/runs/"+id, nil).JSON(t, &run)
+	if run.State != dispatcherapi.StateStopped || run.ClosedAt == nil {
+		t.Errorf("the Run is %s, closed at %v; want stopped and Closed", run.State, run.ClosedAt)
 	}
 }
 
