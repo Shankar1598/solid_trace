@@ -107,6 +107,8 @@ test('the demo starts six Runs; the Runs list and a Run page show them', async (
   await expect(page.getByRole('link', { name: 'evidence/cart-total.txt' })).toBeVisible()
   await expect(page.locator('[data-section="events"] [data-event="pr_opened"]')).toHaveCount(1)
   await expect(page.locator('[data-section="executions"] [data-execution]')).toHaveCount(1)
+  // The demo merged its PR on the fake Forge: the Run is closed.
+  await expect(page.getByText('Closed', { exact: true }).first()).toBeVisible()
   await page.screenshot({ path: join(consoleDir, 'tmp', 'demo-run.png'), fullPage: true })
   const session = page.locator('dl a[href*="/agent_sessions/"]').first()
   await expect(session).toBeVisible()

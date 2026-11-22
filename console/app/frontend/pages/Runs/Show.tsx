@@ -10,8 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   actorText,
   checkText,
-  durationText,
+  eventDetailText,
   eventKindText,
+  executionDurationText,
   stateText,
   stateTone,
   type RunEvent,
@@ -121,7 +122,7 @@ function TakeOver({ takeOver }: { takeOver: RunTakeOver }) {
         <span className="font-mono text-xs" data-take-over="vm">{takeOver.vm ?? 'its VM'}</span>.
       </p>
       {takeOver.attach
-        ? <div><span className="text-muted-foreground">Attach with: </span><code className="bg-muted px-1.5 py-0.5 text-xs break-all" data-take-over="attach">{takeOver.attach}</code></div>
+        ? <div><span className="text-muted-foreground">Attach with: </span><code className="bg-muted px-1.5 py-0.5 text-xs break-words whitespace-pre-wrap" data-take-over="attach">{takeOver.attach}</code></div>
         : <None text="The attach command is not known yet." />}
     </Section>
   )
@@ -130,7 +131,7 @@ function TakeOver({ takeOver }: { takeOver: RunTakeOver }) {
 function Facts({ view }: { view: RunProps }) {
   const run = view.run
   const facts: [string, React.ReactNode][] = [
-    ['Reason', run.reason || <None />],
+    ...(run.reason ? [['Reason', run.reason] as [string, React.ReactNode]] : []),
     ['Trigger', run.trigger || <None />],
     ['Started by', actorText(run.actor)],
     ['Project', view.project?.name ?? (run.project || <None />)],
@@ -162,7 +163,24 @@ function Executions({ executions }: { executions: RunExecution[] }) {
   return (
     <Section title="Executions">
       {executions.length === 0 ? <None text="No Execution yet." /> : (
-        <div className="overflow-x-auto border">
+        <>
+        <ul className="space-y-2 sm:hidden">
+          {executions.map(e => (
+            <li key={e.id} data-execution-card={e.id} className="border p-2">
+              <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1 text-xs">
+                <dt className="text-muted-foreground">Start</dt><dd className="font-mono">{when(e.start)}</dd>
+                <dt className="text-muted-foreground">End</dt><dd className="font-mono">{when(e.end)}</dd>
+                <dt className="text-muted-foreground">Duration</dt><dd>{executionDurationText(e)}</dd>
+                <dt className="text-muted-foreground">Reason</dt>
+                <dd>{e.reason ?? '-'}{e.exit_code !== null && <span className="text-muted-foreground"> (exit code {e.exit_code})</span>}</dd>
+                <dt className="text-muted-foreground">Account</dt><dd className="font-mono break-words">{e.account ?? '-'}</dd>
+                <dt className="text-muted-foreground">VM</dt><dd className="font-mono break-words">{e.vm ?? '-'}</dd>
+                <dt className="text-muted-foreground">Form</dt><dd>{e.form === 'interactive' ? 'Take-over' : 'Headless'}</dd>
+              </dl>
+            </li>
+          ))}
+        </ul>
+        <div className="hidden overflow-x-auto border sm:block">
           <Table aria-label="Executions">
             <TableHeader>
               <TableRow>
@@ -180,7 +198,7 @@ function Executions({ executions }: { executions: RunExecution[] }) {
                 <TableRow key={e.id} data-execution={e.id}>
                   <TableCell className="font-mono text-xs whitespace-nowrap">{when(e.start)}</TableCell>
                   <TableCell className="font-mono text-xs whitespace-nowrap">{when(e.end)}</TableCell>
-                  <TableCell className="text-xs">{durationText(e.duration_seconds)}</TableCell>
+                  <TableCell className="text-xs">{executionDurationText(e)}</TableCell>
                   <TableCell className="text-xs">{e.reason ?? <None text="-" />}{e.exit_code !== null && <span className="text-muted-foreground"> (exit code {e.exit_code})</span>}</TableCell>
                   <TableCell className="font-mono text-xs">{e.account ?? '-'}</TableCell>
                   <TableCell className="font-mono text-xs">{e.vm ?? '-'}</TableCell>
@@ -190,6 +208,7 @@ function Executions({ executions }: { executions: RunExecution[] }) {
             </TableBody>
           </Table>
         </div>
+        </>
       )}
     </Section>
   )
@@ -248,7 +267,7 @@ function Report({ report }: { report: RunReport }) {
         <div>
           <h3 className="mb-1 font-medium">evidence/report.md</h3>
           {report.report_md !== null
-            ? <pre className="max-h-[40rem] overflow-auto bg-muted p-3 text-xs whitespace-pre-wrap" data-evidence="report.md">{report.report_md}</pre>
+            ? <pre className="max-h-[40rem] overflow-auto bg-muted p-3 text-xs leading-5 whitespace-pre-wrap" data-evidence="report.md">{report.report_md}</pre>
             : <None text={report.report_md_error ?? 'No evidence/report.md.'} />}
         </div>
       </div>
@@ -266,7 +285,7 @@ function Events({ title, events, empty }: { title: string; events: RunEvent[]; e
               <span className="font-mono text-xs whitespace-nowrap text-muted-foreground">{when(e.time)}</span>
               <span className="font-medium">{eventKindText(e.kind)}</span>
               {e.intervention && <span>by {actorText(e.actor)}</span>}
-              {e.detail && <span className="min-w-0 break-words text-muted-foreground">{e.detail}</span>}
+              {e.detail && <span className="min-w-0 break-words text-muted-foreground">{eventDetailText(e.kind, e.detail)}</span>}
               {e.reason && <span className="text-xs text-muted-foreground">({e.reason})</span>}
             </li>
           ))}
@@ -284,7 +303,7 @@ function Commands({ commands }: { commands: RunProps['commands'] }) {
         {rows.map(([label, command]) => (
           <div key={label} className="contents">
             <dt className="text-muted-foreground">{label}</dt>
-            <dd><code className="bg-muted px-1.5 py-0.5 text-xs break-all">{command}</code></dd>
+            <dd><code className="bg-muted px-1.5 py-0.5 text-xs break-words whitespace-pre-wrap">{command}</code></dd>
           </div>
         ))}
       </dl>

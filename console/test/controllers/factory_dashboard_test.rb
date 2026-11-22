@@ -68,38 +68,18 @@ class FactoryDashboardTest < ActionDispatch::IntegrationTest
       charts.map(&:title)
     assert_equal [ @agent.id ], charts.map(&:project_id).uniq
     assert_equal [ [ 0, 0 ], [ 6, 0 ], [ 0, 4 ], [ 6, 4 ] ], charts.map { |chart| [ chart.x, chart.y ] }
-    # Each reads the closing events, and the Project filter.
-    charts.each do |chart|
-      assert_includes chart.query, 'event.kind == "closed"'
-      assert_includes chart.query, "factory.project == $project"
-      assert_includes chart.query, "by bin_auto(time)"
-    end
   end
 
-  test "the tokens, cycle time and interventions Charts read the totals of the closing event" do
+  # EventStore's test (event_store/factory_dashboard_queries_test.go) runs the Queries of this file
+  # on closed run events: the Charts must be what it ran.
+  test "the Charts have the Queries of config/factory_dashboard_queries.yml, which EventStore's tests run" do
     stub_dispatcher(settings: nil)
     sign_in_as(@admin)
     save_settings
 
-    tokens, cycle, _acceptance, interventions = factory_dashboards.first.charts.map(&:query)
-    %w[input output cache_read cache_write].each { |kind| assert_includes tokens, "totals.tokens.#{kind}" }
-    assert_includes tokens, 'run.close_reason == "pr_merged"'
-    assert_includes cycle, "totals.seconds_to_pr_opened"
-    assert_includes cycle, "totals.seconds_from_pr_opened_to_outcome"
-    assert_includes cycle, 'run.close_reason == "pr_merged"'
-    assert_includes interventions, "totals.interventions.total"
-  end
-
-  test "the acceptance rate divides two countif counts: merged over merged and declined" do
-    stub_dispatcher(settings: nil)
-    sign_in_as(@admin)
-    save_settings
-
-    acceptance = factory_dashboards.first.charts.find_by!(title: "Acceptance rate").query
-    merged = 'countif(run.close_reason == "pr_merged")'
-    declined = 'countif(run.close_reason == "pr_declined")'
-    assert_includes acceptance, "100 * #{merged} / (#{merged} + #{declined})"
-    assert_equal 3, acceptance.scan("countif(").size
+    file = YAML.safe_load_file(Rails.root.join("config/factory_dashboard_queries.yml")).fetch("charts")
+    charts = factory_dashboards.first.charts
+    assert_equal file.map { |c| [ c["title"], c["query"], c["options"] ] }, charts.map { |c| [ c.title, c.query, c.options ] }
   end
 
   test "the Project filter changes each of the four Charts: its values go to EventStore as the project parameter" do

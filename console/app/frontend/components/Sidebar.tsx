@@ -1,7 +1,7 @@
 import { Link, usePage } from '@inertiajs/react'
 import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Workflow, Check, ChevronsUpDown, Timer } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { navSection, orgSwitchUrl } from '@/lib/nav'
+import { navSection, orgSwitchUrl, sidebarItems, type NavSection } from '@/lib/nav'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
@@ -9,6 +9,11 @@ import { usePaletteOpener } from './CommandPalette'
 import { onMac } from './useShortcut'
 import { keyLabel } from '@/lib/shortcuts'
 import { buttonVariants } from '@/components/ui/button'
+
+const SECTION_ICONS: Record<NavSection, typeof Gauge> = {
+  overview: Gauge, issues: List, logs: ScrollText, performance: Timer, dashboards: LayoutDashboard, monitors: BellRing,
+  agent_sessions: Bot, runs: Workflow, projects: GitMerge, settings: Settings,
+}
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 
@@ -32,19 +37,9 @@ export function Sidebar({ className }: SidebarProps) {
   )
 
   const section = navSection(url)
-  const navItems = [
-    { label: 'Overview', href: `/${current_org.slug}/overview`, icon: Gauge, active: section === 'overview' },
-    { label: 'Issues', href: `/${current_org.slug}/issues`, icon: List, active: section === 'issues' },
-    { label: 'Logs', href: `/${current_org.slug}/logs`, icon: ScrollText, active: section === 'logs' },
-    { label: 'Performance', href: `/${current_org.slug}/performance`, icon: Timer, active: section === 'performance' },
-    { label: 'Dashboards', href: `/${current_org.slug}/dashboards`, icon: LayoutDashboard, active: section === 'dashboards' },
-    { label: 'Monitors', href: `/${current_org.slug}/monitors`, icon: BellRing, active: section === 'monitors' },
-    { label: 'Agent sessions', href: `/${current_org.slug}/agent_sessions`, icon: Bot, active: section === 'agent_sessions' },
-    // The Runs page is the Factory's: with no Dispatcher URL, an install shows no part of the Factory.
-    ...(props.factory_on ? [{ label: 'Runs', href: `/${current_org.slug}/runs`, icon: Workflow, active: section === 'runs' }] : []),
-    { label: 'Projects', href: `/${current_org.slug}/projects`, icon: GitMerge, active: section === 'projects' },
-    { label: 'Settings', href: `/${current_org.slug}/settings/organization`, icon: Settings, active: section === 'settings' },
-  ]
+  const navItems = sidebarItems(current_org.slug, props.factory_on === true).map(item => ({
+    ...item, icon: SECTION_ICONS[item.section], active: section === item.section,
+  }))
 
   return (
     <div className={cn("min-h-screen border-r bg-card text-card-foreground md:flex hidden w-[240px] flex-shrink-0 flex-col justify-between z-20", className)}>

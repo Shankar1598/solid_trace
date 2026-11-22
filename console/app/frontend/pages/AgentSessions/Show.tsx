@@ -137,10 +137,10 @@ function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; 
     ['Parent Agent session', parentPath
       ? <Link href={parentPath} className="font-mono text-xs underline underline-offset-2">{session.parent_session_id}</Link>
       : <None />],
-    ['Model', session.model ? <span className="font-mono text-xs">{session.model}</span> : <None />],
+    ['Model', session.model ? <span className="font-mono text-xs">{session.model}</span> : <None text="Not known" />],
     ['First', timeText(session.first)],
     ['Last', timeText(session.last)],
-    ['Tokens', (
+    ['Tokens', totalTokens(session) === 0 ? <None text="No tokens" /> : (
       <span className="font-mono text-xs tabular-nums">
         {tokensText(totalTokens(session))}: {session.input_tokens.toLocaleString()} input, {session.output_tokens.toLocaleString()} output,{' '}
         {session.cache_read_tokens.toLocaleString()} cache read, {session.cache_write_tokens.toLocaleString()} cache write
@@ -163,8 +163,8 @@ function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; 
   )
 }
 
-function None() {
-  return <span className="text-muted-foreground">None</span>
+function None({ text = 'None' }: { text?: string }) {
+  return <span className="text-muted-foreground">{text}</span>
 }
 
 /** One transcript's timeline, the main one or a subagent's, with a button for its next page. */

@@ -203,6 +203,61 @@ class RunPageTest < ActionDispatch::IntegrationTest
       interventions.map { |e| [ e["kind"], e.dig("actor", "name") ] }
   end
 
+  # The Dispatcher's own switch of an account is not a person's intervention,
+  # and the closing totals do not count it (totals.interventions, ticket 84).
+  test "an account switch by the Dispatcher is an event but not an intervention, and shows the old and the new account" do
+    dispatcher = { kind: "dispatcher", id: "", name: "Dispatcher" }
+    list = events + [
+      event(7, "2026-10-03T11:00:00Z", "account_switched", "queued", actor: dispatcher,
+        "account.old" => "team-2", "account.new" => "team-3"),
+      event(8, "2026-10-03T11:05:00Z", "account_switched", "queued", actor: { kind: "person", id: "12", name: "Dee" },
+        "account.old" => "team-3", "account.new" => "team-4")
+    ]
+    stub_run(list)
+    stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
+    sign_in_as(@member)
+
+    view = page
+
+    assert_equal [ [ "account_switched", "Dispatcher", false, "team-2 to team-3" ], [ "account_switched", "Dee", true, "team-3 to team-4" ] ],
+      view["events"].last(2).map { |e| [ e["kind"], e.dig("actor", "name"), e["intervention"], e["detail"] ] }
+    assert_equal [ "message_accepted", "account_switched" ], view["interventions"].map { |e| e["kind"] }
+    assert_equal "Dee", view["interventions"].last.dig("actor", "name")
+  end
+
+  test "an interrupt shows the text of its message, and an interrupt with no message has no detail" do
+    list = events + [
+      event(7, "2026-10-03T11:00:00Z", "interrupt", "running", "execution.id" => "x1", "message.id" => "m1",
+        "message.text" => "Stop and use the other branch"),
+      event(8, "2026-10-03T11:01:00Z", "interrupt", "running", "execution.id" => "x1")
+    ]
+    stub_run(list)
+    stub_evidence("evidence/report.md", "Fixed.", "text/markdown")
+    sign_in_as(@member)
+
+    interrupts = page["interventions"].select { |e| e["kind"] == "interrupt" }
+
+    assert_equal [ "Stop and use the other branch", nil ], interrupts.map { |e| e["detail"] }
+  end
+
+  test "an Execution of a lost machine has no end and is not live" do
+    lost = event(4, "2026-10-03T10:20:00Z", "machine_lost", "queued", actor: { kind: "dispatcher", id: "", name: "Dispatcher" },
+      "execution.id" => "x1", "machine_lost.reason" => "machine lost", "machine_lost.restart" => true)
+    stub_run(events.first(3) + [ lost ])
+    sign_in_as(@member)
+
+    execution = page["executions"].sole
+
+    assert_equal [ "x1", nil, nil, "machine lost", false ], execution.values_at("id", "end", "duration_seconds", "reason", "live")
+  end
+
+  test "an Execution that is running is live" do
+    stub_run(events.first(3))
+    sign_in_as(@member)
+
+    assert_equal true, page["executions"].sole["live"]
+  end
+
   test "the last report shows its checks with pass or fail and the output tail, its Evidence files, and evidence/report.md in full" do
     stub_run
     text = "# Report\n\n#{"A long line of the summary. " * 400}\n\n## Cause report\n\nThe cart rounded each line.\n"

@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 func TestTheDemoRunsReachTheirStatesAndTheLongRunStaysRunningUntilStopped(t *testing.T) {
 	env := factorytest.New(t, factorytest.Executions)
 	env.Project("shop")
-	ana := env.Member("Ana")
+	ana := env.Admin()
 	client := &dispatcherapi.Client{URL: env.URL(), HTTP: &http.Client{Timeout: 30 * time.Second},
 		Tokens: staticToken(ana.Token), Version: "0.0.0-test"}
 	s := stage{Client: client, Project: "shop", Agent: env.Runner.Agent, Dispatched: env.Runner.Dispatched,
@@ -78,6 +78,21 @@ func TestTheDemoRunsReachTheirStatesAndTheLongRunStaysRunningUntilStopped(t *tes
 	}
 	if long := get(5); long.State != dispatcherapi.StateRunning {
 		t.Errorf("the long Run is %s", long.State)
+	}
+
+	// The demo merges the first Run's PR on the fake Forge, so that the Run
+	// closes and the starter Dashboard has a closed event to draw.
+	if err := s.MergeFirstPR(ctx, env, runs[0]); err != nil {
+		t.Fatalf("%v\nDispatcher log:\n%s", err, env.Logs())
+	}
+	var closed map[string]any
+	for _, ev := range env.RunEvents(runs[0].ID) {
+		if ev["event.kind"] == "closed" {
+			closed = ev
+		}
+	}
+	if closed == nil || closed["run.close_reason"] != "pr_merged" {
+		t.Errorf("the first Run has no closed event with the reason pr_merged: %v", closed)
 	}
 
 	// The demo's end stops the long Run, so that it does not stay running.

@@ -1,17 +1,29 @@
 import { expect, test, type Page } from '@playwright/test'
 import { ORG } from '../support/data'
+import { rails } from '../support/factoryFlow'
 import { expectEditorText, last24h, openLogs, runBy, settled } from '../support/logs'
-import { watchErrors } from '../support/screens'
+import { failedLoad, watchErrors } from '../support/screens'
 
 // Copy link in the explorer bar, and the command palette (Cmd/Ctrl+K): a
 // Project's Logs, the pages, recent Queries and actions.
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
 
+// The Dispatcher URL is shared dev state: the test of the pages needs it empty
+// (no Factory), so the file sets it empty and puts back what it read.
+let dispatcherUrl = ''
+test.beforeAll(() => {
+  dispatcherUrl = rails('print InstanceSetting.current.dispatcher_url.to_s')
+  rails('InstanceSetting.current.update!(dispatcher_url: nil)')
+})
+test.afterAll(() => {
+  rails(`InstanceSetting.current.update!(dispatcher_url: ${dispatcherUrl ? JSON.stringify(dispatcherUrl) : 'nil'})`)
+})
+
 const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText())
 
 test('Copy link as shown gives the run\'s absolute range; live keeps it relative', async ({ page }) => {
-  const errors = watchErrors(page)
+  const errors = watchErrors(page, [failedLoad(503)])
   await openLogs(page, '?range=6h&mode=builder')
 
   await page.getByRole('button', { name: 'Copy link' }).click()
@@ -35,7 +47,7 @@ const palette = (page: Page) => page.getByRole('dialog', { name: 'Command palett
 const search = (page: Page) => page.getByLabel('Search the palette')
 
 test('Cmd+K jumps to a recent Query from another page', async ({ page }) => {
-  const errors = watchErrors(page)
+  const errors = watchErrors(page, [failedLoad(503)])
   // A Query run in Query mode is recorded as recent.
   const query = `['solid-trace-project']\n| where level == "warn"\n| take ${100 + Math.floor(Math.random() * 900)}`
   await openLogs(page, last24h('query'))
@@ -58,7 +70,7 @@ test('Cmd+K jumps to a recent Query from another page', async ({ page }) => {
 })
 
 test('the palette lists Projects\' Logs, pages and actions, and the sidebar opens it', async ({ page }) => {
-  const errors = watchErrors(page)
+  const errors = watchErrors(page, [failedLoad(503)])
   await page.goto(`/${ORG}/issues`)
 
   // The Runs page is the Factory's: with no Dispatcher URL, the sidebar and the palette have none.
