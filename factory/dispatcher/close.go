@@ -300,12 +300,18 @@ func (s *store) closingRuns(where string, args ...any) ([]closingRun, error) {
 // the end of the Run's last Execution or the last message that it
 // accepted, or the Run's start when it has neither.
 func (s *store) idleRuns(before time.Time) ([]closingRun, error) {
-	return s.closingRuns(`closed_at IS NULL AND state NOT IN `+inList(len(liveStates))+`
-		AND MAX(created_at, COALESCE((SELECT MAX(e.ended_at) FROM executions e WHERE e.run_id = runs.id), 0),
-		COALESCE((SELECT MAX(m.accepted_at) FROM messages m WHERE m.run_id = runs.id), 0)) <= ?
-		AND `+noLiveExecutionSQL,
-		append(anys(liveStates), before.UnixMicro(), dispatcherapi.ExecutionEnded)...)
+	return s.closingRuns(`closed_at IS NULL AND `+idleSQL+` AND `+noLiveExecutionSQL,
+		append(idleArgs(before), dispatcherapi.ExecutionEnded)...)
 }
+
+// idleSQL is the SQL test of a Run in the runs table that is not queued
+// or running and whose last activity is at the time of idleArgs or
+// earlier.
+var idleSQL = `state NOT IN ` + inList(len(liveStates)) + `
+	AND MAX(created_at, COALESCE((SELECT MAX(e.ended_at) FROM executions e WHERE e.run_id = runs.id), 0),
+	COALESCE((SELECT MAX(m.accepted_at) FROM messages m WHERE m.run_id = runs.id), 0)) <= ?`
+
+func idleArgs(before time.Time) []any { return append(anys(liveStates), before.UnixMicro()) }
 
 // savePROutcome records the outcome of the Run's PR at at, with its PR
 // outcome event, in one transaction. A Run that is closed, or whose PR
@@ -334,16 +340,22 @@ func (s *store) savePROutcome(runID, outcome string, at time.Time) error {
 // its closed event, which has the Run's own totals and sessionTotals (the
 // Attributes of its Agent sessions' totals). It is false when the Run is
 // closed already, or has an Execution queued or live: a Closed Run has no
-// Execution that can save a work-in-progress ref after the close.
+// Execution that can save a work-in-progress ref after the close. For no
+// activity, it is also false when the Run is not idle at at: a message
+// after the read of the idle Runs continues it.
 func (s *store) closeRun(runID, reason string, at time.Time, sessionTotals map[string]any) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
+	where, args := noLiveExecutionSQL, []any{at.UnixMicro(), runID, dispatcherapi.ExecutionEnded}
+	if reason == closeNoActivity {
+		where += ` AND ` + idleSQL
+		args = append(args, idleArgs(at.Add(-closeAfter))...)
+	}
 	result, err := tx.Exec(`UPDATE runs SET closed_at = ?, wip_delete_due = 1
-		WHERE id = ? AND closed_at IS NULL AND `+noLiveExecutionSQL, at.UnixMicro(), runID,
-		dispatcherapi.ExecutionEnded)
+		WHERE id = ? AND closed_at IS NULL AND `+where, args...)
 	if err != nil {
 		return false, err
 	}

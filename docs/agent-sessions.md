@@ -91,7 +91,7 @@ Click the person or the Run in the list to open the Agent session page.
 - Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
 - A subagent shows inside the tool call that started it. Click it to open its steps.
 - A long Agent session loads in pages: click **Load more steps** at the end of the timeline.
-- A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. A value marked **cut** was cut at the Log limits; the raw line has all of it.
+- A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. When a Run's next Execution finds its current Agent session so, it does not resume it: a new Agent session joins the Run, starts with the task and the messages, and becomes the Run's current Agent session. A value marked **cut** was cut at the Log limits; the raw line has all of it.
 - Click **Show full** on a cut value to read its raw line, as the record keeps it: with the secrets redacted.
 - To find a step, type in the search box above the timeline. The search shows the steps of this Agent session, and of its subagents, that have the text, with any case. Click **Clear** to see the timeline again.
 
@@ -275,7 +275,11 @@ Each Execution gets one subscription account of the pool: the free account with 
 - **No account is free:** the Run waits on an account limit. Its reason names the account and the reset time. It continues in a new Execution when an account is free again. A message waits on the Run, and the agent gets it when the Run continues. Stop works on a Run that waits.
 - **A report before the limit** sets the outcome: for example, a Run that reported done is done.
 - **Switch by hand:** `solidtrace switch-account RUN_ID` moves a Run that waits on an account limit to another free account. With no other account free, it is refused with the first reset time.
-- **The fallback of cluster check 5:** with `DISPATCHER_AT_ACCOUNT_LIMIT=wait` (the default is `switch`), a Run stays on its account: at the usage limit it waits for that account's reset time, also when another account is free, and later Executions of the Run use the same account. A person can still switch its account. When the operator removes the account from the pool, the Run continues on a free account.
+- **The fallback of cluster check 5:** with `DISPATCHER_AT_ACCOUNT_LIMIT=wait` (the default is `switch`), a Run stays on its account: at the usage limit it waits for that account's reset time, also when another account is free, and later Executions of the Run use the same account. A person can still switch its account, also when the Run is queued and waits for its account. When the operator removes the account from the pool, the Run continues on a free account.
+
+## The first message of a Run's Agent session
+
+The wrapper puts the factory's commands before the task in the first message of each Agent session that an Execution starts, for each Run: `solidtrace check` (the checks of the factory file, or `solidtrace check COMMAND`), `solidtrace pr --title TEXT --description TEXT` (push the Run's branch and open its PR) and `solidtrace report --outcome done|needs-a-person|failed --summary TEXT`. A resume of the Agent session does not give them again. An Issue or a Monitor Run also gets its standing task.
 
 ## Read the Runs
 

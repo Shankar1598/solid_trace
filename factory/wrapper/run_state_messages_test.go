@@ -302,6 +302,96 @@ func TestWithNoAgentSessionToResumeTheNewExecutionStartsItAgainWithTheTaskAndThe
 	}
 }
 
+// The spec (The Run model): "If a resume is not possible, a new Agent
+// session joins the same Run." After a partial or cut transcript, the new
+// Execution starts the harness with a new Agent session id, which becomes
+// the Run's current Agent session. SolidTrace's copy of the old transcript
+// does not change.
+func TestAPartialOrCutTranscriptMakesANewAgentSessionJoinTheRun(t *testing.T) {
+	for _, flags := range []string{"partial", "cut"} {
+		t.Run(flags, func(t *testing.T) {
+			env, ana := newEnv(t)
+			env.Runner.Agent(takeTask, initLine(t), done("First"), reply, result, waitForEnd)
+			id := start(t, env, ana, "Fix the cart")
+			waitFor(t, env, ana, id, dispatcherapi.StateDone)
+			old := sessionOf(t, env, id)
+			before := env.SolidTrace.Stored(old, old+".jsonl")
+			if len(before) == 0 {
+				t.Fatalf("SolidTrace has no transcript of %s", old)
+			}
+			env.SolidTrace.FlagFile(old, old+".jsonl", flags)
+
+			env.Runner.Agent(takeTask, takeTask, initLine(t), done("Fixed both"), reply, result, waitForEnd)
+			sendContinued(t, env, ana, id, "Also fix the tax")
+			waitForExecutions(t, env, ana, id, 2)
+			waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+			reports := eventsOf(env, id, "report")
+			if len(reports) != 2 {
+				t.Fatalf("%d report events, want 2", len(reports))
+			}
+			current, _ := reports[1]["agent.session_id"].(string)
+			if current == "" || current == old {
+				t.Fatalf("the second report's Agent session is %q, want a new one (the old one is %s)", current, old)
+			}
+			deadline := time.Now().Add(10 * time.Second)
+			for len(env.SolidTrace.Stored(current, current+".jsonl")) == 0 {
+				if time.Now().After(deadline) {
+					t.Fatalf("SolidTrace has no transcript of the new Agent session %s", current)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if after := env.SolidTrace.Stored(old, old+".jsonl"); string(after) != string(before) {
+				t.Errorf("the old transcript changed: %d bytes, then %d", len(before), len(after))
+			}
+		})
+	}
+}
+
+// With no Agent session in SolidTrace (the harness never started), the
+// new Execution keeps the Run's Agent session id.
+func TestWithNoAgentSessionInSolidTraceTheRunKeepsItsAgentSession(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Forge.RefuseGit("example/shop")
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	env.Forge.AcceptGit("example/shop")
+	old := sessionOf(t, env, id)
+
+	env.Runner.Agent(takeTask, takeTask, initLine(t), done("Fixed both"), reply, result, waitForEnd)
+	sendContinued(t, env, ana, id, "Also fix the tax")
+	waitForExecutions(t, env, ana, id, 2)
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if reports := eventsOf(env, id, "report"); len(reports) != 1 || reports[0]["agent.session_id"] != old {
+		t.Errorf("the report events %v, want one with the Agent session %s", reports, old)
+	}
+}
+
+// A Run's agent learns the factory's commands in the first message of its
+// Agent session: a Run from the CLI too, not only an Issue Run. A resume
+// of the Agent session does not give them again.
+func TestTheFirstMessageOfARunsAgentSessionNamesTheFactorysCommands(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), done("First"), reply, result, waitForEnd)
+	env.Runner.Agent(takeTask, done("Second"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	sendContinued(t, env, ana, id, "Also fix the tax")
+	waitForExecutions(t, env, ana, id, 2)
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+
+	session := sessionOf(t, env, id)
+	transcript := string(env.SolidTrace.Stored(session, session+".jsonl"))
+	for _, command := range []string{"solidtrace check COMMAND", "solidtrace pr --title", "solidtrace report --outcome"} {
+		if n := strings.Count(transcript, command); n != 1 {
+			t.Errorf("the transcript names %q %d times, want 1 (in the first message):\n%s", command, n, transcript)
+		}
+	}
+	if tools, task := strings.Index(transcript, "solidtrace pr"), strings.Index(transcript, "Fix the cart"); task < tools {
+		t.Errorf("the commands do not come before the task:\n%s", transcript)
+	}
+}
+
 func TestAMessageRestartsTheThirtyDaysOfActivity(t *testing.T) {
 	env, ana := newEnv(t)
 	env.Runner.Agent(takeTask, initLine(t), done("First"), reply, result, waitForEnd)

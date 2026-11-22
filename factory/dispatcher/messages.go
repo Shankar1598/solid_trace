@@ -164,6 +164,11 @@ func acceptMessageIn(tx *sql.Tx, organizationID, runID string, by actor, text st
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return accepted, err
 		}
+		// An Execution that agreed to end takes no message, and its end
+		// cannot continue a Run whose PR has an outcome.
+		if live == "" && prOutcome != "" {
+			return accepted, &notMessageable{state: state, closed: true}
+		}
 	case slices.Contains(continuingStates, state):
 		// The Execution of a stopped Run can still be in its end: the
 		// queue waits for that end, and the end does not change the

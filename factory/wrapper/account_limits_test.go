@@ -223,6 +223,40 @@ func TestTheResetTimeComesFromTheRateLimitEventOrIsOneHourWhenTheHarnessGivesNon
 	}
 }
 
+// The third limit signal: an error result whose text names the limit, with
+// no rate_limit_event and no assistant rate_limit error before it.
+func TestAnErrorResultWithTheLimitTextAloneIsAUsageLimit(t *testing.T) {
+	env, ana := newEnv(t)
+	limited, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "is_error": true, "num_turns": 1,
+		"result": "You've hit your limit · resets 1pm (UTC)", "session_id": "", "uuid": "", "total_cost_usd": 0})
+	env.Runner.Agent(takeTask, initLine(t), string(limited), `{"fake":"exit","code":1}`)
+
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnAccountLimit)
+	if !strings.Contains(run.Reason, factorytest.DefaultAccount) {
+		t.Errorf("reason %q, want the account", run.Reason)
+	}
+	if got := limitOf(t, env, factorytest.DefaultAccount); got != "2026-11-14 10:00 UTC" {
+		t.Errorf("pool-1 is at its limit until %q, want the one-hour default", got)
+	}
+}
+
+// A rejected rate_limit_event before a turn that works (the account uses
+// its overage) is not a usage limit: the result is not an error.
+func TestARejectedRateLimitEventBeforeASuccessfulResultIsNotAUsageLimit(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), rejected(env.Clock.Now().Add(time.Hour)), done("Fixed"), reply, result, waitForEnd)
+
+	id := start(t, env, ana, "Fix the cart")
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if e := onlyExecution(t, run); e.EndReason == dispatcherapi.EndUsageLimit {
+		t.Errorf("the Execution ended with %q", e.EndReason)
+	}
+	if got := limitOf(t, env, factorytest.DefaultAccount); got != "-" {
+		t.Errorf("pool-1 is at its limit until %q after a turn that worked", got)
+	}
+}
+
 func TestAReportBeforeTheUsageLimitSetsTheOutcomeAndTheAccountIsAtItsLimit(t *testing.T) {
 	env, ana := newEnv(t)
 	reset := env.Clock.Now().Add(time.Hour)
@@ -307,6 +341,45 @@ func TestSwitchAccountMovesAWaitingRunToAFreeAccount(t *testing.T) {
 	// switches.
 	if got := switchAccount(env, ana, id); got.Code == 0 || !strings.Contains(got.Stderr, "waits on an account limit") {
 		t.Errorf("switch-account on a done Run: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+}
+
+// With the wait setting, a queued Run whose own account is at its limit
+// stays queued and waits for it; a person can still switch its account.
+func TestWithTheWaitSettingSwitchAccountMovesAQueuedRunThatWaitsForItsAccount(t *testing.T) {
+	env, ana := newEnv(t)
+	waitAtLimit(t, env)
+	env.AddAccount("pool-2", secondToken)
+	env.Runner.Agent(takeTask, initLine(t), done("Fixed"), reply, result, waitForEnd)
+	env.Runner.Agent(takeTask, done("Fixed the tax on pool-2"), reply, result, waitForEnd)
+
+	id := start(t, env, ana, "Fix the cart")
+	if got := onlyExecution(t, waitFor(t, env, ana, id, dispatcherapi.StateDone)).Account; got != factorytest.DefaultAccount {
+		t.Fatalf("the Run is on %q", got)
+	}
+	env.MarkAtLimit(factorytest.DefaultAccount, env.Clock.Now().Add(time.Hour))
+	if got := ana.CLI("message", "--dispatcher", env.URL(), id, "Also fix the tax"); got.Code != 0 {
+		t.Fatalf("solidtrace message: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	time.Sleep(300 * time.Millisecond)
+	run := getRun(t, ana, id)
+	if run.State != dispatcherapi.StateQueued || len(run.Executions) != 1 || !strings.Contains(run.Reason, "waits for it") {
+		t.Fatalf("the Run is %s (%s) with %d Executions, want queued for its account", run.State, run.Reason,
+			len(run.Executions))
+	}
+	env.Clock.Advance(time.Second)
+
+	got := switchAccount(env, ana, id)
+	if got.Code != 0 || !strings.Contains(got.Stdout, "pool-2") {
+		t.Fatalf("solidtrace switch-account: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	run = waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 || run.Executions[1].Account != "pool-2" || run.Summary != "Fixed the tax on pool-2" {
+		t.Fatalf("the Run is done with %q in %+v", run.Summary, run.Executions)
+	}
+	switched := waitForEvent(t, env, id, "account_switched")
+	if switched["account.old"] != factorytest.DefaultAccount || switched["account.new"] != "pool-2" {
+		t.Errorf("the account_switched event: %v", switched)
 	}
 }
 

@@ -95,8 +95,13 @@ func (s *store) accounts(now time.Time) ([]Account, error) {
 }
 
 // markAtLimit marks an account at its usage limit until the reset time.
+// It keeps a later reset time that the account has: a limit end with no
+// reset time from the harness (the one-hour default) does not make a
+// reset time that the harness gave before shorter. A limit that ended is
+// always earlier than a new reset time.
 func (s *store) markAtLimit(name string, until time.Time) error {
-	res, err := s.db.Exec(`UPDATE accounts SET limited_until = ? WHERE name = ?`, until.UnixMicro(), name)
+	res, err := s.db.Exec(`UPDATE accounts SET limited_until = MAX(COALESCE(limited_until, 0), ?) WHERE name = ?`,
+		until.UnixMicro(), name)
 	if err != nil {
 		return err
 	}
@@ -339,7 +344,8 @@ type notSwitchable struct{ why string }
 func (e *notSwitchable) Error() string { return e.why }
 
 // switchAccount moves a Run of the Organization that waits on an account
-// limit to another free account, in one transaction: the Run is queued,
+// limit (with the wait setting, also a queued Run that waits for its own
+// account) to another free account, in one transaction: the Run is queued,
 // and its next Execution gets that account. It gives the old and the new
 // account, errNotFound or a *notSwitchable.
 func (s *store) switchAccount(organizationID, runID string, by actor, at time.Time) (old, next string, err error) {
@@ -358,7 +364,16 @@ func (s *store) switchAccount(organizationID, runID string, by actor, at time.Ti
 	if err != nil {
 		return "", "", err
 	}
-	if state != dispatcherapi.StateWaitingOnAccountLimit || closed {
+	waits := state == dispatcherapi.StateWaitingOnAccountLimit
+	if state == dispatcherapi.StateQueued && s.waitAtLimit {
+		// With the wait setting, a queued Run waits for its own account
+		// at its limit (accountFor holds it): it also waits on an account
+		// limit.
+		if waits, err = s.heldForAccount(tx, runID, at); err != nil {
+			return "", "", err
+		}
+	}
+	if !waits || closed {
 		return "", "", &notSwitchable{"the Run is " + state + ": only a Run that waits on an account limit can switch " +
 			"its account"}
 	}
@@ -382,6 +397,18 @@ func (s *store) switchAccount(organizationID, runID string, by actor, at time.Ti
 		return "", "", err
 	}
 	return old, next, s.commit(tx)
+}
+
+// heldForAccount is true when the queued Run has no Execution that has
+// not ended, and accountFor gives it no account at at.
+func (s *store) heldForAccount(tx *sql.Tx, runID string, at time.Time) (bool, error) {
+	var live bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM executions WHERE run_id = ? AND state != ?)`, runID,
+		dispatcherapi.ExecutionEnded).Scan(&live); err != nil || live {
+		return false, err
+	}
+	account, _, err := s.accountFor(tx, runID, at)
+	return account == "", err
 }
 
 // switchAccount is a person's switch of the account of a Run that waits
@@ -468,12 +495,15 @@ func AccountsCommand(args []string, getenv func(string) string, now func() time.
 	if verb == "add" {
 		// Read to the end of the first line only: an operator pastes the
 		// token and presses Enter, and stdin stays open.
-		line, err := bufio.NewReader(io.LimitReader(stdin, 64<<10)).ReadString('\n')
+		const maxLine = 64 << 10
+		line, err := bufio.NewReader(io.LimitReader(stdin, maxLine+1)).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return fail("read the token from stdin: %v", err)
 		}
 		token = strings.TrimSpace(line)
 		switch {
+		case len(line) > maxLine:
+			return fail("the first line on stdin is longer than 64 KB: give only the token that 'claude setup-token' prints")
 		case token == "":
 			return fail("give the account's token on stdin: the token that 'claude setup-token' prints")
 		case strings.HasPrefix(token, "sk-ant-api"):
@@ -527,7 +557,8 @@ func AccountsCommand(args []string, getenv func(string) string, now func() time.
 		if !removed {
 			return fail("there is no account %s in the pool", name)
 		}
-		fmt.Fprintf(stdout, "The account %s is out of the pool. Its live Executions keep their token.\n", name)
+		fmt.Fprintf(stdout, "The account %s is out of the pool. Its running Executions keep their token; "+
+			"the Run of an Execution that has not taken its task yet goes back in the queue.\n", name)
 	case "list":
 		list, err := s.accounts(now())
 		if err != nil {

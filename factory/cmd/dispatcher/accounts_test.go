@@ -96,6 +96,38 @@ func TestTheOperatorCommandRefusesAnAbsentTokenAndAnAPIKey(t *testing.T) {
 	}
 }
 
+// A first line longer than the command reads is refused, not cut to a
+// token that does not work. A line of the longest length is a token.
+func TestAddRefusesATokenLineLongerThan64KB(t *testing.T) {
+	db := newDatabase(t)
+	long := "sk-ant-oat01-" + strings.Repeat("a", 64<<10)
+	if code, _, errs := operator(t, db, long+"\n", "add", "ana"); code != 1 || !strings.Contains(errs, "64 KB") {
+		t.Errorf("a token line over 64 KB: exit %d, stderr %q", code, errs)
+	}
+	if _, out, _ := operator(t, db, "", "list"); strings.Contains(out, "ana") {
+		t.Errorf("a refused account is in the list:\n%s", out)
+	}
+	longest := "sk-ant-oat01-" + strings.Repeat("a", 64<<10-len("sk-ant-oat01-")-1)
+	if code, out, errs := operator(t, db, longest+"\n", "add", "ana"); code != 0 {
+		t.Errorf("a token line of 64 KB with its newline: exit %d\n%s%s", code, out, errs)
+	}
+}
+
+// The remove says what happens to the account's Executions: a running one
+// keeps its token, and one that has not taken its task goes back in the
+// queue.
+func TestRemoveSaysWhatHappensToTheAccountsExecutions(t *testing.T) {
+	db := newDatabase(t)
+	if code, out, errs := operator(t, db, anaToken+"\n", "add", "ana"); code != 0 {
+		t.Fatalf("add: exit %d\n%s%s", code, out, errs)
+	}
+	code, out, errs := operator(t, db, "", "remove", "ana")
+	if code != 0 || !strings.Contains(out, "running Executions keep their token") ||
+		!strings.Contains(out, "back in the queue") {
+		t.Errorf("remove: exit %d\n%s%s", code, out, errs)
+	}
+}
+
 func TestTheOperatorCommandNeedsOnlyTheDatabaseAndTheKey(t *testing.T) {
 	var out, errs bytes.Buffer
 	code := command(context.Background(), []string{"accounts", "list"}, env(nil), strings.NewReader(""), &out, &errs)
