@@ -296,3 +296,100 @@ func TestTheDispatcherRefusesAnInterruptOfARunWithNoLiveExecution(t *testing.T) 
 		t.Errorf("a refused interrupt changed the Run: %s, %d Executions", run.State, len(run.Executions))
 	}
 }
+
+// betweenTurns starts a Run whose first turn ends while a person's
+// message is written but not delivered: the wrapper is then in the wait
+// for a new turn that delivers it (the give-back wait), and no turn runs.
+// The agent then waits until open, and then does the rest.
+func betweenTurns(t *testing.T, env *factorytest.Env, ana *factorytest.Person, rest ...string) (id, message string,
+	open func()) {
+	t.Helper()
+	here, reached := marker(t)
+	wait, openFirst := gate(t)
+	there, held := marker(t)
+	hold, open := gate(t)
+	env.Runner.Agent(append([]string{takeTask, initLine(t), here, wait, result, there, hold}, rest...)...)
+	id = start(t, env, ana, "Fix the cart")
+	reached()
+	message = send(t, env, ana, id, "Also fix the tax")
+	waitForMessageEvent(t, env, id, message, "message_written")
+	openFirst()
+	held()
+	time.Sleep(settle)
+	return id, message, open
+}
+
+func TestAnInterruptWithNoMessageBetweenTurnsEndsTheExecutionAtOnce(t *testing.T) {
+	env, ana := newEnv(t)
+	id, message, open := betweenTurns(t, env, ana, thenEOF)
+	defer open()
+
+	// The give-back wait does not pass: the agent machine's clock stays.
+	interrupt(t, env, ana, id)
+
+	waitUntil(t, "the end of the first Execution", func() bool {
+		run := getRun(t, ana, id)
+		return len(run.Executions) > 0 && run.Executions[0].State == dispatcherapi.ExecutionEnded
+	})
+	if first := getRun(t, ana, id).Executions[0]; first.EndReason != dispatcherapi.EndInterrupted {
+		t.Errorf("the first Execution ended with %q, want %q", first.EndReason, dispatcherapi.EndInterrupted)
+	}
+	if delivered := messageEvents(env, id, message)["message_delivered"]; len(delivered) != 0 {
+		t.Errorf("the message that no turn took is delivered: %v", delivered)
+	}
+}
+
+func TestAnInterruptWithAMessageBetweenTurnsWritesTheMessageAtOnceAndTheExecutionContinues(t *testing.T) {
+	env, ana := newEnv(t)
+	id, message, open := betweenTurns(t, env, ana, takeTask, takeTask,
+		reportStep("--outcome", "done", "--summary", "Used the new API"), reply, result, waitForEnd)
+
+	interrupt(t, env, ana, id, "Use the new API")
+
+	// No turn runs, so no interrupt request goes and no result comes:
+	// the message is written at once.
+	mid, _ := waitForEvent(t, env, id, "interrupt")["message.id"].(string)
+	if mid == "" {
+		t.Fatal("the interrupt event has no message id")
+	}
+	waitForMessageEvent(t, env, id, mid, "message_written")
+	stillRunning(t, env, ana, id, "the interrupt between turns")
+	open()
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if e := onlyExecution(t, run); e.EndReason != dispatcherapi.EndReported {
+		t.Errorf("the Execution ended with %q, want %q", e.EndReason, dispatcherapi.EndReported)
+	}
+	for _, m := range []string{message, mid} {
+		waitForMessageEvent(t, env, id, m, "message_delivered")
+	}
+}
+
+func TestAnInterruptWithAMessageThatGetsNoResultWritesTheMessageAfterTheWait(t *testing.T) {
+	env, ana := newEnv(t)
+	here, reached := marker(t)
+	wait, open := gate(t)
+	// A tool call that the interrupt does not stop: no result comes.
+	env.Runner.Agent(takeTask, initLine(t), here, wait, takeTask,
+		reportStep("--outcome", "done", "--summary", "Used the new API"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	reached()
+	interrupt(t, env, ana, id, "Use the new API")
+	mid, _ := waitForEvent(t, env, id, "interrupt")["message.id"].(string)
+	time.Sleep(settle)
+
+	env.Clock.Advance(9 * time.Second)
+	stillRunning(t, env, ana, id, "9 s with no result after the interrupt")
+	if written := messageEvents(env, id, mid)["message_written"]; len(written) != 0 {
+		t.Fatalf("the message is written before the interrupt's wait passed: %v", written)
+	}
+	env.Clock.Advance(time.Second)
+	waitForMessageEvent(t, env, id, mid, "message_written")
+	stillRunning(t, env, ana, id, "the interrupt's wait")
+	open()
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if e := onlyExecution(t, run); e.EndReason != dispatcherapi.EndReported {
+		t.Errorf("the Execution ended with %q, want %q", e.EndReason, dispatcherapi.EndReported)
+	}
+	waitForMessageEvent(t, env, id, mid, "message_delivered")
+}

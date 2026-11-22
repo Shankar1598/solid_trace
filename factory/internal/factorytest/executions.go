@@ -442,10 +442,9 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		before(x.Execution)
 	}
 	workload := Workload(x.Execution)
+	// The JWT is written when the wrapper starts (startWrapper), at the
+	// clock of that time, as Nomad gives one to an allocation that starts.
 	identity := filepath.Join(r.dir, "identity-"+x.Execution+".jwt")
-	if err := os.WriteFile(identity, []byte(r.Identity(workload)), 0o600); err != nil {
-		return "", err
-	}
 	harness := "FAKE_HARNESS_STREAM=turn-with-tool-call"
 	r.mu.Lock()
 	if len(r.scripts) > 0 {
@@ -530,7 +529,19 @@ func (r *Runner) Dispatch(ctx context.Context, x dispatcher.RunnerExecution) (st
 		return workload, nil
 	}
 	r.mu.Unlock()
-	return workload, r.Fake.Dispatch(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
+	return workload, r.startWrapper(ctx, fakerunner.Execution{ID: x.Execution, Env: env})
+}
+
+// startWrapper writes the Execution's workload identity JWT, at the
+// environment's clock, and starts its wrapper. A wrapper that waited for
+// a machine (HoldMachines) while the clock moved gets a JWT that is valid
+// now, not one of its dispatch.
+func (r *Runner) startWrapper(ctx context.Context, x fakerunner.Execution) error {
+	path := filepath.Join(r.dir, "identity-"+x.ID+".jwt")
+	if err := os.WriteFile(path, []byte(r.Identity(Workload(x.ID))), 0o600); err != nil {
+		return err
+	}
+	return r.Fake.Dispatch(ctx, x)
 }
 
 // HoldMachines makes the Runner have no machine for the next
@@ -551,7 +562,7 @@ func (r *Runner) GiveMachines() {
 	r.held, r.waiting = false, nil
 	r.mu.Unlock()
 	for _, x := range waiting {
-		if err := r.Fake.Dispatch(context.Background(), x); err != nil {
+		if err := r.startWrapper(context.Background(), x); err != nil {
 			r.env.t.Fatal(err)
 		}
 	}

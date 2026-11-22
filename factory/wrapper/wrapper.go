@@ -187,7 +187,8 @@ func execute(ctx context.Context, cfg *config, boundary killBoundary, runUser ru
 	go func() { ran <- e.run(work, environ) }()
 	select {
 	case end := <-ran:
-		if e.owner.CompareAndSwap(ownerNone, ownerEnd) {
+		// run took the end, unless the preemption handler had it first.
+		if e.owner.Load() == ownerEnd {
 			stopWatching()
 			next, err := c.end(ctx, end)
 			if err != nil {
@@ -387,9 +388,10 @@ func (e *execution) interactive() bool { return e.task.Form == dispatcherapi.For
 func (e *execution) run(ctx context.Context, environ []string) dispatcherapi.ExecutionEnd {
 	end := e.work(ctx, environ)
 	e.endProcedure(context.Background())
-	// After the preempting marker, the preemption handler pushes and
-	// deletes: this end call does not go.
-	if e.isMarked() {
+	// The usual end takes the end before its push: a notice or a signal
+	// after this starts no handler. When the preemption handler took it
+	// first, the handler pushes and ends: this end call does not go.
+	if !e.owner.CompareAndSwap(ownerNone, ownerEnd) {
 		return end
 	}
 	// Before the end: each commit that is not pushed, and no secret file.
@@ -965,6 +967,9 @@ func (e *execution) follow(stdout *os.File, exited <-chan struct{}) dispatcherap
 		select {
 		case <-e.interrupts:
 			switch {
+			case !e.inbox.holds():
+				// A signal whose interrupt an earlier result settled:
+				// that result released its message too.
 			case pending != "":
 				// The turn ended before the interrupt: no turn stops, and
 				// no result comes.
