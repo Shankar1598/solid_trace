@@ -91,6 +91,40 @@ func TestAnAgentSessionIDIsNotAddedToTheRunOfAnEndedExecution(t *testing.T) {
 	}
 }
 
+// A new current Agent session (the resume was not possible) joins the
+// running Execution's Run and becomes its current one. An ended
+// Execution's Run gets none.
+func TestANewCurrentAgentSessionJoinsTheRunOfARunningExecutionOnly(t *testing.T) {
+	w := newAdminWorld(t)
+	d, now := w.d, w.clock()
+	startedExecution(t, w)
+	before, old, err := d.store.runSessions("r-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.store.newCurrentSession("e-1", now); err != nil {
+		t.Fatal(err)
+	}
+	ids, current, err := d.store.runSessions("r-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current == old || !sessionIDPattern.MatchString(current) || len(ids) != len(before)+1 ||
+		ids[len(ids)-1] != current || ids[0] != old {
+		t.Errorf("the Run's Agent sessions are %v, current %q; before %v, current %q", ids, current, before, old)
+	}
+
+	if err := d.store.endExecution("e-1", dispatcherapi.ExecutionEnd{Reason: dispatcherapi.EndHarnessExited}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.store.newCurrentSession("e-1", now); !errors.Is(err, errEnded) {
+		t.Fatalf("a new current Agent session for an ended Execution: %v, want errEnded", err)
+	}
+	if after, still, err := d.store.runSessions("r-1"); err != nil || len(after) != len(ids) || still != current {
+		t.Errorf("after the end: %v, current %q (%v)", after, still, err)
+	}
+}
+
 // The end step revokes only the tokens that are not revoked yet: an end
 // step that runs again, or a token that a first end step revoked, sends
 // no second revoke to SolidTrace.

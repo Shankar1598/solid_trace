@@ -656,9 +656,14 @@ const (
 // TokenRequest is the body of the wrapper's token call. A new Agent
 // session id (a /clear, or a second Claude Code process) is added to the
 // Run first, and the Run's current Agent session stays; with none, the call
-// gives a new token for the same Agent sessions.
+// gives a new token for the same Agent sessions. NewSession is the call of
+// an Execution that cannot resume the Run's current Agent session (SolidTrace
+// has only a partial or cut transcript of it): the Dispatcher makes a new
+// Agent session id, adds it to the Run as its current one, and gives it as
+// SessionToken.SessionID. It takes no AgentSessionID.
 type TokenRequest struct {
 	AgentSessionID string `json:"agent_session_id,omitempty"`
+	NewSession     bool   `json:"new_session,omitempty"`
 }
 
 // End reasons that the wrapper gives.

@@ -149,7 +149,12 @@ var errRefused = errors.New("the Dispatcher refused the Agent session")
 // ask is the token call: it adds sessionID ("" adds none) to the Run, and
 // keeps the new token.
 func (u *uploads) ask(ctx context.Context, sessionID string) error {
-	a, err := u.client.call(ctx, "token", dispatcherapi.TokenRequest{AgentSessionID: sessionID})
+	return u.askFor(ctx, dispatcherapi.TokenRequest{AgentSessionID: sessionID})
+}
+
+// askFor is the token call with req, and keeps the new token.
+func (u *uploads) askFor(ctx context.Context, req dispatcherapi.TokenRequest) error {
+	a, err := u.client.call(ctx, "token", req)
 	if err != nil {
 		return err
 	}

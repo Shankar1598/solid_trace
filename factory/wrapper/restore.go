@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/solidtrace/cli/agentapi"
+	"github.com/solidtrace/cli/dispatcherapi"
 )
 
 // The restore of the Agent session directory. An Execution that resumes
@@ -40,12 +41,38 @@ var errNoAgentSession = errors.New("SolidTrace has no Agent session")
 // directory. It is true when the transcript (<session id>.jsonl) is back,
 // so that the harness can resume it. It is false, with no error, when
 // SolidTrace has no Agent session or no complete transcript of it: the
-// harness then starts the Agent session again, with the task. It writes
+// harness then starts an Agent session with the task, under the session
+// id that restore gives. With no Agent session in SolidTrace, that is the
+// Run's current id. With a partial or cut transcript, SolidTrace keeps the
+// old transcript's end offsets, so a new Agent session joins the Run: the
+// Dispatcher gives a new id and makes it the Run's current one. It writes
 // through the open project directory (prepare), and gives each file and
 // folder that it makes to the run user.
-func (u *uploads) restore(ctx context.Context, r runUser) (bool, error) {
+func (u *uploads) restore(ctx context.Context, r runUser) (resumed bool, session string, err error) {
+	session = u.task.SessionID
+	found, resumed, err := u.download(ctx, r)
+	if err != nil || resumed || !found {
+		return resumed, session, err
+	}
+	if err := u.askFor(ctx, dispatcherapi.TokenRequest{NewSession: true}); err != nil {
+		return false, "", fmt.Errorf("get a new Agent session id for the Run: %w", err)
+	}
+	u.mu.Lock()
+	session = u.token.SessionID
+	u.mu.Unlock()
+	if !sessionIDShape(session) || session == u.task.SessionID {
+		return false, "", fmt.Errorf("the Dispatcher gave %q as the new Agent session id", session)
+	}
+	fmt.Fprintf(u.log, "wrapper: restore: the new Agent session %s joins the Run\n", session)
+	return false, session, nil
+}
+
+// download downloads the Run's current Agent session into the project
+// directory. found is true when SolidTrace has the Agent session, and
+// restored when its complete transcript is back.
+func (u *uploads) download(ctx context.Context, r runUser) (found, restored bool, err error) {
 	if !sessionIDShape(u.task.SessionID) {
-		return false, fmt.Errorf("%q is not an Agent session id", u.task.SessionID)
+		return false, false, fmt.Errorf("%q is not an Agent session id", u.task.SessionID)
 	}
 	ctx, cancel := context.WithTimeout(ctx, restoreTimeout)
 	defer cancel()
@@ -58,29 +85,29 @@ func (u *uploads) restore(ctx context.Context, r runUser) (bool, error) {
 		case errors.As(err, &answer) && answer.Status == http.StatusNotFound:
 			fmt.Fprintf(u.log, "wrapper: restore: %v %s: the harness starts it again\n", errNoAgentSession,
 				u.task.SessionID)
-			return false, nil
+			return false, false, nil
 		case errors.As(err, &answer) && answer.Status == http.StatusServiceUnavailable && time.Now().Before(deadline):
 			wait := time.Duration(max(answer.RetryAfter, 1)) * time.Second
 			select {
 			case <-ctx.Done():
-				return false, ctx.Err()
+				return false, false, ctx.Err()
 			case <-time.After(wait):
 			}
 			continue
 		case err != nil:
-			return false, err
+			return false, false, err
 		}
 		defer download.Archive.Close()
-		restored, err := extract(download.Archive, u.dir, r.giveIn, u.log)
+		written, err := extract(download.Archive, u.dir, r.giveIn, u.log)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
-		if !restored[u.task.SessionID+".jsonl"] {
-			fmt.Fprintf(u.log, "wrapper: restore: SolidTrace has no complete transcript of the Agent session %s: "+
-				"the harness starts it again\n", u.task.SessionID)
-			return false, nil
+		if !written[u.task.SessionID+".jsonl"] {
+			fmt.Fprintf(u.log, "wrapper: restore: SolidTrace has no complete transcript of the Agent session %s\n",
+				u.task.SessionID)
+			return true, false, nil
 		}
-		return true, nil
+		return true, true, nil
 	}
 }
 

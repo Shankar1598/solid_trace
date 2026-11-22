@@ -140,11 +140,14 @@ func (e *execution) setup(ctx context.Context, environ []string) error {
 	// Agent session directory of the Run, so that a resume works on this
 	// machine.
 	if e.task.Resume {
-		resumed, err := e.uploads.restore(ctx, e.runUser)
+		resumed, session, err := e.uploads.restore(ctx, e.runUser)
 		if err != nil {
 			return fmt.Errorf("restore the Agent session %s: %w", e.task.SessionID, err)
 		}
 		e.resumed = resumed
+		// A new Agent session joins the Run when its transcript is not
+		// complete: the harness starts under the new id.
+		e.task.SessionID = session
 	}
 	if e.task.Setup != "" {
 		return e.runSetupCommand(ctx, environ)

@@ -214,9 +214,16 @@ func (d *Dispatcher) token(w http.ResponseWriter, r *http.Request, e storedExecu
 		writeProblem(w, http.StatusBadRequest, "an Agent session id is a UUID in lower case, not "+quote(req.AgentSessionID))
 		return
 	}
+	if req.AgentSessionID != "" && req.NewSession {
+		writeProblem(w, http.StatusBadRequest, "a call with new_session takes no agent_session_id")
+		return
+	}
 	started, err := d.store.runningSince(e.id)
-	if err == nil && req.AgentSessionID != "" {
+	switch {
+	case err == nil && req.AgentSessionID != "":
 		err = d.store.addRunSession(e.id, req.AgentSessionID, d.now())
+	case err == nil && req.NewSession:
+		err = d.store.newCurrentSession(e.id, d.now())
 	}
 	var tok dispatcherapi.SessionToken
 	if err == nil {
@@ -295,8 +302,8 @@ func (s *store) runningSince(executionID string) (time.Time, error) {
 // which the next Execution resumes and which has evidence/): a new file in
 // the project directory can be the transcript of a second Claude Code
 // process that a tool started. Only a sure signal moves the current one
-// (the take-over, ticket 61). An id that the Run has is no change; an id
-// of another Run gives errOtherRun.
+// (newCurrentSession, after a resume that is not possible). An id that
+// the Run has is no change; an id of another Run gives errOtherRun.
 func (s *store) addRunSession(executionID, sessionID string, at time.Time) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -329,6 +336,42 @@ func (s *store) addRunSession(executionID, sessionID string, at time.Time) error
 	}
 	if _, err := tx.Exec(`INSERT INTO run_sessions (session_id, run_id, added_at) VALUES (?, ?, ?)`,
 		sessionID, runID, at.UnixMicro()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// newCurrentSession adds a new Agent session id to the running
+// Execution's Run and makes it the Run's current Agent session: the
+// Execution could not resume the current one (the spec, The Run model: "If
+// a resume is not possible, a new Agent session joins the same Run"). The
+// later Executions resume the new one, and it has the Run's evidence/.
+func (s *store) newCurrentSession(executionID string, at time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var runID, state string
+	if err := tx.QueryRow(`SELECT run_id, state FROM executions WHERE id = ?`, executionID).Scan(&runID, &state); err != nil {
+		return err
+	}
+	if state != dispatcherapi.ExecutionRunning {
+		return errEnded
+	}
+	var count int
+	if err := tx.QueryRow(`SELECT count(*) FROM run_sessions WHERE run_id = ?`, runID).Scan(&count); err != nil {
+		return err
+	}
+	if count >= maxRunSessions {
+		return errTooManySessions
+	}
+	id := newSessionID()
+	if _, err := tx.Exec(`INSERT INTO run_sessions (session_id, run_id, added_at) VALUES (?, ?, ?)`,
+		id, runID, at.UnixMicro()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE runs SET session_id = ? WHERE id = ?`, id, runID); err != nil {
 		return err
 	}
 	return tx.Commit()
