@@ -22,7 +22,8 @@ const maxSkipped = 200
 // it does the end call.
 const (
 	ownerNone int32 = iota
-	// ownerEnd is the usual end, after the harness and the end procedure.
+	// ownerEnd is the usual end, from the end of its end procedure on
+	// (run takes it before the push).
 	ownerEnd
 	// ownerPreemption is the preemption handler, from its trigger on.
 	ownerPreemption
@@ -104,8 +105,8 @@ func (e *execution) watch(ctx context.Context, notice machineNotice, signals <-c
 	}
 }
 
-// trigger starts the preemption handler, once, unless the usual end call
-// started.
+// trigger starts the preemption handler, once, unless the usual end took
+// the end (after its end procedure, before its push).
 func (e *execution) trigger(reason string, at time.Time) {
 	if !e.owner.CompareAndSwap(ownerNone, ownerPreemption) {
 		return

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -361,6 +362,53 @@ func TestTheDispatcherRefusesAPreemptionCallThatIsNotValid(t *testing.T) {
 	}
 	if slices.Contains(kinds(env.RunEvents(id)), "preempting") {
 		t.Errorf("a refused call made a preempting event: %v", kinds(env.RunEvents(id)))
+	}
+}
+
+// A notice that comes after the end procedure of the usual end, while it
+// pushes the Run's branch: the usual end has the end, so no preemption
+// handler starts, and the usual end call goes.
+func TestANoticeDuringThePushBeforeTheEndStartsNoPreemptionHandler(t *testing.T) {
+	env, ana := newEnv(t)
+	dir := env.Runner.SharedDir("slow-push")
+	pushing, gate := filepath.Join(dir, "pushing"), filepath.Join(dir, "gate")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = push ] && [ ! -e " + gate + " ]; then touch " + pushing +
+		"; while [ ! -e " + gate + " ]; do sleep 0.05; done; fi\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.PathFirst(dir)
+	env.Runner.Agent(takeTask, initLine(t), commitStep, reportStep("--outcome", "done", "--summary", "Fixed"), reply,
+		result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitUntil(t, "the push before the end", func() bool {
+		_, err := os.Stat(pushing)
+		return err == nil
+	})
+	execution := getRun(t, ana, id).Executions[0].ID
+
+	env.Runner.Preempt(execution)
+	time.Sleep(settle)
+	if err := os.WriteFile(gate, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if e := onlyExecution(t, run); e.EndReason != dispatcherapi.EndReported {
+		t.Errorf("the Execution ended with %q, want %q", e.EndReason, dispatcherapi.EndReported)
+	}
+	awaitEvent(t, env, id, "execution_ended")
+	for _, kind := range []string{"preempting", "preemption"} {
+		if slices.Contains(kinds(env.RunEvents(id)), kind) {
+			t.Errorf("a %s event after the usual end took the end: %v", kind, kinds(env.RunEvents(id)))
+		}
+	}
+	if code := waitForExit(t, env, execution); code != 0 {
+		t.Errorf("the wrapper exited with code %d", code)
 	}
 }
 
