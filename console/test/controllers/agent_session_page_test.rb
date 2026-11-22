@@ -215,6 +215,46 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
+  test "each Organization with an Agent Project reads the Agent sessions of its own, never another Organization's" do
+    own = stub_session(user_id: @admin.id)
+    own_line = stub_line
+    other = create(:organization, slug: "other")
+    other_admin = create(:user, name: "Olga")
+    create(:organization_user, organization: other, user: other_admin, role: :admin)
+    other_project = AgentSessionsSettings.turn_on(organization: other, user: other_admin, entries: [ "github.com/other/app" ], confirmed: "1").project
+    asked = stub_request(:post, "#{EventStore.base_url}/api/#{other_project.id}/agent-sessions/#{CART}")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: { agent_session: header(user_id: other_admin.id), subagents: [], steps: [ step("person", "Other's step") ], next_cursor: nil }.to_json)
+    asked_line = stub_request(:post, "#{EventStore.base_url}/api/#{other_project.id}/agent-sessions/#{CART}/line")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { line: "the other's line", cut: false }.to_json)
+    sign_in_as(other_admin)
+
+    get agent_session_path(org_slug: "other", id: CART), headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    assert_response :success
+    assert_equal [ "Other's step" ], response.parsed_body.dig("props", "agent_session", "steps").map { |s| s["text"] }
+
+    get agent_session_timeline_path(org_slug: "other", id: CART), as: :json
+    assert_response :success
+    get agent_session_line_path(org_slug: "other", id: CART, path: "session.jsonl", version: 1, offset: 120), as: :json
+    assert_response :success
+    assert_equal "the other's line", response.parsed_body["line"]
+
+    assert_requested asked, times: 2
+    assert_requested asked_line
+    assert_not_requested own
+    assert_not_requested own_line
+  end
+
+  test "a raw line with no path, or a blank one, is 404 and does not go to EventStore" do
+    stub_line
+    sign_in_as(@member)
+    get agent_session_line_path(org_slug: "acme", id: CART, version: 1, offset: 120), as: :json
+    assert_response :not_found
+    get agent_session_line_path(org_slug: "acme", id: CART, path: " ", version: 1, offset: 120), as: :json
+    assert_response :not_found
+    assert_not_requested :post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}/line"
+  end
+
   test "EventStore down shows the page with the error" do
     stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}").to_return(status: 500, body: "boom")
     sign_in_as(@member)

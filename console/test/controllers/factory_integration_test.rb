@@ -220,6 +220,17 @@ class FactoryIntegrationTest < ActionDispatch::IntegrationTest
     assert_match(/solidtrace senders delete snd_1/, flash[:alert])
   end
 
+  test "a sender that the Dispatcher refuses to delete for any reason but 'no such sender' stays, and Console warns" do
+    integration = factory_integration
+    stub_request(:delete, "#{SENDERS_URL}/snd_1").to_return(json({ error: "the sender is busy" }, status: 500))
+    sign_in_as(@admin)
+
+    delete integration_url(integration, org_slug: @organization.slug)
+
+    assert_not Integration.exists?(integration.id)
+    assert_match(/could not delete its sender snd_1 at the Dispatcher: the sender is busy/, flash[:alert])
+  end
+
   test "with no Dispatcher URL any more, deleting the Integration warns that the sender stays" do
     integration = factory_integration
     InstanceSetting.current.update!(dispatcher_url: nil)

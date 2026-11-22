@@ -324,6 +324,28 @@ class RunPageTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_match "attachment", response.headers["Content-Disposition"]
+    # A download is never served with the file's own type, so a browser opens none of it as a page.
+    assert_equal "application/octet-stream", response.media_type
+  end
+
+  test "each Organization with an Agent Project reads the Runs of its own, never another Organization's" do
+    other = create(:organization, slug: "other")
+    other_admin = create(:user)
+    create(:organization_user, organization: other, user: other_admin, role: :admin)
+    other_project = AgentSessionsSettings.turn_on(organization: other, user: other_admin,
+      entries: [ "github.com/other/app" ], confirmed: "1").project
+    own = stub_run
+    asked = stub_request(:get, "#{EventStore.base_url}/api/#{other_project.id}/runs/run_1")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: { run: { id: "run_1", state: "running", closed: false }, events: [] }.to_json)
+    sign_in_as(other_admin)
+
+    get run_path(org_slug: "other", id: "run_1"), headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+
+    assert_response :success
+    assert_equal "running", response.parsed_body.dig("props", "run", "run", "state")
+    assert_requested asked
+    assert_not_requested own
   end
 
   test "a file that no report of the Run names is 404, and EventStore is not asked" do

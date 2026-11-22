@@ -19,6 +19,17 @@ class ProjectTest < ActiveSupport::TestCase
     assert_not create(:project).has_attribute?(:log_file_order)
   end
 
+  test "captured repositories are a setting of the Agent Project only" do
+    project = build(:project, captured_repositories: [ "github.com/acme/shop" ])
+
+    assert_not project.valid?
+    assert_includes project.errors[:captured_repositories], "are a setting of the Agent Project only"
+
+    project.agent = true
+
+    assert project.valid?
+  end
+
   test "a Project needs a name" do
     project = build(:project, name: "", slug: nil)
 
