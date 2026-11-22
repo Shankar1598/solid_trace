@@ -431,9 +431,10 @@ func TestALostMachineDuringTheTakeOverMakesTheRunWaitOnAPersonWithTheReason(t *t
 // A core that is not in the Execution's cgroup (a person's hc connect
 // started it before the wrapper's) would run the take-over's harness
 // outside the kill boundary, with the account's token: the wrapper kills
-// that core before it starts a terminal, and the take-over does not
-// start.
-func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.T) {
+// that core before it starts a terminal, and starts its own core in the
+// cgroup. The early connection drops; the take-over goes on, and no
+// stray core stays.
+func TestAnHcCoreOutsideTheExecutionsCgroupIsKilledAndTheTakeOverStartsItsOwnCore(t *testing.T) {
 	env, ana := newEnv(t)
 	var attr *syscall.SysProcAttr
 	if os.Geteuid() == 0 {
@@ -454,21 +455,32 @@ func TestATakeOverWithAnHcCoreOutsideTheExecutionsCgroupDoesNotStart(t *testing.
 	id := inToolCallRun(t, env, ana)
 	takeOverCLI(t, env, ana, id)
 
-	run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson)
-	if !strings.Contains(run.Reason, "take-over ended") || !strings.Contains(run.Reason, "not in the Execution's cgroup") {
-		t.Errorf("the reason is %q", run.Reason)
-	}
-	if e := run.Executions[1]; !strings.HasPrefix(e.EndReason, dispatcherapi.EndSetupFailed) {
-		t.Errorf("the take-over Execution ended with %q, want the setup failure", e.EndReason)
+	run, terminal := takeOverTerminal(t, env, ana, id)
+	if run.State != dispatcherapi.StateTakenOver {
+		t.Errorf("the Run is %s (%s), want taken over", run.State, run.Reason)
 	}
 	select {
 	case <-ended:
 	case <-time.After(10 * time.Second):
 		t.Error("the core outside the cgroup still runs")
 	}
-	// No harness started: the core outside would have run it.
-	if terminals := env.Runner.TakeOver.Terminals(); len(terminals) != 0 {
-		t.Errorf("the wrapper started a terminal in the core outside the cgroup: %v", terminals)
+	// The terminal's holder is a child of the wrapper's core: it is in the
+	// take-over Execution's cgroup.
+	holder, err := os.ReadFile(filepath.Join(env.Runner.TakeOver.Dir(), terminal, "holder"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := killboundary.Reopen(wrapper.CgroupName(run.Executions[1].ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(holder)))
+	if in, err := boundary.Holds(pid); err != nil || !in {
+		t.Errorf("the take-over's terminal (holder %d) is not in the take-over Execution's cgroup (%v)", pid, err)
+	}
+	leave(t, env, terminal)
+	if run := waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnPerson); run.Reason != dispatcherapi.ReasonTakeOverNoReport {
+		t.Errorf("the reason is %q, want %q", run.Reason, dispatcherapi.ReasonTakeOverNoReport)
 	}
 }
 

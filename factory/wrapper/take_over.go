@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -142,15 +143,25 @@ func (e *execution) runInteractive(environ []string) dispatcherapi.ExecutionEnd 
 	// no SUDO_ variable (a core that 'sudo hc connect' starts has them,
 	// and takes the person's user from them).
 	e.coreEnv = coreEnv(e.gitEnv(environ, ""))
-	if out, err := e.hc("server", "start"); err != nil {
-		fmt.Fprintf(e.log, "wrapper: hc server start: %v: %s\n", err, lastLines(out, 5))
-	}
 	// The core and its holders must be in the Execution's cgroup before a
 	// terminal starts: a core that was there before (a person's early hc
 	// connect, or systemd started it) runs its terminals outside it, and
-	// the end would not kill the harness.
-	if err := e.checkCore(); err != nil {
-		return failed(err)
+	// the end would not kill the harness. checkCore kills such a core, and
+	// the next start is the wrapper's own: the early connection drops, and
+	// the person attaches again. Only a core that starts again outside
+	// each time fails the take-over.
+	for try := 1; ; try++ {
+		if out, err := e.hc("server", "start"); err != nil {
+			fmt.Fprintf(e.log, "wrapper: hc server start: %v: %s\n", err, lastLines(out, 5))
+		}
+		err := e.checkCore()
+		if err == nil {
+			break
+		}
+		if try == coreTries || !errors.Is(err, errCoreOutside) {
+			return failed(err)
+		}
+		fmt.Fprintf(e.log, "wrapper: %v; the wrapper starts its own core\n", err)
 	}
 	// The harness's environment is in a file of the secrets directory,
 	// not on the terminal's command line.
@@ -333,14 +344,35 @@ func (e *execution) checkCore() error {
 	if len(outside) == 0 {
 		return nil
 	}
+	var killed []int
 	for _, pid := range outside {
 		var st syscall.Stat_t
-		if syscall.Stat(fmt.Sprintf("/proc/%d", pid), &st) == nil && int(st.Uid) == e.runUser.uid {
-			syscall.Kill(pid, syscall.SIGKILL)
+		if syscall.Stat(fmt.Sprintf("/proc/%d", pid), &st) == nil && int(st.Uid) == e.runUser.uid &&
+			syscall.Kill(pid, syscall.SIGKILL) == nil {
+			killed = append(killed, pid)
 		}
 	}
-	return fmt.Errorf("the hc core is not in the Execution's cgroup (processes %v): a core started before the wrapper's, "+
-		"such as by an early hc connect, or by systemd; try the take-over again", outside)
+	// The next hc server start must not find the killed core.
+	for deadline := time.Now().Add(hcWait); time.Now().Before(deadline) && slices.ContainsFunc(killed, runs); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("%w (processes %v): a core started before the wrapper's, such as by an early hc connect, "+
+		"or by systemd; try the take-over again", errCoreOutside, outside)
+}
+
+// errCoreOutside is checkCore's error for a core or a holder outside the
+// Execution's cgroup.
+var errCoreOutside = errors.New("the hc core is not in the Execution's cgroup")
+
+// coreTries is how many times the take-over starts the hc core when a
+// core outside the Execution's cgroup was there.
+const coreTries = 3
+
+// runs tells if the process pid runs: a killed process that its parent
+// did not wait for yet has no command line.
+func runs(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	return err == nil && len(b) > 0
 }
 
 // HarnessEnv is the harness-env command: args are the environment file
