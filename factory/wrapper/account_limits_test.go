@@ -143,6 +143,43 @@ func TestAUsageLimitWithAnotherAccountFreeMovesTheRunToItAndResumesTheAgentSessi
 	}
 }
 
+// A Run that waits on an account limit for 30 days (the pool had no
+// account) is Closed: an account that is free again, and a person's
+// switch, do not continue it.
+func TestAClosedRunThatWaitsOnAnAccountLimitIsNotContinuedByAFreeAccountOrASwitch(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(script(takeTask, initLine(t), usageLimit(env.Clock.Now().Add(2*time.Hour)))...)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateWaitingOnAccountLimit)
+	env.RemoveAccount(factorytest.DefaultAccount)
+
+	env.Clock.Advance(31 * 24 * time.Hour)
+	env.CheckClosedRuns()
+	run := getRun(t, ana, id)
+	if run.ClosedAt == nil || run.State != dispatcherapi.StateWaitingOnAccountLimit {
+		t.Fatalf("the Run is %s, closed at %v; want waiting on an account limit and Closed", run.State, run.ClosedAt)
+	}
+
+	env.AddAccount("pool-2", secondToken)
+	env.Clock.Advance(time.Minute)
+	time.Sleep(settle)
+	// Ana's sign-in has ended after 31 days: Ben signs in now.
+	ben := env.Member("Ben")
+	got := switchAccount(env, ben, id)
+	if got.Code != 1 || !strings.Contains(got.Stderr, "409") {
+		t.Errorf("a switch of the account of a Closed Run: exit %d\n%s%s", got.Code, got.Stdout, got.Stderr)
+	}
+	time.Sleep(settle)
+	run = getRun(t, ana, id)
+	if run.State != dispatcherapi.StateWaitingOnAccountLimit || len(run.Executions) != 1 {
+		t.Errorf("the Closed Run is %s with %d Executions; want waiting on an account limit with 1", run.State,
+			len(run.Executions))
+	}
+	if events := eventsOf(env, id, "account_switched"); len(events) != 0 {
+		t.Errorf("the Closed Run has account_switched events: %v", events)
+	}
+}
+
 func TestAUsageLimitWithNoAccountFreeWaitsAndContinuesAtTheResetTime(t *testing.T) {
 	env, ana := newEnv(t)
 	reset := env.Clock.Now().Add(2 * time.Hour)

@@ -398,6 +398,72 @@ func TestAPersonsContinueAfterTooManyLostMachinesStartsTheCountAgain(t *testing.
 		"machine_lost.restart": true})
 }
 
+// A setup that failed ends the count of lost machines in a row: it
+// changed no saved work, but a person continued the Run after it. Three
+// lost machines, a setup that fails, and a message: the next
+// lost machine is the first in a row, so it restarts the Run.
+func TestAFailedSetupEndsTheCountOfLostMachinesInARow(t *testing.T) {
+	env, ana := newEnv(t)
+	for range 3 {
+		env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	}
+	// The fourth Execution fails its setup: the forge does not answer its clone.
+	env.Runner.Agent(takeTask)
+	env.Runner.Agent(takeTask, initLine(t), waitForever(t, env))
+	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Fixed"), reply, result,
+		waitForEnd)
+	dir := env.Runner.SharedDir("forge-silent")
+	fails := filepath.Join(dir, "fails")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n[ \"$1\" = ls-remote ] && [ -e " + fails + " ] && { echo 'fatal: the forge does not answer' >&2; " +
+		"exit 128; }\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.PathFirst(dir)
+
+	id := start(t, env, ana, "Fix the cart")
+	for i := 1; i <= 3; i++ {
+		execution := runningExecution(t, ana, id, i)
+		if i == 3 {
+			// The forge does not answer from now on, so the setup of the fourth Execution fails.
+			if err := os.WriteFile(fails, nil, 0o666); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := env.Runner.Fake.LoseMachine(execution); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, fmt.Sprintf("machine_lost event %d", i), func() bool { return len(lostEvents(env, id)) == i })
+	}
+	run := waitFor(t, env, ana, id, dispatcherapi.StateFailed)
+	if len(run.Executions) != 4 || !strings.Contains(run.Reason, "the setup failed") {
+		t.Fatalf("the Run is %s (%s): %+v", run.State, run.Reason, run.Executions)
+	}
+	if err := os.Remove(fails); err != nil {
+		t.Fatal(err)
+	}
+
+	send(t, env, ana, id, "Go on")
+	fifth := runningExecution(t, ana, id, 5)
+	if err := env.Runner.Fake.LoseMachine(fifth); err != nil {
+		t.Fatal(err)
+	}
+	run = waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 6 {
+		t.Fatalf("want 6 Executions, got %+v", run.Executions)
+	}
+	lost := lostEvents(env, id)
+	if len(lost) != 4 {
+		t.Fatalf("want 4 machine_lost events, got %v", lost)
+	}
+	checkFields(t, lost[3], map[string]any{"execution.id": fifth, "machine_lost.in_a_row": float64(1),
+		"machine_lost.restart": true})
+}
+
 // A preemption that restarts the Run counts: the lost machine after it
 // is the second in a row.
 func TestAPreemptionAndALostMachineCountInARow(t *testing.T) {

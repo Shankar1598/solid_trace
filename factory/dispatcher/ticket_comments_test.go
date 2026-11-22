@@ -146,7 +146,14 @@ func TestATriggerCommentFromBeforeTheRunIsNotForIt(t *testing.T) {
 	env.Tracker.Put("board", faketracker.Ticket{ID: "T-1", Title: "Fix the cart total", Status: "Backlog"}, rosa)
 	env.Tracker.AddComment("board", "T-1", "/agent an old note", rosa)
 	env.Clock.Advance(2 * time.Minute)
-	id := boardRun(t, env, path)
+	// The ticket goes to the ready status with SetStatus, which keeps its
+	// comments: boardRun's Put makes a new ticket with none, and the old
+	// note would then not be there for the test to refuse.
+	env.Tracker.SetStatus("board", "T-1", faketracker.ReadyStatus, rosa)
+	if a := env.TrackerWebhook(path, secret, "d-ready", "T-1"); a.Status != http.StatusOK {
+		t.Fatalf("the webhook: %d %s", a.Status, a.Body)
+	}
+	id := waitForRuns(t, env, 1)[0].ID
 	env.Tracker.AddComment("board", "T-1", "/agent a new note", rosa)
 	env.TrackerWebhook(path, secret, "d-c1", "T-1")
 	wantMessage(t, waitForAccepted(t, env, id, 1)[0], "/agent a new note", "u-7", "Rosa")
@@ -319,6 +326,26 @@ func TestALinearTriggerCommentByAMemberOrAGuestIsAMessageAndByAnAppABotOrAnExter
 		if !strings.Contains(env.Logs(), reason) {
 			t.Errorf("no log with %q:\n%s", reason, env.Logs())
 		}
+	}
+}
+
+// The connection is of one team. An issue that moved to another team is
+// not a ticket of the connection, so a person of the other team cannot
+// steer its Run with a comment.
+func TestATriggerCommentOnALinearIssueThatMovedToAnotherTeamDoesNothing(t *testing.T) {
+	env, path := linearEnv(t)
+	id := linearRun(t, env, path)
+	env.Linear.AddTeam(design)
+	env.Linear.Put(fakelinear.Issue{ID: "issue-1", Identifier: "DES-1", Team: "DES", Title: "Fix issue-1",
+		Status: "Ready for agent"}, rosaOnLinear)
+	env.Linear.AddComment("issue-1", "/agent Use the second fix", fakelinear.By{User: &rosaOnLinear})
+	// No webhook: the step of the whole connection (the backstop) reads
+	// the comments of each ticket of a Run. A webhook for the issue
+	// finds no ticket of the connection, and reads no comment.
+	env.Clock.Advance(5*time.Minute + time.Second)
+	settle()
+	if list := acceptedMessages(env, id); len(list) != 0 {
+		t.Errorf("the Run got %d messages from a comment on an issue of another team: %v", len(list), list)
 	}
 }
 

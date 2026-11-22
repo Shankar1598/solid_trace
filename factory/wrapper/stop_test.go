@@ -129,6 +129,29 @@ func TestStopOnARunThatWaitsOnAPersonMakesItStopped(t *testing.T) {
 	}
 }
 
+// Done and failed are end states: a stop keeps them and says why it
+// refuses.
+func TestStopOnADoneOrFailedRunIsRefusedAndKeepsItsState(t *testing.T) {
+	for _, state := range []string{dispatcherapi.StateDone, dispatcherapi.StateFailed} {
+		t.Run(state, func(t *testing.T) {
+			env, ana := newEnv(t)
+			id := idleRun(t, env, ana, state)
+
+			got := ana.CLI("stop", "--dispatcher", env.URL(), id)
+
+			if got.Code != 1 || !strings.Contains(got.Stderr, state) {
+				t.Errorf("solidtrace stop of a %s Run: exit %d\n%s%s", state, got.Code, got.Stdout, got.Stderr)
+			}
+			if run := getRun(t, ana, id); run.State != state {
+				t.Errorf("the Run is %s after the refused stop, want %s", run.State, state)
+			}
+			if events := eventsOf(env, id, "stop"); len(events) != 0 {
+				t.Errorf("the refused stop has events: %v", events)
+			}
+		})
+	}
+}
+
 // hangingClone makes the clone of the Project shop hang, as a forge that
 // accepts the connection and does not answer, and queues an agent that
 // makes the file that it gives when the harness starts.
