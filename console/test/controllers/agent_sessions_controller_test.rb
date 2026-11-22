@@ -161,6 +161,28 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
+  test "each Organization with an Agent Project reads the Agent sessions of its own, never another Organization's" do
+    acme_asked = stub_agent_sessions(turn_on, {})
+    other = create(:organization, slug: "other")
+    other_admin = create(:user)
+    create(:organization_user, organization: other, user: other_admin, role: :admin)
+    other_project = AgentSessionsSettings.turn_on(organization: other, user: other_admin, entries: [ "github.com/other/app" ], confirmed: "1").project
+    other_asked = stub_request(:post, "#{EventStore.base_url}/api/#{other_project.id}/agent-sessions")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: {
+        agent_sessions: [ row(CART, user_id: other_admin.id, cost: nil) ],
+        totals: { agent_sessions: 1, input_tokens: 10, output_tokens: 50, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: nil, no_cost: 1 },
+        more: false, repositories: [ "github.com/other/app" ],
+      }.to_json)
+    sign_in_as(other_admin)
+
+    get agent_sessions_path(org_slug: "other"), headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+
+    assert_response :success
+    assert_equal [ CART ], response.parsed_body.dig("props", "agent_sessions", "rows").map { |r| r["id"] }
+    assert_requested other_asked
+    assert_not_requested acme_asked
+  end
+
   test "search across Agent sessions opens the Logs explorer on the Agent Project with 7 days, which a member can read" do
     project = turn_on
     stub_agent_sessions(project, {})
