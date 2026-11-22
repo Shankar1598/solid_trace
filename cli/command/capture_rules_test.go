@@ -106,3 +106,23 @@ func TestCaptureReadsTheRemotesOfTheWorkingDirectoryNotOfGITDIR(t *testing.T) {
 		t.Errorf("capture sent %d requests for a repository that is not captured", len(requests))
 	}
 }
+
+// A cwd that is not an absolute path names no directory of its own: it
+// would be read from the directory of the hook. The start directory is the
+// first line with an absolute cwd.
+func TestTheStartDirectoryIsTheFirstAbsoluteCwdOfTheTranscript(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
+	s := w.session(t.TempDir())
+	line := `{"cwd":"."}` + "\n" + `{"cwd":"` + repo + `"}` + "\n"
+	s.write("", line)
+
+	s.stop()
+	if s.stored(s.main()) != line {
+		t.Fatalf("not uploaded; log: %s", w.captureLog())
+	}
+	if who := w.agent.StoredSession(s.id); who.Repository != "bitbucket.org/acme/shop" {
+		t.Errorf("who and where: %+v", who)
+	}
+}
