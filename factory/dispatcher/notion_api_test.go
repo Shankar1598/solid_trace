@@ -173,7 +173,7 @@ func TestTheNotionKindReadsEachPageOfTheListAndTheContentOfATicket(t *testing.T)
 	env, db, _ := notionEnv(t, "")
 	ctx := context.Background()
 	kind, c := notionKind(env, db)
-	env.Notion.PageSize = 2
+	env.Notion.SetPageSize(2)
 	for range 5 {
 		readyPage(env, db, "Ready")
 	}
@@ -205,7 +205,7 @@ func TestTheNotionKindReadsEachPageOfTheListAndTheContentOfATicket(t *testing.T)
 func TestReadyTicketsHasNoNotionPageInTheTrash(t *testing.T) {
 	env, db, _ := notionEnv(t, "")
 	kind, c := notionKind(env, db)
-	env.Notion.ListTrashed = true
+	env.Notion.SetListTrashed(true)
 	live := readyPage(env, db, "Live")
 	archived := readyPage(env, db, "Archived")
 	env.Notion.Flag(archived, true, false)
