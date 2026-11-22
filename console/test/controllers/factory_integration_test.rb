@@ -89,9 +89,11 @@ class FactoryIntegrationTest < ActionDispatch::IntegrationTest
     assert_equal [ "factory", "Fix bugs", "snd_1" ], [ integration.provider, integration.name, integration.sender_id ]
     assert_equal SECRET, integration.sender_secret
     # No list of Projects: the sender can start Runs in each Project of the
-    # Organization of the Admin's token, and no other.
+    # Organization of the Admin's token, and no other. It is the Factory
+    # Integration's sender, so only its deliveries start Issue and Monitor
+    # Runs.
     assert_requested(:post, SENDERS_URL, times: 1) do |request|
-      assert_equal({ "name" => "Fix bugs" }, JSON.parse(request.body))
+      assert_equal({ "name" => "Fix bugs", "factory" => true }, JSON.parse(request.body))
       token = Oauth::ConsoleToken.find_live(request.headers["Authorization"].delete_prefix("Bearer "))
       assert_equal [ @admin, @organization ], [ token.user, token.organization ]
     end

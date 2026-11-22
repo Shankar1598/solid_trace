@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -88,6 +89,7 @@ func (d *Dispatcher) createSender(w http.ResponseWriter, r *http.Request, p pers
 		Sender: dispatcherapi.Sender{ID: newRunID(), Name: name, Projects: []string{},
 			CreatedAt: d.now().UTC().Truncate(time.Microsecond), CreatedBy: dispatcherapi.Person{ID: p.id, Name: p.name}},
 		organization: p.organization,
+		factory:      save.Factory,
 	}
 	if len(save.Projects) > 0 {
 		projects, err := d.listProjects(r.Context(), p.organization)
@@ -219,6 +221,11 @@ func (d *Dispatcher) genericWebhook(w http.ResponseWriter, r *http.Request, id s
 		writeProblem(w, http.StatusBadRequest, problem)
 		return
 	}
+	if name, ok := factoryAttribute(start.Attributes); ok && !sender.factory {
+		writeProblem(w, http.StatusBadRequest, "the attribute "+name+" is for the sender of a 'Factory' Integration "+
+			"only: attribute names that start with "+factoryAttributePrefix+" start an Issue or a Monitor Run")
+		return
+	}
 	served, err := d.tokens.organization(r.Context())
 	if err != nil {
 		d.ownOrganizationFailure(w, err)
@@ -305,6 +312,22 @@ func (d *Dispatcher) ownOrganizationFailure(w http.ResponseWriter, err error) {
 		d.log.Warn("could not check the Dispatcher's own token", "error", err)
 		writeProblem(w, http.StatusBadGateway, "the Dispatcher could not check its own token at SolidTrace")
 	}
+}
+
+// factoryAttributePrefix starts the names of the attributes that only the
+// sender of a 'Factory' Integration sends (issue_runs.go). With them, a
+// Run gets an mcp:read token for its Project and comments on an Issue.
+const factoryAttributePrefix = "solidtrace."
+
+// factoryAttribute gives the first name, in order, of the attributes that
+// start with factoryAttributePrefix.
+func factoryAttribute(attributes map[string]string) (string, bool) {
+	names := slices.Sorted(maps.Keys(attributes))
+	i := slices.IndexFunc(names, func(name string) bool { return strings.HasPrefix(name, factoryAttributePrefix) })
+	if i < 0 {
+		return "", false
+	}
+	return names[i], true
 }
 
 // readGeneric reads and checks a delivery's body into start, in its

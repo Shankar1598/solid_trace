@@ -21,11 +21,13 @@ type senderProject struct {
 }
 
 // storedSender is a sender with its Organization and its list of
-// Projects (nil is each Project).
+// Projects (nil is each Project). factory is true for the sender of a
+// 'Factory' Integration (SaveSender.Factory).
 type storedSender struct {
 	dispatcherapi.Sender
 	organization organization
 	projects     []senderProject
+	factory      bool
 }
 
 // starter is the sender as the starter of its Runs.
@@ -41,7 +43,7 @@ func (s storedSender) starter() starter {
 }
 
 const senderColumns = `id, organization_id, organization_slug, name, projects, created_at, created_by_id,
-	created_by_name, last_delivery_at`
+	created_by_name, last_delivery_at, factory`
 
 func scanSender(row interface{ Scan(...any) error }) (storedSender, error) {
 	var s storedSender
@@ -49,7 +51,7 @@ func scanSender(row interface{ Scan(...any) error }) (storedSender, error) {
 	var created int64
 	var last sql.NullInt64
 	err := row.Scan(&s.ID, &s.organization.id, &s.organization.slug, &s.Name, &projects, &created, &s.CreatedBy.ID,
-		&s.CreatedBy.Name, &last)
+		&s.CreatedBy.Name, &last, &s.factory)
 	if err != nil {
 		return s, err
 	}
@@ -81,10 +83,10 @@ func (s *store) insertSender(sender storedSender, secret string) error {
 		projects = string(b)
 	}
 	_, err := s.db.Exec(`INSERT INTO senders (id, organization_id, organization_slug, name, secret, projects,
-		created_at, created_by_id, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		created_at, created_by_id, created_by_name, factory) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sender.ID, sender.organization.id, sender.organization.slug, sender.Name,
 		s.sealer.seal(senderPurpose(sender.ID), []byte(secret)), projects, sender.CreatedAt.UnixMicro(),
-		sender.CreatedBy.ID, sender.CreatedBy.Name)
+		sender.CreatedBy.ID, sender.CreatedBy.Name, sender.factory)
 	return err
 }
 

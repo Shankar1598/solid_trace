@@ -421,6 +421,9 @@ var migrations = []string{
 	// and its start clears them.
 	`ALTER TABLE runs ADD COLUMN take_over_by_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN take_over_by_name TEXT NOT NULL DEFAULT '';`,
+	// The sender of a 'Factory' Integration (deferred ticket 06): only its
+	// deliveries can have the attributes of an Issue or a Monitor Run.
+	`ALTER TABLE senders ADD COLUMN factory INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // store is the Dispatcher's SQLite database.

@@ -953,6 +953,11 @@ type SaveSender struct {
 	// Projects are the slugs of the Projects that the sender can start
 	// Runs in (empty is each Project).
 	Projects []string `json:"projects,omitempty"`
+	// Factory is true for the sender of a 'Factory' Integration, which
+	// Console makes. Only its deliveries can have the attributes that
+	// start an Issue or a Monitor Run (names that start with
+	// "solidtrace.").
+	Factory bool `json:"factory,omitempty"`
 }
 
 // NewSender is the answer when an Admin makes a sender: the sender, and

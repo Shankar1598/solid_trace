@@ -31,8 +31,11 @@ import (
 // Issue as 'Factory'. A Monitor has no comments: its cause report is on
 // the Run's page only.
 //
-// Only a sender sets attributes, and an Admin makes each sender: a
-// sender's delivery with these attributes is an Issue or a Monitor Run.
+// Only a sender sets attributes, and only the sender of a 'Factory'
+// Integration (SaveSender.Factory, which an Admin's call sets) can send
+// these: the Dispatcher refuses them from each other sender
+// (factoryAttribute). So a sender's delivery with these attributes is an
+// Issue or a Monitor Run.
 
 // The attributes of a delivery from Console's 'Factory' Integration.
 const (

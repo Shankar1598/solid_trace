@@ -28,7 +28,7 @@ func oneIssueComment(t *testing.T, env *factorytest.Env) recorder.IssueComment {
 
 func TestAnIssueRunsCauseReportIsACommentOnTheIssueByFactory(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
@@ -47,7 +47,7 @@ func TestAnIssueRunsCauseReportIsACommentOnTheIssueByFactory(t *testing.T) {
 
 func TestAMonitorRunsCauseReportIsOnTheRunsPageOnly(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", monitorAttributes("12"))
@@ -63,7 +63,7 @@ func TestAMonitorRunsCauseReportIsOnTheRunsPageOnly(t *testing.T) {
 
 func TestAnIssueRunWithNoCauseReportAndNoPRAddsNoComment(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t), reportStep("--outcome", "done", "--summary", "Looked"), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
 	waitFor(t, env, ana, id, dispatcherapi.StateDone)
@@ -75,7 +75,7 @@ func TestAnIssueRunWithNoCauseReportAndNoPRAddsNoComment(t *testing.T) {
 
 func TestTheCauseReportCommentIsSentAgainWhileSolidTraceIsDown(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
@@ -94,7 +94,7 @@ func TestTheCauseReportCommentNamesTheProjectByItsSlugAtTheTimeOfTheComment(t *t
 	env := factorytest.New(t, factorytest.Executions)
 	shop := env.Project("shop")
 	ana := env.Member("Ana")
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
@@ -117,7 +117,7 @@ func TestACommentOnAnIssueWhoseProjectIsGoneIsGivenUpWithAWarning(t *testing.T) 
 	env := factorytest.New(t, factorytest.Executions)
 	shop := env.Project("shop")
 	ana := env.Member("Ana")
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.SolidTrace.RefuseIssueComments(http.StatusServiceUnavailable)
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
@@ -143,7 +143,7 @@ func TestACommentOnAnIssueWhoseProjectIsGoneIsGivenUpWithAWarning(t *testing.T) 
 
 func TestACommentOnAnIssueThatIsGoneIsGivenUpWithAWarning(t *testing.T) {
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.SolidTrace.RefuseIssueComments(http.StatusNotFound)
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", "Found the cause", "--cause-report", cause), reply, result, waitForEnd)
@@ -168,7 +168,7 @@ const cutNote = "The full text is on the Run's page: "
 func issueRunWithLongReport(t *testing.T, summary, causeReport string) (dispatcherapi.Run, recorder.IssueComment) {
 	t.Helper()
 	env, ana := newEnv(t)
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	env.Runner.Agent(takeTask, initLine(t),
 		reportStep("--outcome", "done", "--summary", summary, "--cause-report", causeReport), reply, result, waitForEnd)
 	id := factoryDelivery(t, env, path, sender.Secret, "d-1", issueAttributes("7"))
@@ -251,7 +251,7 @@ func issueRunWithPRAndReport(t *testing.T, check, summary, causeReport string) (
 name = "cart-test"
 command = "` + check + `"
 `}, "A factory file")
-	sender, path := env.Sender("Factory")
+	sender, path := env.FactorySender("Factory")
 	out := t.TempDir()
 	env.Runner.Agent(takeTask, initLine(t), commitStep,
 		recorded(out, "open", `solidtrace pr --title "Fix the cart" --description "Round the sum."`),

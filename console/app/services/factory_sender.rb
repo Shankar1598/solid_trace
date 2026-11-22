@@ -3,7 +3,10 @@
 # The Webhook sender of a 'Factory' Integration, which Console makes and
 # deletes at the Dispatcher's API as the signed-in Admin (W6). The sender
 # has no list of Projects, so it starts Runs in each Project of the
-# Organization of the Admin's token, and in no other Organization.
+# Organization of the Admin's token, and in no other Organization. It is
+# made as the Factory Integration's sender (factory: true): only its
+# deliveries can have the solidtrace.* attributes that start an Issue or a
+# Monitor Run.
 #
 #   id, secret = FactorySender.new(user: current_user, organization: @current_org).create("Factory")
 #
@@ -19,7 +22,7 @@ class FactorySender
   # Makes a sender named name. Returns its id and its secret, which the
   # Dispatcher gives in this answer only.
   def create(name)
-    answer = @dispatcher.request(:post, PATH, body: { name: name })
+    answer = @dispatcher.request(:post, PATH, body: { name: name, factory: true })
     id = answer["id"] if answer.is_a?(Hash)
     secret = answer["secret"] if answer.is_a?(Hash)
     unless id.is_a?(String) && id.present? && secret.is_a?(String) && secret.present?
