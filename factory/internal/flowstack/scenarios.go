@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/internal/factorytest"
 	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/fakeharness"
-	"github.com/solidtrace/factory/internal/factorytest"
 )
 
 // scenario is one Run of the demo: its prompt, the script of its scripted
@@ -254,10 +255,18 @@ const webhookSecret = "demo-webhook-secret"
 // returns when the Dispatcher closed the Run.
 func (s stage) MergeFirstPR(ctx context.Context, env *factorytest.Env, r started) error {
 	repo := "example/" + s.Project
-	prs := env.Forge.PRs(repo)
-	if len(prs) == 0 {
-		return fmt.Errorf("the fake Forge has no PR in %s to merge", repo)
+	run, err := s.Client.Get(ctx, r.ID)
+	if err != nil {
+		return fmt.Errorf("get the Run %s: %w", r.ID, err)
 	}
+	// The Runs work at the same time, so the order of their PRs on the
+	// fake Forge is not the order of the Runs. Find the PR by its link.
+	prs := env.Forge.PRs(repo)
+	i := slices.IndexFunc(prs, func(pr fakeforge.PR) bool { return pr.Link == run.PRURL })
+	if run.PRURL == "" || i < 0 {
+		return fmt.Errorf("the fake Forge has no PR %q of the Run %s in %s to merge", run.PRURL, r.ID, repo)
+	}
+	pr := prs[i]
 	connection, err := s.Client.SaveWebhookSecret(ctx, factorytest.ForgeConnection, webhookSecret)
 	if err != nil {
 		return fmt.Errorf("save the webhook secret: %w", err)
@@ -266,8 +275,6 @@ func (s stage) MergeFirstPR(ctx context.Context, env *factorytest.Env, r started
 	if !ok {
 		return fmt.Errorf("the forge connection has the webhook URL %q", connection.WebhookURL)
 	}
-	// The Run's PR is the first that the demo made.
-	pr := prs[0]
 	env.Forge.SetState(repo, pr.ID, "MERGED")
 	if a := env.ForgeWebhook(path, webhookSecret, "{demo-merged}", fakeforge.EventPRFulfilled, env.Forge.PRWebhook(repo, pr.ID)); a.Status != 200 {
 		return fmt.Errorf("the merge webhook: %d %s", a.Status, a.Body)

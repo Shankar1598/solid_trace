@@ -105,23 +105,23 @@ type Notion struct {
 	server *httptest.Server
 	// Now is the clock of last_edited_time (time.Now when nil).
 	Now func() time.Time
-	// PageSize is the most results that a list gives (100 when 0).
-	PageSize int
-	// ListTrashed is true when a database query also gives the pages in
+
+	mu sync.Mutex
+	// pageSize is the most results that a list gives (100 when 0).
+	pageSize int
+	// listTrashed is true when a database query also gives the pages in
 	// the trash, as Notion can do for a short time after a page moves
 	// there.
-	ListTrashed bool
-
-	mu        sync.Mutex
-	tokens    map[string]bool
-	databases map[string]*database
-	pages     map[string]*page
-	users     map[string]User
-	comments  []Comment
-	refuse    map[string]int
-	calls     []string
-	usersOff  map[string]bool // by token; "" is each token
-	blockKids map[string][]Block
+	listTrashed bool
+	tokens      map[string]bool
+	databases   map[string]*database
+	pages       map[string]*page
+	users       map[string]User
+	comments    []Comment
+	refuse      map[string]int
+	calls       []string
+	usersOff    map[string]bool // by token; "" is each token
+	blockKids   map[string][]Block
 }
 
 // New is a fake Notion with no databases, served until the test ends.
@@ -154,6 +154,22 @@ func (n *Notion) DatabaseWith(id, status string, statuses []string, selects ...s
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.databases[id] = &database{id: id, status: status, statuses: statuses, selects: selects}
+}
+
+// SetPageSize sets the most results that a list gives (100 when 0). The
+// Dispatcher can call the API at each time, so the field has the lock.
+func (n *Notion) SetPageSize(size int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.pageSize = size
+}
+
+// SetListTrashed makes a database query also give the pages in the trash
+// (on true), as Notion can do for a short time after a page moves there.
+func (n *Notion) SetListTrashed(on bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.listTrashed = on
 }
 
 // AddUser adds a user that GET /v1/users/{id} gives.
@@ -564,7 +580,7 @@ func (n *Notion) query(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	var ids []string
 	for _, p := range n.pages {
-		if p.database == d.id && (n.ListTrashed || !p.gone()) && (q.Filter.Status == nil || p.Status == q.Filter.Status.Equals) {
+		if p.database == d.id && (n.listTrashed || !p.gone()) && (q.Filter.Status == nil || p.Status == q.Filter.Status.Equals) {
 			ids = append(ids, p.ID)
 		}
 	}
@@ -579,7 +595,7 @@ func (n *Notion) query(w http.ResponseWriter, r *http.Request, id string) {
 
 // window is one page of a list of ids, from the cursor (an index).
 func (n *Notion) window(ids []string, cursor string, size int) ([]string, bool, any) {
-	limit := n.PageSize
+	limit := n.pageSize
 	if limit == 0 {
 		limit = 100
 	}
@@ -751,7 +767,7 @@ func (n *Notion) user(w http.ResponseWriter, token, id string) {
 }
 
 // listComments is GET /v1/comments?block_id=: the comments on a page,
-// oldest first, PageSize at a time.
+// oldest first, one page size (SetPageSize) at a time.
 func (n *Notion) listComments(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("block_id")
 	p := n.pageOf(id)
