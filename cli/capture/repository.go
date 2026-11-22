@@ -117,9 +117,19 @@ func Remotes(ctx context.Context, cwd string) (names []string, folder string, ok
 	return unique, folder, true, nil
 }
 
+// sshHosts are the hosts that some services use only for git over SSH,
+// with the host of the same service for HTTPS.
+var sshHosts = map[string]string{
+	"ssh.bitbucket.org":    "bitbucket.org",
+	"altssh.bitbucket.org": "bitbucket.org",
+	"ssh.github.com":       "github.com",
+	"altssh.gitlab.com":    "gitlab.com",
+}
+
 // Normalise gives a git remote URL as host/workspace/name: the ssh, scp
 // and HTTPS forms give the same name, with the host in lower case, no
-// user, no port and no .git ending. ok is false for a local path or a
+// user, no port and no .git ending. The SSH-only host of a service, as
+// ssh.bitbucket.org, gives the host of its HTTPS form. ok is false for a local path or a
 // remote with no workspace.
 func Normalise(remote string) (string, bool) {
 	var host, path string
@@ -146,6 +156,9 @@ func Normalise(remote string) (string, bool) {
 		}
 	}
 	host = strings.ToLower(host)
+	if web, ok := sshHosts[host]; ok {
+		host = web
+	}
 	path = strings.Trim(path, "/")
 	path = strings.TrimSuffix(path, ".git")
 	path = strings.Trim(path, "/")
