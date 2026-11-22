@@ -286,7 +286,7 @@ function Events({ title, events, empty }: { title: string; events: RunEvent[]; e
               <span className="font-medium">{eventKindText(e.kind)}</span>
               {e.intervention && <span>by {actorText(e.actor)}</span>}
               {e.detail && <span className="min-w-0 break-words text-muted-foreground">{eventDetailText(e.kind, e.detail)}</span>}
-              {e.reason && <span className="text-xs text-muted-foreground">({e.reason})</span>}
+              {e.reason && e.reason !== e.detail && <span className="text-xs text-muted-foreground">({e.reason})</span>}
             </li>
           ))}
         </ol>

@@ -157,6 +157,7 @@ function FilterSelect({ label, all, value, options, onChange, last }: {
 }
 
 function RunsTable({ rows, more, projectNames, path }: { rows: RunRow[]; more: boolean; projectNames: Record<string, string>; path: string }) {
+  const projectLabel = (row: RunRow) => (row.project ? (projectNames[row.project] ?? row.project) : 'No Project')
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto border">
@@ -165,11 +166,11 @@ function RunsTable({ rows, more, projectNames, path }: { rows: RunRow[]; more: b
             <TableRow>
               <TableHead>State</TableHead>
               <TableHead>Run</TableHead>
-              <TableHead>Project</TableHead>
-              <TableHead>Repository</TableHead>
-              <TableHead>Trigger</TableHead>
-              <TableHead>Started by</TableHead>
-              <TableHead>Last event</TableHead>
+              <TableHead className="max-[1399px]:hidden">Project</TableHead>
+              <TableHead className="max-[1399px]:hidden">Repository</TableHead>
+              <TableHead className="max-[1399px]:hidden">Trigger</TableHead>
+              <TableHead className="max-[1399px]:hidden">Started by</TableHead>
+              <TableHead className="max-sm:hidden">Last event</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -188,15 +189,20 @@ function RunsTable({ rows, more, projectNames, path }: { rows: RunRow[]; more: b
                     {row.title || <span className="text-muted-foreground">No title</span>}
                   </Link>
                   <div className="font-mono text-xs text-muted-foreground">{row.id}</div>
+                  {/* Below 1400 px the four columns are hidden, so that the table fits; their values go here. */}
+                  <div className="mt-1 max-w-80 whitespace-normal break-words text-xs text-muted-foreground min-[1400px]:hidden">
+                    {[projectLabel(row), row.trigger, actorText(row.actor)].join(' · ')}
+                    <span className="sm:hidden"> · {format(new Date(row.time), 'MMM d, HH:mm')}</span>
+                  </div>
                 </TableCell>
-                <TableCell className="align-top text-sm">{row.project ? (projectNames[row.project] ?? row.project) : <span className="text-muted-foreground">None</span>}</TableCell>
-                <TableCell className="align-top font-mono text-xs">
+                <TableCell className="align-top text-sm max-[1399px]:hidden">{projectLabel(row)}</TableCell>
+                <TableCell className="align-top font-mono text-xs max-[1399px]:hidden">
                   {row.repository}
                   {row.folder && <span className="text-muted-foreground">/{row.folder}</span>}
                 </TableCell>
-                <TableCell className="align-top text-sm">{row.trigger}</TableCell>
-                <TableCell className="align-top text-sm">{actorText(row.actor)}</TableCell>
-                <TableCell className="align-top font-mono text-xs whitespace-nowrap">{format(new Date(row.time), 'MMM d, HH:mm')}</TableCell>
+                <TableCell className="align-top text-sm max-[1399px]:hidden">{row.trigger}</TableCell>
+                <TableCell className="align-top text-sm max-[1399px]:hidden">{actorText(row.actor)}</TableCell>
+                <TableCell className="align-top font-mono text-xs whitespace-nowrap max-sm:hidden">{format(new Date(row.time), 'MMM d, HH:mm')}</TableCell>
               </TableRow>
             ))}
           </TableBody>

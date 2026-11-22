@@ -146,7 +146,7 @@ function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; 
         {session.cache_read_tokens.toLocaleString()} cache read, {session.cache_write_tokens.toLocaleString()} cache write
       </span>
     )],
-    ['Estimated cost', <span><span className="font-mono text-xs">{costText(session.cost_usd)}</span> <span className="text-xs text-muted-foreground">({costLabel})</span></span>],
+    ['Estimated cost', <span>{session.cost_usd === null ? <span className="text-muted-foreground">{costText(null)}</span> : <span className="font-mono text-xs">{costText(session.cost_usd)}</span>} <span className="text-xs text-muted-foreground">({costLabel})</span></span>],
     ['Flags', session.flags.length ? session.flags.join(', ') : <None />],
   ]
   return (
