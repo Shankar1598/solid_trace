@@ -176,3 +176,48 @@ func TestAPersonsPushBeforeAPreemptionLeavesTheSaveInTheWIPRef(t *testing.T) {
 		t.Errorf("the person's push is not on the branch: %q", got)
 	}
 }
+
+// The agent's HEAD is not the tip of the Run's branch (the agent is on
+// another branch) when a person's push wins: the WIP ref keeps the save
+// all the same, and the text tells if the branch's commits are in it.
+func TestAPersonsPushBeforeAPreemptionKeepsTheSaveWhenHEADIsNotTheRunsBranch(t *testing.T) {
+	cases := []struct {
+		name string
+		// other makes the agent's other branch.
+		other func(t *testing.T, checkout string)
+		text  string
+	}{
+		{"a branch from the Run's branch", func(t *testing.T, checkout string) {
+			gitRun(t, "-C", checkout, "checkout", "-q", "-b", "other")
+		}, "its commits are in the work-in-progress save in refs/agent-wip/" + saveRunID},
+		{"a branch from main", func(t *testing.T, checkout string) {
+			gitRun(t, "-C", checkout, "checkout", "-q", "-b", "other", "origin/main")
+		}, "the work-in-progress save in refs/agent-wip/" + saveRunID + " does not have its commits"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, remote := savingExecution(t, map[string]string{"app.txt": "one\n"}, nil)
+			commitFiles(t, e.checkout, map[string]string{"committed.txt": "not pushed\n"}, "A commit on the Run's branch")
+			c.other(t, e.checkout)
+			commitFiles(t, e.checkout, map[string]string{"other.txt": "other\n"}, "A commit on the other branch")
+			writeFiles(t, e.checkout, map[string]string{"app.txt": "not committed\n"})
+			person := filepath.Join(t.TempDir(), "person")
+			gitRun(t, "clone", "-q", "-b", "main", remote, person)
+			commitFiles(t, person, map[string]string{"person.txt": "a person\n"}, "A person's commit")
+			gitRun(t, "-C", person, "push", "-q", "origin", "HEAD:refs/heads/"+e.task.Branch)
+
+			saved, err := e.save(context.Background(), dispatcherapi.EndPreempted)
+
+			ref := "refs/agent-wip/" + saveRunID
+			if got := gitRun(t, "--git-dir", remote, "rev-parse", ref); saved.Commit == "" || got != saved.Commit {
+				t.Fatalf("the remote's WIP ref is %s, the save gives %q", got, saved.Commit)
+			}
+			if got := gitRun(t, "--git-dir", remote, "show", ref+":app.txt"); got != "not committed" {
+				t.Errorf("app.txt in the WIP ref: %q", got)
+			}
+			if err == nil || !strings.Contains(err.Error(), c.text) {
+				t.Errorf("the save after a person's push: %v, want %q", err, c.text)
+			}
+		})
+	}
+}
