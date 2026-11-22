@@ -209,7 +209,9 @@ func (s *wipSaver) run(ctx context.Context, reason string, checkpoint bool) (sav
 	if err := s.commitAndPush(ctx, git, root, message+leftOutText(skipped), ref, now); err != nil {
 		return savedWork{}, false, err
 	}
-	s.last = key
+	// The key after the pushes has each submodule push that failed, so
+	// that the next checkpoint tries it again.
+	s.last = root.key()
 	if checkpoint {
 		s.atMu.Lock()
 		s.at = e.clock.Now()

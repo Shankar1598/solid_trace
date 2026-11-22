@@ -152,6 +152,42 @@ func TestASubmoduleThatCannotBePushedIsListedAsNotSaved(t *testing.T) {
 	}
 }
 
+// A submodule push that fails is tried again at the next checkpoint, also
+// when nothing changed after it.
+func TestTheNextCheckpointPushesASubmoduleWhosePushFailed(t *testing.T) {
+	e, _, lib := submoduleExecution(t)
+	// The remote refuses one push.
+	writeFiles(t, lib, map[string]string{"hooks/pre-receive": "#!/bin/sh\nrm -f -- \"$0\"\necho refused >&2\nexit 1\n"})
+	if err := os.Chmod(filepath.Join(lib, "hooks", "pre-receive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, filepath.Join(e.checkout, "vendor", "lib"), map[string]string{"lib.txt": "two\n"})
+	ref := "refs/agent-wip/" + saveRunID
+
+	saved, pushed, err := e.saver.checkpoint(context.Background())
+	if err != nil || !pushed || len(saved.Skipped) != 1 || !strings.Contains(saved.Skipped[0], "refused") {
+		t.Fatalf("the first checkpoint: pushed %v (%v), left out %q", pushed, err, saved.Skipped)
+	}
+	if refs := gitRun(t, "--git-dir", lib, "for-each-ref"); strings.Contains(refs, "agent-wip") {
+		t.Fatalf("the refused push made a WIP ref: %s", refs)
+	}
+
+	saved, pushed, err = e.saver.checkpoint(context.Background())
+	if err != nil || !pushed {
+		t.Fatalf("the next checkpoint: pushed %v (%v), want a push", pushed, err)
+	}
+	if got := gitRun(t, "--git-dir", lib, "show", ref+":lib.txt"); got != "two" {
+		t.Errorf("lib.txt in the submodule's save: %q", got)
+	}
+	if len(saved.Skipped) != 0 {
+		t.Errorf("the next checkpoint left out %q", saved.Skipped)
+	}
+
+	if _, pushed, err := e.saver.checkpoint(context.Background()); err != nil || pushed {
+		t.Errorf("a checkpoint with no change after the saves: pushed %v (%v)", pushed, err)
+	}
+}
+
 // A submodule's URL is the forge's, as the run user's git configuration
 // rewrites it; a URL that is not on the forge gets no push.
 func TestASubmodulesURLMustBeOnTheForge(t *testing.T) {
