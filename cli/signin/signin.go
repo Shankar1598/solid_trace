@@ -157,7 +157,7 @@ func (c *Client) Discover(ctx context.Context, instanceURL string) (Server, erro
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return Server{}, fmt.Errorf("%s has no OAuth sign-in: Console needs an HTTPS Console URL (Settings → Instance)", instanceURL)
+		return Server{}, fmt.Errorf("%s has no OAuth sign-in: ask the operator to set the Console URL in Settings → Instance (an HTTPS URL)", instanceURL)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return Server{}, fmt.Errorf("%s answered %s to the OAuth metadata request", instanceURL, resp.Status)
