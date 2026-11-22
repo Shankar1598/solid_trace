@@ -317,6 +317,11 @@ func demoUp(f demoFlags) int {
 		fmt.Fprintf(os.Stderr, "demo: %v\nDispatcher log:\n%s", err, env.Logs())
 		code = 1
 	default:
+		// One Run closes, so that the starter Factory Dashboard has a closed event to draw.
+		tell("Merging the PR of the first Run on the fake Forge...")
+		if err := s.MergeFirstPR(ctx, env, runs[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "demo: the merge did not close the first Run (the Dashboard stays empty): %v\n", err)
+		}
 		tell("The Runs:")
 		for _, r := range runs {
 			tell("  %s  %s", r.ID, r.Name)

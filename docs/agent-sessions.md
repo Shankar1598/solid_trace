@@ -383,7 +383,7 @@ The command starts the real Dispatcher and the real wrapper, with fakes for the 
 
 The six Runs:
 
-- Done, with a PR, two checks that passed and one Evidence file.
+- Done, with a PR, two checks that passed and one Evidence file. The demo merges its PR on the fake forge, so the Run closes with the reason `pr_merged`, and the starter **Factory** Dashboard draws its Charts from that one closed event.
 - Done, with no Evidence (a check failed).
 - Needs a person, with a question.
 - Failed (the agent's harness exited in the middle of a turn).

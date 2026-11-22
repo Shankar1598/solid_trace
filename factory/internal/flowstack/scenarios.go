@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/solidtrace/cli/dispatcherapi"
+	"github.com/solidtrace/factory/internal/fakeforge"
 	"github.com/solidtrace/factory/internal/fakeharness"
+	"github.com/solidtrace/factory/internal/factorytest"
 )
 
 // scenario is one Run of the demo: its prompt, the script of its scripted
@@ -241,6 +243,43 @@ func (s stage) Start(ctx context.Context, list []scenario) ([]started, error) {
 		}
 	}
 	return runs, nil
+}
+
+// webhookSecret is the secret of the demo's forge webhook.
+const webhookSecret = "demo-webhook-secret"
+
+// MergeFirstPR merges the PR of the Run on the fake Forge and sends the
+// Dispatcher the webhook that Bitbucket sends, so that the Run closes with
+// the reason pr_merged and its closed event has the Run's totals. It
+// returns when the Dispatcher closed the Run.
+func (s stage) MergeFirstPR(ctx context.Context, env *factorytest.Env, r started) error {
+	repo := "example/" + s.Project
+	prs := env.Forge.PRs(repo)
+	if len(prs) == 0 {
+		return fmt.Errorf("the fake Forge has no PR in %s to merge", repo)
+	}
+	connection, err := s.Client.SaveWebhookSecret(ctx, factorytest.ForgeConnection, webhookSecret)
+	if err != nil {
+		return fmt.Errorf("save the webhook secret: %w", err)
+	}
+	path, ok := strings.CutPrefix(connection.WebhookURL, factorytest.PublicWebhookURL)
+	if !ok {
+		return fmt.Errorf("the forge connection has the webhook URL %q", connection.WebhookURL)
+	}
+	// The Run's PR is the first that the demo made.
+	pr := prs[0]
+	env.Forge.SetState(repo, pr.ID, "MERGED")
+	if a := env.ForgeWebhook(path, webhookSecret, "{demo-merged}", fakeforge.EventPRFulfilled, env.Forge.PRWebhook(repo, pr.ID)); a.Status != 200 {
+		return fmt.Errorf("the merge webhook: %d %s", a.Status, a.Body)
+	}
+	return waitUntil(ctx, 30*time.Second, func() bool {
+		for _, ev := range env.RunEvents(r.ID) {
+			if ev["event.kind"] == "closed" {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // waitState waits until the Run has the state, and for a state that is not
