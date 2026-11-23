@@ -224,8 +224,10 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 		unit := units[line.unit]
 		receipt := normalise.Receipt{At: unit.StoredAt.UTC(), RetentionDays: retentionDays}
 		if i == 0 || lines[i-1].unit != line.unit {
-			// A line with no timestamp has the time of the line before it,
-			// and the first lines the time that the server stored the unit.
+			// A line with no timestamp has, for its Log, the time of the
+			// line before it, and the first lines the time that the server
+			// stored the unit. That time is not activity: the totals read
+			// only the lines with a time of their own.
 			previous = json.RawMessage(strconv.Quote(receipt.At.Format(time.RFC3339Nano)))
 		}
 		object, f := line.object, line.facts
@@ -242,12 +244,13 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 				object["time"] = at
 			}
 		}
-		if t, ok := object["time"]; ok {
-			previous = t
+		_, timed := object["time"]
+		if timed {
+			previous = object["time"]
 		} else {
 			object["time"] = previous
 		}
-		totals.addLine(unit, line.offset+uint64(line.length), object, f, receipt)
+		totals.addLine(unit, line.offset+uint64(line.length), object, timed, f, receipt)
 		keepOnStoredDay(object, receipt.At)
 		addSource(object, unit, line.offset, line.length)
 		log, outcome := normalise.JSON(object, receipt)

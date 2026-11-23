@@ -114,6 +114,13 @@ func (t AgentTitle) After(u AgentTitle) bool {
 	return t.Text > u.Text
 }
 
+// NoActivity is the last time of a transcript's row with no line that has
+// a timestamp of its own (spec, Storage): the parse puts it in last_time,
+// and the time that the server stored the units in first_time. The max of
+// last_time never takes it over a real time, so the row is never in a
+// range, and the stored time is never before the lines that were stored.
+var NoActivity = time.Unix(0, 0).UTC()
+
 // AgentSessionDay is what one range of the parse adds to the totals of
 // one file of one Agent session on one day: a row of agent_sessions.
 type AgentSessionDay struct {
@@ -268,7 +275,8 @@ func (s *ClickHouseLogs) AgentSessionTotals(ctx context.Context, projectID uint3
 
 // AgentSessionFilter selects the Agent sessions of a list. An Agent
 // session is in the range [From, To] when it has activity in it: one of
-// its files has a line in the range on one day. The other fields select
+// its transcripts has a line with a timestamp of its own in the range on
+// one day. The other fields select
 // nothing when they are zero.
 type AgentSessionFilter struct {
 	From, To time.Time
@@ -320,7 +328,9 @@ func (s *ClickHouseLogs) AgentSessionList(ctx context.Context, projectID uint32,
 	// Grouped by the key of the table, so that the times of a row are its
 	// merged times, when its parts are not merged yet too.
 	// Only a transcript has the times of its lines: a side file has the
-	// time when the server stored it, which is not activity.
+	// time when the server stored it, which is not activity. A transcript's
+	// row with no timed line has NoActivity as its last time, so it is in no
+	// range.
 	selected += ` AND endsWith(path, '.jsonl') GROUP BY session_id, day, path, version HAVING max(last_time) >= ? AND min(first_time) <= ?`
 	args = append(args, f.From, f.To)
 	return s.agentSessionTotals(ctx, projectID, ` AND session_id IN (`+selected+`)`, args...)
@@ -427,11 +437,21 @@ func sumAgentFiles(t *AgentSessionTotals, files []agentFileTotals, flags uint8) 
 	highest := map[string]uint32{}
 	subagents := map[string]bool{}
 	// A file that is not .jsonl has no lines, so its times are the times
+	// when the server stored it. A transcript whose lines have no time of
+	// their own has no activity (NoActivity): its times are the first time
 	// when the server stored it. The Agent session's times are those of its
-	// transcripts, unless it has none.
-	transcripts := slices.ContainsFunc(files, func(f agentFileTotals) bool { return isTranscript(f.path) })
+	// transcripts with activity, unless it has none.
+	active := make([]bool, len(files))
+	for i := range files {
+		f := &files[i]
+		active[i] = isTranscript(f.path) && f.last.After(NoActivity)
+		if !f.last.After(NoActivity) {
+			f.last = f.first
+		}
+	}
+	transcripts := slices.Contains(active, true)
 	for i, f := range files {
-		if !transcripts || isTranscript(f.path) {
+		if !transcripts || active[i] {
 			if t.First.IsZero() || f.first.Before(t.First) {
 				t.First = f.first
 			}

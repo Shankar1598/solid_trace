@@ -384,3 +384,57 @@ func TestAnOldAgentSessionUploadedLateKeepsItsOwnTimesWithASideFile(t *testing.T
 		t.Errorf("Expected no Agent session in the range of the upload day, got %v", got)
 	}
 }
+
+// untimedLines are lines that Claude Code writes with no timestamp: at the
+// start of a transcript, before each turn and at the end.
+var untimedLines = []string{
+	`{"type":"mode","mode":"default","sessionId":"x"}`,
+	`{"type":"permission-mode","permissionMode":"default","sessionId":"x"}`,
+	`{"type":"last-prompt","lastPrompt":"Add a cart page","sessionId":"x"}`,
+	`{"type":"ai-title","aiTitle":"Cart page","sessionId":"x"}`,
+}
+
+// An old Agent session uploaded again, as after its Agent Project was
+// deleted: its units start with lines that have no timestamp, and a later
+// unit has only such lines. Those lines are not activity, so the Agent
+// session keeps the times of its timed lines and is not in the range of the
+// upload. An Agent session with no timed line is in no range, and its times
+// are the time when the server stored it.
+func TestTheAgentSessionsListTakesNoActivityFromLinesWithNoTimestamp(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	upload := time.Date(2026, 10, 20, 12, 2, 54, 355220000, time.UTC)
+	env.Clock.Set(upload)
+	first := jsonl(append(append(append([]string{}, untimedLines...),
+		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
+		replyAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", `{"type":"text","text":"Done."}`)),
+		untimedLines...)...)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: first}), 200)
+	expectStatus(t, uploadUnit(t, env, o.secret, apiSession, unitUpload{path: "session.jsonl", body: jsonl(untimedLines...)}), 200)
+	env.ProcessAgentFiles(t)
+	env.Clock.Set(upload.Add(time.Hour))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first),
+		body: jsonl(untimedLines...)}), 200)
+	env.ProcessAgentFiles(t)
+
+	if got := listedIDs(listAgentSessions(t, env, o.project, map[string]any{
+		"from": "2026-10-20T00:00:00Z", "to": "2026-10-21T00:00:00Z",
+	})); len(got) != 0 {
+		t.Errorf("Expected no Agent session with activity on the day of the upload, got %v", got)
+	}
+	october := listAgentSessions(t, env, o.project, octoberRange)
+	if len(october.AgentSessions) != 1 || october.AgentSessions[0].ID != laptopSession ||
+		october.AgentSessions[0].First != "2026-10-02T11:00:00Z" || october.AgentSessions[0].Last != "2026-10-02T11:00:05Z" {
+		t.Errorf("Expected the old Agent session with the times of its timed lines, got %+v", october.AgentSessions)
+	}
+	if got := october.AgentSessions[0].Title; got != "Cart page" {
+		t.Errorf("Expected the untimed ai-title to give the title, got %q", got)
+	}
+	untimed := sessionTotalsOf(t, env, o.project, apiSession)
+	if !untimed.First.Equal(upload) || !untimed.Last.Equal(upload) {
+		t.Errorf("Expected the stored time %s as the first and last time of an Agent session with no timed line, got %s and %s",
+			upload, untimed.First, untimed.Last)
+	}
+}

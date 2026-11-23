@@ -32,9 +32,10 @@ type sessionDayKey struct {
 
 type sessionDay struct {
 	storage.AgentSessionDay
-	hasLine bool
+	// hasTime is true when a line of the row has a time of its own.
+	hasTime bool
 	// storedFirst and storedLast are the times that the server stored the
-	// units, for a day with no lines.
+	// units, for a row with no such line.
 	storedFirst, storedLast time.Time
 }
 
@@ -74,22 +75,25 @@ func (t *sessionTotals) row(unit storage.AgentFileUnit) *sessionDay {
 }
 
 // addLine adds one line's Log, before its time is kept on the stored day,
-// to its file's row. A line time that is not believable for the unit's
-// receipt, as Log ingest decides, gives the stored time. The line ends at
-// end, its offset after its last byte.
-func (t *sessionTotals) addLine(unit storage.AgentFileUnit, end uint64, object map[string]json.RawMessage, f lineFacts, receipt normalise.Receipt) {
+// to its file's row. timed is true when the line has a time of its own:
+// only such a line is activity, and sets the row's first and last times.
+// A line time that is not believable for the unit's receipt, as Log
+// ingest decides, gives the stored time. The line ends at end, its offset
+// after its last byte.
+func (t *sessionTotals) addLine(unit storage.AgentFileUnit, end uint64, object map[string]json.RawMessage, timed bool, f lineFacts, receipt normalise.Receipt) {
 	row := t.row(unit)
-	at, ok := timeOf(object["time"])
-	if !ok || !receipt.InWindow(at) {
-		at = receipt.At
+	if at, ok := timeOf(object["time"]); timed {
+		if !ok || !receipt.InWindow(at) {
+			at = receipt.At
+		}
+		if !row.hasTime || at.Before(row.First) {
+			row.First = at
+		}
+		if !row.hasTime || at.After(row.Last) {
+			row.Last = at
+		}
+		row.hasTime = true
 	}
-	if !row.hasLine || at.Before(row.First) {
-		row.First = at
-	}
-	if !row.hasLine || at.After(row.Last) {
-		row.Last = at
-	}
-	row.hasLine = true
 
 	role, line := stringOf(object["agent.role"]), stringOf(object["agent.line"])
 	if role == rolePerson {
@@ -161,7 +165,14 @@ func (t *sessionTotals) days() []storage.AgentSessionDay {
 	days := make([]storage.AgentSessionDay, len(keys))
 	for i, key := range keys {
 		row := t.rows[key]
-		if !row.hasLine {
+		switch {
+		case row.hasTime:
+		case strings.HasSuffix(row.Path, ".jsonl"):
+			// A transcript's lines with no time of their own are not
+			// activity (storage.NoActivity).
+			row.First, row.Last = row.storedFirst, storage.NoActivity
+		default:
+			// A side file has no lines: its times are the stored times.
 			row.First, row.Last = row.storedFirst, row.storedLast
 		}
 		days[i] = row.AgentSessionDay
