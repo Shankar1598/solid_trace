@@ -10,7 +10,7 @@ export interface IngestTarget {
 }
 
 export interface Snippet {
-  id: 'curl' | 'vector' | 'fluent-bit' | 'sentry' | 'opentelemetry'
+  id: 'curl' | 'vector' | 'fluent-bit' | 'sentry' | 'otel-collector' | 'otel-sdk'
   label: string
   /** What the snippet is: a shell command or a config file. */
   note: string
@@ -38,7 +38,7 @@ function otlpEndpoint({ url }: IngestTarget): string {
   return new URL(url).href.replace(/\/+$/, '')
 }
 
-/** The snippets an empty Project shows: curl, Vector, Fluent Bit, a Sentry SDK and OpenTelemetry. */
+/** The snippets an empty Project shows: curl, Vector, Fluent Bit, a Sentry SDK, an OpenTelemetry Collector and an OpenTelemetry SDK. */
 export function snippets(target: IngestTarget): Snippet[] {
   const key = target.key ?? NO_KEY
   const route = logsRoute(target)
@@ -108,10 +108,16 @@ export function snippets(target: IngestTarget): Snippet[] {
       ].join('\n'),
     },
     {
-      id: 'opentelemetry',
-      label: 'OpenTelemetry',
-      note: 'An exporter and a logs pipeline for an OpenTelemetry Collector (set receivers to your own), then the environment variables for an SDK that sends without one. EventStore takes OTLP over HTTP, not gRPC.',
+      id: 'otel-collector',
+      label: 'OpenTelemetry Collector',
+      note: 'A config file for an OpenTelemetry Collector.',
       code: [
+        'receivers:',
+        '  otlp:',
+        '    protocols:',
+        '      grpc: {}',
+        '      http: {}',
+        '',
         'exporters:',
         '  otlp_http:',
         `    endpoint: ${otlp}`,
@@ -123,10 +129,15 @@ export function snippets(target: IngestTarget): Snippet[] {
         '    logs:',
         '      receivers: [otlp]',
         '      exporters: [otlp_http]',
-        '',
-        '# For an SDK, with no Collector, set these instead:',
+      ].join('\n'),
+    },
+    {
+      id: 'otel-sdk',
+      label: 'OpenTelemetry SDK',
+      note: 'Environment variables for an OpenTelemetry SDK. EventStore takes OTLP over HTTP, not gRPC.',
+      code: [
         `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${otlp}/v1/logs`,
-        `OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer ${key}`,
+        `OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20${key}`,
         'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf',
       ].join('\n'),
     },

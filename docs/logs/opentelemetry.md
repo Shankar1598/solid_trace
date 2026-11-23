@@ -2,7 +2,7 @@
 
 An OpenTelemetry Collector or SDK sends Logs to EventStore over OTLP/HTTP. Each request goes to one Project. The Logs show in the Logs explorer a few seconds later.
 
-The Logs explorer of a Project with no Logs has an OpenTelemetry tab in its Get started panel. The tab shows the settings below with the Ingest URL and the Project's key filled in.
+The Logs explorer of a Project with no Logs has two OpenTelemetry tabs in its Get started panel: one for a Collector and one for an SDK. Each tab shows the settings below with the Ingest URL and the Project's key filled in.
 
 ## The route
 
@@ -10,7 +10,7 @@ The Logs explorer of a Project with no Logs has an OpenTelemetry tab in its Get 
 POST <Ingest URL>/v1/logs
 ```
 
-- Send Logs only. Traces and metrics are not taken yet.
+- Send Logs only. EventStore does not take traces and metrics.
 - Use OTLP over HTTP. EventStore does not take gRPC, so an exporter must use `http/protobuf` or `http/json`, not `grpc`.
 - The Project is the Project of the key.
 
@@ -38,8 +38,8 @@ The body can be compressed. Set `Content-Encoding` to `gzip`, `deflate`, `br` or
 
 The limits are the same as for the other Log routes:
 
-- 10 MB as sent.
-- 50 MB after decoding.
+- 10 MiB as sent.
+- 50 MiB after decoding.
 
 A body over a limit gets `413`. One request is stored as one Log batch, so keep each request well below the limits.
 
@@ -62,22 +62,25 @@ EventStore stores the other Logs of the request. A Log that has a field cut to a
 | `401` | There is no key, or the key is not known. | Drops the data. |
 | `413` | The body is over a limit. | Drops the data. |
 | `415` | The Content-Type or the Content-Encoding is not one of the above. | Drops the data. |
-| `503` | EventStore is overloaded or stops. The answer has `Retry-After: 5`. | Sends the request again after the wait. |
+| `500` | An internal error, for example the lookup of the key fails. | Drops the data. |
+| `503` | EventStore is overloaded or shuts down. The answer has `Retry-After: 5`. | Sends the request again after the wait. |
 
-The OTLP/HTTP specification makes a sender retry `429`, `502`, `503` and `504`, and drop the data on any other error. A Collector 0.165.0 does this, and it showed the same in a test of `400`, `401`, `415` and `503`. The Collector logs a warning when a `200` has a `partial_success`, and it goes on.
+The OTLP/HTTP specification makes a sender retry `429`, `502`, `503` and `504`, and drop the data on any other error. So a sender does not retry a `500` or a `4xx` other than `429`. A Collector 0.165.0 does this. A test showed it for `400`, `401`, `415` and `503`. The `500` follows from the specification and was not tested. The Collector logs a warning when a `200` has a `partial_success`, and it continues to send.
 
 A request that a Collector sends again after a timeout can store its Logs twice. This is true for every Log route.
 
 ## Ingest counts
 
-Each request adds to the Project's Ingest counts:
+Each request that EventStore reads adds to the Project's Ingest counts:
 
 - One request.
 - One Log received for each log record.
 - One unreadable Log for each Log that was not stored.
 - The bytes, after decoding and as sent.
 
-A body that does not decode counts as one request with its bytes and no Logs. A request that is turned away as overloaded counts as such.
+A body that does not decode as OTLP counts as one request with its bytes and no Logs. A request that EventStore turns away as overloaded is counted as overloaded.
+
+A request that EventStore refuses before it reads the body is not counted. These are `401`, `413`, `415`, and a body that does not decompress.
 
 ## Field mapping
 
@@ -87,9 +90,17 @@ The record, its scope and its resource give the Attributes of a Log, in one flat
 
 ### A Collector
 
-Use the `otlp_http` exporter. The older name `otlphttp` still works, but it is deprecated. Set `endpoint` to the Ingest URL. The Collector adds `/v1/logs` to it.
+Use the `otlp_http` exporter. The older name `otlphttp` still works, but the Collector replaced it. Set `endpoint` to the Ingest URL. The Collector adds `/v1/logs` to it.
+
+This is the config file of the Collector tab. It runs as it is:
 
 ```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc: {}
+      http: {}
+
 exporters:
   otlp_http:
     endpoint: https://ingest.example.com
@@ -103,19 +114,21 @@ service:
       exporters: [otlp_http]
 ```
 
-To send JSON, add `encoding: json` to the exporter.
+The receivers take OTLP on port 4317 (gRPC) and port 4318 (HTTP). The Collector sends to EventStore over HTTP only. To send JSON, add `encoding: json` to the exporter.
 
 ### An SDK
 
-Set these environment variables in the process of the application:
+This is the text of the SDK tab. Set these environment variables in the process of the application:
 
 ```
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://ingest.example.com/v1/logs
-OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer <key>
+OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20<key>
 OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
 ```
 
-Use `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, not `OTEL_EXPORTER_OTLP_ENDPOINT`. The second variable also sets the endpoint of traces and metrics, which EventStore does not take yet. An SDK uses the first one as it is, so it has the `/v1/logs` path in it.
+The header value has `%20` for the space, as the OpenTelemetry specification asks.
+
+Use `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, not `OTEL_EXPORTER_OTLP_ENDPOINT`. The second variable also sets the endpoint of traces and metrics, which EventStore does not take. An SDK uses the first one as it is, so it has the `/v1/logs` path in it.
 
 ## Related
 
