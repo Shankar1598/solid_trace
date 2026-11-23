@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionsSearch, costText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionsSearch, costText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
 
@@ -13,6 +13,47 @@ describe('the search of the Agent sessions page', () => {
     const range = { kind: 'absolute' as const, from: new Date('2026-10-02T09:00:00Z'), to: new Date('2026-10-02T10:00:00Z') }
     expect(agentSessionsSearch(range, { ...none, repository: 'github.com/acme/shop', project: 'shop' }))
       .toBe('?from=2026-10-02T09%3A00%3A00.000Z&to=2026-10-02T10%3A00%3A00.000Z&repository=github.com%2Facme%2Fshop&project=shop')
+  })
+})
+
+describe('the order of the Agent sessions page', () => {
+  const week = { kind: 'relative' as const, span: '7d' }
+
+  it('holds the sort and the direction in the search, after the filters', () => {
+    expect(agentSessionsSearch(week, { ...none, person: 3 }, { sort: 'tokens', direction: 'desc' })).toBe('?range=7d&person=3&sort=tokens&direction=desc')
+    expect(agentSessionsSearch(week, none, { sort: 'cost', direction: 'asc' })).toBe('?range=7d&sort=cost&direction=asc')
+  })
+
+  it('leaves the default order out of the search: the latest activity first', () => {
+    expect(agentSessionsSearch(week, none)).toBe('?range=7d')
+    expect(agentSessionsSearch(week, none, { sort: null, direction: null })).toBe('?range=7d')
+    expect(agentSessionsSearch(week, none, { sort: 'last', direction: 'desc' })).toBe('?range=7d')
+    expect(agentSessionsSearch(week, none, { sort: null, direction: 'asc' })).toBe('?range=7d&sort=last&direction=asc')
+  })
+
+  it('is the last activity descending when the URL names no order', () => {
+    expect(orderOf({ sort: null, direction: null })).toEqual({ sort: 'last', direction: 'desc' })
+    expect(orderOf({ sort: 'start', direction: null })).toEqual({ sort: 'start', direction: 'desc' })
+  })
+
+  it('sorts a new column descending first, and flips the sorted column', () => {
+    expect(nextOrder({ sort: null, direction: null }, 'tokens')).toEqual({ sort: 'tokens', direction: 'desc' })
+    expect(nextOrder({ sort: 'tokens', direction: 'desc' }, 'tokens')).toEqual({ sort: 'tokens', direction: 'asc' })
+    expect(nextOrder({ sort: 'tokens', direction: 'asc' }, 'tokens')).toEqual({ sort: 'tokens', direction: 'desc' })
+    expect(nextOrder({ sort: 'tokens', direction: 'asc' }, 'cost')).toEqual({ sort: 'cost', direction: 'desc' })
+    // The default order is the last activity descending, so a click on it flips it.
+    expect(nextOrder({ sort: null, direction: null }, 'last')).toEqual({ sort: 'last', direction: 'asc' })
+  })
+
+  it('says the order in words', () => {
+    expect(orderText({ sort: null, direction: null })).toBe('latest activity first')
+    expect(orderText({ sort: 'last', direction: 'asc' })).toBe('earliest activity first')
+    expect(orderText({ sort: 'start', direction: 'desc' })).toBe('latest start first')
+    expect(orderText({ sort: 'start', direction: 'asc' })).toBe('earliest start first')
+    expect(orderText({ sort: 'tokens', direction: 'desc' })).toBe('most tokens first')
+    expect(orderText({ sort: 'tokens', direction: 'asc' })).toBe('fewest tokens first')
+    expect(orderText({ sort: 'cost', direction: 'desc' })).toBe('highest cost first')
+    expect(orderText({ sort: 'cost', direction: 'asc' })).toBe('lowest cost first')
   })
 })
 

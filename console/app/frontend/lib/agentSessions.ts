@@ -1,6 +1,6 @@
-// The Agent sessions page: its search (the range and the filters stay in
-// the URL, so that a filtered view can be shared), and how its numbers
-// read. The rows and totals come from AgentSessionsView.
+// The Agent sessions page: its search (the range, the filters and the
+// order stay in the URL, so that a filtered view can be shared), and how
+// its numbers read. The rows and totals come from AgentSessionsView.
 import { EMPTY_BUILDER, queryOf } from './logs/builder'
 import { searchOf } from './logs/explorerState'
 import type { TimeRange } from './timeRange'
@@ -15,6 +15,48 @@ export interface AgentSessionFilters {
   /** The slug of a Project of Runs. */
   project: string | null
   run: RunFilter | null
+}
+
+/** The columns that EventStore sorts the list by. */
+export type AgentSort = 'last' | 'start' | 'tokens' | 'cost'
+export type SortDirection = 'desc' | 'asc'
+
+/** The order of the list, as the URL names it; null is the default of each. */
+export interface AgentSessionOrder {
+  sort: AgentSort | null
+  direction: SortDirection | null
+}
+
+/** The order of the list when the URL names none: the latest activity first. */
+export const DEFAULT_ORDER = { sort: 'last', direction: 'desc' } as const satisfies { sort: AgentSort; direction: SortDirection }
+
+/** The order that the list has: the URL's, with the default for each part that it leaves out. */
+export function orderOf(order: AgentSessionOrder): { sort: AgentSort; direction: SortDirection } {
+  return { sort: order.sort ?? DEFAULT_ORDER.sort, direction: order.direction ?? DEFAULT_ORDER.direction }
+}
+
+/**
+ * The order after a click on a column's heading: the other direction on
+ * the sorted column, else that column descending (the latest times, the
+ * most tokens, the highest cost first).
+ */
+export function nextOrder(order: AgentSessionOrder, sort: AgentSort): { sort: AgentSort; direction: SortDirection } {
+  const now = orderOf(order)
+  if (now.sort === sort) return { sort, direction: now.direction === 'desc' ? 'asc' : 'desc' }
+  return { sort, direction: 'desc' }
+}
+
+const ORDER_TEXT: Record<AgentSort, Record<SortDirection, string>> = {
+  last: { desc: 'latest activity first', asc: 'earliest activity first' },
+  start: { desc: 'latest start first', asc: 'earliest start first' },
+  tokens: { desc: 'most tokens first', asc: 'fewest tokens first' },
+  cost: { desc: 'highest cost first', asc: 'lowest cost first' },
+}
+
+/** The order in words, as "most tokens first". */
+export function orderText(order: AgentSessionOrder): string {
+  const { sort, direction } = orderOf(order)
+  return ORDER_TEXT[sort][direction]
 }
 
 export interface AgentSessionRow {
@@ -53,8 +95,11 @@ export interface AgentSessionTotals {
   no_cost: number
 }
 
-/** The page's search for a range and filters: a span stays a span, and a filter that is not set is left out. */
-export function agentSessionsSearch(range: TimeRange, filters: AgentSessionFilters): string {
+/**
+ * The page's search for a range, filters and an order: a span stays a
+ * span, a filter that is not set is left out, and so is the default order.
+ */
+export function agentSessionsSearch(range: TimeRange, filters: AgentSessionFilters, order: AgentSessionOrder = { sort: null, direction: null }): string {
   const params = new URLSearchParams()
   if (range.kind === 'relative') {
     params.set('range', range.span)
@@ -65,6 +110,11 @@ export function agentSessionsSearch(range: TimeRange, filters: AgentSessionFilte
   for (const name of ['person', 'repository', 'project', 'run'] as const) {
     const value = filters[name]
     if (value !== null && value !== '') params.set(name, String(value))
+  }
+  const { sort, direction } = orderOf(order)
+  if (sort !== DEFAULT_ORDER.sort || direction !== DEFAULT_ORDER.direction) {
+    params.set('sort', sort)
+    params.set('direction', direction)
   }
   return `?${params}`
 }

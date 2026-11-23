@@ -13,8 +13,8 @@ module McpTools
 
     description <<~TEXT.squish
       Lists an Organization's Agent sessions, the recorded conversations of coding agents in its Agent Project:
-      each Agent session with activity in the range, latest activity first, as the Agent sessions page lists them,
-      at most limit rows. Each row has the id, the title (the last /rename, else the title that Claude Code gave,
+      each Agent session with activity in the range, latest activity first unless sort and direction say otherwise,
+      as the Agent sessions page lists them, at most limit rows. Each row has the id, the title (the last /rename, else the title that Claude Code gave,
       else the start of the first person message; "" for none), first and last times, the person (an engineer's own
       Agent session) or the Run (id and Project), harness, repository, folder, parent_session_id, model, input,
       output, cache_read and cache_write tokens, cost_usd (an estimate at list prices), person_messages, turns,
@@ -23,7 +23,9 @@ module McpTools
       Agent session, and cost_usd when it has no cost. totals adds up all the Agent sessions
       that the filters select, also those that the limit left out; more is true when the limit left some out. When
       more is true, narrow the range, or filter by person or repository, to read the others. repositories lists
-      those of the range. person, repository, project and run filter, as the page's filters do.
+      those of the range. person, repository, project and run filter, as the page's filters do. sort (last activity,
+      start, tokens or cost) and direction (desc, the default, or asc) order the rows before the limit: sort cost
+      gives the most expensive Agent sessions first, and those with no cost last.
       get_agent_session reads one Agent session's timeline.
     TEXT
     read_only!
@@ -36,6 +38,10 @@ module McpTools
     argument :project, { type: "string", description: "Only the Agent sessions of Runs that use this Project's Factory settings: its slug. list_projects lists them." }
     argument :run, { type: "string", enum: AgentSessionsView::RUN_FILTERS,
                      description: "run: only the Agent sessions of Runs; none: only engineers' own Agent sessions." }
+    argument :sort, { type: "string", enum: AgentSessionsView::SORTS,
+                      description: "The order of the rows: last (the last activity, the default), start, tokens or cost." }
+    argument :direction, { type: "string", enum: AgentSessionsView::DIRECTIONS,
+                           description: "desc (the default): the latest or the largest first; asc: the earliest or the smallest first." }
     argument :limit, { type: "integer", minimum: 1, maximum: MOST,
                        description: "The most Agent sessions in the rows, #{DEFAULT_LIMIT} when left out." }
 
@@ -44,14 +50,15 @@ module McpTools
       range = AgentSessionsView.range(range: arguments[:range], from: arguments[:from], to: arguments[:to])
       filters = { person: person&.id, repository: arguments[:repository].to_s.strip.presence,
                   project: factory_project&.slug, run: arguments[:run].presence }
-      view = AgentSessionsView.new(organization: organization, range: range, filters: filters, limit: limit)
+      order = { sort: arguments[:sort].presence, direction: arguments[:direction].presence }
+      view = AgentSessionsView.new(organization: organization, range: range, filters: filters, order: order, limit: limit)
       rows = view.rows
       require_event_store!(view)
 
       sessions = rows.map { |row| short(row).merge("link" => links.agent_session(organization, row["id"])) }
       json({ agent_sessions: sessions, totals: view.totals, more: view.more, cost_label: AgentSessionsView::COST_LABEL,
-             range: TransactionsView.range_h(range), filters: view.filters, repositories: view.repositories },
-        link: links.agent_sessions(organization, range: range, filters: view.filters))
+             range: TransactionsView.range_h(range), filters: view.filters, order: view.order, repositories: view.repositories },
+        link: links.agent_sessions(organization, range: range, filters: view.filters, order: view.order))
     end
 
     private

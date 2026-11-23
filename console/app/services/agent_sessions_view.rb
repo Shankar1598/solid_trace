@@ -2,16 +2,21 @@
 
 # The Agent sessions of an Organization as a member sees them on the Agent
 # sessions page: those of its Agent Project with activity in a range, that
-# the filters select, latest activity first, with the totals of their
-# tokens and estimated cost. Each row names its person, or its Run. Made
-# here once, so that the page and the MCP server's list_agent_sessions
-# cannot drift.
+# the filters select, in the order (latest activity first by default),
+# with the totals of their tokens and estimated cost. Each row names its
+# person, or its Run. Made here once, so that the page and the MCP
+# server's list_agent_sessions cannot drift.
 #
 # The filters: person (a user id), repository (host/workspace/name),
 # project (the slug of a Project of Runs: it selects the Agent sessions of
 # Runs only, as an engineer's own Agent session has no Project), and run
 # ("run" for the Agent sessions of Runs, "none" for those of no Run). A
 # filter that is not one of these values is not applied.
+#
+# The order: sort (last, start, tokens or cost) and direction (desc or
+# asc), as EventStore sorts the Agent sessions before its limit. With no
+# order, or one that is not one of these values, EventStore gives the
+# latest activity first.
 class AgentSessionsView
   include EventStoreView
 
@@ -20,6 +25,8 @@ class AgentSessionsView
   # The range when none is given.
   DEFAULT_SPAN = "7d"
   RUN_FILTERS = %w[run none].freeze
+  SORTS = %w[last start tokens cost].freeze
+  DIRECTIONS = %w[desc asc].freeze
   # The cost is the tokens at list prices, or Claude Code's own estimate,
   # never an invoice (story 30).
   COST_LABEL = "estimate at list prices"
@@ -45,15 +52,25 @@ class AgentSessionsView
     }
   end
 
-  attr_reader :organization, :range, :filters, :limit
+  # The order that params name: sort and direction, each nil when it names
+  # none or one that is not a value.
+  def self.order(params)
+    sort = params[:sort].to_s
+    direction = params[:direction].to_s
+    { sort: SORTS.include?(sort) ? sort : nil, direction: DIRECTIONS.include?(direction) ? direction : nil }
+  end
+
+  attr_reader :organization, :range, :filters, :order, :limit
 
   # range is a McpTools::TimeRange, as AgentSessionsView.range reads it;
-  # filters as AgentSessionsView.filters reads them. limit is the most rows,
-  # nil for EventStore's own limit (500), which the page uses.
-  def initialize(organization:, range:, filters: {}, limit: nil)
+  # filters and order as AgentSessionsView.filters and .order read them.
+  # limit is the most rows, nil for EventStore's own limit (500), which the
+  # page uses.
+  def initialize(organization:, range:, filters: {}, order: {}, limit: nil)
     @organization = organization
     @range = range
     @filters = { person: nil, repository: nil, project: nil, run: nil }.merge(filters.compact)
+    @order = { sort: nil, direction: nil }.merge(order.compact)
     @limit = limit
   end
 
@@ -65,7 +82,7 @@ class AgentSessionsView
     return { on: false } unless project
 
     {
-      on: true, range: TransactionsView.range_h(range), filters: filters, event_store: event_store,
+      on: true, range: TransactionsView.range_h(range), filters: filters, order: order, event_store: event_store,
       rows: rows, totals: totals, more: more, cost_label: COST_LABEL,
       people: people, projects: projects, repositories: repositories,
     }
@@ -128,7 +145,8 @@ class AgentSessionsView
   def answer
     event_store_answer("Agent sessions") do
       EventStore.agent_sessions!(project_id: project.id, from: range.from, to: range.to, user_id: filters[:person],
-        repository: filters[:repository], project: filters[:project], run: filters[:run], limit: limit,
+        repository: filters[:repository], project: filters[:project], run: filters[:run],
+        sort: order[:sort], direction: order[:direction], limit: limit,
         read_timeout: TIMEOUT_SECONDS)
     end
   end

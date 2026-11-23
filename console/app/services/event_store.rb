@@ -157,12 +157,16 @@ class EventStore
 
     # The Agent sessions of an Agent Project with activity in [from, to],
     # that the filters select (nil selects all), as EventStore's POST
-    # /agent-sessions answers them: {"agent_sessions" => [...] latest
-    # first, at most limit, "totals" of all that the filters select,
-    # "more", "repositories"}. run is "run", "none" or nil. Raises
+    # /agent-sessions answers them: {"agent_sessions" => [...] in the order
+    # of sort and direction (latest activity first when nil), the first
+    # limit, "totals" of all that the filters select, "more",
+    # "repositories"}. run is "run", "none" or nil; sort is last, start,
+    # tokens, cost or nil; direction is desc, asc or nil. Raises
     # Unavailable as transactions! does.
-    def agent_sessions!(project_id:, from:, to:, user_id: nil, repository: nil, project: nil, run: nil, limit: nil, read_timeout: 10)
-      body = { from: utc(from), to: utc(to), user_id: user_id, repository: repository, project: project, run: run, limit: limit }.compact
+    def agent_sessions!(project_id:, from:, to:, user_id: nil, repository: nil, project: nil, run: nil, sort: nil, direction: nil,
+                        limit: nil, read_timeout: 10)
+      body = { from: utc(from), to: utc(to), user_id: user_id, repository: repository, project: project, run: run,
+               sort: sort, direction: direction, limit: limit }.compact
       post!("#{base_url}/api/#{project_id}/agent-sessions", body, read_timeout: read_timeout, open_timeout: 3)
     end
 

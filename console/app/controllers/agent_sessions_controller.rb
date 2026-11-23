@@ -2,8 +2,8 @@
 
 # The Agent sessions page (Organization navigation): the Agent sessions of
 # the Organization's Agent Project over the range and the filters in the
-# URL (range=<span> or from and to, person, repository, project, run),
-# with their totals. AgentSessionsView builds it. Each member sees it;
+# URL (range=<span> or from and to, person, repository, project, run), in
+# the order in the URL (sort and direction), with their totals. AgentSessionsView builds it. Each member sees it;
 # someone outside the Organization gets 404 (set_current_org). With Agent
 # sessions off, the page tells how to turn them on.
 class AgentSessionsController < ApplicationController
@@ -20,7 +20,7 @@ class AgentSessionsController < ApplicationController
     # page has them only while the Factory is on; a link that names them
     # does not filter out of sight.
     filters = filters.merge(project: nil, run: nil) unless Dispatcher.on?
-    view = AgentSessionsView.new(organization: @current_org, range: range, filters: filters)
+    view = AgentSessionsView.new(organization: @current_org, range: range, filters: filters, order: AgentSessionsView.order(params))
     props = view.to_h.merge(settings_path: agent_session_settings_path(org_slug: @current_org.slug))
     props[:can_turn_on] = admin? unless props[:on]
     props[:search] = search_across(@current_org.agent_project)

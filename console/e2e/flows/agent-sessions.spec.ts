@@ -267,9 +267,27 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect.poll(() => longTitleLink.evaluate(a => a.scrollWidth > a.clientWidth), { message: 'the long title is cut' }).toBe(true)
   await expect(table.locator(`tr[data-session="${members.id}"] td[data-cell="title"] a`)).toHaveText('Fix the cart total.')
 
+  // A sortable heading sorts the list at EventStore, before its limit: the
+  // most tokens first, then the fewest. The list opens with the latest
+  // activity first. The order is in the URL, and a filter keeps it.
+  const orderedIds = () => table.locator('tr[data-session]').evaluateAll(rows => rows.map(r => r.getAttribute('data-session')!))
+  await expect(table.getByRole('columnheader', { name: 'Last activity' })).toHaveAttribute('aria-sort', 'descending')
+  const tokensHead = table.getByRole('columnheader', { name: 'Tokens' })
+  await expect(tokensHead).not.toHaveAttribute('aria-sort')
+  await tokensHead.getByRole('button', { name: 'Tokens' }).click()
+  await expect(page).toHaveURL(/[?&]sort=tokens&direction=desc(&|$)/)
+  await expect(tokensHead).toHaveAttribute('aria-sort', 'descending')
+  await expect.poll(orderedIds).toEqual([long.id, members.id])
+  await tokensHead.getByRole('button', { name: 'Tokens' }).click()
+  await expect(page).toHaveURL(/[?&]sort=tokens&direction=asc(&|$)/)
+  await expect(tokensHead).toHaveAttribute('aria-sort', 'ascending')
+  await expect(table.getByRole('columnheader', { name: 'Last activity' })).not.toHaveAttribute('aria-sort')
+  await expect.poll(orderedIds).toEqual([members.id, long.id])
+
   // The person filter, with the repository filter: one person's rows.
   await choose(page, 'Person', MEMBER_NAME)
   await expect.poll(() => rowIds(page)).toEqual([members.id])
+  await expect(page).toHaveURL(/[?&]sort=tokens&direction=asc(&|$)/)
   await expectTotals(page, { 'Agent sessions': '1', Tokens: '150', Input: '5' })
   await choose(page, 'Person', ADMIN_NAME)
   await expect.poll(() => rowIds(page)).toEqual([long.id])
@@ -285,7 +303,11 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   // row opens it, not only on the name: here on the start time.
   await choose(page, 'Repository', APP)
   await expect.poll(() => rowIds(page)).toEqual([long.id])
-  await expect(table.locator(`tr[data-session="${long.id}"]`).getByRole('link', { name: ADMIN_NAME })).toBeVisible()
+  // The person's cell is plain text, not a link of its own: the row opens
+  // the Agent session, and the title is the row's link.
+  const personCell = table.locator(`tr[data-session="${long.id}"] td`).nth(3)
+  await expect(personCell).toHaveText(ADMIN_NAME)
+  await expect(personCell.getByRole('link')).toHaveCount(0)
   await table.locator(`tr[data-session="${long.id}"] td`).nth(1).click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/agent_sessions/${long.id}`))
   await expect(page.getByText(long.id, { exact: true })).toBeVisible()

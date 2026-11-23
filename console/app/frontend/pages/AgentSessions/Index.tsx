@@ -1,6 +1,6 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
-import { AlertTriangle, Bot } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot } from 'lucide-react'
 import { AgentSessionSearch } from '@/components/AgentSessionSearch'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -13,6 +13,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   agentSessionsSearch,
   costText,
+  nextOrder,
+  orderOf,
+  orderText,
   searchAcrossHref,
   titleOf,
   tokensText,
@@ -20,12 +23,15 @@ import {
   whoText,
   type SearchAcross,
   type AgentSessionFilters,
+  type AgentSessionOrder,
   type AgentSessionRow,
+  type AgentSort,
   type AgentSessionTotals,
   type RunFilter,
 } from '@/lib/agentSessions'
 import { rangeOfAnswer, type AnsweredRange } from '@/lib/performance'
 import type { TimeRange } from '@/lib/timeRange'
+import { cn } from '@/lib/utils'
 import type { SharedProps } from '@/types'
 
 type AgentSessionsProps =
@@ -35,6 +41,7 @@ type AgentSessionsProps =
       settings_path: string
       range: AnsweredRange
       filters: AgentSessionFilters
+      order: AgentSessionOrder
       event_store: { available: boolean; error?: string }
       rows: AgentSessionRow[]
       totals: AgentSessionTotals
@@ -52,9 +59,11 @@ const DESCRIPTION = 'Each Agent session of this Organization: the engineers\' in
 
 /**
  * The Agent sessions page: the Agent sessions of the Organization's Agent
- * Project that the filters select, latest activity first, with the totals
- * of their tokens and estimated cost. The range and the filters are in the
- * URL, so that a filtered view can be shared.
+ * Project that the filters select, in the order of the sorted column (the
+ * latest activity first by default), with the totals of their tokens and
+ * estimated cost. The range, the filters and the order are in the URL, so
+ * that a filtered view can be shared. EventStore sorts the Agent sessions
+ * before its limit, so that the rows are the first of all in that order.
  */
 export default function AgentSessionsIndex({ agent_sessions: view }: { agent_sessions: AgentSessionsProps }) {
   return (
@@ -88,8 +97,10 @@ function SessionsList({ view }: { view: Extract<AgentSessionsProps, { on: true }
   const { current_org, factory_on } = usePage<SharedProps>().props
   const range = rangeOfAnswer(view.range)
   const path = `/${current_org?.slug ?? ''}/agent_sessions`
-  const visit = (nextRange: TimeRange, filters: AgentSessionFilters) => router.visit(`${path}${agentSessionsSearch(nextRange, filters)}`)
+  const visit = (nextRange: TimeRange, filters: AgentSessionFilters, order: AgentSessionOrder = view.order) =>
+    router.visit(`${path}${agentSessionsSearch(nextRange, filters, order)}`)
   const filter = (change: Partial<AgentSessionFilters>) => visit(range, { ...view.filters, ...change })
+  const sortBy = (order: AgentSessionOrder) => visit(range, view.filters, order)
 
   return (
     <div className="space-y-4">
@@ -167,7 +178,9 @@ function SessionsList({ view }: { view: Extract<AgentSessionsProps, { on: true }
           </CardContent>
         </Card>
       ) : (
-        view.rows.length > 0 && <SessionsTable rows={view.rows} more={view.more} total={view.totals.agent_sessions} path={path} />
+        view.rows.length > 0 && (
+          <SessionsTable rows={view.rows} more={view.more} total={view.totals.agent_sessions} path={path} order={view.order} onSort={sortBy} />
+        )
       )}
     </div>
   )
@@ -222,7 +235,15 @@ function Totals({ totals, costLabel }: { totals: AgentSessionTotals; costLabel: 
   )
 }
 
-function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; more: boolean; total: number; path: string }) {
+function SessionsTable({ rows, more, total, path, order, onSort }: {
+  rows: AgentSessionRow[]
+  more: boolean
+  total: number
+  path: string
+  order: AgentSessionOrder
+  onSort: (order: AgentSessionOrder) => void
+}) {
+  const sortHead = { order, onSort }
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto border">
@@ -230,13 +251,13 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
           <TableHeader>
             <TableRow>
               <TableHead>Title</TableHead>
-              <TableHead className="max-md:hidden">Start</TableHead>
-              <TableHead className="max-md:hidden">Last activity</TableHead>
+              <SortHead sort="start" className="max-md:hidden" {...sortHead}>Start</SortHead>
+              <SortHead sort="last" className="max-md:hidden" {...sortHead}>Last activity</SortHead>
               <TableHead className="max-md:hidden">Person or Run</TableHead>
               <TableHead className="max-md:hidden">Repository</TableHead>
               <TableHead className="max-md:hidden">Model</TableHead>
-              <TableHead className="text-right">Tokens</TableHead>
-              <TableHead className="text-right max-md:hidden">Estimated cost</TableHead>
+              <SortHead sort="tokens" className="text-right" numeric {...sortHead}>Tokens</SortHead>
+              <SortHead sort="cost" className="text-right max-md:hidden" numeric {...sortHead}>Estimated cost</SortHead>
               <TableHead className="text-right max-2xl:hidden">Messages</TableHead>
               <TableHead className="text-right max-2xl:hidden">Tool calls</TableHead>
             </TableRow>
@@ -264,7 +285,8 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
                 <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.first)}</TableCell>
                 <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.last)}</TableCell>
                 <TableCell className="max-md:hidden">
-                  <Link href={`${path}/${row.id}`} className={`underline-offset-2 hover:underline ${row.run ? 'font-mono text-xs' : ''}`}>{whoText(row)}</Link>
+                  {/* Plain text: the row opens the Agent session, and the title is its link. */}
+                  <span className={row.run ? 'font-mono text-xs' : undefined}>{whoText(row)}</span>
                   {row.flags.map(flag => <Badge key={flag} variant="warn" className="ml-1.5">{flag}</Badge>)}
                 </TableCell>
                 <TableCell className="font-mono text-xs max-md:hidden">
@@ -291,7 +313,7 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
       </div>
       {more && (
         <p className="text-xs text-muted-foreground">
-          The newest {rows.length.toLocaleString()} of {total.toLocaleString()} Agent sessions. The totals are of all {total.toLocaleString()}. Narrow the range or the filters to see the others.
+          The first {rows.length.toLocaleString()} of {total.toLocaleString()} Agent sessions, {orderText(order)}. The totals are of all {total.toLocaleString()}. Narrow the range or the filters to see the others.
         </p>
       )}
     </div>
@@ -299,8 +321,43 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
 }
 
 /**
+ * The heading of a column that EventStore sorts the list by: a button that
+ * sorts it descending first, and the other way on a second click. Only the
+ * sorted column shows its direction. As only some columns sort, the others
+ * show a quiet up-down arrow on hover and on focus, which takes its place
+ * always, so that the heading does not move. A numeric heading keeps its
+ * text at the right edge, with the arrow before it.
+ */
+function SortHead({ sort, order, onSort, numeric, className, children }: {
+  sort: AgentSort
+  order: AgentSessionOrder
+  onSort: (order: AgentSessionOrder) => void
+  numeric?: boolean
+  className?: string
+  children: string
+}) {
+  const now = orderOf(order)
+  const sorted = now.sort === sort
+  const Arrow = now.direction === 'desc' ? ArrowDown : ArrowUp
+  return (
+    <TableHead className={className} aria-sort={sorted ? (now.direction === 'desc' ? 'descending' : 'ascending') : undefined}>
+      <button
+        type="button"
+        onClick={() => onSort(nextOrder(order, sort))}
+        className={cn('group inline-flex items-center gap-1 hover:text-foreground focus-visible:text-foreground', numeric && 'flex-row-reverse')}
+      >
+        {children}
+        {sorted
+          ? <Arrow className="h-3 w-3" aria-hidden />
+          : <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60" aria-hidden />}
+      </button>
+    </TableHead>
+  )
+}
+
+/**
  * Opens an Agent session when a click lands anywhere on its row. A click on
- * the name's link is the link's own, and a click that ends a text selection
+ * the title's link is the link's own, and a click that ends a text selection
  * does not open, so that the row's text can still be copied. Ctrl or Cmd
  * opens a new tab, as on the link.
  */

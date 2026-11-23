@@ -66,6 +66,29 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
                  "&repository=github.com%2Facme%2Fshop&run=run", got.link
   end
 
+  test "list_agent_sessions passes the sort and the direction, and keeps them in the link" do
+    asked = stub_list(from: "2026-09-26T12:00:00.000Z", to: "2026-10-03T12:00:00.000Z", sort: "cost", direction: "desc")
+
+    got = call_tool(:list_agent_sessions, user: @member, sort: "cost", direction: "desc")
+
+    assert_not got.error?
+    assert_requested asked
+    assert_equal({ "sort" => "cost", "direction" => "desc" }, got.json["order"])
+    assert_equal "http://console.test/acme/agent_sessions?direction=desc&range=7d&sort=cost", got.link
+  end
+
+  test "list_agent_sessions refuses a sort or a direction that is not one" do
+    assert call_tool(:list_agent_sessions, user: @member, sort: "title").error?
+    assert call_tool(:list_agent_sessions, user: @member, direction: "up").error?
+  end
+
+  test "list_agent_sessions tells the caller how to sort" do
+    description = listed_tools(user: @member).find { |tool| tool[:name] == "list_agent_sessions" }[:description]
+
+    assert_match(/sort/, description)
+    assert_match(/most expensive/, description)
+  end
+
   test "list_agent_sessions takes a person by user id too" do
     asked = stub_list(from: "2026-09-26T12:00:00.000Z", to: "2026-10-03T12:00:00.000Z", user_id: @admin.id)
 

@@ -110,6 +110,31 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "github.com/acme/api", "github.com/acme/shop" ], view["repositories"]
   end
 
+  test "the sort and the direction in the URL go to EventStore and come back on the page" do
+    project = turn_on
+    asked = stub_agent_sessions(project, { "sort" => "tokens", "direction" => "asc", "repository" => "github.com/acme/shop" })
+    sign_in_as(@member)
+
+    view = page(sort: "tokens", direction: "asc", repository: "github.com/acme/shop")
+
+    assert_requested asked
+    assert_equal({ "sort" => "tokens", "direction" => "asc" }, view["order"])
+  end
+
+  test "with no sort in the URL, EventStore gets none and gives its own order" do
+    project = turn_on
+    stub_agent_sessions(project, {})
+    sign_in_as(@member)
+
+    view = page
+
+    assert_requested(:post, "#{EventStore.base_url}/api/#{project.id}/agent-sessions") do |request|
+      sent = JSON.parse(request.body)
+      !sent.key?("sort") && !sent.key?("direction")
+    end
+    assert_equal({ "sort" => nil, "direction" => nil }, view["order"])
+  end
+
   test "while the Factory is off, the Project and Run filters of a link are not sent" do
     InstanceSetting.current.update!(dispatcher_url: nil)
     project = turn_on
@@ -133,10 +158,11 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
         body: { agent_sessions: [], totals: { agent_sessions: 0, no_cost: 0 }, more: false, repositories: [] }.to_json)
     sign_in_as(@member)
 
-    view = page(range: "forever", person: "someone", run: "maybe")
+    view = page(range: "forever", person: "someone", run: "maybe", sort: "title", direction: "up")
 
     assert_requested asked
     assert_equal({ "person" => nil, "repository" => nil, "project" => nil, "run" => nil }, view["filters"])
+    assert_equal({ "sort" => nil, "direction" => nil }, view["order"])
     assert_equal "7d", view.dig("range", "span")
   end
 
