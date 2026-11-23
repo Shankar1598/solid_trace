@@ -95,9 +95,11 @@ The title of an Agent session is the one that Claude Code shows for it:
 
 Only the main transcript gives the title: a subagent's title lines do not change it. A long title is cut with "…" in the list; hold the pointer on it to read all of it. On a phone, the title is the main text of the row, with the person or the Run, the start and the repository below it.
 
-An Agent session that SolidTrace parsed before v0.23.2 has no title, until new lines of it have a title that Claude Code made or a `/rename`.
+An Agent session that SolidTrace parsed before v0.23.2 has no title, until new lines of it have a title that Claude Code made or a `/rename`. This is also true for an Agent session that was live during the update: when all its lines with a title uploaded before the update, it has no title until Claude Code writes its title again, at its next turn.
 
-- Filter by time, person, repository, **Project (Runs)**, and Run or no Run. The Project filter selects the Agent sessions of Runs only, because an engineer's own Agent session has no Project. Use the repository filter to find those. The filters are in the page's URL, so you can share a filtered view.
+The activity of an Agent session is the times of its transcript lines that have a timestamp. Claude Code writes some lines with no timestamp, such as its title, the last prompt and the mode. Such a line is not activity, so an old Agent session that uploads again, or that a person only opens again, does not show as active at the time of the upload. A transcript with no line that has a timestamp has no activity, so it is in no time range. Its page shows the time when SolidTrace stored it as its first and last activity. Agent sessions that SolidTrace parsed before v0.23.3 keep their times.
+
+- Filter by time, person, repository, **Project (Runs)**, and Run or no Run. The Project filter selects the Agent sessions of Runs only, because an engineer's own Agent session has no Project. Use the repository filter to find those. The **Project (Runs)** and Run filters show only when the Factory is on, and the Project list holds only the Projects whose Runs have Agent sessions in the range. The filters are in the page's URL, so you can share a filtered view.
 - The totals of tokens and estimated cost are for the Agent sessions that the filters select. The page shows the newest 500 of them; the totals include all of them.
 - The cost is an estimate at list prices, not an invoice. It is Claude Code's own estimate when the transcript has one after its last reply, and else the tokens at the list price of each model. An Agent session whose model has no list price has no cost, and the totals say how many Agent sessions they do not include.
 
@@ -107,7 +109,7 @@ Click a row in the list to open the Agent session page.
 
 - The page's heading is the title of the Agent session.
 - The header shows the person or the Run, the repository, the folder, the parent Agent session (a link, for a fork or a `/clear`), the model, the first and last activity, the tokens by kind, the estimated cost and the flags.
-- The timeline shows the person messages, the agent replies and the tool calls in time order, the oldest step first, as a chat reads. Choose **Newest first** above the timeline to see the newest step first; **Oldest first** goes back. Your browser keeps the choice, with the choices of what to show. Each tool call shows its input, with its output below it.
+- The timeline shows the person messages, the agent replies and the tool calls in time order, the oldest step first, as a chat reads. Choose **Newest first** above the timeline to see the newest step first; **Oldest first** goes back. Your browser keeps the choice, with the choices of what to show. Each tool call shows its input, with its output below it. The agent's replies and its thinking show as Markdown; a person's messages show as plain text.
 - A message that a person sent while the agent worked shows at the time when the agent got it, not at the time when the person wrote it.
 - Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
 - A subagent shows inside the tool call that started it. Click it to open its steps.
@@ -124,7 +126,7 @@ An agent can do the same over MCP: `query_logs` on the Agent Project runs a Quer
 
 ### Over MCP
 
-An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them, each with its title, with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both.
+An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them, each with its title, with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both. `list_agent_sessions` gives at most 50 Agent sessions, or the `limit` that the agent sets, at most 200, with the totals of all of them. When it says `more`, the agent narrows the range or filters by person or repository.
 
 ## Set a Project's Factory settings
 
