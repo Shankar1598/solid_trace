@@ -212,6 +212,60 @@ func TestOTLPRouteRefusesABadKeyContentTypeOrBody(t *testing.T) {
 	}
 }
 
+func TestAnOTLPBodyThatDoesNotDecodeCountsAsARequestWithItsBytes(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+
+	body := []byte("not protobuf")
+	resp := sendOTLP(t, env, "/v1/logs", "application/x-protobuf", body, map[string]string{"Authorization": "Bearer test_public_key"})
+	if resp.StatusCode != 400 {
+		t.Fatalf("Expected 400, got %d", resp.StatusCode)
+	}
+
+	env.Clock.Advance(time.Second)
+	env.FlushIngestCounts(t)
+	got := overview(t, env, testNow, testNow, 123)
+	want := overviewReceived{Bytes: int64(len(body)), BytesOnWire: int64(len(body)), Requests: 1}
+	if got.Band.Received != want || got.Band.UnreadableLogs != 0 {
+		t.Errorf("Expected received %+v and no unreadable Log, got %+v and %d", want, got.Band.Received, got.Band.UnreadableLogs)
+	}
+}
+
+func TestATruncatedOTLPLogIsStoredAndNotRejected(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	seedProject(t, env.SQLitePath, 123, 0)
+
+	logs := plog.NewLogs()
+	record := logs.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+	record.Body().SetStr("long")
+	// Over the 64 KB per-string limit, so it is cut.
+	record.Attributes().PutStr("payload", strings.Repeat("x", 70<<10))
+	body, err := plogotlp.NewExportRequestFromLogs(logs).MarshalProto()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := sendOTLP(t, env, "/v1/logs", "application/x-protobuf", body, map[string]string{"Authorization": "Bearer test_public_key"})
+	expectNoneRejected(t, otlpResponse(t, resp, "application/x-protobuf"))
+	env.ProcessLogs(t)
+	stored := latestLogs(t, env, 123, 10)
+	if len(stored) != 1 || stored[0].Message != "long" || stored[0].Attributes["solidtrace.truncated"] != true {
+		t.Fatalf("Expected 1 Log marked as truncated, got %+v", messages(stored))
+	}
+	if payload, _ := stored[0].Attributes["payload"].(string); len(payload) >= 70<<10 {
+		t.Errorf("Expected the payload cut, got %d bytes", len(payload))
+	}
+
+	env.Clock.Advance(time.Second)
+	env.FlushIngestCounts(t)
+	got := overview(t, env, testNow, testNow, 123)
+	if got.Band.Received.Logs != 1 || got.Band.UnreadableLogs != 0 {
+		t.Errorf("Expected 1 Log received and none unreadable, got %+v and %d unreadable", got.Band.Received, got.Band.UnreadableLogs)
+	}
+}
+
 func TestAnOTLPLogOverOneMBIsARejectedLogRecord(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()

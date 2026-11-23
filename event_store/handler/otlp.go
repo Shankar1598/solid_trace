@@ -8,6 +8,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 
 	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 // otlpContentTypes are the Content-Types of the OTLP/HTTP encodings.
@@ -31,7 +32,7 @@ func (h *IngestHandler) OTLPLogs(c *fiber.Ctx) error {
 func (h *IngestHandler) storeOTLPLogs(c *fiber.Ctx, projectID uint32, body ingest.Body) error {
 	encoding, ok := otlpEncoding(mediaType(c))
 	if !ok {
-		return c.Status(fiber.StatusUnsupportedMediaType).JSON(fiber.Map{"error": "Unsupported Content-Type: use application/x-protobuf or application/json"})
+		return c.Status(fiber.StatusUnsupportedMediaType).JSON(fiber.Map{"error": "The Content-Type must be application/x-protobuf or application/json"})
 	}
 	counts, err := h.ingest.IngestOTLPLogs(projectID, body, encoding)
 	if err != nil {
@@ -50,7 +51,13 @@ func (h *IngestHandler) storeOTLPLogs(c *fiber.Ctx, projectID uint32, body inges
 	}
 	answer, err := marshal()
 	if err != nil {
-		return h.renderIngestError(c, err)
+		// The Logs are stored. A status that the sender retries stores them
+		// again, so the answer is an empty export response.
+		logger.L.Error("Marshal the OTLP export response failed", "error", err)
+		answer = nil
+		if encoding == ingest.OTLPJSON {
+			answer = []byte("{}")
+		}
 	}
 	c.Set(fiber.HeaderContentType, otlpContentTypes[encoding])
 	return c.Send(answer)

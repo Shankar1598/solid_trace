@@ -37,10 +37,11 @@ type otlpRecord struct {
 // request in encoding. Each log record is one Log. They are normalised,
 // against the receipt time and the Project's Retention, and stored as one
 // Log batch, and Log processing is woken, as IngestLogs does. A body that
-// doesn't decode is ErrInvalidOTLP, and nothing in it is stored or counted.
+// doesn't decode is ErrInvalidOTLP, and nothing in it is stored.
 //
-// A request whose body decodes adds to its Project's Ingest counts of its
-// second of arrival, and so does one turned away as overloaded.
+// Every request whose body is read adds to its Project's Ingest counts of
+// its second of arrival, and so does one turned away as overloaded. A body
+// that doesn't decode counts as one request with its bytes and no Logs.
 func (s *Service) IngestOTLPLogs(projectID uint32, body Body, encoding OTLPEncoding) (LogCounts, error) {
 	if !s.enterGate() {
 		s.counts.count(projectID, s.clock.Now(), models.IngestCount{RequestsOverloaded: 1})
@@ -52,12 +53,15 @@ func (s *Service) IngestOTLPLogs(projectID uint32, body Body, encoding OTLPEncod
 	if err != nil {
 		return LogCounts{}, err
 	}
+	counted := models.IngestCount{BytesReceived: int64(len(raw)), BytesOnWire: int64(body.Wire)}
 	request := plogotlp.NewExportRequest()
 	unmarshal := request.UnmarshalProto
 	if encoding == OTLPJSON {
 		unmarshal = request.UnmarshalJSON
 	}
 	if unmarshal(raw) != nil {
+		counted.Requests = 1
+		s.counts.count(projectID, s.clock.Now(), counted)
 		return LogCounts{}, ErrInvalidOTLP
 	}
 
@@ -69,7 +73,6 @@ func (s *Service) IngestOTLPLogs(projectID uint32, body Body, encoding OTLPEncod
 			}
 		}
 	}
-	counted := models.IngestCount{BytesReceived: int64(len(raw)), BytesOnWire: int64(body.Wire)}
 	return s.storeLogs(projectID, records, 0, counted, normaliseOTLP)
 }
 
