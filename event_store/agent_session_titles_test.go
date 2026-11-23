@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -88,6 +89,85 @@ func TestTheTitleOfAnAgentSessionUploadedInPartsIsItsLastRenameElseItsLastTitle(
 
 	part(laptopSession, customTitleLine("Checkout work"))
 	expectTitles("a second rename", map[string]string{laptopSession: "Checkout work"})
+}
+
+// A live Agent session that the hooks upload in many small parts, as Claude
+// Code writes it: a part can end on an ai-title line or hold only lines with
+// no timestamp, the parts are on two stored days, and a subagent's parts come
+// between them. Its title is its last ai-title.
+func TestTheTitleOfALiveAgentSessionUploadedInManySmallPartsIsItsLastTitle(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	var lines []string
+	for turn := 1; turn <= 14; turn++ {
+		at := time.Date(2026, 10, 2, 23, 40+turn, 0, 0, time.UTC).Format(time.RFC3339)
+		lines = append(lines,
+			personAt(fmt.Sprintf("u%d", turn), at, fmt.Sprintf("Turn %d", turn)),
+			`{"type":"last-prompt","lastPrompt":"Turn","sessionId":"x"}`,
+			aiTitleLine(fmt.Sprintf("Title %d", turn)),
+			`{"type":"mode","mode":"default","sessionId":"x"}`,
+			replyAt(fmt.Sprintf("a%d", turn), at, fmt.Sprintf("msg_%d", turn), "claude-opus-5-5", `{"type":"text","text":"Done."}`),
+		)
+	}
+	end, subEnd := 0, 0
+	for start, part := 0, 0; start < len(lines); start, part = start+3, part+1 {
+		env.Clock.Set(time.Date(2026, 10, 2, 23, 50, 0, 0, time.UTC).Add(time.Duration(part) * 3 * time.Minute))
+		sub := jsonl(personAt(fmt.Sprintf("s%d", part), "2026-10-02T23:45:00Z", "Read the cart"), aiTitleLine("Reading the cart"))
+		expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "subagents/agent-a1.jsonl", offset: subEnd, body: sub}), 200)
+		subEnd += len(sub)
+		body := jsonl(lines[start:min(start+3, len(lines))]...)
+		expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: end, body: body}), 200)
+		end += len(body)
+		env.ProcessAgentFiles(t)
+	}
+	if got := sessionTotalsOf(t, env, o.project, laptopSession); got.Title != "Title 14" || got.PersonMessages != 14 {
+		t.Errorf("Expected the last ai-title and 14 person messages, got the title %q and %d", got.Title, got.PersonMessages)
+	}
+}
+
+// The cause of an Agent session of a real install with no title: its lines
+// with a title were parsed before v0.23.2, which had no titles, and the part
+// after the upgrade had no title line. The title comes with its next ai-title
+// line, which Claude Code writes at each turn.
+func TestALiveAgentSessionParsedBeforeTitlesGetsItsTitleAtItsNextTitleLine(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	env.Clock.Set(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	o := newAgentOrganization(t, env)
+	end := 0
+	part := func(lines ...string) {
+		t.Helper()
+		body := jsonl(lines...)
+		expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: end, body: body}), 200)
+		end += len(body)
+		env.ProcessAgentFiles(t)
+	}
+	title := func() string {
+		t.Helper()
+		return sessionTotalsOf(t, env, o.project, laptopSession).Title
+	}
+
+	// The parse before titles: its rows have the default title, (0, 0, ''),
+	// which is "no title".
+	part(personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"), aiTitleLine("Cart page"))
+	if err := env.ClickHouse.Conn().Exec(context.Background(),
+		`ALTER TABLE agent_sessions UPDATE title = (0, 0, '') WHERE 1 SETTINGS mutations_sync = 1`); err != nil {
+		t.Fatalf("give the rows the title of the parse before titles: %v", err)
+	}
+	if got := title(); got != "" {
+		t.Fatalf("Expected no title from the parse before titles, got %q", got)
+	}
+
+	part(`{"type":"system","subtype":"away_summary","timestamp":"2026-10-02T11:05:00Z","content":"Away"}`)
+	if got := title(); got != "" {
+		t.Errorf("Expected no title after a part with no title line, got %q", got)
+	}
+	part(personAt("u2", "2026-10-02T11:10:00Z", "And the checkout"), aiTitleLine("Cart page and checkout"))
+	if got := title(); got != "Cart page and checkout" {
+		t.Errorf("Expected the title of the next ai-title line, got %q", got)
+	}
 }
 
 func TestAnInstallFromBeforeTitlesGetsTheTitleColumnAtItsNextStart(t *testing.T) {

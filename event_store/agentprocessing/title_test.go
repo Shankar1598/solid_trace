@@ -1,6 +1,7 @@
 package agentprocessing
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +138,64 @@ func TestTheTitleOfAnAgentSession(t *testing.T) {
 		}
 		if got := titleOf(t, subagent, units); got != (storage.AgentTitle{}) {
 			t.Errorf("Expected no title for the subagent's transcript, got %+v", got)
+		}
+	})
+
+	t.Run("a live Agent session uploaded in many small parts keeps its last ai-title", func(t *testing.T) {
+		// As Claude Code writes a live Agent session: each turn is a person
+		// message, then lines with no timestamp (last-prompt, ai-title, mode,
+		// permission-mode), then the agent's reply. The hooks and the sweep
+		// upload it in parts that start and end anywhere between lines: a
+		// part can end on an ai-title, or hold only untimed lines. The parts
+		// are on two stored days, and a subagent's parts come between them.
+		var lines []string
+		for turn := 1; turn <= 14; turn++ {
+			at := time.Date(2026, 11, 22, 23, 40+turn, 0, 0, time.UTC).Format(time.RFC3339)
+			lines = append(lines,
+				`{"type":"user","uuid":"p","timestamp":"`+at+`","message":{"role":"user","content":"Turn `+fmt.Sprint(turn)+`"}}`,
+				`{"type":"last-prompt","lastPrompt":"Turn `+fmt.Sprint(turn)+`","sessionId":"x"}`,
+				aiTitle(fmt.Sprintf("Title %d", turn)),
+				`{"type":"mode","mode":"default","sessionId":"x"}`,
+				`{"type":"permission-mode","permissionMode":"default","sessionId":"x"}`,
+				`{"type":"assistant","uuid":"a","timestamp":"`+at+`","message":{"id":"m`+fmt.Sprint(turn)+`","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"Done."}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+			)
+		}
+		const subagent = "subagents/agent-a1.jsonl"
+		for _, size := range []int{1, 2, 3, 5, 7} {
+			var ranges [][]storage.AgentFileUnit
+			var offset, subOffset uint64
+			for start, part := 0, 0; start < len(lines); start, part = start+size, part+1 {
+				unit := unitOf(main, offset, lines[start:min(start+size, len(lines))]...)
+				// The first parts on one day, the others on the next.
+				unit.StoredAt = time.Date(2026, 11, 22, 23, 50, 0, 0, time.UTC).Add(time.Duration(part) * 3 * time.Minute)
+				offset += uint64(len(unit.Bytes))
+				sub := unitOf(subagent, subOffset, person("Read the cart"), aiTitle("Reading the cart"))
+				sub.StoredAt = unit.StoredAt
+				subOffset += uint64(len(sub.Bytes))
+				ranges = append(ranges, []storage.AgentFileUnit{sub, unit})
+			}
+			if got := titleOf(t, main, ranges...).Text; got != "Title 14" {
+				t.Errorf("Parts of %d lines, a range each: expected the last ai-title, got %q", size, got)
+			}
+			var one []storage.AgentFileUnit
+			for _, r := range ranges {
+				one = append(one, r...)
+			}
+			if got := titleOf(t, main, one).Text; got != "Title 14" {
+				t.Errorf("Parts of %d lines in one range: expected the last ai-title, got %q", size, got)
+			}
+		}
+	})
+
+	t.Run("a new version of the transcript has the title of its own lines", func(t *testing.T) {
+		old := unitOf(main, 0, person("Fix the cart"), aiTitle("Cart"))
+		trimmed := unitOf(main, 0, person("Fix the cart"), aiTitle("Cart and checkout"))
+		trimmed.Version = 2
+		_, days, _ := parseUnits([]storage.AgentFileUnit{old, trimmed}, 30, parseState{})
+		for _, d := range days {
+			if d.Version == 2 && d.Title.Text != "Cart and checkout" {
+				t.Errorf("Expected the title of version 2, got %+v", d.Title)
+			}
 		}
 	})
 
