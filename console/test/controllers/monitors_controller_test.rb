@@ -123,6 +123,15 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ @monitor.id, "Checkout errors", [ @slack.id ] ], props["monitor"].values_at("id", "name", "integration_ids")
   end
 
+  test "the form's pages know whether SQL queries are on, and a new Monitor starts as a Query" do
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    props = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")
+    assert_equal [ false, "query" ], [ props["sql_queries_enabled"], props["monitor"]["language"] ]
+
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    assert_equal true, inertia_page(edit_monitor_url(@monitor, org_slug: @organization.slug), "Monitors/Edit")["sql_queries_enabled"]
+  end
+
   # ---------------------------------------------------------------------------
   # Saving
   # ---------------------------------------------------------------------------
@@ -163,6 +172,34 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
 
     errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
     assert_match "must end in a summarize", Array(errors["query"]).first
+  end
+
+  test "a member makes a SQL Threshold monitor on the form, and its pages show its language" do
+    stub_monitor_sql_check(@project)
+    sql = "SELECT service, count() AS errors FROM logs GROUP BY service"
+    post monitors_url(org_slug: @organization.slug), params: { monitor: monitor_params(name: "SQL errors", language: "sql", query: sql) }, as: :json
+
+    monitor = @organization.monitors.find_by!(name: "SQL errors")
+    assert_equal [ "sql", sql ], [ monitor.language, monitor.query ]
+    listed = inertia_page(monitors_url(org_slug: @organization.slug), "Monitors/Index")["monitors"].find { |m| m["name"] == "SQL errors" }
+    assert_equal "sql", listed["language"]
+    assert_equal "sql", inertia_page(edit_monitor_url(monitor, org_slug: @organization.slug), "Monitors/Edit")["monitor"]["language"]
+  end
+
+  test "SQL that does not run comes back on the SQL, and SQL off on the Monitor" do
+    stub_monitor_sql_check(@project)
+    stub_request(:post, %r{/logs/sql}).to_return(status: 400, body: { error: "Unknown function cuont" }.to_json)
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(language: "sql", query: "SELECT cuont() FROM logs") }, as: :json
+
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_equal [ [ "can't run: Unknown function cuont" ], nil ], errors.values_at("sql", "query")
+
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    post monitors_url(org_slug: @organization.slug),
+      params: { monitor: monitor_params(language: "sql", query: "SELECT count() FROM logs") }, as: :json
+    errors = inertia_page(new_monitor_url(org_slug: @organization.slug), "Monitors/New")["errors"]
+    assert_equal [ "SQL queries are off on this install" ], errors["base"]
   end
 
   test "a member changes a Monitor and its Integrations" do
@@ -559,6 +596,40 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
       assert_response status
       assert_match error, response.parsed_body["error"]
     end
+  end
+
+  test "the groups preview of a SQL Monitor reads its SQL as a run would, over its range and then the Baseline's" do
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    WebMock::RequestRegistry.instance.reset!
+    freeze_time
+    sql = "SELECT service, count() AS errors FROM logs GROUP BY service"
+    asked = []
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql").to_return do |request|
+      body = JSON.parse(request.body)
+      asked << body.values_at("sql", "from", "timeout_seconds")
+      rows = asked.size == 1 ? [ [ "api", 90 ], [ "web", 4 ] ] : [ [ "api", 60 ] ]
+      { status: 200, body: { table: { columns: [ SERVICE, { "name" => "errors", "type" => "number" } ], rows: rows } }.to_json }
+    end
+
+    answer = preview_groups(language: "sql", query: sql)
+
+    assert_response :success
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    assert_equal [ [ sql, (to - 5.minutes).utc.iso8601(3), 10 ], [ sql, (to - 10.minutes).utc.iso8601(3), 10 ] ], asked
+    assert_equal [ { "group" => { "service" => "api" }, "value" => 90, "baseline" => 60, "firing" => true },
+                   { "group" => { "service" => "web" }, "value" => 4, "baseline" => 0, "firing" => true } ], answer["groups"]
+    assert_not_requested(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+  end
+
+  test "the groups preview of a SQL Monitor while SQL queries are off says so in place of the groups, reading nothing" do
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    WebMock::RequestRegistry.instance.reset!
+
+    answer = preview_groups(language: "sql", query: "SELECT count() AS errors FROM logs")
+
+    assert_response :unprocessable_content
+    assert_equal MonitorEvaluation::SQL_OFF, answer["error"]
+    assert_not_requested(:post, %r{/logs/})
   end
 
   test "the groups preview won't run on another Organization's Project, or past the chart runs Console allows" do

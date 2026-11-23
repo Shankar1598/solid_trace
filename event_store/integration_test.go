@@ -575,7 +575,7 @@ func (env *TestEnv) open(t *testing.T) {
 	env.LogsHandler = logsHandler
 	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
 
-	env.App = handler.NewIngestApp(ingestHandler, healthHandler)
+	env.App = handler.NewIngestApp(ingestHandler, healthHandler, handler.IngestOptions{IdleTimeout: 10 * time.Second})
 	agentTokens, err := auth.NewTokens(env.SQLitePath)
 	if err != nil {
 		t.Fatalf("Failed to open Console's tokens: %v", err)

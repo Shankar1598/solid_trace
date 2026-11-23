@@ -7,6 +7,6 @@
 class SignedInClientsController < ApplicationController
   def destroy
     current_user.oauth_grants.where(revoked_at: nil).find(params[:id]).revoke!
-    redirect_back_or_to user_settings_path, notice: "Signed-in client revoked"
+    redirect_back_or_to user_settings_page, notice: "Signed-in client revoked"
   end
 end

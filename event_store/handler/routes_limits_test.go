@@ -8,7 +8,7 @@ import (
 // The ingest app reads a body of its full limit in time from a client that
 // sends at the slowest rate it serves.
 func TestTheIngestAppReadsAFullUnitAtTheSlowestUploadRate(t *testing.T) {
-	app := NewIngestApp(nil, nil)
+	app := NewIngestApp(nil, nil, IngestOptions{IdleTimeout: 10 * time.Second})
 	read := app.Config().ReadTimeout
 	if app.Config().BodyLimit != agentBodyLimit {
 		t.Fatalf("Expected the ingest app's body limit to be one unit as sent, %d, got %d", agentBodyLimit, app.Config().BodyLimit)

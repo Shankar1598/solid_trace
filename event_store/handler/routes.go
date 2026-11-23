@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -17,8 +18,18 @@ const minUploadBytesPerSecond = 250_000
 // minUploadBytesPerSecond: about 2 minutes 20 seconds.
 const ingestReadTimeout = time.Duration(agentBodyLimit/minUploadBytesPerSecond+1) * time.Second
 
+// IngestOptions are the ingest app's settings from the config file.
+type IngestOptions struct {
+	// IdleTimeout is how long a keep-alive connection may wait for its next
+	// request.
+	IdleTimeout time.Duration
+	// RefuseForwardedHTTP refuses an ingest request that a proxy says came
+	// to it as plain HTTP (RefuseForwardedHTTP).
+	RefuseForwardedHTTP bool
+}
+
 // NewIngestApp returns the public ingest app, serving the ingest routes.
-func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler) *fiber.App {
+func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler, options IngestOptions) *fiber.App {
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		// The server reads no larger body, as sent, for any route: an upload
@@ -29,12 +40,35 @@ func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler) *f
 		// requests without buffering them. Either way no proxy absorbs slow
 		// clients, so it bounds a request and an idle connection. Fiber's
 		// default is to wait forever. Caddy's keep-alive (deploy/caddy) is
-		// shorter than IdleTimeout.
+		// shorter than the default IdleTimeout. Behind a load balancer that
+		// keeps connections open longer, ingest_idle_timeout_seconds is
+		// longer than its keep-alive. ReadTimeout starts at a request's first
+		// byte, so it doesn't end an idle keep-alive connection.
 		ReadTimeout: ingestReadTimeout, // headers and body of one request
-		IdleTimeout: 10 * time.Second,  // between keep-alive requests
+		IdleTimeout: options.IdleTimeout,
 	})
+	if options.RefuseForwardedHTTP {
+		app.Use("/api", RefuseForwardedHTTP)
+	}
 	RegisterIngestRoutes(app, ingestHandler, healthHandler)
 	return app
+}
+
+// RefuseForwardedHTTP answers 403 to a request whose X-Forwarded-Proto says
+// it came to the proxy as plain HTTP, so a client with an http:// URL fails
+// clearly. It isn't a security control: the client sent its key already. A
+// request with no X-Forwarded-Proto, as a load balancer's health check or a
+// client on the network sends, passes. A proxy may append its value to the
+// client's, so the last value is the proxy's.
+func RefuseForwardedHTTP(c *fiber.Ctx) error {
+	proto := c.Get(fiber.HeaderXForwardedProto)
+	if i := strings.LastIndexByte(proto, ','); i >= 0 {
+		proto = proto[i+1:]
+	}
+	if strings.EqualFold(strings.TrimSpace(proto), "http") {
+		return c.Status(fiber.StatusForbidden).SendString("Use an https:// URL: this ingest refuses plain HTTP that a proxy forwarded.")
+	}
+	return c.Next()
 }
 
 // RegisterIngestRoutes mounts the public routes. They authenticate with the

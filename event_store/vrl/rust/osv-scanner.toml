@@ -9,3 +9,18 @@ drops it. It backs VRL's parse_yaml function and vrl's build script, which \
 parses ua-parser's bundled regexes. Revisit when vrl moves to a maintained \
 YAML parser.\
 """
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+reason = """
+chrono is unmaintained, with no fixed release: a notice, not a defect. vrl \
+0.37 depends on it for its time functions. Revisit when vrl moves to a \
+maintained time crate.\
+"""
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0555"
+reason = """
+chrono-tz is unmaintained, with no fixed release: a notice, not a defect. \
+vrl 0.37 depends on it for time zones. Revisit with chrono.\
+"""

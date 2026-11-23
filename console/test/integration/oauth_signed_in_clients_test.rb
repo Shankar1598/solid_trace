@@ -251,13 +251,13 @@ class OauthSignedInClientsTest < ActionDispatch::IntegrationTest
     assert_redirected_to page
   end
 
-  test "Revoke with no Referer goes to Settings → User" do
+  test "Revoke with no Referer goes to Settings → User under the home Organization" do
     signed_in
     id = signed_in_clients.first["id"]
 
     delete signed_in_client_url(id)
 
-    assert_redirected_to user_settings_url
+    assert_redirected_to user_url(org_slug: "acme")
   end
 
   test "a user cannot revoke another user's Grant: 404, and its tokens keep working" do

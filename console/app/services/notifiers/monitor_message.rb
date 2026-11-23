@@ -40,12 +40,13 @@ module Notifiers
         end
       end
 
-      # What a message says about its Monitor: its name, Query and range, and
-      # where its Project's explorer is. Read from the Monitor while it
-      # exists, so an edit before delivery shows.
+      # What a message says about its Monitor: its name, its language (query
+      # or sql) and its Query or SQL, its range, and where its Project's
+      # explorer is. Read from the Monitor while it exists, so an edit before
+      # delivery shows. A row kept before language existed has a Query.
       def about(monitor)
         {
-          "id" => monitor.id, "name" => monitor.name, "query" => monitor.query,
+          "id" => monitor.id, "name" => monitor.name, "language" => monitor.language, "query" => monitor.query,
           "range_minutes" => monitor.range_minutes, "project" => monitor.project.name,
           "project_slug" => monitor.project.slug, "organization_slug" => monitor.organization.slug,
         }
@@ -276,8 +277,10 @@ module Notifiers
       end
 
       # The Logs explorer on the Monitor's Project and Query, over [from, to).
+      # For SQL, the explorer opens in SQL mode with the SQL.
       def explorer_url(monitor, from, to)
-        params = { org_slug: monitor["organization_slug"], **PublicUrls.link_options, mode: "query", q: monitor["query"] }
+        text = monitor["language"] == "sql" ? { mode: "sql", sql: monitor["query"] } : { mode: "query", q: monitor["query"] }
+        params = { org_slug: monitor["organization_slug"], **PublicUrls.link_options, **text }
         params.merge!(from: from, to: to) if from.present? && to.present?
         Rails.application.routes.url_helpers.project_logs_url(monitor["project_slug"], **params)
       end

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { router, usePage } from '@inertiajs/react'
-import ReactGridLayout, { useContainerWidth, type Layout, type LayoutItem } from 'react-grid-layout'
+import { useContainerWidth } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
-import { toast } from 'sonner'
-import { Check, Pencil, Plus, RefreshCw, Settings, Square } from 'lucide-react'
+import { Check, ListPlus, Pencil, Plus, RefreshCw, Settings, Square, Type } from 'lucide-react'
 import { copyText } from '@/components/copyText'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -15,47 +14,58 @@ import {
 } from '@/components/ui/alert-dialog'
 import { HoverTimeProvider } from '@/components/charts/hoverTime'
 import { Button } from '@/components/ui/button'
-import { saveLayout } from '@/lib/dashboards/api'
 import {
-  GRID_COLUMNS, filterValues, filterValuesOfSearch, movedPlaces, rangeOfSearch, searchOfRangeAndValues, stackedPlaces,
-  type AutoRefresh, type Dashboard, type DashboardChart, type FilterValues, type Place,
+  chartGroups, isTextBlock, pickedOfSearch, rangeOfSearch, searchOfRangeAndPicked, valuesWithDefaults,
+  type AutoRefresh, type Dashboard, type DashboardChart, type DashboardItem, type DashboardSection, type FilterValues, type TextBlock,
 } from '@/lib/dashboards/dashboard'
 import { createFetchQueue } from '@/lib/dashboards/fetchQueue'
+import { readFolded, writeFolded } from '@/lib/dashboards/foldedSections'
+import { browserStorage } from '@/lib/recentQueries'
 import type { LinkKind } from '@/lib/logs/explorerState'
 import { resolveRange, type TimeRange } from '@/lib/timeRange'
 import type { SharedProps } from '@/types'
 import type { ProjectOption } from '../Logs/components/BuilderPanel'
 import { CopyLink } from '../Logs/components/CopyLink'
 import { TagMenuProvider } from '../Logs/components/TagMenu'
-import { ChartCard, type DashboardRun } from './components/ChartCard'
+import type { DashboardRun } from './components/ChartCard'
 import { ChartEditor } from './components/ChartEditor'
+import { ChartGrid } from './components/ChartGrid'
 import { DashboardSettings } from './components/DashboardSettings'
 import { FilterBar } from './components/FilterBar'
 import { FiltersDialog } from './components/FiltersDialog'
+import { TextBlockEditor } from './components/TextBlockEditor'
+import { DeleteSectionDialog, SectionDialog, SectionHeader } from './components/Sections'
 
-/** A grid row's height and the gap between cards, in px. */
-const ROW_PX = 64
-const GAP_PX = 12
 /** Below this grid width (a phone) the cards stack in one column. */
 const STACK_BELOW_PX = 640
 const NO_COLUMNS = { shown: [], toggle: () => {} }
 
+/** The editor open on the page: a chart's or a Text block's, with item null to add one to the Section sectionId (null for none). */
+type ItemEditor =
+  | { kind: 'chart'; item: DashboardChart | null; sectionId: number | null }
+  | { kind: 'text'; item: TextBlock | null; sectionId: number | null }
+
+/** The editor of an item on the grid, which the item's viz decides. */
+const editorOf = (item: DashboardItem): ItemEditor =>
+  isTextBlock(item) ? { kind: 'text', item, sectionId: item.section_id } : { kind: 'chart', item, sectionId: item.section_id }
+
 interface DashboardsShowProps {
-  dashboard: Dashboard & { charts: DashboardChart[] }
+  dashboard: Dashboard & { sections: DashboardSection[]; charts: DashboardItem[] }
   projects: ProjectOption[]
 }
 
-const placesOf = (charts: DashboardChart[]): Place[] => charts.map(({ id, x, y, w, h }) => ({ id, x, y, w, h }))
-const layoutOf = (charts: DashboardChart[]): LayoutItem[] => charts.map(c => ({ i: String(c.id), x: c.x, y: c.y, w: c.w, h: c.h, minW: 2, minH: 2 }))
-
 /**
- * A Dashboard: its charts on a grid, each run over the range in the URL (the
+ * A Dashboard: its charts in no Section on a grid, then each Section, a
+ * header over its charts on a grid of their own. A viewer folds a Section to
+ * its header, and the folds are kept in their browser only. Each chart runs
+ * over the range in the URL (the
  * Dashboard's default range until another is picked) with the values of the
- * filters it names, at most a few at once. The values sit in the URL beside
+ * filters it names (their default values until others are picked), at most a
+ * few at once. The values sit in the URL beside
  * the range; changing one runs again only the charts that name its filter.
  * Refresh runs them all again, as auto-refresh does on a relative range.
  * Edit lets the cards be dragged by their titles and resized from their
- * corners; each move is saved.
+ * corners, inside their group; each move is saved.
  */
 export default function DashboardsShow({ dashboard, projects }: DashboardsShowProps) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
@@ -66,26 +76,31 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
   useEffect(() => () => queue.abortAll(), [queue])
   const [running, setRunning] = useState<ReadonlySet<number>>(new Set())
   const [editing, setEditing] = useState(false)
-  const [editor, setEditor] = useState<{ chart: DashboardChart | null } | null>(null)
-  const [deleting, setDeleting] = useState<DashboardChart | null>(null)
+  const [editor, setEditor] = useState<ItemEditor | null>(null)
+  const [deleting, setDeleting] = useState<DashboardItem | null>(null)
+  // The Section dialog: null renames none; section null adds one.
+  const [sectionEditor, setSectionEditor] = useState<{ section: DashboardSection | null } | null>(null)
+  const [deletingSection, setDeletingSection] = useState<DashboardSection | null>(null)
+  const [folded, setFolded] = useState<ReadonlySet<number>>(() => readFolded(browserStorage(), dashboard.id))
   const [settings, setSettings] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [picked, setPicked] = useState<FilterValues>(() => filterValuesOfSearch(window.location.search, dashboard.filters))
+  // The values picked, by name; [] is All. A filter not picked has its default values.
+  const [picked, setPicked] = useState<FilterValues>(() => pickedOfSearch(window.location.search, dashboard.filters))
   // Only the values of the filters the Dashboard has now: a removed filter's go.
-  const values = useMemo(() => filterValues(dashboard.filters, picked), [dashboard.filters, picked])
-  const search = searchOfRangeAndValues(range, values)
+  const values = useMemo(() => valuesWithDefaults(dashboard.filters, picked), [dashboard.filters, picked])
+  const search = searchOfRangeAndPicked(range, dashboard.filters, picked)
 
   const rerun = useCallback((r: TimeRange) => setRun(prev => ({ ...resolveRange(r, new Date()), n: prev.n + 1 })), [])
   const pickRange = (next: TimeRange) => {
     setRange(next)
-    router.replace({ url: basePath + searchOfRangeAndValues(next, values), preserveState: true, preserveScroll: true })
+    router.replace({ url: basePath + searchOfRangeAndPicked(next, dashboard.filters, picked), preserveState: true, preserveScroll: true })
     rerun(next)
   }
   // The charts that name the filter run again when their values change; the run stays.
   const pickValues = (name: string, next: string[]) => {
-    const nextValues = filterValues(dashboard.filters, { ...values, [name]: next })
-    setPicked(nextValues)
-    router.replace({ url: basePath + searchOfRangeAndValues(range, nextValues), preserveState: true, preserveScroll: true })
+    const nextPicked = { ...picked, [name]: next }
+    setPicked(nextPicked)
+    router.replace({ url: basePath + searchOfRangeAndPicked(range, dashboard.filters, nextPicked), preserveState: true, preserveScroll: true })
   }
 
   // Auto-refresh runs a relative range again, counting from when the last run
@@ -100,24 +115,14 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
     return next
   }), [])
 
-  // The grid's places, and the ones last saved, so each move saves only what changed.
-  const [layout, setLayout] = useState<LayoutItem[]>(() => layoutOf(dashboard.charts))
-  const saved = useRef<Place[]>(placesOf(dashboard.charts))
-  useEffect(() => {
-    setLayout(layoutOf(dashboard.charts))
-    saved.current = placesOf(dashboard.charts)
-  }, [dashboard.charts])
-  const persist = (next: Layout) => {
-    setLayout([...next])
-    const moved = movedPlaces(saved.current, [...next])
-    if (moved.length === 0) return
-    const before = saved.current
-    saved.current = saved.current.map(p => moved.find(m => m.id === p.id) ?? p)
-    saveLayout(orgSlug, dashboard.id, moved).catch(error => {
-      saved.current = before
-      toast.error(`The layout wasn't saved: ${error.message}`)
-    })
-  }
+  const toggleFold = (id: number) => setFolded(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    writeFolded(browserStorage(), dashboard.id, next)
+    return next
+  })
+
   const { width, containerRef, mounted } = useContainerWidth()
   // A phone shows the cards one under another and can't move them: the
   // stacked places are never saved.
@@ -126,18 +131,45 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
 
   const copyLink = (kind: LinkKind) => {
     const shown: TimeRange = kind === 'shown' && range.kind === 'relative' ? { kind: 'absolute', from: run.from, to: run.to } : range
-    copyText(window.location.origin + basePath + searchOfRangeAndValues(shown, values), 'Link')
+    copyText(window.location.origin + basePath + searchOfRangeAndPicked(shown, dashboard.filters, picked), 'Link')
   }
 
   const setAutoRefresh = (value: AutoRefresh) => router.patch(`${basePath}${search}`, { dashboard: { auto_refresh: value } }, { preserveScroll: true, preserveState: true })
-  const duplicate = (chart: DashboardChart) => router.post(`${basePath}/charts/${chart.id}/duplicate${search}`, {}, { preserveScroll: true, preserveState: true })
-  const remove = (chart: DashboardChart) => router.delete(`${basePath}/charts/${chart.id}${search}`, {
+  const duplicate = (chart: DashboardItem) => router.post(`${basePath}/charts/${chart.id}/duplicate${search}`, {}, { preserveScroll: true, preserveState: true })
+  const remove = (chart: DashboardItem) => router.delete(`${basePath}/charts/${chart.id}${search}`, {
     preserveScroll: true, preserveState: true, onFinish: () => setDeleting(null),
   })
+  const moveSection = (section: DashboardSection, to: number) =>
+    router.patch(`${basePath}/sections/${section.id}${search}`, { section: { position: to } }, { preserveScroll: true, preserveState: true })
 
   const projectsById = useMemo(() => new Map(projects.map(p => [p.id, p])), [projects])
   const charts = dashboard.charts
-  const severalProjects = new Set(charts.map(c => c.project_id)).size > 1
+  const sections = dashboard.sections
+  // Memoized, so a grid's charts change only when the Dashboard is reloaded.
+  const groups = useMemo(() => chartGroups(sections, charts), [sections, charts])
+  const [unsectioned, ...sectioned] = groups
+  const severalProjects = new Set(charts.flatMap(c => (isTextBlock(c) ? [] : [c.project_id]))).size > 1
+  const grid = (groupCharts: DashboardItem[]) => (
+    <ChartGrid
+      charts={groupCharts}
+      width={width}
+      stacked={stacked}
+      arranging={arranging}
+      orgSlug={orgSlug}
+      dashboardId={dashboard.id}
+      projectsById={projectsById}
+      showProject={severalProjects}
+      run={run}
+      range={range}
+      filters={dashboard.filters}
+      values={values}
+      queue={queue}
+      onRunning={onRunning}
+      onEdit={item => setEditor(editorOf(item))}
+      onDuplicate={duplicate}
+      onDelete={setDeleting}
+    />
+  )
 
   return (
     <DashboardLayout>
@@ -155,7 +187,9 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           )}
           <AutoRefreshPicker value={dashboard.auto_refresh} onChange={setAutoRefresh} paused={range.kind === 'absolute' ? 'the range is fixed' : null} />
           <CopyLink onCopy={copyLink} />
-          <Button variant="outline" onClick={() => setEditor({ chart: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
+          <Button variant="outline" onClick={() => setEditor({ kind: 'chart', item: null, sectionId: null })}><Plus className="h-3.5 w-3.5" /> Add chart</Button>
+          <Button variant="outline" onClick={() => setEditor({ kind: 'text', item: null, sectionId: null })}><Type className="h-3.5 w-3.5" /> Add text</Button>
+          <Button variant="outline" onClick={() => setSectionEditor({ section: null })}><ListPlus className="h-3.5 w-3.5" /> Add section</Button>
           {editing ? (
             <Button onClick={() => setEditing(false)}><Check className="h-3.5 w-3.5" /> Done</Button>
           ) : (
@@ -176,52 +210,71 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
         <TagMenuProvider onFilter={null} onSummarize={null} columns={NO_COLUMNS}>
           {/* Hovering one time chart marks its time on the others. */}
           <HoverTimeProvider>
-          <div ref={containerRef}>
-            {charts.length === 0 ? (
+          <div ref={containerRef} className="flex flex-col gap-4">
+            {charts.length === 0 && sections.length === 0 ? (
               <div className="border border-dashed p-10 text-center text-sm text-muted-foreground">
-                No charts yet. Press Add chart, or chart a Query in the Logs explorer and press Add to dashboard beside the chart switch.
+                No charts yet. Press Add chart or Add text, or chart a Query in the Logs explorer and press Add to dashboard beside the chart switch.
               </div>
-            ) : mounted && (
-              <ReactGridLayout
-                layout={stacked ? stackedPlaces(layout) : layout}
-                width={width}
-                gridConfig={{ cols: GRID_COLUMNS, rowHeight: ROW_PX, margin: [GAP_PX, GAP_PX], containerPadding: [0, 0] }}
-                dragConfig={{ enabled: arranging, handle: '.dashboard-chart-handle' }}
-                resizeConfig={{ enabled: arranging }}
-                onDragStop={persist}
-                onResizeStop={persist}
-              >
-                {charts.map(chart => (
-                  <div key={String(chart.id)}>
-                    <ChartCard
-                      chart={chart}
-                      project={projectsById.get(chart.project_id)}
-                      showProject={severalProjects}
-                      orgSlug={orgSlug}
-                      run={run}
-                      range={range}
-                      filters={dashboard.filters}
-                      values={values}
-                      queue={queue}
-                      editing={arranging}
-                      onRunning={onRunning}
-                      onEdit={() => setEditor({ chart })}
-                      onDuplicate={() => duplicate(chart)}
-                      onDelete={() => setDeleting(chart)}
-                    />
-                  </div>
-                ))}
-              </ReactGridLayout>
-            )}
+            ) : mounted && (<>
+              {unsectioned.charts.length > 0 && grid(unsectioned.charts)}
+              {sectioned.map(({ section, charts: inSection }, i) => section && (
+                <section key={section.id} className="flex flex-col gap-3" aria-label={section.title}>
+                  <SectionHeader
+                    section={section}
+                    chartCount={inSection.length}
+                    folded={folded.has(section.id)}
+                    first={i === 0}
+                    last={i === sectioned.length - 1}
+                    onToggle={() => toggleFold(section.id)}
+                    onAddChart={() => {
+                      // The new chart must show, so a folded Section unfolds.
+                      if (folded.has(section.id)) toggleFold(section.id)
+                      setEditor({ kind: 'chart', item: null, sectionId: section.id })
+                    }}
+                    onAddText={() => {
+                      if (folded.has(section.id)) toggleFold(section.id)
+                      setEditor({ kind: 'text', item: null, sectionId: section.id })
+                    }}
+                    onRename={() => setSectionEditor({ section })}
+                    onMove={by => moveSection(section, i + by)}
+                    onDelete={() => setDeletingSection(section)}
+                  />
+                  {folded.has(section.id) ? null : inSection.length > 0 ? grid(inSection) : (
+                    <div className="flex items-center justify-center gap-3 border border-dashed p-4 text-xs text-muted-foreground">
+                      No charts in this section.
+                      <Button variant="outline" size="sm" onClick={() => setEditor({ kind: 'chart', item: null, sectionId: section.id })}>
+                        <Plus className="h-3.5 w-3.5" /> Add chart
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setEditor({ kind: 'text', item: null, sectionId: section.id })}>
+                        <Type className="h-3.5 w-3.5" /> Add text
+                      </Button>
+                    </div>
+                  )}
+                </section>
+              ))}
+            </>)}
           </div>
           </HoverTimeProvider>
         </TagMenuProvider>
       </div>
 
-      {editor && (
+      {editor?.kind === 'text' && (
+        <TextBlockEditor
+          block={editor.item}
+          sectionId={editor.sectionId}
+          sections={sections}
+          orgSlug={orgSlug}
+          dashboardId={dashboard.id}
+          search={search}
+          onClose={() => setEditor(null)}
+        />
+      )}
+      {editor?.kind === 'chart' && (
         <ChartEditor
-          chart={editor.chart}
+          chart={editor.item}
+          sectionId={editor.sectionId}
           projects={projects}
+          sections={sections}
           orgSlug={orgSlug}
           dashboardId={dashboard.id}
           filters={dashboard.filters}
@@ -235,15 +288,31 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
       <AlertDialog open={deleting !== null} onOpenChange={open => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete "{deleting?.title}"?</AlertDialogTitle>
-            <AlertDialogDescription>The chart is removed from this Dashboard for everyone. Its Query isn't kept.</AlertDialogDescription>
+            <AlertDialogTitle>{deleting?.title ? `Delete "${deleting.title}"?` : 'Delete this text?'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleting && isTextBlock(deleting)
+                ? "The text is removed from this Dashboard for everyone. It isn't kept."
+                : "The chart is removed from this Dashboard for everyone. Its Query isn't kept."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button variant="destructive" onClick={() => deleting && remove(deleting)}>Delete chart</Button>
+            <Button variant="destructive" onClick={() => deleting && remove(deleting)}>{deleting && isTextBlock(deleting) ? 'Delete text' : 'Delete chart'}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {sectionEditor && (
+        <SectionDialog section={sectionEditor.section} orgSlug={orgSlug} dashboardId={dashboard.id} search={search} onClose={() => setSectionEditor(null)} />
+      )}
+      <DeleteSectionDialog
+        section={deletingSection}
+        chartCount={charts.filter(c => c.section_id === deletingSection?.id).length}
+        orgSlug={orgSlug}
+        dashboardId={dashboard.id}
+        search={search}
+        onClose={() => setDeletingSection(null)}
+      />
 
       {settings && <DashboardSettings dashboard={dashboard} orgSlug={orgSlug} search={search} onClose={() => setSettings(false)} />}
       {filtersOpen && (

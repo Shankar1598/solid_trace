@@ -153,7 +153,7 @@ When a Query returns a table, the Logs explorer draws it as a chart above the ta
 
 Any other table shows on its own: one with no rows, with a second datetime column, or with two rows for the same bin and group.
 
-A chart draws at most 8 series, the ones with the largest totals, and the legend says how many more there are. Click a legend entry to hide or show its series. Columns that measure different things, such as a count and an average, get a panel each over the same time axis; `rate` and `peak_rate` share one, in Logs per second. Bars and areas stack only for `count`, `countif`, `sum` and `rate`, whose values add up, and only when that column has its panel alone. So `summarize rate(), peak_rate() by bin_auto(time), shop` draws each shop's rate unstacked, in the panel it shares with `peak_rate`.
+A chart draws at most 8 series, the ones with the largest totals, and the legend says how many more there are. Click a legend entry to hide or show its series. Columns that measure different things, such as a count and an average, get a panel each over the same time axis; `rate` and `peak_rate` share one, in Logs per second. A column of arithmetic over aggregates, such as `received = n / 60.0`, measures something of its own. On a Dashboard, a Chart's unit is the unit of all its columns, so they share one axis. When a `by` column splits two or more columns over one axis, each column has its own colour and each group a shade of it, and the legend names the column, such as `r4 · received`. With two or more columns, the tooltip always names the column. Bars and areas stack only for `count`, `countif`, `sum` and `rate`, whose values add up, and only when that column has its panel alone. So `summarize rate(), peak_rate() by bin_auto(time), shop` draws each shop's rate unstacked, in the panel it shares with `peak_rate`.
 
 **Time bins.** `bin(time, 5m)` makes bins of the size you give. `bin_auto(time)` picks a size from the time range, giving at most about 100 bins. It reads the range after the Query's `where` stages narrow it. Bins start at multiples of their size from 1970-01-01 UTC, so the first and last bins may cover only part of the range. The chart fades them, and its tooltip says "partial bin". The chart says its bin size beside the legend, such as "1m bins", and its tooltip gives each bin's span, such as 19:02–19:03, so a count over 5-minute bins doesn't read as one per minute. A new Summarize in the Builder starts with `by bin_auto(time)`, so one click charts a count.
 
@@ -166,6 +166,10 @@ A chart draws at most 8 series, the ones with the largest totals, and the legend
 **Zoom.** Drag across two or more bins of a chart over time to narrow the time range to them. A click does nothing.
 
 **Add to dashboard.** Beside the switch, Add to dashboard saves the Project, the Query that ran and the chart's form to a new or existing Dashboard. It is there for a Query's table, not for Logs or for SQL. Create monitor, beside it, starts a Monitor from the same Query and range: see [Monitors](monitors.md).
+
+**Threshold lines.** A line or area Chart on a Dashboard can show up to 5 limits, such as "oldest unprocessed event under 1 h". Add them in the chart editor under Threshold lines, or give `options.thresholds` to the MCP server's `add_chart` or `update_chart`. Each has a value, in the Chart's unit, an optional label of at most 40 characters, and an optional severity, warn or critical. The Chart draws each one as a dashed horizontal line across the whole range, with its label at the right end: the label you give, or else the value with the Chart's unit and decimals. No severity draws the line in the muted colour of the axes, warn in the warning colour and critical in the danger colour. A threshold line is not a series: the `by` columns do not split it, it is not in the legend, and it does not take one of the 8 series. The value axis reaches each line, so a limit above every value still shows. A bar, stat or table Chart refuses threshold lines, and the chart editor drops them when you change a Chart to one of these. A threshold line only draws a limit and sends nothing; to be told when a number passes a limit, make a [Monitor](monitors.md).
+
+**Text blocks.** A Dashboard can also hold Text blocks: notes in Markdown, such as what a Section is for, how to read a Chart, what to do when a number is bad, or a link to a runbook. Press Add text beside Add chart, or Add text here in a Section's menu. The editor has a Markdown box and a preview, and the title is optional. A Text block shows headings, lists, bold, code, links and tables (GitHub's Markdown), at most 10,000 characters. It shows no raw HTML and runs no script, it shows an image as a link to its address and does not load it, and its links open in a new tab. You move, resize, edit, duplicate and delete a Text block as you do a Chart. It has no Project and no Query, so it runs nothing: the range, the filters, Refresh and auto-refresh do not change it. On the MCP server, `add_chart` and `update_chart` take `viz` `text` with `text`, and no `project` or `query`.
 
 ## Dashboard filters
 
@@ -180,7 +184,18 @@ where service == $service and level == $level
 
 - **One value** works as if it were written there as a string: picking `api` makes `service == $service` mean `service == "api"`.
 - **Several values:** `==`, `=~`, `contains` and `startswith` match any of them, and `!=`, `!~`, `!contains` and `!startswith` match none of them.
-- **All**, a filter with no value, makes its comparison true, as if it weren't there. Every Dashboard opens with its filters on All.
+- **All**, a filter with no value, makes its comparison true, as if it weren't there.
+
+A Dashboard opens with each filter on its default values, or on All when it has none. A member can still pick other values, or All.
+
+**An on/off filter** is a select with two options, such as `hide` and `show`, and the default `hide`. Compare it with a string, and use `or`:
+
+```
+where $known_issues == "show" or not(store_id in (489, 512))
+| summarize count() by bin_auto(time)
+```
+
+With `hide`, the comparison is false, so the Query leaves out those stores. With `show`, it is true, and with All it isn't there, so the Query keeps every store.
 
 A value is text. Compared with a built-in field, it is text. Compared with an Attribute, it matches the text or the number or bool the text reads as, so `status == $status` with `500` matches both `500` and `"500"`. Compared with a number column after `summarize` or `extend`, it is a number, and a value that isn't one matches nothing.
 
@@ -188,7 +203,7 @@ A value is text. Compared with a built-in field, it is text. Compared with an At
 
 A filter goes on either side of `==`, `!=`, `=~` and `!~`, after `contains`, `startswith` and their `!` and `_cs` forms, and after `search`. Anywhere else it's an error: in `project`, `extend`, `summarize` or `sort`, in an `in (…)` list, in an order comparison such as `>`, after `matches regex`, and inside `not(…)`, where All would keep nothing. To leave a value out, use `!=`.
 
-Only a Dashboard's Charts fill filters in, on the Dashboard page or through the MCP server's `get_chart_data`. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have. A Monitor's Query can't name a filter.
+Only a Dashboard's Charts fill filters in, on the Dashboard page or through the MCP server's `get_chart_data`, which runs a filter it isn't given with its default values. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have. A Monitor's Query can't name a filter.
 
 ## Reading less
 

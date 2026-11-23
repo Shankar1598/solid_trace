@@ -259,3 +259,34 @@ func TestAChangeOfTheHoursOnLocalDiskMovesOlderPartsToTheBucketWithoutARestart(t
 		t.Errorf("Expected 24 hours kept past hours out of range, got %v and %d", ttls, env.ClickHouse.LocalCacheHours())
 	}
 }
+
+// ClickHouse works out every part's move time again after a change of the
+// hours, reading each part's time column, from the bucket too: on a big
+// install, longer than a change may take. The change commits without waiting
+// for it.
+func TestAChangeOfTheHoursOnLocalDiskDoesntWaitForClickHouseToWorkOutEachPartsMoveTime(t *testing.T) {
+	env, now := setupBucketTestEnv(t, 24*30)
+	defer env.Cleanup()
+
+	postAndProcess(t, env, logJSON(t, "recent", now.Add(-time.Hour), nil), logJSON(t, "old", now.AddDate(0, 0, -3), nil))
+	conn := env.ClickHouse.Conn()
+	// ClickHouse then can't work out the parts' move times, as on a big install
+	// it takes a while to.
+	for _, f := range []storage.DayFamily{storage.LogDays, storage.SpanDays} {
+		if err := conn.Exec(context.Background(), "SYSTEM STOP MERGES "+f.Tables[0]); err != nil {
+			t.Fatalf("Stopping merges failed: %v", err)
+		}
+		defer conn.Exec(context.Background(), "SYSTEM START MERGES "+f.Tables[0])
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := env.ClickHouse.UseLocalCacheHours(ctx, 24); err != nil {
+		t.Fatalf("Expected the change to commit at once, got %v", err)
+	}
+	for table, ttl := range dayTablesTTL(t, env) {
+		if !strings.Contains(ttl, "toIntervalHour(24) TO VOLUME 'bucket'") {
+			t.Errorf("Expected the %s table's TTL at 24 hours, got %q", table, ttl)
+		}
+	}
+}

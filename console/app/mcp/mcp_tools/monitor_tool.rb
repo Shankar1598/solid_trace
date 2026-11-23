@@ -24,7 +24,8 @@ module McpTools
         type: "string",
         description: "The Query the Monitor runs on its Project. EventStore checks it as kind needs before it's saved: " \
                      "a Query it can't run, a threshold Query that doesn't end in a summarize of one number, or a Query naming " \
-                     "a Dashboard filter ($name), which only Dashboard Charts fill in, is not saved.",
+                     "a Dashboard filter ($name), which only Dashboard Charts fill in, is not saved. Giving it makes the " \
+                     "Monitor's language query.",
       },
       interval_minutes: { type: "integer", description: "How often the Monitor runs, in minutes, 1 to #{LogMonitor::MAX_INTERVAL_MINUTES}. 1 when made." },
       range_minutes: {
@@ -82,6 +83,23 @@ module McpTools
       },
     }.freeze
 
+    # The sql argument, listed only while SQL queries are on, and what the
+    # tools' descriptions say of it then.
+    SQL = {
+      type: "string",
+      description: "A SQL query (ClickHouse SQL) that the Monitor runs in place of a Query. Only a threshold Monitor takes it. " \
+                   "Use query first. Use sql only when the Monitor needs a join, a subquery, a window, or a read of the " \
+                   "events or spans tables. The SQL reads the logs, events and spans tables of the Monitor's Project, as " \
+                   "run_sql does. The range is set outside the SQL. Each run reads range_minutes that end 60 seconds before " \
+                   "the run, so the SQL needs no time condition. Its table must be the group columns and one number column. " \
+                   "For example: SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service. The " \
+                   "columns other than the number column name each group. EventStore runs the SQL before the Monitor is " \
+                   "saved. SQL that does not run is not saved. A table without exactly one number column is not saved. " \
+                   "Give sql or query, not both. Giving sql makes the Monitor's language sql.",
+    }.freeze
+    SQL_NOTE = "A threshold Monitor that needs a join, a subquery, a window, or the events or spans tables takes sql in " \
+               "place of query."
+
     # The fields the Monitor takes as attributes; integration_ids is saved
     # with them.
     ATTRIBUTES = (MONITOR_FIELDS.keys - [ :integration_ids ]).freeze
@@ -94,13 +112,18 @@ module McpTools
 
     class_methods do
       # The organization and monitor arguments, which #monitor reads.
-      def takes_monitor
+      def takes_monitor(required: true)
         takes_organization
-        argument :monitor, MONITOR, required: true
+        argument :monitor, MONITOR, required: required
       end
 
-      def takes_monitor_fields(required: [])
-        MONITOR_FIELDS.each { |name, schema| argument name, schema, required: required.include?(name) }
+      # The Monitor's fields, or only those of only, with sql after query,
+      # listed only while SQL queries are on.
+      def takes_monitor_fields(required: [], only: MONITOR_FIELDS.keys, note: SQL_NOTE)
+        MONITOR_FIELDS.slice(*only).each do |name, schema|
+          argument name, schema, required: required.include?(name)
+          sql_argument :sql, SQL, note: note if name == :query
+        end
       end
     end
 
@@ -112,11 +135,36 @@ module McpTools
     end
 
     # The fields given in the arguments, as the Monitor takes them, with the
-    # Project when one is named.
+    # Project when one is named. query or sql sets the Monitor's language,
+    # and its text.
     def monitor_attributes
+      raise ToolError, "Give query or sql, not both: a Monitor runs one of them." if arguments.key?(:query) && arguments.key?(:sql)
+
       attributes = arguments.slice(*ATTRIBUTES)
+      attributes[:language] = "query" if arguments.key?(:query)
+      attributes.merge!(language: "sql", query: arguments[:sql]) if arguments.key?(:sql)
       attributes[:project] = project if arguments.key?(:project)
       attributes
+    end
+
+    # Refuses a new Monitor without its text: query, or sql while SQL queries
+    # are on.
+    def needs_text!
+      return if arguments.key?(:query) || arguments.key?(:sql)
+
+      raise ToolError, InstanceSetting.current.sql_queries_enabled? ? "Give query, or sql for a Monitor that needs SQL." : "Give query."
+    end
+
+    # The changes the arguments make to monitor, as #monitor_attributes
+    # gives them. A new project points a Query's source at it, as the
+    # Monitor form does, unless a query or sql is given; a SQL Monitor's
+    # SQL reads the new Project's tables as it is.
+    def monitor_changes(monitor)
+      changes = monitor_attributes
+      if arguments.key?(:project) && !arguments.key?(:query) && !arguments.key?(:sql) && monitor.language_query?
+        changes[:query] = with_source(monitor.query, project.slug)
+      end
+      changes
     end
 
     # Saves monitor with attributes and the integration_ids given, as the

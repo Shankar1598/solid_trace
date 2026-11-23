@@ -6,7 +6,7 @@ module McpTools
   class GetMonitor < Base
     include MonitorTool
 
-    description "Gives a Monitor: its Project, Query, kind and settings, its status, each group's state (firing first, at most " \
+    description "Gives a Monitor: its Project, its language (query or sql) and its Query or SQL, its kind and settings, its status, each group's state (firing first, at most " \
                 "#{STATES_SHOWN}) with its last value and, comparing the change, its last Baseline, its last #{RUNS_SHOWN} " \
                 "runs, newest first, and the Integrations it tells."
     read_only!

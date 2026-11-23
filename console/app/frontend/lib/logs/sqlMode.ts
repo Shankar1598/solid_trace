@@ -4,6 +4,9 @@
 // when the SQL is no longer the SQL it opened with.
 import { draftIn, searchOf, type Explorer, type Mode } from './explorerState'
 
+/** The placeholder of a SQL editor: the Logs explorer's and the Monitor form's. */
+export const SQL_PLACEHOLDER = 'SELECT level, count(*) FROM logs GROUP BY level'
+
 /**
  * Into SQL mode with `sql`, the readable SQL of the Query, as both what ran
  * and the draft, so the URL holds it. Nothing runs; `replace` is the search

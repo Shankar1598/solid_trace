@@ -4,6 +4,7 @@ import AuthLayout from '@/components/layouts/AuthLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordInput } from '@/components/PasswordInput'
 
 // The sign-up form, or, when sign-up is closed, why: people then join by
 // Invite.
@@ -74,9 +75,8 @@ function RegisterForm() {
 
         <div className="space-y-2">
           <Label htmlFor="password">Password</Label>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             value={data.password}
             onChange={(e) => setData('password', e.target.value)}
             required
@@ -88,9 +88,8 @@ function RegisterForm() {
 
         <div className="space-y-2">
           <Label htmlFor="password_confirmation">Confirm password</Label>
-          <Input
+          <PasswordInput
             id="password_confirmation"
-            type="password"
             value={data.password_confirmation}
             onChange={(e) => setData('password_confirmation', e.target.value)}
             required

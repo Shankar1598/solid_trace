@@ -6,11 +6,26 @@ FactoryBot.define do
     name { "Checkout health" }
   end
 
+  factory :dashboard_section do
+    dashboard
+    title { "Errors" }
+    sequence(:position) { |n| n }
+  end
+
   factory :dashboard_chart do
     dashboard
     project { association :project, organization: dashboard.organization }
     title { "Requests" }
     query { "['#{project.slug}']\n| summarize count() by bin_auto(time)" }
     viz { "line" }
+
+    # A Text block: Markdown, with no Project, Query or title.
+    trait :text do
+      viz { "text" }
+      project { nil }
+      query { nil }
+      title { nil }
+      text { "**Read me** first." }
+    end
   end
 end

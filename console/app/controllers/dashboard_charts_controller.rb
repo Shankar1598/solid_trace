@@ -13,14 +13,24 @@ class DashboardChartsController < ApplicationController
   before_action :set_chart, only: %i[update destroy duplicate data]
   before_action :set_time_range, only: %i[data preview]
 
+  # A new chart goes beside the last row of its Section (or of no Section)
+  # when there is space, else under every chart there, unless a place is
+  # given.
   def create
     chart = @dashboard.charts.new(chart_params)
-    chart.y = @dashboard.bottom unless chart_params.key?(:y)
+    if !chart_params.key?(:x) && !chart_params.key?(:y)
+      chart.x, chart.y = @dashboard.place(chart.section_id, chart.w)
+    elsif !chart_params.key?(:y)
+      chart.y = @dashboard.bottom(chart.section_id)
+    end
     save(chart, notice: "Chart added.", status: :created)
   end
 
+  # A chart moved to another Section goes under every chart of that
+  # Section, unless a row is given.
   def update
     @chart.assign_attributes(chart_params)
+    @chart.y = @dashboard.bottom(@chart.section_id) if @chart.section_id_changed? && !chart_params.key?(:y)
     save(@chart, notice: "Chart saved.")
   end
 
@@ -32,17 +42,22 @@ class DashboardChartsController < ApplicationController
     end
   end
 
-  # A copy of the chart under every chart, its title marked as a copy.
+  # A copy of the chart in its Section, placed as a new chart is, its title
+  # marked as a copy. A Text block with no title stays with none.
   def duplicate
     copy = @chart.dup
-    copy.assign_attributes(title: "#{@chart.title} (copy)".truncate(200), x: 0, y: @dashboard.bottom)
+    x, y = @dashboard.place(@chart.section_id, @chart.w)
+    copy.assign_attributes(title: @chart.title.blank? ? @chart.title : "#{@chart.title} (copy)".truncate(200), x: x, y: y)
     save(copy, notice: "Chart duplicated.", status: :created)
   end
 
   # GET with from and to (ISO 8601), and the page's keys for each filter the
   # Query names that isn't All (Dashboard.filter_values_in): the chart's
   # Query run over that range with those values.
+  # A Text block runs nothing.
   def data
+    return render json: { error: "A Text block runs no Query." }, status: :unprocessable_content if @chart.text?
+
     run_chart(@current_org.projects.find(@chart.project_id), @chart.query, parameters: @dashboard.filter_values(shown_filter_values))
   end
 
@@ -65,10 +80,13 @@ class DashboardChartsController < ApplicationController
   end
 
   # The Project is looked up in the Organization: another Organization's
-  # Project is no Project, so the chart is refused as having none.
+  # Project is no Project, so the chart is refused as having none. An empty
+  # section_id is no Section, and an empty query or text is none, as a Text
+  # block has no Query and a chart no text.
   def chart_params
     @chart_params ||= begin
-      permitted = params.require(:chart).permit(:project_id, :title, :query, :viz, :x, :y, :w, :h, options: %i[stacked unit decimals])
+      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :text, :viz, :x, :y, :w, :h, options: [ :stacked, :unit, :decimals, { thresholds: %i[value label severity] } ])
+      %i[section_id query text].each { |key| permitted[key] = permitted[key].presence if permitted.key?(key) }
       permitted[:project] = @current_org.projects.find_by(id: permitted.delete(:project_id)) if permitted.key?(:project_id)
       permitted
     end

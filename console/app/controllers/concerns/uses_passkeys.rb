@@ -90,12 +90,12 @@ module UsesPasskeys
   def redirect_removing_factor(what)
     if yield
       notice = current_user.two_factor? ? "#{what} removed." : "#{what} removed. Two-factor is off."
-      redirect_back_or_to user_settings_path, notice: notice
+      redirect_back_or_to user_settings_page, notice: notice
     else
-      redirect_back_or_to user_settings_path, alert: second_step_refused
+      redirect_back_or_to user_settings_page, alert: second_step_refused
     end
   rescue User::TwoFactor::Required => e
-    redirect_back_or_to user_settings_path, alert: e.message
+    redirect_back_or_to user_settings_page, alert: e.message
   end
 
   # The request's proof for adding a factor (User#add_factor), under proof:

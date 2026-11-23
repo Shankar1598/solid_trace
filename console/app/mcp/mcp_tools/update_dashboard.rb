@@ -8,7 +8,7 @@ module McpTools
 
     description "Changes a Dashboard's name, description, default_range, auto_refresh or filters. Only the fields given " \
                 "change, and filters replaces the whole list: get_dashboard lists them. add_chart, update_chart and delete_chart " \
-                "change its Charts."
+                "change its Charts, and add_section, update_section and delete_section its Sections."
     writes!
     takes_dashboard
     takes_dashboard_fields

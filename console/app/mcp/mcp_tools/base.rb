@@ -44,6 +44,7 @@ module McpTools
       "Project" => [ "Project", "list_projects" ],
       "Dashboard" => [ "Dashboard", "list_dashboards" ],
       "DashboardChart" => [ "Chart", "get_dashboard" ],
+      "DashboardSection" => [ "Section", "get_dashboard" ],
       "LogMonitor" => [ "Monitor", "list_monitors" ],
       "Integration" => [ "Integration", "list_integrations" ],
       "Issue" => [ "Issue", "list_issues" ],
@@ -92,6 +93,7 @@ module McpTools
       def argument(name, schema, required: false)
         @properties = properties.merge(name.to_sym => schema)
         @required = (required_arguments + (required ? [ name.to_sym ] : [])).uniq
+        @input_schema_without_sql = nil
         input_schema({ properties: @properties, required: @required.presence }.compact)
       end
 
@@ -120,6 +122,36 @@ module McpTools
 
       def needs_sql_queries?
         @needs_sql_queries || false
+      end
+
+      # An argument listed only while SQL queries are on, such as
+      # create_monitor's sql. note, which needs the description given before,
+      # is added to the tool's description only while they are on.
+      def sql_argument(name, schema, note: nil)
+        @description_without_sql ||= @description_value
+        description([ @description_value, note ].compact.join(" "))
+        argument(name, schema)
+        @sql_arguments = sql_arguments + [ name.to_sym ]
+      end
+
+      def sql_arguments
+        @sql_arguments || []
+      end
+
+      # The description and the input schema as the server lists them now.
+      # While SQL queries are off, they do not have the SQL arguments and
+      # their note. A call that gives one anyway is refused where it is saved
+      # or run. The tool class itself is listed, so it keeps all its settings.
+      def description_value
+        sql_hidden? ? @description_without_sql : super
+      end
+
+      def input_schema_value
+        return super unless sql_hidden?
+
+        @input_schema_without_sql ||= MCP::Tool::InputSchema.new(
+          { properties: properties.except(*sql_arguments), required: (required_arguments - sql_arguments).presence }.compact
+        )
       end
 
       # A tool on the install's settings, for an instance admin only. An
@@ -155,6 +187,11 @@ module McpTools
 
       def required_arguments
         @required || []
+      end
+
+      # Whether the tool has SQL arguments that the server must not list now.
+      def sql_hidden?
+        sql_arguments.any? && !InstanceSetting.current.sql_queries_enabled?
       end
     end
 

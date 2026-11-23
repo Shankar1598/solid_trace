@@ -33,6 +33,9 @@ RUN go mod download
 
 # Where vrl/build puts the library for the vrl package to link.
 COPY --from=vrl /vrl/target/dist/libst_vrl.a vrl/lib/linux_${TARGETARCH}/libst_vrl.a
+# Go 1.27.4 and later refuse a cgo library with LLVM bitcode sections, which
+# Rust's objects keep for a later LTO step. Nothing here uses them.
+RUN objcopy --remove-section=.llvmbc --remove-section=.llvmcmd vrl/lib/linux_${TARGETARCH}/libst_vrl.a
 
 COPY . .
 

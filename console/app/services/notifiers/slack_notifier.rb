@@ -46,7 +46,7 @@ module Notifiers
       end
     end
 
-    MONITOR_EMOJI = { "error" => "🔥", "warning" => "🔎", "info" => "✅" }.freeze
+    MONITOR_EMOJI = { "error" => "🚨", "warning" => "🔎", "info" => "✅" }.freeze
     # Slack's limits on a header's text, a section's text, a field's text,
     # the fields in a section and a button's URL.
     MAX_HEADER = 150

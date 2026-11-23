@@ -118,6 +118,49 @@ class DashboardTest < ActiveSupport::TestCase
     assert_includes @dashboard.errors[:filters], "must be a list"
   end
 
+  test "a filter keeps its default values as a list, from a text or a list, and leaves out none" do
+    @dashboard.update!(filters: [
+      select("known_issues", list("hide", "show")).merge("default" => "hide"),
+      select("level", list("error", "warn"), multiple: true).merge("default" => [ "error", " warn ", "" ]),
+      search("q").merge("default" => " timeout "),
+      search("r").merge("default" => ""),
+      select("s", field(create(:project, organization: @dashboard.organization).id, "service")).merge("default" => [])
+    ])
+    assert_equal [ [ "hide" ], [ "error", "warn" ], [ "timeout" ], nil, nil ], @dashboard.reload.filters.map { |f| f["default"] }
+    assert_not @dashboard.filters[3].key?("default")
+  end
+
+  test "a filter's default is one value unless a select takes several, a fixed list's options' values, at most 200 characters" do
+    project_id = create(:project, organization: @dashboard.organization).id
+    @dashboard.filters = [
+      select("a", list("hide", "show")).merge("default" => [ "hide", "show" ]),
+      search("b").merge("default" => [ "x", "y" ]),
+      select("c", list("hide", "show"), multiple: true).merge("default" => [ "hide", "gone" ]),
+      search("d").merge("default" => "x" * 201),
+      search("e").merge("default" => { "x" => 1 }),
+      select("f", field(project_id, "service"), multiple: true).merge("default" => [ "api", "web" ])
+    ]
+    assert_not @dashboard.valid?
+    errors = @dashboard.errors.to_hash.transform_keys(&:to_s)
+    assert_equal %w[filters[0].default filters[1].default filters[2].default filters[3].default filters[4].default], errors.keys
+    assert_includes errors["filters[0].default"], "must be one value, as the filter takes one"
+    assert_includes errors["filters[2].default"], "must be the options' values, not \"gone\""
+    assert_includes errors["filters[3].default"], "is too long (at most 200 characters)"
+    assert_includes errors["filters[4].default"], "must be a string or a list of strings"
+  end
+
+  test "filter values run with a filter's default when asked and its name isn't given, and All when given empty" do
+    @dashboard.update!(filters: [ select("known_issues", list("hide", "show")).merge("default" => "hide"), search("q") ])
+
+    assert_equal({}, @dashboard.filter_values({}))
+    assert_equal({ "known_issues" => [ "hide" ] }, @dashboard.filter_values({}, defaults: true))
+    assert_equal({ "known_issues" => [ "show" ], "q" => [ "x" ] }, @dashboard.filter_values({ known_issues: "show", q: "x" }, defaults: true))
+    assert_equal({}, @dashboard.filter_values({ known_issues: [] }, defaults: true))
+    assert_equal({}, @dashboard.filter_link_values({}))
+    assert_equal({ "known_issues" => [ "" ] }, @dashboard.filter_link_values({ known_issues: "", q: [] }))
+    assert_equal({ "known_issues" => [ "hide" ], "q" => [ "x" ] }, @dashboard.filter_link_values({ "known_issues" => [ "hide" ], "q" => "x" }))
+  end
+
   private
 
   def search(name)

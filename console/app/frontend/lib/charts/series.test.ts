@@ -543,6 +543,59 @@ describe('panels', () => {
   })
 })
 
+describe('a chart of several columns', () => {
+  // The first team's Chart: events received and processed per second, by region, both in /s.
+  const REGION: TableColumn = { name: 'region_code', type: 'string' }
+  const RECEIVED: TableColumn = { name: 'received', type: 'number' }
+  const PROCESSED: TableColumn = { name: 'processed', type: 'number' }
+  const regions = (...names: string[]) => names.map((r, i) => ['2026-10-09T10:00:00Z', r, 100 - i * 10, 90 - i * 10])
+
+  it('draws renamed columns over one value axis when the chart has a unit', () => {
+    const rows = regions('r4', 'r7')
+
+    expect(drawable(chartOf(table([TIME, REGION, RECEIVED, PROCESSED], rows), { unit: '/s' })).panels.map(p => p.columns))
+      .toEqual([['received', 'processed']])
+    // Without a unit, each renamed column measures something of its own.
+    expect(drawable(chartOf(table([TIME, REGION, RECEIVED, PROCESSED], rows))).panels.map(p => p.columns))
+      .toEqual([['received'], ['processed']])
+  })
+
+  it('gives each column over one axis a hue, and each group a shade of it, named with its column', () => {
+    const model = drawable(chartOf(table([TIME, REGION, RECEIVED, PROCESSED], regions('r4', 'r7', 'r1', 'r2', 'r9')), { unit: '/s' }))
+
+    // As many groups as leave each column its hue: the four with the largest received totals.
+    expect(model.legend.map(e => [e.name, e.color])).toEqual([
+      ['r4 · received', 'var(--chart-1)'], ['r4 · processed', 'var(--chart-2)'],
+      ['r7 · received', 'var(--chart-1-2)'], ['r7 · processed', 'var(--chart-2-2)'],
+      ['r1 · received', 'var(--chart-1-3)'], ['r1 · processed', 'var(--chart-2-3)'],
+      ['r2 · received', 'var(--chart-1-4)'], ['r2 · processed', 'var(--chart-2-4)'],
+    ])
+  })
+
+  it('keeps each series\' hue and shade when a re-run ranks the groups or orders the columns again', () => {
+    const colors = (model: ChartModel) => Object.fromEntries(drawable(model).legend.map(e => [e.name, e.color]))
+    const first = keepColors(chartOf(table([TIME, REGION, RECEIVED, PROCESSED], regions('r4', 'r7')), { unit: '/s' }), new Map())
+
+    // r7 now leads, a new region comes, and processed is the first column.
+    const rows = regions('r7', 'r4', 'r1').map(([time, region, received, processed]) => [time, region, processed, received])
+    const next = keepColors(chartOf(table([TIME, REGION, PROCESSED, RECEIVED], rows), { unit: '/s' }), first.slots)
+
+    expect(colors(next.model)).toEqual({
+      ...colors(first.model),
+      'r1 · received': 'var(--chart-1-3)', 'r1 · processed': 'var(--chart-2-3)',
+    })
+  })
+
+  it('names the column in the tooltip when each panel draws one, with a legend entry for each group', () => {
+    const model = drawable(chartOf(table([TIME, REGION, RECEIVED, PROCESSED], regions('r4', 'r7'))))
+
+    expect(model.legend.map(e => e.name)).toEqual(['r4', 'r7'])
+    expect(model.series.map(s => s.label)).toEqual(['r4 · received', 'r4 · processed', 'r7 · received', 'r7 · processed'])
+    // One column needs no name.
+    expect(drawable(chartOf(table([TIME, REGION, RECEIVED], [['2026-10-09T10:00:00Z', 'r4', 3]]))).series.map(s => s.label)).toEqual(['r4'])
+  })
+})
+
 describe('colours kept from the last chart', () => {
   const rows = (services: [string, number][]) => services.map(([s, n]) => ['2026-10-09T10:00:00Z', s, n])
   const colors = (model: ChartModel) => Object.fromEntries(drawable(model).legend.map(e => [e.name, e.color]))

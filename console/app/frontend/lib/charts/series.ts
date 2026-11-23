@@ -26,8 +26,10 @@ export type SplitValue = string | number | boolean | null
 export interface Series {
   /** Its values' key in each point. */
   key: string
-  /** What the legend and tooltip call it. */
+  /** What the legend calls it. */
   name: string
+  /** What the tooltip calls it: its name, with its column when there are several and the name leaves it out. */
+  label: string
   /** The number column it draws. */
   column: string
   /** The values of the columns that split it, which a Log has as Fields. */
@@ -40,7 +42,12 @@ export interface Series {
   id: string
   /** Its palette slot (1 to MAX_SERIES), or null when it wears a Level's colour. */
   slot: number | null
-  /** A CSS colour: its palette slot's hue, or a Level's own colour. */
+  /**
+   * Its shade of its slot's hue (1 is the hue itself), when its column gives
+   * the hue and its group the shade; else null.
+   */
+  shade: number | null
+  /** A CSS colour: its palette slot's hue or a shade of it, or a Level's own colour. */
   color: string
   total: number
 }
@@ -146,8 +153,11 @@ export function binsTime(query: string): boolean {
  *   first string column, split by the others;
  * - a stat when it is one row of one number;
  * - none otherwise.
+ *
+ * A Dashboard chart's unit, when set, is the unit of all its number
+ * columns, so they share one value axis.
  */
-export function chartOf(table: LogTable): ChartModel {
+export function chartOf(table: LogTable, { unit }: { unit?: string } = {}): ChartModel {
   const { columns, rows } = table
   if (rows.length === 1 && columns.length === 1 && columns[0].type === 'number') {
     return { kind: 'stat', name: columns[0].name, value: numberOf(rows[0][0]) }
@@ -169,7 +179,7 @@ export function chartOf(table: LogTable): ChartModel {
       return typeof time === 'string' ? new Date(time).getTime() : null
     }, measures, splits)
     if (!pivot) return { kind: 'none' }
-    const { reported, ...drawn } = keepSeries(pivot, table, measures, splits, filled)
+    const { reported, ...drawn } = keepSeries(pivot, table, measures, splits, filled, unit)
     if (drawn.series.length === 0) return { kind: 'none' }
     const times = [...pivot.xs.keys()].map(Number).sort((a, b) => a - b)
     const from = table.from ? new Date(table.from) : new Date(times[0])
@@ -191,7 +201,7 @@ export function chartOf(table: LogTable): ChartModel {
   const [category, ...rest] = splits
   const pivot = pivotRows(table, i => splitName(columns[category].name, cell(rows[i][category])), measures, rest)
   if (!pivot) return { kind: 'none' }
-  const { reported: _, ...drawn } = keepSeries(pivot, table, measures, rest, false)
+  const { reported: _, ...drawn } = keepSeries(pivot, table, measures, rest, false, unit)
   if (drawn.series.length === 0) return { kind: 'none' }
   // The bars with the largest totals, largest first; Levels and numbers keep their own order.
   const omittedCategories = Math.max(0, drawn.points.length - MAX_BARS)
@@ -281,10 +291,11 @@ function pivotRows(
  * hue), each with every measure. A series with no value at all is left out
  * and named in empty. Series of Levels go worst first and wear their Level's
  * colour. A missing value is a zero where an empty bin has no Logs and the
- * aggregate counts, and a gap otherwise.
+ * aggregate counts, and a gap otherwise. A chart's unit, when given, is
+ * that of every measure.
  */
 function keepSeries(
-  pivot: Pivot, { columns, rows, truncated }: LogTable, measures: number[], splits: number[], filled: boolean,
+  pivot: Pivot, { columns, rows, truncated }: LogTable, measures: number[], splits: number[], filled: boolean, unit: string | undefined,
 ): SeriesSet & { reported: Map<string, Set<number | string>> } {
   const drawn = measures.slice(0, MAX_SERIES)
   const source = (combo: string, m: number) => `${combo}\u0000${m}`
@@ -319,8 +330,11 @@ function keepSeries(
   // there is one), a split value wears one hue in all of them, so as many
   // split values as hues are kept, and the split values alone say what a
   // series is: adding or removing a function repaints none of them.
-  const units = groupBy(drawn, m => unitOf(columns[m].name, columns[m].agg))
-  const byCombo = splits.length > 0 && units.every(unit => unit.length === 1)
+  const units = unit ? [drawn] : groupBy(drawn, m => unitOf(columns[m].name, columns[m].agg))
+  const byCombo = splits.length > 0 && units.every(group => group.length === 1)
+  // Else, with several columns split by groups, a column wears one hue and
+  // each of its groups a shade of it, so the columns are told apart first.
+  const shaded = !byCombo && splits.length > 0 && drawn.length > 1
   const empty = order.flatMap(combo => drawn.filter(m => !hasValues(combo, m)).map(m => nameOf(combo, m)))
   // Ranked once each; ties keep the rows' order, as sort is stable.
   const ranks = new Map(order.map(combo => [combo, rank(combo)]))
@@ -331,22 +345,25 @@ function keepSeries(
 
   const series: (Series & { source: string })[] = []
   const slots = new Map<string, number>()
-  for (const combo of kept) {
+  for (const [place, combo] of kept.entries()) {
     const values = pivot.combos.get(combo)!
     const split = splits.map((s, k) => ({ field: columns[s].name, value: values[k] }))
     for (const m of drawn.filter(m => hasValues(combo, m))) {
       const id = JSON.stringify(byCombo ? split : [split, columns[m].name])
       if (!slots.has(id)) slots.set(id, slots.size + 1)
-      const slot = levels ? null : slots.get(id)!
+      const slot = levels ? null : shaded ? drawn.indexOf(m) + 1 : slots.get(id)!
+      const shade = shaded ? place + 1 : null
       series.push({
         key: `s${series.length}`,
         name: byCombo ? split.map(({ field, value }) => splitName(field, value)).join(' · ') : nameOf(combo, m),
+        label: nameOf(combo, m),
         column: columns[m].name,
         split,
         agg: columns[m].agg ?? null,
         id,
         slot,
-        color: slot === null ? `var(--chart-level-${levelOf(combo) ?? 'none'})` : `var(--chart-${slot})`,
+        shade,
+        color: slot === null ? `var(--chart-level-${levelOf(combo) ?? 'none'})` : colorOf(slot, shade),
         total: totals.get(source(combo, m)) ?? 0,
         source: source(combo, m),
       })
@@ -361,9 +378,9 @@ function keepSeries(
   // The xs each series has a row at, which the empty bins between are told from.
   const reported = new Map(series.map(s => [s.key, new Set([...pivot.xs].filter(([, at]) => at.has(s.source)).map(([x]) => x))]))
 
-  const panels = units.map((unit): Panel => {
-    const agg = unit.length === 1 ? columns[unit[0]].agg : undefined
-    const names = unit.map(m => columns[m].name)
+  const panels = units.map((group): Panel => {
+    const agg = group.length === 1 ? columns[group[0]].agg : undefined
+    const names = group.map(m => columns[m].name)
     return {
       columns: names,
       keys: series.filter(s => names.includes(s.column)).map(s => s.key),
@@ -390,6 +407,11 @@ function legendOf(series: Series[]): LegendEntry[] {
   const entries = new Map<string, LegendEntry>()
   for (const s of series) if (!entries.has(s.id)) entries.set(s.id, { id: s.id, name: s.name, color: s.color })
   return [...entries.values()]
+}
+
+/** A palette slot's hue, or a shade of it past the first: the palette's shade tokens. */
+function colorOf(slot: number, shade: number | null): string {
+  return shade === null || shade === 1 ? `var(--chart-${slot})` : `var(--chart-${slot}-${shade})`
 }
 
 /**
@@ -421,24 +443,43 @@ function groupBy<T>(items: T[], keyOf: (item: T) => string): T[][] {
  * drawn there keeps its palette slot, so filtering out a series, a change
  * of rank, or adding or removing a function repaints none of the others,
  * and a new id takes the lowest slot free. A new split matches no id, so it
- * starts from slot 1 again. Returns the slots to keep for the next.
+ * starts from slot 1 again. A series shaded by its group keeps its column's
+ * hue and its own shade so. Returns the slots to keep for the next.
  */
 export function keepColors(model: ChartModel, slots: ReadonlyMap<string, number>): { model: ChartModel; slots: Map<string, number> } {
   if (model.kind !== 'time' && model.kind !== 'bars') return { model, slots: new Map(slots) }
-  const ids = [...new Set(model.series.filter(s => s.slot !== null).map(s => s.id))]
-  if (ids.length === 0) return { model, slots: new Map(slots) }
-  const next = new Map<string, number>()
-  for (const id of ids) if (slots.has(id)) next.set(id, slots.get(id)!)
-  const taken = new Set(next.values())
-  for (const id of ids) {
-    if (next.has(id)) continue
+  const coloured = model.series.filter(s => s.slot !== null)
+  if (coloured.length === 0) return { model, slots: new Map(slots) }
+  // A shaded series' hue is its column's, kept as the column's id when
+  // nothing splits it; its shade is kept by its own id, among its column's.
+  const hueOf = (s: Series) => (s.shade === null ? s.id : JSON.stringify([[], s.column]))
+  const next = keepSlots(coloured.map(hueOf), slots)
+  const shaded = coloured.filter(s => s.shade !== null)
+  for (const column of new Set(shaded.map(s => s.column))) {
+    for (const [id, shade] of keepSlots(shaded.filter(s => s.column === column).map(s => s.id), slots)) next.set(id, shade)
+  }
+  const series = model.series.map(s => {
+    if (s.slot === null) return s
+    const slot = next.get(hueOf(s))!
+    const shade = s.shade === null ? null : next.get(s.id)!
+    return { ...s, slot, shade, color: colorOf(slot, shade) }
+  })
+  return { model: { ...model, series, legend: legendOf(series) }, slots: next }
+}
+
+/** A slot for each key: the one it had, else the lowest one free. */
+function keepSlots(keys: string[], slots: ReadonlyMap<string, number>): Map<string, number> {
+  const kept = new Map<string, number>()
+  for (const key of keys) if (slots.has(key)) kept.set(key, slots.get(key)!)
+  const taken = new Set(kept.values())
+  for (const key of keys) {
+    if (kept.has(key)) continue
     let slot = 1
     while (taken.has(slot)) slot++
-    next.set(id, slot)
+    kept.set(key, slot)
     taken.add(slot)
   }
-  const series = model.series.map(s => (s.slot === null ? s : { ...s, slot: next.get(s.id)!, color: `var(--chart-${next.get(s.id)!})` }))
-  return { model: { ...model, series, legend: legendOf(series) }, slots: next }
+  return kept
 }
 
 /**

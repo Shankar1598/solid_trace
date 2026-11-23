@@ -12,6 +12,11 @@ target_dir=$(cargo metadata --format-version 1 --no-deps --manifest-path rust/Ca
 lib="lib/$(go env GOOS)_$(go env GOARCH)"
 mkdir -p "$lib"
 cp "$target_dir/release/libst_vrl.a" "$lib/libst_vrl.a"
+# Go 1.27.4 and later refuse a cgo library with LLVM bitcode sections, which
+# Rust's objects keep for a later LTO step. Nothing here uses them.
+if [ "$(go env GOOS)" = linux ]; then
+	objcopy --remove-section=.llvmbc --remove-section=.llvmcmd "$lib/libst_vrl.a"
+fi
 
 # Go's build cache keys cgo on the LDFLAGS text, not the library, so a
 # rebuilt library would otherwise be ignored. This file changes with it.

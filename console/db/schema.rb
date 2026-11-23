@@ -93,16 +93,28 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_21_090000) do
     t.integer "dashboard_id", null: false
     t.integer "h", default: 4, null: false
     t.json "options", default: {}, null: false
-    t.integer "project_id", null: false
-    t.text "query", null: false
-    t.string "title", null: false
+    t.integer "project_id"
+    t.text "query"
+    t.integer "section_id"
+    t.string "title"
     t.datetime "updated_at", null: false
     t.string "viz", default: "line", null: false
     t.integer "w", default: 6, null: false
     t.integer "x", default: 0, null: false
     t.integer "y", default: 0, null: false
+    t.text "text"
     t.index ["dashboard_id"], name: "index_dashboard_charts_on_dashboard_id"
     t.index ["project_id"], name: "index_dashboard_charts_on_project_id"
+    t.index ["section_id"], name: "index_dashboard_charts_on_section_id"
+  end
+
+  create_table "dashboard_sections", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "dashboard_id", null: false
+    t.integer "position", default: 0, null: false
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.index ["dashboard_id"], name: "index_dashboard_sections_on_dashboard_id"
   end
 
   create_table "dashboards", force: :cascade do |t|
@@ -242,6 +254,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_21_090000) do
     t.datetime "ingest_cursor_at"
     t.integer "interval_minutes", default: 1, null: false
     t.string "kind", null: false
+    t.string "language", default: "query", null: false
     t.text "last_error"
     t.datetime "last_run_at"
     t.datetime "logs_skipped_at"
@@ -502,8 +515,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_21_090000) do
   add_foreign_key "capture_confirmations", "users", on_delete: :nullify
   add_foreign_key "comments", "issues"
   add_foreign_key "comments", "organizations_users", column: "organization_user_id"
+  add_foreign_key "dashboard_charts", "dashboard_sections", column: "section_id", on_delete: :nullify
   add_foreign_key "dashboard_charts", "dashboards"
   add_foreign_key "dashboard_charts", "projects"
+  add_foreign_key "dashboard_sections", "dashboards"
   add_foreign_key "dashboards", "organizations"
   add_foreign_key "dashboards", "users", column: "created_by_id", on_delete: :nullify
   add_foreign_key "instance_settings", "organizations", column: "meta_organization_id", on_delete: :nullify

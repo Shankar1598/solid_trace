@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordInput } from '@/components/PasswordInput'
 import {
   getPasskey,
   passkeyAutofillAvailable,
@@ -112,9 +113,8 @@ export default function Login({ sign_up_allowed, passkey_offer }: { sign_up_allo
               Forgot your password?
             </Link>
           </div>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             value={data.password}
             onChange={(e) => setData('password', e.target.value)}
             required

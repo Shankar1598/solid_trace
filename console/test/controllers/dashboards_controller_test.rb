@@ -93,15 +93,16 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
 
   test "a member saves a Dashboard's filters as the whole list, and its page carries them" do
     filters = [
-      { name: "level", label: "Level", kind: "select", multiple: true, options: { from: "list", items: [ { label: "Error", value: "error" } ] } },
-      { name: "q", label: "", kind: "search" }
+      { name: "level", label: "Level", kind: "select", multiple: true, default: [ "error" ], options: { from: "list", items: [ { label: "Error", value: "error" } ] } },
+      { name: "q", label: "", kind: "search", default: "timeout" }
     ]
     patch dashboard_url(@dashboard, org_slug: @organization.slug), params: { dashboard: { filters: filters } }, as: :json
 
     assert_response :success
     saved = [
-      { "name" => "level", "label" => "Level", "kind" => "select", "multiple" => true, "options" => { "from" => "list", "items" => [ { "label" => "Error", "value" => "error" } ] } },
-      { "name" => "q", "label" => "q", "kind" => "search" }
+      { "name" => "level", "label" => "Level", "kind" => "select", "multiple" => true, "options" => { "from" => "list", "items" => [ { "label" => "Error", "value" => "error" } ] },
+        "default" => [ "error" ] },
+      { "name" => "q", "label" => "q", "kind" => "search", "default" => [ "timeout" ] }
     ]
     assert_equal saved, response.parsed_body["filters"]
     assert_equal saved, inertia_page(dashboard_url(@dashboard, org_slug: @organization.slug), "Dashboards/Show")["dashboard"]["filters"]
@@ -159,7 +160,7 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_not DashboardChart.exists?(@chart.id)
   end
 
-  test "a member adds a chart, which goes under the others" do
+  test "a member adds a chart, which goes beside the last row when there is space" do
     post dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { chart: {
       project_id: @project.id, title: "Errors", query: "['#{@project.slug}'] | summarize count()", viz: "stat",
       w: 3, h: 2, options: { unit: "Logs", decimals: "0" },
@@ -167,8 +168,40 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :created
     chart = @dashboard.charts.find(response.parsed_body["id"])
-    assert_equal [ "Errors", "stat", 0, 4, 3, 2 ], [ chart.title, chart.viz, chart.x, chart.y, chart.w, chart.h ]
+    assert_equal [ "Errors", "stat", 6, 0, 3, 2 ], [ chart.title, chart.viz, chart.x, chart.y, chart.w, chart.h ]
     assert_equal({ "unit" => "Logs", "decimals" => 0 }, chart.options)
+  end
+
+  test "a member saves a line chart's threshold lines from the chart editor" do
+    lines = [ { "value" => 100, "label" => "full", "severity" => "critical" }, { "value" => 80, "severity" => "warn" } ]
+    patch dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug),
+      params: { chart: { viz: "line", options: { stacked: true, thresholds: lines } } }, as: :json
+
+    assert_response :ok
+    assert_equal({ "stacked" => true, "thresholds" => lines }, @chart.reload.options)
+  end
+
+  test "a member adds a Text block with no Project or Query, changes and duplicates it, and its data runs nothing" do
+    post dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { chart: {
+      project_id: "", query: "", title: "", viz: "text", text: "## Runbook", w: 12, h: 2,
+    } }, as: :json
+
+    assert_response :created
+    block = @dashboard.charts.find(response.parsed_body["id"])
+    assert_equal [ "text", "## Runbook", nil, nil, "" ], [ block.viz, block.text, block.project_id, block.query, block.title ]
+    assert_equal "## Runbook", response.parsed_body["text"]
+
+    patch dashboard_chart_url(@dashboard, block, org_slug: @organization.slug), params: { chart: { text: "Restart the worker." } }, as: :json
+    assert_response :ok
+    assert_equal "Restart the worker.", block.reload.text
+
+    post duplicate_dashboard_chart_url(@dashboard, block, org_slug: @organization.slug), as: :json
+    assert_response :created
+    assert_equal [ "text", "Restart the worker.", "" ], response.parsed_body.values_at("viz", "text", "title")
+
+    get data_dashboard_chart_url(@dashboard, block, org_slug: @organization.slug, from: "2026-10-03T08:00:00Z", to: "2026-10-03T10:00:00Z")
+    assert_response :unprocessable_content
+    assert_equal "A Text block runs no Query.", response.parsed_body["error"]
   end
 
   test "a member edits, duplicates and deletes a chart" do
@@ -180,7 +213,7 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     post duplicate_dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug), as: :json
     assert_response :created
     copy = @dashboard.charts.find(response.parsed_body["id"])
-    assert_equal [ "All requests (copy)", @chart.query, "bar", 4 ], [ copy.title, copy.query, copy.viz, copy.y ]
+    assert_equal [ "All requests (copy)", @chart.query, "bar", 6, 0 ], [ copy.title, copy.query, copy.viz, copy.x, copy.y ]
 
     delete dashboard_chart_url(@dashboard, @chart, org_slug: @organization.slug)
     assert_redirected_to dashboard_url(@dashboard, org_slug: @organization.slug)

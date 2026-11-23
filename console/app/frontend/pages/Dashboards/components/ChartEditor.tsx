@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { router } from '@inertiajs/react'
 import { QueryEditor } from '@/components/QueryEditor'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -9,8 +8,9 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
-  DASHBOARD_VIZES, newChartQuery, titleOfQuery, unknownFilterProblems, withSource,
-  type ChartOptions, type DashboardChart, type DashboardFilter, type DashboardViz, type FilterValues,
+  DASHBOARD_VIZES, THRESHOLD_VIZES, drawnThresholds, newChartQuery, savedThresholds, thresholdRows, titleOfQuery, unknownFilterProblems, withSource,
+  type ChartOptions, type DashboardChart, type DashboardFilter, type DashboardSection, type DashboardViz, type FilterValues,
+  type SavedThreshold, type ThresholdRow,
 } from '@/lib/dashboards/dashboard'
 import { fetchChartPreview } from '@/lib/dashboards/api'
 import { RunError, validateQuery, type QueryProblem } from '@/lib/logs/api'
@@ -18,6 +18,9 @@ import { EMPTY_BUILDER, builderOf, queryOf, type Builder } from '@/lib/logs/buil
 import { fieldInfos } from '@/lib/logs/columns'
 import { BuilderPanel, type ProjectOption } from '../../Logs/components/BuilderPanel'
 import { ChartBody, type ChartRun } from './ChartBody'
+import { saveItem } from './saveItem'
+import { SectionSelect } from './SectionSelect'
+import { ThresholdsField } from './ThresholdsField'
 
 const VIZ_LABELS: Record<DashboardViz, string> = { line: 'Line', area: 'Area', bar: 'Bar', stat: 'Stat', table: 'Table' }
 const NO_FIELDS = fieldInfos([])
@@ -31,13 +34,19 @@ type Mode = 'builder' | 'query'
  * Adds a chart, or edits one: its Project, its Query in the Builder or the
  * Query editor (checked through validate), its title, viz and options, with
  * a preview of its chart over the Dashboard's range and filter values as it
- * changes. A Query naming a filter the Dashboard lacks can't be saved.
- * Saving posts through Inertia, which reloads the Dashboard.
+ * changes, and its Section when the Dashboard has any. A Query naming a
+ * filter the Dashboard lacks can't be saved. Saving posts through Inertia,
+ * which reloads the Dashboard. A chart put in another Section goes under
+ * that Section's charts.
  */
-export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ran, values, search, onClose }: {
+export function ChartEditor({ chart, sectionId = null, projects, sections, orgSlug, dashboardId, filters, ran, values, search, onClose }: {
   /** The chart edited, or null for a new one. */
   chart: DashboardChart | null
+  /** The Section a new chart goes in, or null for none. */
+  sectionId?: number | null
   projects: ProjectOption[]
+  /** The Dashboard's Sections, in order, which the chart can be put in. */
+  sections: DashboardSection[]
   orgSlug: string
   dashboardId: number
   /** The Dashboard's filters, which the Builder offers and the Query may name. */
@@ -56,8 +65,13 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
   const [mode, setMode] = useState<Mode>('builder')
   const [builder, setBuilder] = useState<Builder | null>(null)
   const [title, setTitle] = useState(chart?.title ?? '')
+  const [section, setSection] = useState<number | null>(chart ? chart.section_id : sectionId)
   const [viz, setViz] = useState<DashboardViz>(chart?.viz ?? 'line')
   const [options, setOptions] = useState<ChartOptions>(chart?.options ?? {})
+  // The threshold lines as typed; the preview draws those whose value is a number so far.
+  const [thresholds, setThresholds] = useState<ThresholdRow[]>(() => thresholdRows(chart?.options.thresholds))
+  const takesThresholds = THRESHOLD_VIZES.includes(viz)
+  const previewOptions = useMemo(() => ({ ...options, thresholds: drawnThresholds(thresholds) }), [options, thresholds])
   const [problems, setProblems] = useState<QueryProblem[]>([])
   // The Query names a filter the Dashboard lacks, which keeps Save off.
   const [namesUnknown, setNamesUnknown] = useState(false)
@@ -169,20 +183,16 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
       return
     }
     // stacked is always sent, so the options are never an empty hash, which Rails would drop.
-    const saved: Record<string, string | number | boolean> = { stacked: options.stacked !== false }
+    const saved: Record<string, string | number | boolean | SavedThreshold[]> = { stacked: options.stacked !== false }
     if (options.unit) saved.unit = options.unit
     if (options.decimals !== undefined && !Number.isNaN(options.decimals)) saved.decimals = options.decimals
-    const data = { chart: { project_id: project.id, title: title.trim() || titleOfQuery(query), query, viz, options: saved } }
-    // The page keeps its range and runs, so only the chart saved runs again.
-    const visit = {
-      preserveScroll: true,
-      preserveState: true,
-      onSuccess: onClose,
-      onError: (e: Record<string, string>) => setErrors(e),
-      onFinish: () => setSaving(false),
-    }
-    if (chart) router.patch(`/${orgSlug}/dashboards/${dashboardId}/charts/${chart.id}${search}`, data, visit)
-    else router.post(`/${orgSlug}/dashboards/${dashboardId}/charts${search}`, data, visit)
+    // Other vizzes have no threshold lines, so a chart made a bar drops them.
+    if (takesThresholds &&thresholds.length > 0) saved.thresholds = savedThresholds(thresholds)
+    // An empty section_id is no Section.
+    const data = { chart: { project_id: project.id, section_id: section ?? '', title: title.trim() || titleOfQuery(query), query, viz, options: saved } }
+    saveItem({
+      orgSlug, dashboardId, id: chart?.id ?? null, search, data, onSuccess: onClose, onError: setErrors, onFinish: () => setSaving(false),
+    })
   }
 
   const projectItems = useMemo(() => projects.map(p => ({ value: String(p.id), label: p.name })), [projects])
@@ -204,7 +214,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
           <DialogTitle>{chart ? 'Edit chart' : 'Add a chart'}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <div className={sections.length > 0 ? 'grid gap-3 sm:grid-cols-[1fr_auto_auto]' : 'grid gap-3 sm:grid-cols-[1fr_auto]'}>
           <div className="space-y-1">
             <Label htmlFor="chart-title">Title</Label>
             <Input id="chart-title" value={title} placeholder={titleOfQuery(query)} onChange={e => setTitle(e.target.value)} />
@@ -222,6 +232,7 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
             </Select>
             {errors.project && <p className="text-xs text-destructive">Project {errors.project}</p>}
           </div>
+          {sections.length > 0 && <SectionSelect sections={sections} value={section} error={errors.section} onChange={setSection} />}
         </div>
 
         <div className="space-y-2">
@@ -299,8 +310,10 @@ export function ChartEditor({ chart, projects, orgSlug, dashboardId, filters, ra
           {errors.options && <p className="text-xs text-destructive">Options {errors.options}</p>}
         </div>
 
+        {takesThresholds &&<ThresholdsField rows={thresholds} onChange={setThresholds} />}
+
         <div className="h-72 overflow-auto border" data-chart-preview>
-          <ChartBody run={preview} viz={viz} options={options} />
+          <ChartBody run={preview} viz={viz} options={previewOptions} />
         </div>
 
         <DialogFooter>

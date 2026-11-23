@@ -1,15 +1,21 @@
 # frozen_string_literal: true
 
 module McpTools
-  # What the Dashboard and Chart tools share: the dashboard and chart
-  # arguments, the records they name in the Organization, and a Dashboard and
-  # a Chart as the tools answer them. Any member of the Organization can see,
+  # What the Dashboard, Section and Chart tools share: the dashboard, section
+  # and chart arguments, the records they name in the Organization, and a
+  # Dashboard and a Chart as the tools answer them. Any member of the Organization can see,
   # make, change and delete its Dashboards, as in the UI.
   module DashboardTool
     extend ActiveSupport::Concern
 
     DASHBOARD = { type: "integer", description: "The Dashboard's id. list_dashboards lists them." }.freeze
     CHART = { type: "integer", description: "The Chart's id, on the Dashboard. get_dashboard lists them." }.freeze
+    SECTION = { type: "integer", description: "The Section's id, on the Dashboard. get_dashboard lists them." }.freeze
+    SECTION_POSITION = {
+      type: "integer",
+      description: "Where the Section goes among the Dashboard's Sections, from 0 at the top. The others move to make room, " \
+                   "and a position past the last puts it last.",
+    }.freeze
 
     # A Dashboard filter as the Dashboard keeps it, which get_dashboard
     # answers and the Dashboard validates.
@@ -43,6 +49,15 @@ module McpTools
             field: { type: "string" },
           },
         },
+        default: {
+          type: %w[string array], items: { type: "string" },
+          description: "The values the filter has when the Dashboard opens, until someone picks others: a string, or a list of strings. " \
+                       "One value for a search, or for a select that isn't multiple; a fixed list's values must be its options' values. " \
+                       "None, which is All, when not given; \"\" or [] removes the default. " \
+                       "For an on/off filter, give a select the options hide and show, and the default hide. " \
+                       "Then a Chart's Query where $known_issues == \"show\" or not(store_id in (1, 2)) leaves those Logs out with hide, " \
+                       "and keeps them with show or All.",
+        },
       },
     }.freeze
 
@@ -60,13 +75,20 @@ module McpTools
         description: "The Dashboard's filters, the controls of the bar under its header, in the bar's order, at most " \
                      "#{Dashboard::MAX_FILTERS}. A Chart uses a filter by naming it in its Query as $name, such as " \
                      "where service == $service, and runs it with the values picked, or as All, as if the comparison weren't there, " \
-                     "when none is; query_language_reference's Dashboard filters says where $name can go. The list given replaces " \
+                     "when none is. The Dashboard opens with each filter on its default values, or on All when it has none. " \
+                     "query_language_reference's Dashboard filters says where $name can go. The list given replaces " \
                      "the Dashboard's filters whole, so give every filter to keep; [] removes them all. None when made.",
       },
     }.freeze
 
     CHART_FIELDS = {
-      title: { type: "string", description: "The Chart's title, at most 200 characters." },
+      title: { type: "string", description: "The Chart's title, at most 200 characters. Optional for a Text block." },
+      text: {
+        type: "string",
+        description: "A Text block's Markdown, at most #{DashboardChart::MAX_TEXT} characters: headings, lists, bold, code, links " \
+                     "and tables. The page shows no raw HTML and no images (an image shows as its link), and opens links in a new tab. " \
+                     "Only for viz text, and needed for it.",
+      },
       query: {
         type: "string",
         description: "The Query the Chart runs on its Project over the Dashboard's range. It must answer a table, so end it with " \
@@ -78,7 +100,10 @@ module McpTools
         type: "string",
         enum: DashboardChart::VIZES,
         description: "How the table is drawn. line and area need the last summarize's time bins, such as by bin_auto(time); " \
-                     "bar needs a summarize with no time bin; stat needs a table of one row and one number; table draws any table. line when made.",
+                     "bar needs a summarize with no time bin; stat needs a table of one row and one number; table draws any table. " \
+                     "text is a Text block: a note in Markdown (the text field) with no project, no query and no options, " \
+                     "which runs nothing and does not change with the range or the filters. " \
+                     "A Chart does not change into a Text block, nor a Text block into a Chart. line when made.",
       },
       options: {
         type: "object",
@@ -87,12 +112,43 @@ module McpTools
           stacked: { type: %w[boolean null], description: "Stack a line, area or bar Chart's series." },
           unit: { type: "string", description: "A short unit shown with the values, such as ms, at most 16 characters." },
           decimals: { type: %w[integer null], description: "How many decimals to show, 0 to #{DashboardChart::MAX_DECIMALS}." },
+          thresholds: {
+            type: %w[array null],
+            description: "Limits a line or area Chart draws as horizontal lines across its whole range, such as an SLO or a capacity: " \
+                         "at most #{DashboardChart::MAX_THRESHOLDS}, in the order given. A threshold line is a limit, not a series: " \
+                         "the Query's by does not split it, it is not in the legend, it does not take one of the 8 series a Chart draws, " \
+                         "and the value axis reaches it. It sends nothing; a Monitor does that. Not for bar, stat or table, " \
+                         "so give null with a change to one of those. The list given replaces the Chart's; [] or null removes them all.",
+            items: {
+              type: "object",
+              properties: {
+                value: { type: "number", description: "Where the line is, in the Chart's unit." },
+                label: {
+                  type: "string",
+                  description: "What the line shows at its right end, at most #{DashboardChart::MAX_THRESHOLD_LABEL} characters. " \
+                               "The value with the Chart's unit when not given.",
+                },
+                severity: {
+                  type: "string", enum: DashboardChart::SEVERITIES,
+                  description: "The line's colour: warn or critical. A muted line when not given.",
+                },
+              },
+              required: %w[value],
+            },
+          },
         },
       },
       x: { type: "integer", description: "The column the Chart starts at, from 0, on a grid #{DashboardChart::COLUMNS} columns wide. 0 when added." },
       y: { type: "integer", description: "The row the Chart starts at, from 0. Under every Chart when added." },
       w: { type: "integer", description: "How many columns the Chart spans, 1 to #{DashboardChart::COLUMNS}; x + w at most #{DashboardChart::COLUMNS}. 6 when added." },
       h: { type: "integer", description: "How many rows the Chart spans, 1 to #{DashboardChart::MAX_HEIGHT}. 4 when added." },
+      section_id: {
+        type: %w[integer null],
+        description: "The id of the Dashboard's Section the Chart is in, which get_dashboard lists; null for no Section. " \
+                     "The page shows the Charts in no Section first, then each Section with its Charts on a grid of its own, " \
+                     "so x and y are the place in the Section. A Chart put in a Section goes under its Charts unless y is given. " \
+                     "No Section when added.",
+      },
     }.freeze
 
     class_methods do
@@ -106,6 +162,12 @@ module McpTools
       def takes_chart
         takes_dashboard
         argument :chart, CHART, required: true
+      end
+
+      # And the section argument, which #section reads.
+      def takes_section
+        takes_dashboard
+        argument :section, SECTION, required: true
       end
 
       def takes_dashboard_fields(required: [])
@@ -133,6 +195,11 @@ module McpTools
       @chart ||= dashboard.charts.find(arguments[:chart])
     end
 
+    # The Section the section argument names, on #dashboard.
+    def section
+      @section ||= dashboard.sections.find(arguments[:section])
+    end
+
     # The fields of names given in the arguments, as the record takes them.
     def given(names)
       arguments.slice(*names)
@@ -142,10 +209,10 @@ module McpTools
     # Project changed, is saved only when EventStore finds no mistakes in its
     # Query on its Project, and the Query names only the Dashboard's filters,
     # as the chart editor checks before it saves. The check compiles the
-    # Query and runs nothing.
+    # Query and runs nothing. A Text block has no Query to check.
     def save_chart!(chart)
       chart.validate!
-      if chart.new_record? || chart.query_changed? || chart.project_id_changed?
+      if !chart.text? && (chart.new_record? || chart.query_changed? || chart.project_id_changed?)
         validation = EventStore.validate_logs_query(project_id: chart.project_id, query: chart.query)
         if Array(validation["errors"]).any?
           EventStore.mistakes(validation).each { |mistake| chart.errors.add(:query, mistake) }
@@ -166,15 +233,24 @@ module McpTools
       "#{names.one? ? "isn't one" : "aren't any"} of this Dashboard's filters (#{dashboard.filter_names.join(', ').presence || 'it has none'})"
     end
 
-    # A Dashboard with its Charts, in the order the page reads them.
+    # A Dashboard with its Sections and Charts, in the order the page reads
+    # them.
     def dashboard_json(dashboard)
       charts = dashboard.charts.includes(:project).to_a
-      DashboardSerializer.new(dashboard, chart_count: charts.size).as_json.merge(charts: charts.map { |chart| chart_json(chart) })
+      DashboardSerializer.new(dashboard, chart_count: charts.size).as_json.merge(
+        sections: dashboard.sections.map { |section| section_json(section) },
+        charts: charts.map { |chart| chart_json(chart) },
+      )
     end
 
-    # A Chart, with the slug of its Project, which the tools take.
+    def section_json(section)
+      DashboardSectionSerializer.new(section).as_json
+    end
+
+    # A Chart, with the slug of its Project, which the tools take; a Text
+    # block has none.
     def chart_json(chart)
-      DashboardChartSerializer.new(chart).as_json.merge(project: chart.project.slug)
+      DashboardChartSerializer.new(chart).as_json.merge(project: chart.project&.slug)
     end
   end
 end

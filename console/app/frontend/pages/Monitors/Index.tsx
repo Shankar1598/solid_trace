@@ -6,11 +6,11 @@ import { PageHeader } from '@/components/PageHeader'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import type { Monitor } from '@/lib/monitors/monitor'
+import { LANGUAGE_NAMES, type Monitor } from '@/lib/monitors/monitor'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
 
-/** The Organization's Monitors: each one's status, Project, kind and last run. */
+/** The Organization's Monitors: each one's status, Project, kind, language (Query or SQL) and last run. */
 export default function MonitorsIndex({ monitors }: { monitors: Monitor[] }) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
 
@@ -47,6 +47,7 @@ export default function MonitorsIndex({ monitors }: { monitors: Monitor[] }) {
                 <TableHead>Status</TableHead>
                 <TableHead>Project</TableHead>
                 <TableHead>Kind</TableHead>
+                <TableHead>Language</TableHead>
                 <TableHead>Last run</TableHead>
               </TableRow>
             </TableHeader>
@@ -61,6 +62,7 @@ export default function MonitorsIndex({ monitors }: { monitors: Monitor[] }) {
                   </TableCell>
                   <TableCell>{m.project.name}</TableCell>
                   <TableCell>{m.kind === 'threshold' ? 'Threshold' : 'Match'}</TableCell>
+                  <TableCell data-monitor-language>{LANGUAGE_NAMES[m.language]}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {m.last_run_at ? `${formatDistanceToNow(new Date(m.last_run_at))} ago` : 'Not run yet'}
                   </TableCell>

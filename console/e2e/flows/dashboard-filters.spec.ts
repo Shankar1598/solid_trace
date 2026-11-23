@@ -348,3 +348,57 @@ test('a member makes a chart in the Builder with a filter as a chip\'s value, an
   await expect(page.getByRole('heading', { name: 'Dashboards', exact: true })).toBeVisible()
   expect(errors).toEqual([])
 })
+
+test('a filter with a default opens on it, and All picked stays All in the URL', async ({ page }) => {
+  test.setTimeout(150_000)
+  const errors = watchErrors(page)
+  const name = `Filter default flow ${Date.now()}`
+
+  await page.goto(`/${ORG}/dashboards`)
+  await page.getByRole('button', { name: 'New dashboard' }).first().click()
+  await page.getByLabel('Name').fill(name)
+  await page.getByRole('button', { name: 'Create dashboard' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  const to = new Date(Math.floor(Date.now() / 60_000) * 60_000)
+  const from = new Date(to.getTime() - 24 * 3600_000)
+  const opened = `${new URL(page.url()).pathname}?from=${from.toISOString()}&to=${to.toISOString()}`
+  await page.goto(opened)
+
+  // An on/off filter: a select of hide and show, hide by default.
+  await page.getByRole('button', { name: 'Filters', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await addFilter(dialog, 1, { name: 'noisy', label: 'Noisy', options: 'hide\nshow' })
+  await choose(page, dialog.getByRole('combobox', { name: 'Filter 1 default' }), 'hide')
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(dialog).toHaveCount(0)
+  const noisy = page.getByRole('combobox', { name: 'Noisy', exact: true })
+  await expect(noisy).toHaveText(/Noisy: hide/)
+
+  await addStatChart(page, 'Kept', `${SOURCE}\n| where $noisy == "show" or level == "error"\n| summarize count()`)
+  await addStatChart(page, 'Total', `${SOURCE}\n| summarize count()`)
+  await chartsRan(page, 2)
+  const all = await numberOf(page, 'Total')
+  expect(await numberOf(page, 'Kept')).toBeLessThan(all)
+
+  // All keeps every Log, and the URL keeps All through a reload.
+  await choose(page, noisy, 'All')
+  await expect(page).toHaveURL(/[?&]v_noisy=(&|$)/)
+  await chartsRan(page, 2)
+  await expect.poll(() => numberOf(page, 'Kept')).toBe(all)
+  await page.reload()
+  await chartsRan(page, 2)
+  await expect(noisy).toHaveText(/Noisy: All/)
+  await expect.poll(() => numberOf(page, 'Kept')).toBe(all)
+
+  // Opened with no value for it in the URL, the filter is on its default again.
+  await page.goto(opened)
+  await chartsRan(page, 2)
+  await expect(noisy).toHaveText(/Noisy: hide/)
+  await expect.poll(() => numberOf(page, 'Kept')).toBeLessThan(all)
+
+  await choose(page, noisy, 'show')
+  await expect(page).toHaveURL(/[?&]v_noisy=show(&|$)/)
+  await chartsRan(page, 2)
+  await expect.poll(() => numberOf(page, 'Kept')).toBe(all)
+  expect(errors).toEqual([])
+})

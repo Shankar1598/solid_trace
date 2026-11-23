@@ -12,6 +12,7 @@ import {
   type ValueOptions,
 } from '@/lib/charts/axis'
 import { binSize, binSpan } from '@/lib/charts/bins'
+import { thresholdMarks, thresholdReach, type Threshold } from '@/lib/charts/thresholds'
 import type { AbsoluteRange } from '@/lib/logs/explorerState'
 import { zoomRange } from '@/lib/logs/histogram'
 import type { LogTable } from '@/lib/logs/table'
@@ -52,12 +53,19 @@ interface QueryChartProps {
    * the explorer's value menu; without it, the legend only shows and hides.
    */
   legendValue?: (field: string, value: SplitValue) => React.ReactNode
-  /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values, and the unit the value axis. */
+  /** A Dashboard chart's options: stacked false never stacks; unit and decimals read the stat and tooltip values, and the unit labels the value axis, which every column then shares. */
   options?: ChartOptions
   /** A single number's column name over it; off on a Dashboard, whose card title names it. */
   statName?: boolean
-  /** A Monitor's threshold, drawn as a line across each panel, whose value axis reaches it. */
-  threshold?: number
+  /**
+   * Horizontal lines at fixed values: a Dashboard chart's Threshold lines,
+   * or the threshold that the Monitor form draws with the same line. Each is
+   * drawn once across each panel, whose value axis reaches it. They are
+   * never series.
+   */
+  thresholds?: readonly Threshold[]
+  /** Fill the parent's height, as in a Dashboard card: the plots share the room under the legend. Without it, each plot has a fixed height. */
+  fill?: boolean
   className?: string
 }
 
@@ -90,14 +98,14 @@ const RIGHT_DASH = '5 3'
  * a Query's table is charted, so it takes the table and options, never a
  * page's state.
  */
-export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, statName = true, threshold, className }: QueryChartProps) {
+export function QueryChart({ table, form, onZoom, actions, colors, hidden, legendValue, options, statName = true, thresholds, fill = false, className }: QueryChartProps) {
   const model = useMemo(() => {
-    const made = chartOf(table)
+    const made = chartOf(table, { unit: options?.unit })
     if (!colors) return made
     const kept = keepColors(made, colors.current)
     colors.current = kept.slots
     return kept.model
-  }, [table, colors])
+  }, [table, colors, options?.unit])
   // A table with no series, such as a single number, leaves the ones hidden for the next chart, as it does their colours.
   const hiddenNow = useMemo(() => {
     const kept = keepHidden(model, hidden?.current ?? new Set())
@@ -125,7 +133,8 @@ export function QueryChart({ table, form, onZoom, actions, colors, hidden, legen
       actions={actions}
       legendValue={legendValue}
       options={options}
-      threshold={threshold}
+      thresholds={thresholds}
+      fill={fill}
       className={className}
     />
   )
@@ -146,7 +155,7 @@ function StatTile({ name, value, options }: { name: string | null; value: number
 /** The bins a drag has covered, by their points' indexes. */
 type Drag = { start: number; end: number }
 
-function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, options, threshold, className }: {
+function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, legendValue, options, thresholds = [], fill, className }: {
   model: SeriesChartModel
   form: ChartForm
   initialHidden: ReadonlySet<string>
@@ -155,7 +164,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   actions?: React.ReactNode
   legendValue?: QueryChartProps['legendValue']
   options?: ChartOptions
-  threshold?: number
+  thresholds?: readonly Threshold[]
+  fill: boolean
   className?: string
 }) {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(initialHidden)
@@ -163,7 +173,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   const [measure, width] = useWidth()
   const [markedTime, setHoverTime] = useHoverTime(useId())
   const config = useMemo<ChartConfig>(
-    () => Object.fromEntries(model.series.map(s => [s.key, { label: s.name, color: s.color }])),
+    () => Object.fromEntries(model.series.map(s => [s.key, { label: s.label, color: s.color }])),
     [model],
   )
   const toggle = (id: string) => {
@@ -202,8 +212,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     const visible = series.filter(s => !hidden.has(s.id))
     const stacked = panel.stacked && form !== 'line' && options?.stacked !== false
     const [low, high] = extent(model.points, visible, stacked)
-    // A threshold is drawn over the left value axis alone, which reaches it.
-    const reach = threshold === undefined || (twoAxes && i > 0) ? [low, high] : [Math.min(low, threshold), Math.max(high, threshold)]
+    // Threshold lines are drawn over the left value axis alone, which reaches them.
+    const reach = twoAxes && i > 0 ? [low, high] : thresholdReach([low, high], thresholds)
     const values = valueTicks(reach[0], reach[1], several ? 3 : 5)
     const tick = tickLabel(values.step)
     const tips = across && (stacked || visible.length === 1)
@@ -280,16 +290,21 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
 
   const markedLine = time && markedTime !== null ? <ReferenceLine x={markedTime} stroke="var(--muted-foreground)" strokeDasharray="3 3" className="chart-marked-time" /> : null
 
-  const thresholdLine = threshold === undefined ? null : (
+  // One line for each threshold, whatever the groups, with its label at its right end.
+  const thresholdLines = thresholdMarks(thresholds, options ?? {}).map((mark, n) => (
     <ReferenceLine
-      {...(across ? { x: threshold } : { y: threshold })}
-      stroke="var(--destructive)"
+      key={`threshold-${n}`}
+      {...(across ? { x: mark.value } : { y: mark.value })}
+      stroke={mark.color}
       strokeDasharray="4 3"
       ifOverflow="extendDomain"
-      label={{ value: `threshold ${threshold}`, position: across ? 'top' : 'insideTopRight', fontSize: 10, fill: 'var(--destructive)' }}
+      className="chart-threshold-line"
+      label={{ value: mark.label, position: across ? 'top' : 'insideTopRight', fontSize: 10, fill: mark.color }}
     />
-  )
+  ))
 
+  // Lying bars are as tall as their names need, so they never fill.
+  const fills = fill && !across
   const height = !several ? 'h-44 sm:h-56' : panels.length === 2 ? 'h-32 sm:h-40' : 'h-28 sm:h-32'
   const valueAxis = ({ values, label }: typeof panels[number], right: boolean) => (
     <YAxis
@@ -306,8 +321,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   )
 
   return (
-    <div ref={measure} className={cn('flex flex-col', className)}>
-      <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
+    <div ref={measure} className={cn('flex flex-col', fill && 'h-full', className)}>
+      <div className="flex min-h-7 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-1.5" data-chart-legend>
         <Legend model={model} form={form} hidden={hidden} onToggle={toggle} legendValue={legendValue} dashed={twoAxes ? rightOnly(model, panels[1].series) : new Set()} />
         {(time || actions) && (
           <div className="ml-auto flex items-center gap-3">
@@ -316,14 +331,14 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
           </div>
         )}
       </div>
-      <div role="figure" aria-label={chartLabel(model, form, twoAxes)}>
+      <div role="figure" aria-label={chartLabel(model, form, twoAxes)} className={cn(fills && 'flex min-h-0 flex-1 flex-col')}>
         {views.map((layers, i) => {
           const [{ panel, values, label, tips, tipWidth }] = layers
           return (
-          <div key={panel.keys[0]}>
-            {several && <div className="truncate px-3 pt-1 font-mono text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
+          <div key={panel.keys[0]} className={cn(fills && 'flex min-h-0 flex-1 flex-col')}>
+            {several && <div className="shrink-0 truncate px-3 pt-1 font-mono text-[10px] text-muted-foreground" data-chart-panel>{panel.columns.join(', ')}</div>}
             {twoAxes && (
-              <div className="flex justify-between gap-3 px-3 pt-1 font-mono text-[10px] text-muted-foreground">
+              <div className="flex shrink-0 justify-between gap-3 px-3 pt-1 font-mono text-[10px] text-muted-foreground">
                 <span className="truncate" data-chart-axis="left">{layers[0].panel.columns.join(', ')}</span>
                 <span className="flex min-w-0 items-center gap-1.5" data-chart-axis="right">
                   <span className="w-3 shrink-0 border-t-2 border-dashed border-muted-foreground" />
@@ -333,7 +348,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
             )}
             <ChartContainer
               config={config}
-              className={cn('aspect-auto w-full px-1 font-mono', !across && height, zooms && 'cursor-crosshair select-none')}
+              className={cn('aspect-auto w-full px-1 font-mono', fills ? 'min-h-20 flex-1' : !across && height, zooms && 'cursor-crosshair select-none')}
               style={across ? { height: names.length * BAND_PX + 32 } : undefined}
             >
               <PanelChart
@@ -401,7 +416,7 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
                     content={<ChartTooltipContent indicator="line" valueFormatter={(value: number) => optionsText(value, options ?? {})} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)} />}
                   />
                 )}
-                overlay={<>{partialAreas}{dragArea}{thresholdLine}{markedLine}</>}
+                overlay={<>{partialAreas}{dragArea}{thresholdLines}{markedLine}</>}
                 events={events}
               />
             </ChartContainer>

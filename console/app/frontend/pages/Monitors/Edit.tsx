@@ -7,10 +7,11 @@ import type { ProjectOption } from '../Logs/components/BuilderPanel'
 import { MonitorForm } from './components/MonitorForm'
 
 /** Edits a Monitor. */
-export default function MonitorsEdit({ monitor, projects, integrations }: {
+export default function MonitorsEdit({ monitor, projects, integrations, sql_queries_enabled }: {
   monitor: Monitor
   projects: ProjectOption[]
   integrations: IntegrationOption[]
+  sql_queries_enabled: boolean
 }) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
   return (
@@ -23,7 +24,7 @@ export default function MonitorsEdit({ monitor, projects, integrations }: {
         ]}
         title={`Edit ${monitor.name}`}
       />
-      <MonitorForm monitor={monitor} monitorId={monitor.id} projects={projects} integrations={integrations} orgSlug={orgSlug} />
+      <MonitorForm monitor={monitor} monitorId={monitor.id} projects={projects} integrations={integrations} orgSlug={orgSlug} sqlQueriesEnabled={sql_queries_enabled} />
     </DashboardLayout>
   )
 }

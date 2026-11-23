@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
@@ -345,7 +346,7 @@ func TestAnOverloadedIngestTurnsBodiesAwayBeforeDecodingThem(t *testing.T) {
 		Logs: env.PebbleWriter, NotifyLogs: func(uint32) {},
 		Clock: env.Clock, Retention: ingest.FixedRetention(30), MaxWaiting: 1,
 	})
-	app := handler.NewIngestApp(handler.NewIngestHandler(projectAuth, service), handler.NewHealthHandler(env.PebbleWriter, env.ClickHouse))
+	app := handler.NewIngestApp(handler.NewIngestHandler(projectAuth, service), handler.NewHealthHandler(env.PebbleWriter, env.ClickHouse), handler.IngestOptions{IdleTimeout: 10 * time.Second})
 	send := func(path, encoding string, body []byte) *http.Response {
 		req, _ := http.NewRequest("POST", path+"?sentry_key=test_public_key", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/x-ndjson")

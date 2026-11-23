@@ -19,6 +19,7 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   NEWEST_CURSOR = "0199f0a0-0000-7000-8000-000000000003"
   SLACK_URL = "https://hooks.slack.com/services/T00/B00/MONITOR"
   SERVICE = { "name" => "service", "type" => "string" }.freeze
+  ERRORS = { "name" => "errors", "type" => "number" }.freeze
   TIMEOUT = "the run was stopped after 30 s, its timeout: too many Logs were ingested since the last run to read in time"
 
   setup do
@@ -28,6 +29,7 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     @slack = @organization.integrations.create!(provider: "slack", settings: { "webhook_url" => SLACK_URL })
     stub_monitor_query_check(@project, columns: [ SERVICE, COUNT_COLUMN ], ingest_cursor: CURSOR)
     @query_url = "#{EventStore.base_url}/api/#{@project.id}/logs/query"
+    @sql_url = "#{EventStore.base_url}/api/#{@project.id}/logs/sql"
   end
 
   teardown do
@@ -108,7 +110,7 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     travel IntegrationNotification::INITIAL_DELAY
     IntegrationNotification.deliver_pending(@slack.id)
 
-    assert_requested(:post, SLACK_URL) { |request| JSON.parse(request.body)["text"] == "🔥 Firing: Checkout errors" }
+    assert_requested(:post, SLACK_URL) { |request| JSON.parse(request.body)["text"] == "🚨 Firing: Checkout errors" }
     assert Notification.sole.status_sent?
   end
 
@@ -746,6 +748,162 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
+  # Threshold: SQL
+  # ---------------------------------------------------------------------------
+
+  test "a SQL run reads its SQL over [now - range - 60 s, now - 60 s) on EventStore's SQL endpoint, at most 10 s" do
+    monitor = sql_monitor(range_minutes: 15)
+    answer_sql([ [ "api", 3 ] ])
+
+    evaluate(monitor)
+
+    assert_requested(:post, @sql_url, times: 1) do |request|
+      body = JSON.parse(request.body)
+      body["sql"] == monitor.query && body["from"] == "2026-10-17T11:44:00.000Z" &&
+        body["to"] == "2026-10-17T11:59:00.000Z" && body["timeout_seconds"] == 10
+    end
+    assert_not_requested(:post, @query_url)
+    assert monitor.runs.sole.status_ok?
+  end
+
+  test "a SQL Monitor's groups are its columns other than the number, and they fire and resolve as a Query's do" do
+    monitor = sql_monitor(notify_by_group: true)
+    api = { "service" => "api" }.to_json
+    web = { "service" => "web" }.to_json
+
+    answer_sql([ [ "api", 20 ], [ "web", 5 ] ])
+    evaluate(monitor)
+    assert_equal [ [ "monitor_firing", api, 20 ] ], notifications
+    assert_state monitor, web, "ok", 5
+
+    travel 1.minute
+    answer_sql([ [ "web", 30 ] ])
+    evaluate(monitor)
+    assert_equal [ [ "monitor_firing", api, 20 ], [ "monitor_firing", web, 30 ], [ "monitor_resolved", api, nil ] ],
+      notifications
+    assert_equal "errors", Notification.order(:id).last.payload["column"]
+    assert_equal 1, monitor.runs.first.firing
+  end
+
+  test "a SQL Monitor not notifying by group fires on the worst row, and with alert_on_no_data no rows fire" do
+    worst = sql_monitor
+    answer_sql([ [ "api", 4 ], [ "web", 12 ] ])
+    evaluate(worst)
+    assert_equal [ "firing", 12 ], [ worst.states.sole.status, worst.states.sole.last_value ]
+
+    no_data = sql_monitor(alert_on_no_data: true)
+    answer_sql([])
+    evaluate(no_data)
+    assert_equal [ "", "firing", nil ], no_data.states.sole.then { |state| [ state.group_key, state.status, state.last_value ] }
+    assert Notification.order(:id).last.payload["no_data"]
+  end
+
+  test "a SQL Monitor's table over 10,000 rows is the table cut, which changes no state" do
+    monitor = sql_monitor(notify_by_group: true)
+    answer_sql(Array.new(10_001) { |i| [ "s#{i}", 1 ] })
+
+    run = evaluate(monitor)
+
+    assert_equal MonitorEvaluation::SQL_TABLE_CUT, run.error
+    assert_empty monitor.states
+  end
+
+  test "SQL that times out, that ClickHouse refuses, or that gives two numbers is a failed run that names the SQL" do
+    monitor = sql_monitor
+    stub_request(:post, @sql_url).to_return(status: 504, body: timeout_body("the SQL was stopped after 10 s, its timeout"))
+    evaluate(monitor)
+    assert_equal "the SQL was stopped after 10 s, its timeout", monitor.reload.last_error
+
+    stub_request(:post, @sql_url).to_return(status: 400, body: { error: "Unknown table expression identifier 'jobs'" }.to_json)
+    evaluate(monitor)
+    assert_equal "Unknown table expression identifier 'jobs'", monitor.reload.last_error
+
+    answer_sql([ [ 1, 2 ] ], columns: [ ERRORS, { "name" => "p95", "type" => "number" } ])
+    evaluate(monitor)
+    assert_equal "The SQL gives 2 numbers per group, not one to compare with the threshold.", monitor.reload.last_error
+    assert monitor.runs.all?(&:status_error?)
+    assert_equal 0, Notification.count + MonitorState.count
+  end
+
+  test "a SQL Monitor comparing the change reads its SQL over its range, then over the Baseline's, at most 10 s each" do
+    monitor = sql_monitor(compare: "change", baseline: "previous", operator: "rises", threshold: 50, notify_by_group: true,
+      range_minutes: 15)
+    asked = []
+    stub_request(:post, @sql_url).to_return do |request|
+      body = JSON.parse(request.body)
+      asked << body.values_at("sql", "from", "to", "timeout_seconds")
+      rows = asked.size == 1 ? [ [ "api", 90 ], [ "web", 30 ], [ "jobs", 4 ] ] : [ [ "api", 60 ], [ "web", 60 ] ]
+      { status: 200, body: { table: { columns: [ SERVICE, ERRORS ], rows: rows, truncated: false } }.to_json }
+    end
+
+    run = evaluate(monitor)
+
+    assert_equal [ [ monitor.query, "2026-10-17T11:44:00.000Z", "2026-10-17T11:59:00.000Z" ],
+                   [ monitor.query, "2026-10-17T11:29:00.000Z", "2026-10-17T11:44:00.000Z" ] ], asked.map { |each| each.first(3) }
+    assert asked.all? { |each| each.last <= LogMonitor::SQL_READ_TIMEOUT_SECONDS }, "the two reads stay inside the run's 30 s"
+    assert run.status_ok?
+    assert_equal [ "api", "jobs" ], firing_services(monitor), "jobs has no row in the Baseline, so it rises from 0"
+    assert_equal 0, monitor.states.find { |state| state.group["service"] == "jobs" }.last_baseline
+    assert_equal [ 90.0, 60.0, 50.0 ], Notification.find_by(group_key: { "service" => "api" }.to_json).payload
+      .values_at("value", "baseline", "change")
+  end
+
+  test "a SQL Monitor comparing the change, not notifying by group, fires on the worst row's change" do
+    monitor = sql_monitor(compare: "change", baseline: "previous", operator: "rises", threshold: 50)
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    { to => [ [ "api", 110 ], [ "web", 20 ] ], to - 5.minutes => [ [ "api", 100 ], [ "web", 10 ] ] }.each do |end_at, rows|
+      stub_request(:post, @sql_url).with(body: hash_including("from" => (end_at - 5.minutes).utc.iso8601(3)))
+        .to_return(status: 200, body: { table: { columns: [ SERVICE, ERRORS ], rows: rows, truncated: false } }.to_json)
+    end
+
+    evaluate(monitor)
+
+    assert_equal [ "firing", 20, 10 ], state_of(monitor), "web is up 100%, though api's number is larger"
+  end
+
+  test "the preview of a SQL Monitor comparing the change gives each group's number, Baseline and firing, and saves nothing" do
+    monitor = @organization.monitors.new(project: @project, kind: "threshold", language: "sql",
+      query: "SELECT service, count() AS errors FROM logs GROUP BY service", compare: "change", baseline: "day",
+      operator: "rises", threshold: 50, notify_by_group: true)
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    to = Time.current - LogMonitor::PROCESSING_LAG
+    { to => [ [ "api", 90 ], [ "web", 30 ] ], to - 1.day => [ [ "api", 60 ], [ "web", 60 ] ] }.each do |end_at, rows|
+      stub_request(:post, @sql_url).with(body: hash_including("from" => (end_at - 5.minutes).utc.iso8601(3)))
+        .to_return(status: 200, body: { table: { columns: [ SERVICE, ERRORS ], rows: rows, truncated: false } }.to_json)
+    end
+
+    found = MonitorEvaluation.preview(monitor, Time.current)
+
+    assert_equal [ to - 1.day - 5.minutes, to - 1.day ], found.baseline_range
+    assert_equal [ { group: { "service" => "api" }, value: 90, baseline: 60, firing: true },
+                   { group: { "service" => "web" }, value: 30, baseline: 60, firing: false } ], found.groups
+    assert_not_requested(:post, @query_url)
+    assert monitor.new_record?
+  end
+
+  test "the preview of a SQL Monitor while SQL queries are off says so, and asks EventStore nothing" do
+    monitor = @organization.monitors.new(project: @project, kind: "threshold", language: "sql",
+      query: "SELECT count() AS errors FROM logs", operator: ">", threshold: 5)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
+    error = assert_raises(MonitorEvaluation::Unusable) { MonitorEvaluation.preview(monitor, Time.current) }
+
+    assert_equal MonitorEvaluation::SQL_OFF, error.message
+    assert_not_requested(:post, @sql_url)
+  end
+
+  test "a saved SQL Monitor's runs fail while SQL queries are off, and ask EventStore nothing" do
+    monitor = sql_monitor
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
+    run = evaluate(monitor)
+
+    assert run.status_error?
+    assert_equal MonitorEvaluation::SQL_OFF, run.error
+    assert_not_requested(:post, @sql_url)
+  end
+
+  # ---------------------------------------------------------------------------
   # Match
   # ---------------------------------------------------------------------------
 
@@ -978,6 +1136,19 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   # A Monitor of one group's status, last value and last Baseline.
   def state_of(monitor)
     monitor.states.sole.then { |state| [ state.status, state.last_value, state.last_baseline ] }
+  end
+
+  # A SQL Threshold monitor telling Slack, saved with SQL queries on and
+  # the requests its save check made forgotten.
+  def sql_monitor(**attributes)
+    stub_monitor_sql_check(@project, columns: [ SERVICE, ERRORS ])
+    threshold_monitor(language: "sql", query: "SELECT service, count() AS errors FROM logs GROUP BY service", **attributes)
+  end
+
+  # Answers a SQL Monitor's read with rows of service and errors.
+  def answer_sql(rows, columns: [ SERVICE, ERRORS ])
+    stub_request(:post, @sql_url)
+      .to_return(status: 200, body: { table: { columns: columns, rows: rows, truncated: false } }.to_json)
   end
 
   def match_monitor

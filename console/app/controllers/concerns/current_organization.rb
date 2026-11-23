@@ -37,6 +37,16 @@ module CurrentOrganization
     request.get? && (request.inertia? || (request.format.html? && !request.xhr?))
   end
 
+  # Settings → User under the home Organization, with its sidebar, when the
+  # user can open that Organization's pages; else the copy outside any
+  # Organization (/user_settings), which has no sidebar.
+  def user_settings_page
+    organization = home_organization
+    return user_settings_path unless organization && (current_user.two_factor? || !organization.require_two_factor)
+
+    user_path(org_slug: organization.slug)
+  end
+
   # The last used Organization while the user is still in it, otherwise their
   # first by name, or nil for a user in none; of those they can open first,
   # passing over any whose Require two-factor they don't meet.

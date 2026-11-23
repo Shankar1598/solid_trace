@@ -2,7 +2,7 @@
 # Installs SolidTrace on this machine with Docker Compose, or upgrades it.
 #
 #   deploy/install                                  # from a clone of the repository
-#   git fetch --tags && git checkout <tag> && deploy/install   # to upgrade
+#   bin/upgrade <tag>                               # to upgrade
 #   deploy/install --build                          # build the images from this checkout
 #
 # Installs Docker if it is missing (Debian and Ubuntu), starts it at boot,

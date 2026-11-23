@@ -176,7 +176,7 @@ go test -p 1 -count=1 -run 'Bucket|MinIO|OldLogFiles' . ./storage/
 
 - Logs older than the new hours are read from the bucket, which is slower than local disk. Lowering it moves more of the recent Logs there within a minute or two.
 - Raising it keeps more on local disk, which counts toward the disk limit. Parts already in the bucket stay there.
-- ClickHouse then recomputes every part's move time in the background, reading each part's time column, from the bucket too, so change it rarely. On the dev MinIO, for a table of 5 parts, 223 MiB, all in the bucket, the ALTER returned in 0.37 s, and the background mutation read 3.5 MB (the `time` column) in 12 GETs and wrote about 3.5 MB of part metadata; no data column was read.
+- ClickHouse then recomputes every part's move time in the background, reading each part's time column, from the bucket too, so change it rarely. On the dev MinIO, for a table of 5 parts, 223 MiB, all in the bucket, the ALTER returned in 0.37 s, and the background mutation read 3.5 MB (the `time` column) in 12 GETs and wrote about 3.5 MB of part metadata; no data column was read. EventStore doesn't wait for that work, which on a big install takes minutes: v0.19.0 did, so on one with 260 GB in the bucket the change ran past its 30 s, logged "Setting the hours Logs stay on local disk failed" twice, and applied once ClickHouse had finished.
 
 If EventStore can't read the setting, or it's out of range, the tables keep the hours they had, and EventStore logs it each minute.
 

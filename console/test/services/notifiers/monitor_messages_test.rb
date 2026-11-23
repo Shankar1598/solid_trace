@@ -41,7 +41,7 @@ module Notifiers
         url = actions["elements"].first["url"]
         params = Rack::Utils.parse_query(URI(url).query)
 
-        assert_equal "🔥 Firing: Checkout errors (service=api, level=error)", body["text"]
+        assert_equal "🚨 Firing: Checkout errors (service=api, level=error)", body["text"]
         assert_equal body["text"], header.dig("text", "text")
         assert_equal "count_ was 120 over the last 15 minutes, at or above the threshold of 100.", text.dig("text", "text")
         assert_equal [ "*Project:*\nShop", "*Group:*\nservice=api, level=error", "*Value:*\n120",
@@ -61,9 +61,9 @@ module Notifiers
 
       assert_requested(:post, SLACK_URL) do |request|
         body = JSON.parse(request.body)
-        assert_equal "🔥 Firing: Checkout errors (service=&lt;!channel&gt;, level=&lt;https://evil.example|login&gt; &amp; more)",
+        assert_equal "🚨 Firing: Checkout errors (service=&lt;!channel&gt;, level=&lt;https://evil.example|login&gt; &amp; more)",
           body["text"]
-        assert_equal "🔥 Firing: Checkout errors (service=<!channel>, level=<https://evil.example|login> & more)",
+        assert_equal "🚨 Firing: Checkout errors (service=<!channel>, level=<https://evil.example|login> & more)",
           body["blocks"].first.dig("text", "text"), "the header is plain_text, which Slack shows as written"
         true
       end
@@ -194,6 +194,31 @@ module Notifiers
         assert_equal 1, event["links"].size
         true
       end
+    end
+
+    test "a Threshold monitor with SQL links to the explorer's SQL, over the range read and over the Baseline" do
+      stub_monitor_sql_check(@project)
+      @monitor.update!(language: "sql", query: "SELECT service, count() AS errors FROM logs GROUP BY service")
+      message = MonitorMessage.build(row(IntegrationNotification::MONITOR_FIRING, GROUP, change_payload(120.0, 60.0)))
+
+      now, before = [ message.link, message.baseline_link ].map { |url| Rack::Utils.parse_query(URI(url).query) }
+      assert_equal [ "sql", @monitor.query, nil, "2026-10-17T11:44:00Z", "2026-10-17T11:59:00Z" ],
+        now.values_at("mode", "sql", "q", "from", "to")
+      assert_equal [ "sql", @monitor.query, nil, "2026-10-17T11:29:00Z", "2026-10-17T11:44:00Z" ],
+        before.values_at("mode", "sql", "q", "from", "to")
+    end
+
+    test "a deleted Monitor's message links by the language it kept, and by the Query when it kept none" do
+      kept = MonitorMessage.about(@monitor).merge("language" => "sql", "query" => "SELECT count() FROM logs")
+      sql = Notification.new(integration: @slack, group_key: GROUP, kind: IntegrationNotification::MONITOR_FIRING,
+        payload: threshold_payload(120.0).merge("monitor" => kept))
+      assert_equal [ "sql", "SELECT count() FROM logs" ],
+        Rack::Utils.parse_query(URI(MonitorMessage.build(sql).link).query).values_at("mode", "sql")
+
+      older = Notification.new(integration: @slack, group_key: GROUP, kind: IntegrationNotification::MONITOR_FIRING,
+        payload: threshold_payload(120.0).merge("monitor" => MonitorMessage.about(@monitor).except("language")))
+      assert_equal [ "query", @monitor.query ],
+        Rack::Utils.parse_query(URI(MonitorMessage.build(older).link).query).values_at("mode", "q")
     end
 
     test "Email: a change trigger links to both ranges" do

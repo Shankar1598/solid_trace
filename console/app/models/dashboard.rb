@@ -4,7 +4,9 @@
 # Query on one of the Organization's Projects, over the range the page picks:
 # default_range until a member picks another. Its filters are the controls of
 # the bar under its header, whose values the Charts that name them in their
-# Queries ($name) run with (ADR 0014).
+# Queries ($name) run with (ADR 0014): a filter's default values until a
+# member picks others. Its Sections group its charts under
+# titles; a chart can also be in no Section.
 class Dashboard < ApplicationRecord
   AUTO_REFRESH = %w[off 15s 30s 1m 5m].freeze
   # A span back from now, as the explorer's links hold a range: 15m, 1h, 7d.
@@ -18,12 +20,15 @@ class Dashboard < ApplicationRecord
   MAX_FIELD_NAME = 200
   # A page's query string holds each filter's values under this and the
   # filter's name, the key repeated for several values:
-  # ?range=1h&v_service=api&v_service=web. A filter missing from it is All.
+  # ?range=1h&v_service=api&v_service=web. A filter missing from it has its
+  # default values, and a key with only an empty value is All.
   FILTER_KEY_PREFIX = "v_"
+  MAX_SECTIONS = 50
 
   belongs_to :organization
   belongs_to :created_by, class_name: "User", optional: true
   has_many :charts, -> { order(:y, :x, :id) }, class_name: "DashboardChart", inverse_of: :dashboard, dependent: :destroy
+  has_many :sections, -> { order(:position, :id) }, class_name: "DashboardSection", inverse_of: :dashboard, dependent: :destroy
 
   validates :name, presence: true, length: { maximum: 200 }
   validates :description, length: { maximum: 2000 }
@@ -46,9 +51,23 @@ class Dashboard < ApplicationRecord
     values.transform_keys { |name| "#{FILTER_KEY_PREFIX}#{name}" }
   end
 
-  # The row under every chart, where a new chart goes.
-  def bottom
-    charts.maximum(Arel.sql("y + h")) || 0
+  # The row under every chart of the Section of section_id, or of no Section
+  # when it is nil: where a new chart in it goes.
+  def bottom(section_id = nil)
+    charts.where(section_id: section_id).maximum(Arel.sql("y + h")) || 0
+  end
+
+  # Where a new chart w columns wide goes in the Section of section_id, or in
+  # no Section when it is nil, as [x, y]: beside the last row's charts when
+  # there is space for it, else under every chart. The last row starts at the
+  # largest y, so no chart is below it on the right.
+  def place(section_id, w)
+    group = charts.where(section_id: section_id).to_a
+    return [ 0, 0 ] if group.empty?
+
+    top = group.map(&:y).max
+    right = group.select { |chart| chart.y + chart.h > top }.map { |chart| chart.x + chart.w }.max
+    right + w.to_i <= DashboardChart::COLUMNS ? [ right, top ] : [ 0, bottom(section_id) ]
   end
 
   def filter_names
@@ -57,12 +76,32 @@ class Dashboard < ApplicationRecord
 
   # The values of its filters in given, {name => value or [values]}, as
   # EventStore's parameters, in the filters' order. Names it lacks and empty
-  # values are left out, so EventStore runs those filters as All.
-  def filter_values(given)
+  # values are left out, so EventStore runs those filters as All. With
+  # defaults, a filter whose name given lacks has its default values; one
+  # given "" or [] is still All.
+  def filter_values(given, defaults: false)
     given = given.to_h.stringify_keys
-    filter_names.each_with_object({}) do |name, found|
-      values = Array(given[name]).map(&:to_s).reject(&:empty?)
+    filters.each_with_object({}) do |filter, found|
+      name = filter["name"]
+      values = (defaults && !given.key?(name) ? Array(filter["default"]) : Array(given[name])).map(&:to_s).reject(&:empty?)
       found[name] = values if values.any?
+    end
+  end
+
+  # The values given for its filters, {name => value or [values]}, as a link
+  # to its page holds them. The link leaves out a filter that given lacks, so
+  # the page opens it on its default values. A filter with default values that
+  # given sets to All gets [""], so the page opens it on All.
+  def filter_link_values(given)
+    given = given.to_h.stringify_keys
+    filters.each_with_object({}) do |filter, link|
+      name = filter["name"]
+      next unless given.key?(name)
+
+      values = Array(given[name]).map(&:to_s).reject(&:empty?)
+      if values.any? then link[name] = values
+      elsif filter["default"].present? then link[name] = [ "" ]
+      end
     end
   end
 
@@ -76,9 +115,9 @@ class Dashboard < ApplicationRecord
   private
 
   # Each filter is {name, label, kind} and, for a select, multiple and
-  # options; an empty label is the name, and other keys go. What isn't a
-  # filter, and a search's multiple or options, are kept for filters_valid to
-  # refuse.
+  # options, and default when it has default values; an empty label is the
+  # name, and other keys go. What isn't a filter, and a search's multiple or
+  # options, are kept for filters_valid to refuse.
   def normalize_filters
     self.filters = filters.map { |filter| normalize_filter(filter) } if filters.is_a?(Array)
   end
@@ -91,12 +130,22 @@ class Dashboard < ApplicationRecord
     normalized = { "name" => name, "label" => given["label"].to_s.strip.presence || name, "kind" => given["kind"].to_s }
     multiple = ActiveModel::Type::Boolean.new.cast(given["multiple"]) || false
     if normalized["kind"] == "select"
-      normalized.merge("multiple" => multiple, "options" => normalize_filter_options(given["options"]))
+      normalized.merge!("multiple" => multiple, "options" => normalize_filter_options(given["options"]))
     else
       normalized["multiple"] = multiple if multiple
       normalized["options"] = given["options"] unless given["options"].nil?
-      normalized
     end
+    default = normalize_default(given["default"])
+    normalized["default"] = default unless default.nil? || default == []
+    normalized
+  end
+
+  # Default values are a list of strings, from a string or a list; blank ones go.
+  # Anything else is kept for filters_valid to refuse.
+  def normalize_default(default)
+    return default unless default.nil? || default.is_a?(String) || (default.is_a?(Array) && default.all?(String))
+
+    Array(default).map(&:strip).reject(&:empty?)
   end
 
   # A fixed list is {from: "list", items: [{label, value}]}, an empty label
@@ -147,7 +196,29 @@ class Dashboard < ApplicationRecord
         errors.add(:"#{at}.options", "are for selects only") if filter.key?("options")
       else errors.add(:"#{at}.kind", "must be select or search")
       end
+      default_valid(filter, "#{at}.default") if filter.key?("default")
     end
+  end
+
+  # Default values: one for a search or a select of one value, those of a
+  # fixed list's options, each at most MAX_OPTION_TEXT characters.
+  def default_valid(filter, at)
+    default = filter["default"]
+    return errors.add(at.to_sym, "must be a string or a list of strings") unless default.is_a?(Array) && default.all?(String)
+
+    takes_one = filter["kind"] != "select" || filter["multiple"] != true
+    return errors.add(at.to_sym, "must be one value, as the filter takes one") if takes_one && default.size > 1
+    return errors.add(at.to_sym, "are at most #{MAX_OPTIONS} values") if default.size > MAX_OPTIONS
+
+    too_long = default.any? { |value| value.length > MAX_OPTION_TEXT }
+    return errors.add(at.to_sym, "is too long (at most #{MAX_OPTION_TEXT} characters)") if too_long
+
+    options = filter["options"]
+    return unless filter["kind"] == "select" && options.is_a?(Hash) && options["from"] == "list" && options["items"].is_a?(Array)
+
+    known = options["items"].filter_map { |item| item["value"] if item.is_a?(Hash) }
+    unknown = default - known
+    errors.add(at.to_sym, "must be the options' values, not #{unknown.map(&:inspect).to_sentence}") if unknown.any?
   end
 
   def filter_options_valid(options, at)

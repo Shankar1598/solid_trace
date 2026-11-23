@@ -9,7 +9,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  optionsOfText, textOfOptions, type Dashboard, type DashboardChart, type DashboardFilter, type FilterOptions,
+  optionsOfText, textOfOptions, type Dashboard, type DashboardFilter, type DashboardItem, type FilterOptions,
 } from '@/lib/dashboards/dashboard'
 import { parametersOf } from '@/lib/logs/queryLexer'
 import type { ProjectOption } from '../../Logs/components/BuilderPanel'
@@ -29,6 +29,8 @@ interface Draft {
   /** A field select's Project and field. */
   projectId: number | null
   field: string
+  /** The values the filter opens on; none is All. */
+  defaults: string[]
 }
 
 const KINDS = [{ value: 'select' as const, label: 'Select' }, { value: 'search' as const, label: 'Search box' }]
@@ -47,6 +49,7 @@ const draftOf = (filter: DashboardFilter, key: number): Draft => {
     options: options?.from === 'list' ? textOfOptions(options.items) : '',
     projectId: options?.from === 'field' ? options.project_id : null,
     field: options?.from === 'field' ? options.field : '',
+    defaults: filter.default ?? [],
   }
 }
 
@@ -54,12 +57,87 @@ const optionsOf = (draft: Draft): FilterOptions => draft.from === 'field'
   ? { from: 'field', project_id: draft.projectId ?? 0, field: draft.field }
   : { from: 'list', items: optionsOfText(draft.options) }
 
-const filterOf = (draft: Draft): DashboardFilter => draft.kind === 'search'
-  ? { name: draft.name.trim(), label: draft.label, kind: 'search' }
-  : { name: draft.name.trim(), label: draft.label, kind: 'select', multiple: draft.multiple, options: optionsOf(draft) }
+/**
+ * A draft's default values as saved: a fixed list's keep only its options'
+ * values, and a filter of one value keeps the first.
+ */
+function defaultsOf(draft: Draft): string[] {
+  let values = draft.defaults.map(v => v.trim()).filter(v => v !== '')
+  if (draft.kind === 'select' && draft.from === 'list') {
+    const known = new Set(optionsOfText(draft.options).map(o => o.value))
+    values = values.filter(v => known.has(v))
+  }
+  return draft.kind === 'select' && draft.multiple ? values : values.slice(0, 1)
+}
+
+const filterOf = (draft: Draft): DashboardFilter => {
+  const defaults = defaultsOf(draft)
+  const common = { name: draft.name.trim(), label: draft.label, ...(defaults.length > 0 ? { default: defaults } : {}) }
+  return draft.kind === 'search'
+    ? { ...common, kind: 'search' }
+    : { ...common, kind: 'select', multiple: draft.multiple, options: optionsOf(draft) }
+}
+
+/** No default value, in the select of a fixed list's options. */
+const NO_DEFAULT = ''
+
+/**
+ * The values a filter opens on: for a fixed list, a select of its options;
+ * otherwise a text, or one per line for a field select of several values.
+ * None is All.
+ */
+function DefaultControl({ draft, n, onChange }: { draft: Draft; n: number; onChange: (defaults: string[]) => void }) {
+  const label = `Filter ${n} default`
+  let control: React.ReactNode
+  if (draft.kind === 'select' && draft.from === 'list') {
+    const options = optionsOfText(draft.options)
+    const chosen = defaultsOf(draft)
+    const labels = new Map(options.map(o => [o.value, o.label]))
+    const trigger = (
+      <SelectTrigger size="sm" aria-label={label} className="min-w-44">
+        <span className="truncate">{chosen.length === 0 ? 'None (All)' : chosen.map(v => labels.get(v) ?? v).join(', ')}</span>
+      </SelectTrigger>
+    )
+    const items = options.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)
+    control = draft.multiple ? (
+      <Select multiple value={chosen} onValueChange={(next: string[]) => onChange(next)}>
+        {trigger}
+        <SelectContent>{items}</SelectContent>
+      </Select>
+    ) : (
+      <Select value={chosen[0] ?? NO_DEFAULT} onValueChange={(next: string | null) => onChange(next ? [next] : [])}>
+        {trigger}
+        <SelectContent>
+          <SelectItem value={NO_DEFAULT}>None (All)</SelectItem>
+          {items}
+        </SelectContent>
+      </Select>
+    )
+  } else if (draft.kind === 'select' && draft.multiple) {
+    control = (
+      <Textarea
+        aria-label={label} rows={2} className="w-56 font-mono" placeholder="None (All), or one value per line"
+        value={draft.defaults.join('\n')} onChange={e => onChange(e.target.value.split('\n'))}
+      />
+    )
+  } else {
+    control = (
+      <Input
+        aria-label={label} className="h-7 w-56 font-mono" placeholder="None (All)"
+        value={draft.defaults[0] ?? ''} onChange={e => onChange([e.target.value])}
+      />
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-muted-foreground">Default</span>
+      {control}
+    </div>
+  )
+}
 
 const FIELDS: Record<string, string> = {
-  '': 'The filter', name: 'Name', label: 'Label', kind: 'Kind', multiple: 'Several values', options: 'Options',
+  '': 'The filter', name: 'Name', label: 'Label', kind: 'Kind', multiple: 'Several values', options: 'Options', default: 'Default',
   'options.project_id': 'Project', 'options.field': 'Field',
 }
 
@@ -76,7 +154,7 @@ function errorText(field: string, message: string): string {
  * change; removing a filter that charts name asks first.
  */
 export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }: {
-  dashboard: Dashboard & { charts: DashboardChart[] }
+  dashboard: Dashboard & { charts: DashboardItem[] }
   /** The Organization's Projects, one of which a select's field is read from. */
   projects: ProjectOption[]
   orgSlug: string
@@ -101,7 +179,7 @@ export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }:
   const add = () => {
     setDrafts(ds => [...ds, {
       key: nextKey, saved: false, name: '', label: '', kind: 'select', multiple: false,
-      from: 'list', options: '', projectId: projects[0]?.id ?? null, field: '',
+      from: 'list', options: '', projectId: projects[0]?.id ?? null, field: '', defaults: [],
     }])
     setNextKey(k => k + 1)
   }
@@ -109,7 +187,8 @@ export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }:
     setDrafts(ds => ds.filter(d => d.key !== key))
     setRemoving(null)
   }
-  const chartsNaming = (name: string) => dashboard.charts.filter(c => parametersOf(c.query).includes(name.trim()))
+  // A Text block has no Query, so it names no filter.
+  const chartsNaming = (name: string) => dashboard.charts.filter(c => c.query !== null && parametersOf(c.query).includes(name.trim()))
   const askOrRemove = (draft: Draft) => (chartsNaming(draft.name).length > 0 ? setRemoving(draft.key) : remove(draft.key))
 
   const save = (e: React.FormEvent) => {
@@ -139,7 +218,7 @@ export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }:
             <DialogTitle>Filters</DialogTitle>
             <DialogDescription>
               A chart follows a filter by naming it in its Query, as <code>where level == $level</code> or <code>search $q</code>.
-              A filter's name can't change once saved.
+              A filter's name can't change once saved. The Dashboard opens with each filter on its default, or on All when it has none.
             </DialogDescription>
           </DialogHeader>
 
@@ -210,6 +289,7 @@ export function FiltersDialog({ dashboard, projects, orgSlug, search, onClose }:
                     )}
                   </>
                 )}
+                <DefaultControl draft={draft} n={n} onChange={defaults => change(draft.key, { defaults })} />
                 {naming.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 border border-destructive/40 p-2" role="alert">
                     <span className="flex-1">

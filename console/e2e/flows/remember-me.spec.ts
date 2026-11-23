@@ -31,7 +31,15 @@ test.afterAll(() => {
 async function signIn(page: Page, rememberMe: boolean) {
   await page.goto('/login')
   await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(password)
+  const field = page.getByLabel('Password', { exact: true })
+  await field.fill(password)
+  // The eye button shows the password and hides it again.
+  await expect(field).toHaveAttribute('type', 'password')
+  await page.getByRole('button', { name: 'Show password' }).click()
+  await expect(field).toHaveAttribute('type', 'text')
+  await expect(field).toHaveValue(password)
+  await page.getByRole('button', { name: 'Hide password' }).click()
+  await expect(field).toHaveAttribute('type', 'password')
   const box = page.getByRole('checkbox', { name: 'Remember me' })
   await expect(box).not.toBeChecked()
   if (rememberMe) await box.click()

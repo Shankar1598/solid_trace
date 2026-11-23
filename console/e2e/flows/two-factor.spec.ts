@@ -77,7 +77,7 @@ test('an authenticator app is set up with a code, asked for after the password, 
   const file = readFileSync(await (await download).path(), 'utf8')
   for (const code of recoveryCodes) expect(file).toContain(code)
   await page.getByRole('link', { name: 'Continue' }).click()
-  await page.waitForURL(url => url.pathname === '/user_settings')
+  await page.waitForURL(url => url.pathname === `/${ORG}/settings/user`)
   await expect(page.getByText(/^On: signing in asks for a code/)).toBeVisible()
   await expect(page.getByText(/You have 10 Recovery codes left/)).toBeVisible()
 

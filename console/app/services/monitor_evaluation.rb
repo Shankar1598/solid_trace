@@ -13,7 +13,15 @@
 #   firing sends nothing. A group with no row is ok, and no rows at all fire
 #   the Monitor's one group only with alert_on_no_data. A table cut at
 #   EventStore's row limit is an error (TABLE_CUT).
-# - Threshold comparing the change: runs the Query again over the Baseline
+# - Threshold with SQL: reads the same range through EventStore's SQL
+#   endpoint, which sets the range outside the SQL, at most
+#   LogMonitor::SQL_READ_TIMEOUT_SECONDS for each read. Its table has the
+#   same shape as a Query's, so all else is the same. More than MAX_GROUPS
+#   rows is an error (SQL_TABLE_CUT), and while SQL queries are off each run
+#   fails (SQL_OFF). Comparing the change, it reads the SQL a second time
+#   over the Baseline range: two reads of at most 10 s, inside the run's
+#   30 s.
+# - Threshold comparing the change: runs the Query, or the SQL, again over the Baseline
 #   range (LogMonitor#baseline_window) with what's left of the run's
 #   timeout, and each group's change from its Baseline is compared instead:
 #   a row with none in the Baseline rises from 0. Without notify by group
@@ -46,11 +54,17 @@ class MonitorEvaluation
   RUN_LEASE = 5.minutes
   # The most states one statement writes.
   STATES_PER_WRITE = 1_000
-  # EventStore answers at most 10,000 rows. A run that sees only some groups
-  # would compare a different subset each time, firing and resolving groups
-  # it merely missed, so a cut table is an error that changes no state.
-  TABLE_CUT = "The Query gives more than 10,000 rows, the most EventStore answers, so a run can't compare every " \
-    "group with the threshold: group by fewer columns, or filter the Logs before the summarize."
+  # The most groups a run compares: EventStore answers at most this many
+  # rows to a Query. A run that sees only some groups would compare a
+  # different subset each time, firing and resolving groups it merely
+  # missed, so a cut table is an error that changes no state. The SQL users'
+  # row limit is higher, so a SQL Monitor's run counts the rows itself.
+  MAX_GROUPS = 10_000
+  TABLE_CUT_TEMPLATE = "The %s gives more than #{MAX_GROUPS.to_fs(:delimited)} rows, the most %s, so a " \
+    "run can't compare every group with the threshold: group by fewer columns, or filter the %s."
+  TABLE_CUT = format(TABLE_CUT_TEMPLATE, "Query", "EventStore answers", "Logs before the summarize").freeze
+  SQL_TABLE_CUT = format(TABLE_CUT_TEMPLATE, "SQL", "a run compares", "rows before the GROUP BY").freeze
+  SQL_OFF = "#{LogMonitor::SQL_QUERIES_OFF}, so the Monitor's SQL can't run. An instance admin can turn them on again.".freeze
   CHANGED_DURING_RUN = "The Monitor was changed during this run, so the run changed nothing. The next run checks it again."
 
   OUT_OF_TIME = "The Query over the current range took the run's #{LogMonitor::RUN_TIMEOUT_SECONDS} s, leaving none " \
@@ -75,7 +89,9 @@ class MonitorEvaluation
   # Reading and whether it would fire, as the run decides it. It reads
   # EventStore as a run does but takes no lease and writes nothing. Without
   # a threshold only no data fires. Raises Unusable for a table a run can't
-  # compare, and EventStore's errors.
+  # compare and for SQL while SQL queries are off (SQL_OFF), and EventStore's
+  # errors. A SQL Monitor's preview reads as its run does, so comparing the
+  # change, it too reads two times, at most 10 s each.
   def self.preview(monitor, now)
     new(monitor, now).preview
   end
@@ -172,9 +188,11 @@ class MonitorEvaluation
     reading.value.nil? || @monitor.breached?(reading.value, reading.baseline)
   end
 
-  # The table the Query gives over [from, to), stopped after timeout
-  # seconds.
+  # The table the Query, or the SQL, gives over [from, to), stopped after
+  # timeout seconds, and for SQL at most SQL_READ_TIMEOUT_SECONDS.
   def table_over(from, to, timeout)
+    return sql_table_over(from, to, timeout) if @monitor.language_sql?
+
     answer = EventStore.query_logs(
       project_id: @monitor.project_id, query: @monitor.query, from: from, to: to, timeout_seconds: timeout
     )
@@ -183,6 +201,19 @@ class MonitorEvaluation
     raise Unusable, TABLE_CUT if table["truncated"]
 
     table
+  end
+
+  def sql_table_over(from, to, timeout)
+    answer = EventStore.run_logs_sql(
+      project_id: @monitor.project_id, sql: @monitor.query, from: from, to: to,
+      timeout_seconds: [ timeout, LogMonitor::SQL_READ_TIMEOUT_SECONDS ].min
+    )
+    table = answer["table"] || {}
+    raise Unusable, SQL_TABLE_CUT if table["truncated"] || Array(table["rows"]).size > MAX_GROUPS
+
+    table
+  rescue EventStore::SQLQueriesOff
+    raise Unusable, SQL_OFF
   end
 
   # What's left of the run's LogMonitor::RUN_TIMEOUT_SECONDS, for the
@@ -202,7 +233,7 @@ class MonitorEvaluation
     columns = table["columns"] || []
     numbers = columns.each_index.select { |i| columns[i]["type"] == "number" }
     unless numbers.size == 1
-      raise Unusable, "The Query gives #{numbers.size} numbers per group, not one to compare with the threshold."
+      raise Unusable, "The #{@monitor.text_name} gives #{numbers.size} numbers per group, not one to compare with the threshold."
     end
 
     at = numbers.first

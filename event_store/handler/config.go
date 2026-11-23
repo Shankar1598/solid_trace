@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/config"
 )
@@ -13,20 +15,22 @@ type ConfigHandler struct {
 }
 
 type configAnswer struct {
-	IngestPort         string             `json:"ingest_port"`
-	QueryPort          string             `json:"query_port"`
-	PebblePath         string             `json:"pebble_path"`
-	MessageQueuePath   string             `json:"message_queue_path"`
-	SQLitePath         string             `json:"sqlite_path"`
-	LogsParquetPath    string             `json:"logs_parquet_path"`
-	LogsDiskLimit      diskLimitAnswer    `json:"logs_disk_limit"`
-	LogsBinCacheBytes  int64              `json:"logs_bin_cache_bytes"`
-	LogsHeavyReadSlots int                `json:"logs_heavy_read_slots"`
-	IngestMaxWaiting   int                `json:"ingest_max_waiting"`
-	ClickHouse         clickHouseAnswer   `json:"clickhouse"`
-	ObjectStore        *objectStoreAnswer `json:"object_store"`
-	CPUProfileDir      string             `json:"cpu_profile_dir"`
-	Debug              bool               `json:"debug"`
+	IngestPort                string             `json:"ingest_port"`
+	QueryPort                 string             `json:"query_port"`
+	PebblePath                string             `json:"pebble_path"`
+	MessageQueuePath          string             `json:"message_queue_path"`
+	SQLitePath                string             `json:"sqlite_path"`
+	LogsParquetPath           string             `json:"logs_parquet_path"`
+	LogsDiskLimit             diskLimitAnswer    `json:"logs_disk_limit"`
+	LogsBinCacheBytes         int64              `json:"logs_bin_cache_bytes"`
+	LogsHeavyReadSlots        int                `json:"logs_heavy_read_slots"`
+	IngestMaxWaiting          int                `json:"ingest_max_waiting"`
+	IngestIdleTimeoutSeconds  int                `json:"ingest_idle_timeout_seconds"`
+	IngestRefuseForwardedHTTP bool               `json:"ingest_refuse_forwarded_http"`
+	ClickHouse                clickHouseAnswer   `json:"clickhouse"`
+	ObjectStore               *objectStoreAnswer `json:"object_store"`
+	CPUProfileDir             string             `json:"cpu_profile_dir"`
+	Debug                     bool               `json:"debug"`
 	// Defaults are the file's keys whose value is EventStore's default
 	// (config.Defaults), so the page can say so.
 	Defaults []string `json:"defaults"`
@@ -61,16 +65,18 @@ type objectStoreAnswer struct {
 // (storage.ClickHouseLogs.DiskLimit).
 func NewConfigHandler(cfg *config.Config, diskLimitBytes int64) *ConfigHandler {
 	answer := configAnswer{
-		IngestPort:         cfg.Port,
-		QueryPort:          cfg.QueryPort,
-		PebblePath:         cfg.PebblePath,
-		MessageQueuePath:   cfg.MessageQueuePath,
-		SQLitePath:         cfg.SQLitePath,
-		LogsParquetPath:    cfg.LogsParquetPath,
-		LogsDiskLimit:      diskLimitAnswer{ConfiguredBytes: cfg.LogsDiskLimitBytes, EffectiveBytes: diskLimitBytes},
-		LogsBinCacheBytes:  cfg.LogsBinCacheBytes,
-		LogsHeavyReadSlots: cfg.LogsHeavyReadSlots,
-		IngestMaxWaiting:   cfg.IngestMaxWaiting,
+		IngestPort:                cfg.Port,
+		QueryPort:                 cfg.QueryPort,
+		PebblePath:                cfg.PebblePath,
+		MessageQueuePath:          cfg.MessageQueuePath,
+		SQLitePath:                cfg.SQLitePath,
+		LogsParquetPath:           cfg.LogsParquetPath,
+		LogsDiskLimit:             diskLimitAnswer{ConfiguredBytes: cfg.LogsDiskLimitBytes, EffectiveBytes: diskLimitBytes},
+		LogsBinCacheBytes:         cfg.LogsBinCacheBytes,
+		LogsHeavyReadSlots:        cfg.LogsHeavyReadSlots,
+		IngestMaxWaiting:          cfg.IngestMaxWaiting,
+		IngestIdleTimeoutSeconds:  int(cfg.IngestIdleTimeout / time.Second),
+		IngestRefuseForwardedHTTP: cfg.IngestRefuseForwardedHTTP,
 		ClickHouse: clickHouseAnswer{
 			Address:     cfg.ClickHouse.Address,
 			Database:    cfg.ClickHouse.Database,
@@ -114,6 +120,8 @@ func defaultKeys(cfg *config.Config) []string {
 		{"logs_bin_cache_mb", cfg.LogsBinCacheBytes == d.LogsBinCacheBytes},
 		{"logs_heavy_read_slots", cfg.LogsHeavyReadSlots == d.LogsHeavyReadSlots},
 		{"ingest_max_waiting", cfg.IngestMaxWaiting == d.IngestMaxWaiting},
+		{"ingest_idle_timeout_seconds", cfg.IngestIdleTimeout == d.IngestIdleTimeout},
+		{"ingest_refuse_forwarded_http", cfg.IngestRefuseForwardedHTTP == d.IngestRefuseForwardedHTTP},
 		{"clickhouse.address", cfg.ClickHouse.Address == d.ClickHouse.Address},
 		{"clickhouse.database", cfg.ClickHouse.Database == d.ClickHouse.Database},
 		{"clickhouse.user", cfg.ClickHouse.User == d.ClickHouse.User},

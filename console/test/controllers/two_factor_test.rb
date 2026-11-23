@@ -221,7 +221,7 @@ class TwoFactorTest < ActionDispatch::IntegrationTest
 
     # Another's Organization isn't named or returned to.
     get new_authenticator_app_url(org: create(:organization).slug)
-    assert_redirected_to user_settings_url
+    assert_redirected_to user_url(org_slug: organization.slug)
   end
 
   test "Settings → User says whether the Authenticator app is set up, outside and inside an Organization" do

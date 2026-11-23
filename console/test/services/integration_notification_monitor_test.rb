@@ -55,7 +55,7 @@ class IntegrationNotificationMonitorTest < ActiveSupport::TestCase
 
     texts = []
     assert_requested(:post, SLACK_URL, times: 2) { |request| texts << JSON.parse(request.body)["text"] }
-    assert_equal [ "🚨 1 New Issues Detected", "🔥 Firing: Checkout errors" ], texts
+    assert_equal [ "🚨 1 New Issues Detected", "🚨 Firing: Checkout errors" ], texts
     assert Notification.all.all?(&:status_sent?)
   end
 
@@ -82,7 +82,7 @@ class IntegrationNotificationMonitorTest < ActiveSupport::TestCase
 
     texts = []
     assert_requested(:post, SLACK_URL, times: 2) { |request| texts << JSON.parse(request.body)["text"] }
-    assert_equal [ "🔥 Firing: Checkout errors", "✅ Resolved: Checkout errors" ], texts
+    assert_equal [ "🚨 Firing: Checkout errors", "✅ Resolved: Checkout errors" ], texts
     assert firing.reload.status_sent?
     assert resolved.reload.status_sent?
   end
@@ -108,7 +108,7 @@ class IntegrationNotificationMonitorTest < ActiveSupport::TestCase
 
     texts = []
     assert_requested(:post, SLACK_URL, times: 2) { |request| texts << JSON.parse(request.body)["text"] }
-    assert_equal [ "🔥 Firing: Checkout errors", "✅ Resolved: Checkout errors" ], texts
+    assert_equal [ "🚨 Firing: Checkout errors", "✅ Resolved: Checkout errors" ], texts
   end
 
   test "a Monitor row still failing after MONITOR_RETRY_FOR is given up, and its chain goes on" do
@@ -153,7 +153,7 @@ class IntegrationNotificationMonitorTest < ActiveSupport::TestCase
     assert Notification.all.all?(&:status_sent?), Notification.pluck(:status, :error_message).inspect
     texts = []
     assert_requested(:post, SLACK_URL, times: 2) { |request| texts << JSON.parse(request.body)["text"] }
-    assert_equal [ "🔥 Firing: Checkout errors", "✅ Resolved: Checkout errors, renamed" ], texts
+    assert_equal [ "🚨 Firing: Checkout errors", "✅ Resolved: Checkout errors, renamed" ], texts
     assert_equal "solid-trace-monitor-#{monitor_id}", Notifiers::MonitorMessage.build(Notification.last).dedup_key
   end
 

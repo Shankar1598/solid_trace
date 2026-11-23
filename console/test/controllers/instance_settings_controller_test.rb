@@ -18,13 +18,15 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     "sqlite_path" => "/storage/sqlite/solid_trace.sqlite3", "logs_parquet_path" => "/storage/duckdb/logs_parquet",
     "logs_disk_limit" => { "configured_bytes" => 0, "effective_bytes" => 53_687_091_200 },
     "logs_bin_cache_bytes" => 64 << 20, "logs_heavy_read_slots" => 1, "ingest_max_waiting" => 10_000,
+    "ingest_idle_timeout_seconds" => 660, "ingest_refuse_forwarded_http" => false,
     "clickhouse" => { "address" => "clickhouse:9000", "database" => "solidtrace", "user" => "solidtrace",
       "password_set" => true, "config_dir" => "/storage/clickhouse/conf.d" },
     "object_store" => { "kind" => "gcs", "bucket" => "acme-logs", "prefix" => "solidtrace/", "region" => "auto",
       "endpoint" => "https://storage.googleapis.com", "key_id_set" => true, "secret_set" => true },
     "cpu_profile_dir" => "", "debug" => false,
     "defaults" => [ "ingest_port", "query_port", "logs_disk_limit_gb", "logs_bin_cache_mb", "logs_heavy_read_slots",
-      "ingest_max_waiting", "clickhouse.database", "clickhouse.user", "cpu_profile_dir", "debug" ],
+      "ingest_max_waiting", "ingest_refuse_forwarded_http", "clickhouse.database", "clickhouse.user", "cpu_profile_dir",
+      "debug" ],
   }.freeze
 
   setup do
@@ -120,7 +122,7 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "ingest_port", "query_port", "clickhouse.address", "clickhouse.database", "clickhouse.user",
       "SOLIDTRACE_CLICKHOUSE_PASSWORD", "clickhouse.config_dir", "pebble_path", "message_queue_path", "sqlite_path",
       "logs_parquet_path", "logs_disk_limit_gb", "logs_bin_cache_mb", "logs_heavy_read_slots", "ingest_max_waiting",
-      "object_store.kind",
+      "ingest_idle_timeout_seconds", "ingest_refuse_forwarded_http", "object_store.kind",
       "object_store.bucket", "object_store.prefix", "object_store.region", "object_store.endpoint",
       "SOLIDTRACE_OBJECT_STORE_KEY_ID", "SOLIDTRACE_OBJECT_STORE_SECRET",
       "cpu_profile_dir", "debug" ], rows.pluck("source")
@@ -134,6 +136,8 @@ class InstanceSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "Heavy Log reads at once", 1, true ],
       rows["logs_heavy_read_slots"].values_at("label", "value", "default")
     assert_equal [ 10_000, true ], rows["ingest_max_waiting"].values_at("value", "default")
+    assert_equal [ 660, false ], rows["ingest_idle_timeout_seconds"].values_at("value", "default")
+    assert_equal [ false, true ], rows["ingest_refuse_forwarded_http"].values_at("value", "default")
     assert_equal [ "acme-logs", false ], rows["object_store.bucket"].values_at("value", "default")
     assert_nil rows["cpu_profile_dir"]["value"]
     assert_equal [ false, true ], rows["debug"].values_at("value", "default")
