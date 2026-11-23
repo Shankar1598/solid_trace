@@ -45,14 +45,16 @@ class AgentSessionsView
     }
   end
 
-  attr_reader :organization, :range, :filters
+  attr_reader :organization, :range, :filters, :limit
 
   # range is a McpTools::TimeRange, as AgentSessionsView.range reads it;
-  # filters as AgentSessionsView.filters reads them.
-  def initialize(organization:, range:, filters: {})
+  # filters as AgentSessionsView.filters reads them. limit is the most rows,
+  # nil for EventStore's own limit (500), which the page uses.
+  def initialize(organization:, range:, filters: {}, limit: nil)
     @organization = organization
     @range = range
     @filters = { person: nil, repository: nil, project: nil, run: nil }.merge(filters.compact)
+    @limit = limit
   end
 
   def project
@@ -126,7 +128,8 @@ class AgentSessionsView
   def answer
     event_store_answer("Agent sessions") do
       EventStore.agent_sessions!(project_id: project.id, from: range.from, to: range.to, user_id: filters[:person],
-        repository: filters[:repository], project: filters[:project], run: filters[:run], read_timeout: TIMEOUT_SECONDS)
+        repository: filters[:repository], project: filters[:project], run: filters[:run], limit: limit,
+        read_timeout: TIMEOUT_SECONDS)
     end
   end
 end

@@ -92,6 +92,41 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     assert_equal true, got.json["more"]
   end
 
+  test "list_agent_sessions asks for 50 Agent sessions, or the limit given, at most 200" do
+    first = stub_list(from: "2026-09-26T12:00:00.000Z", to: "2026-10-03T12:00:00.000Z", limit: 50)
+
+    assert_not call_tool(:list_agent_sessions, user: @member).error?
+    assert_requested first
+
+    given = stub_list(from: "2026-09-26T12:00:00.000Z", to: "2026-10-03T12:00:00.000Z", limit: 200)
+    assert_not call_tool(:list_agent_sessions, user: @member, limit: 200).error?
+    assert_requested given
+
+    assert call_tool(:list_agent_sessions, user: @member, limit: 201).error?
+    assert call_tool(:list_agent_sessions, user: @member, limit: 0).error?
+  end
+
+  test "list_agent_sessions tells the caller how to read the Agent sessions that the limit left out" do
+    description = listed_tools(user: @member).find { |tool| tool[:name] == "list_agent_sessions" }[:description]
+
+    assert_match(/more is true/, description)
+    assert_match(/narrow the range, or filter by person or repository/, description)
+  end
+
+  test "list_agent_sessions leaves the fields with no value out of each row" do
+    stub_list(from: "2026-09-26T12:00:00.000Z", to: "2026-10-03T12:00:00.000Z")
+
+    run, own = call_tool(:list_agent_sessions, user: @member).json["agent_sessions"]
+
+    assert_not own.key?("run")
+    assert_not run.key?("cost_usd")
+    [ run, own ].each do |row|
+      assert_equal [], %w[folder parent_session_id flags].select { |name| row.key?(name) }
+    end
+    assert_equal [ "", "Cart page" ], [ run["title"], own["title"] ], "the title stays, also when it is empty"
+    assert_equal [ 0, 0 ], [ run["subagents"], own["subagents"] ], "a number stays, also when it is 0"
+  end
+
   test "list_agent_sessions says so when EventStore cannot answer" do
     stub_request(:post, "#{EventStore.base_url}/api/#{@agent.id}/agent-sessions").to_return(status: 500, body: "boom")
 
