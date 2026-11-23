@@ -84,7 +84,7 @@ Claude Code gets the plugin when it starts on a machine, and the plugin runs fro
 
 ## Read the Agent sessions
 
-Each member opens **Agent sessions** in the Organization's navigation. The page lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first: the title, the start, the last activity, the person or the Run, the repository, the model, the tokens, the estimated cost, and the counts of messages and tool calls.
+Each member opens **Agent sessions** in the Organization's navigation. The page lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first unless you sort by another column: the title, the start, the last activity, the person or the Run, the repository, the model, the tokens, the estimated cost, and the counts of messages and tool calls.
 
 The title of an Agent session is the one that Claude Code shows for it:
 
@@ -100,7 +100,8 @@ An Agent session that SolidTrace parsed before v0.23.2 has no title, until new l
 The activity of an Agent session is the times of its transcript lines that have a timestamp. Claude Code writes some lines with no timestamp, such as its title, the last prompt and the mode. Such a line is not activity, so an old Agent session that uploads again, or that a person only opens again, does not show as active at the time of the upload. A transcript with no line that has a timestamp has no activity, so it is in no time range. Its page shows the time when SolidTrace stored it as its first and last activity. Agent sessions that SolidTrace parsed before v0.23.3 keep their times.
 
 - Filter by time, person, repository, **Project (Runs)**, and Run or no Run. The Project filter selects the Agent sessions of Runs only, because an engineer's own Agent session has no Project. Use the repository filter to find those. The **Project (Runs)** and Run filters show only when the Factory is on, and the Project list holds only the Projects whose Runs have Agent sessions in the range. The filters are in the page's URL, so you can share a filtered view.
-- The totals of tokens and estimated cost are for the Agent sessions that the filters select. The page shows the newest 500 of them; the totals include all of them.
+- Sort the list by **Start**, **Last activity**, **Tokens** or **Estimated cost**: click the column's heading. The first click shows the latest times, the most tokens or the highest cost first; a second click turns the order around. An arrow next to the heading shows the sorted column and its direction. An Agent session with no cost comes after those with a cost, in both directions. The order is in the page's URL (`sort` and `direction`), with the filters, and a change of the range or a filter keeps it.
+- The totals of tokens and estimated cost are for the Agent sessions that the filters select. The page shows the first 500 of them in its order; the totals include all of them. SolidTrace sorts all of them before it takes the 500, so the most expensive Agent sessions of the range are always on the page.
 - The cost is an estimate at list prices, not an invoice. It is Claude Code's own estimate when the transcript has one after its last reply, and else the tokens at the list price of each model. An Agent session whose model has no list price has no cost, and the totals say how many Agent sessions they do not include.
 
 ### Read one Agent session
@@ -128,7 +129,7 @@ An agent can do the same over MCP: `query_logs` on the Agent Project runs a Quer
 
 ### Over MCP
 
-An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them, each with its title, with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both. `list_agent_sessions` gives at most 50 Agent sessions, or the `limit` that the agent sets, at most 200, with the totals of all of them. When it says `more`, the agent narrows the range or filters by person or repository.
+An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them, each with its title, with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both. `list_agent_sessions` gives at most 50 Agent sessions, or the `limit` that the agent sets, at most 200, with the totals of all of them. Its `sort` (`last`, `start`, `tokens` or `cost`) and `direction` (`desc` or `asc`) sort them as the page's headings do, before the limit: `sort: cost` gives the most expensive Agent sessions first. When it says `more`, the agent narrows the range or filters by person or repository.
 
 ## Set a Project's Factory settings
 
