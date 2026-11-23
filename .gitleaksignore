@@ -5,3 +5,22 @@ ab41bd2a1414e04ccb40bd655fe8ed10c156dcc7:console/test/lib/tasks/meta_organizatio
 8238102c6cdc14e7f4c15a62acdd40a243ae28b6:console/test/deploy/install_test.rb:generic-api-key:12
 # dev_data's made-up Project key
 b96248e0adfe0c6c9645e934ab164afae610fc37:console/lib/tasks/dev_data.rake:generic-api-key:34
+# The factory and Agent session tests stand-in keys and tokens: base64 of the bytes 0..31 or of 0123456789abcdef, SHA-256 of "test", made-up Notion tokens, a made-up session UUID.
+b6bcd0e089669844def08808cee5dd6bd74a9b5f:factory/dispatcher/config_checkpoint_test.go:generic-api-key:19
+b8454546af59c6ca57c5bb7f9b9a25a23ef1b47d:factory/dispatcher/config_test.go:generic-api-key:89
+112db7274a7e96e07769a160b1b951cd54e2888f:factory/reference_test.go:generic-api-key:23
+a8aea2151cce150247f05c7cd60771f1764711ad:factory/dispatcher/ticket_comments_test.go:generic-api-key:157
+a7815d313be6ac9c2a40cfc85bc2a2b29e21f781:factory/dispatcher/config_test.go:generic-api-key:83
+0795271a38047bd9c6aabcaab84133fcc4601011:factory/dispatcher/config_senders_test.go:generic-api-key:15
+8d2df7a0aae369268de7f9202461065d5d8f1e9e:factory/dispatcher/notion_webhook_test.go:generic-api-key:102
+18d95a0454f8587be8a167000086c12129500050:console/test/services/notifiers/factory_notifier_test.rb:generic-api-key:18
+79b1d1fb5b83fbe0db81a92486fe36b64da5b91c:factory/dispatcher/config_test.go:generic-api-key:17
+585b7768e96bc5bc7939ec0d7a718a8b10822bb9:factory/dispatcher/notion_api_test.go:generic-api-key:277
+316c9c4f949aec72d9fd9977b06b10b2a195c0b1:console/test/controllers/factory_integration_test.rb:generic-api-key:16
+1f5be75fa4d189d2d7e94ca49d9f83f0f776e318:factory/dispatcher/config_nomad_test.go:generic-api-key:15
+110aca74ec262961e5af80afc2c76220deba389c:factory/dispatcher/config_test.go:generic-api-key:17
+55d2e1f193df104916aa900e9fd3aa59c3948264:factory/internal/factorytest/factorytest.go:generic-api-key:71
+55d2e1f193df104916aa900e9fd3aa59c3948264:factory/dispatcher/secrets_internal_test.go:generic-api-key:10
+55d2e1f193df104916aa900e9fd3aa59c3948264:factory/cmd/dispatcher/main_test.go:generic-api-key:95
+55d2e1f193df104916aa900e9fd3aa59c3948264:factory/dispatcher/settings_test.go:generic-api-key:242
+af16c9439892aaa8a66d667639aebb5488ab44ae:event_store/agent_sessions_list_test.go:generic-api-key:18
