@@ -2,10 +2,13 @@ import { defineConfig, devices } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { video } from './e2e/support/video'
 
 // End-to-end flows and screenshots against the dev stack (Procfile.dev).
 // `bun run e2e` runs the flows; `bun run e2e:screens` captures every screen
 // at desktop and phone sizes in dark and light into SCREENS_DIR.
+// E2E_VIDEO=on records a video of each test into its output directory
+// (e2e/support/video.ts).
 const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:4001'
 
 // Chromium's system libraries, unpacked without root on the dev box.
@@ -36,6 +39,7 @@ export default defineConfig({
     headless: true,
     storageState: './tmp/playwright-auth/admin.json',
     trace: 'retain-on-failure',
+    video,
     launchOptions: { env: launchEnv },
   },
   webServer: {
