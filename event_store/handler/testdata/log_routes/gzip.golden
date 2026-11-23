@@ -1,6 +1,9 @@
 status: 200
 content-type: application/json
 retry-after: (none)
-stored: 1 Log batch of 2 Logs for Project 1
+stored:
+  Log batch for Project 1, Logs: 2
+    {"attributes":{},"level":"info","message":"one","time":"2026-11-23T12:00:00Z"}
+    {"attributes":{},"message":"two","service":"web","time":"2026-11-23T12:00:00Z"}
 body:
 {"accepted":2,"dropped":0,"truncated":0}

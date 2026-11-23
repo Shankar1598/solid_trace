@@ -1,6 +1,7 @@
 status: 413
 content-type: application/json
 retry-after: (none)
-stored: nothing
+stored:
+  nothing
 body:
 {"error":"Request body too large"}

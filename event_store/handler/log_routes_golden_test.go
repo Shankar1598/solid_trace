@@ -3,7 +3,9 @@ package handler_test
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,8 +29,10 @@ import (
 )
 
 // updateLogRouteGoldens makes the test write the golden files, in place of
-// comparing with them: go test ./handler -run TestLogRoutesGolden -update
-var updateLogRouteGoldens = flag.Bool("update", false, "write the golden files of TestLogRoutesGolden")
+// comparing with them. Run it from event_store/:
+//
+//	go test -p 1 ./handler -run TestLogRoutesGolden -update-log-routes
+var updateLogRouteGoldens = flag.Bool("update-log-routes", false, "write the golden files of TestLogRoutesGolden")
 
 const logRouteGoldenDir = "testdata/log_routes"
 
@@ -41,8 +45,8 @@ const (
 	decodedBodyOverLimit = 50<<20 + 1
 )
 
-// memoryLogWriter is a LogWriter that keeps the Log batches in memory. With
-// err set, it fails each write with it.
+// memoryLogWriter is a LogWriter that keeps the Log batches in memory, as
+// text. With err set, it fails each write with it.
 type memoryLogWriter struct {
 	err error
 
@@ -54,20 +58,79 @@ func (w *memoryLogWriter) WriteLogBatch(projectID uint32, logs []models.Log, _ t
 	if w.err != nil {
 		return w.err
 	}
+	// The text is made now, because the caller can reuse the Logs after this
+	// call.
+	var batch strings.Builder
+	fmt.Fprintf(&batch, "  Log batch for Project %d, Logs: %d", projectID, len(logs))
+	for _, log := range logs {
+		batch.WriteString("\n    " + storedLogLine(log))
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.batches = append(w.batches, fmt.Sprintf("1 Log batch of %d Logs for Project %d", len(logs), projectID))
+	w.batches = append(w.batches, batch.String())
 	return nil
 }
 
-// stored says what the writer holds, as a line of a golden file.
+// storedLogLine is one stored Log as one line of canonical JSON: the keys are
+// sorted, and the id is left out, because it is random. The time is stable,
+// because the clock of the test is a manual one, or the sender gave the time.
+// A string over longStringBytes is shortened to its start, its length and a
+// hash, so that a golden file stays readable and still pins each byte.
+func storedLogLine(log models.Log) string {
+	raw, err := json.Marshal(log)
+	if err != nil {
+		return fmt.Sprintf("(the Log does not encode: %v)", err)
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return fmt.Sprintf("(the Log does not decode: %v)", err)
+	}
+	delete(value.(map[string]any), "id")
+
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(shortenLongStrings(value)); err != nil {
+		return fmt.Sprintf("(the Log does not encode again: %v)", err)
+	}
+	return strings.TrimSuffix(out.String(), "\n")
+}
+
+const longStringBytes = 120
+
+// shortenLongStrings returns value with each string over longStringBytes
+// replaced by its first 40 bytes, its length and the start of its SHA-256.
+func shortenLongStrings(value any) any {
+	switch v := value.(type) {
+	case string:
+		if len(v) <= longStringBytes {
+			return v
+		}
+		sum := sha256.Sum256([]byte(v))
+		return fmt.Sprintf("%s...[%d bytes, sha256 %x]", strings.ToValidUTF8(v[:40], "?"), len(v), sum[:6])
+	case map[string]any:
+		for name, element := range v {
+			v[name] = shortenLongStrings(element)
+		}
+	case []any:
+		for i, element := range v {
+			v[i] = shortenLongStrings(element)
+		}
+	}
+	return value
+}
+
+// stored says what the writer holds, as the lines of a golden file: for each
+// Log batch, its Project and each of its Logs, in the order they were stored.
 func (w *memoryLogWriter) stored() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if len(w.batches) == 0 {
-		return "nothing"
+		return "  nothing"
 	}
-	return strings.Join(w.batches, ", ")
+	return strings.Join(w.batches, "\n")
 }
 
 // logRouteCase is one fixed request to the ingest app.
@@ -258,8 +321,9 @@ func headerOrNone(resp *http.Response, name string) string {
 
 // sendLogRouteCase sends the case to a new ingest app, built as main builds
 // it: the real handler and the real Log ingest, over a Console SQLite file
-// with the two keys, with a Log writer in memory. It needs no ClickHouse. It
-// answers what a golden file holds.
+// with the two keys, with a Log writer in memory. This test itself uses no
+// ClickHouse, but the package needs the dev ClickHouse to run: its TestMain
+// (clickhousetest.Main) starts with it. It answers what a golden file holds.
 func sendLogRouteCase(t *testing.T, c logRouteCase) string {
 	t.Helper()
 	logger.Init()
@@ -318,7 +382,7 @@ func sendLogRouteCase(t *testing.T, c logRouteCase) string {
 	fmt.Fprintf(&out, "status: %d\n", resp.StatusCode)
 	fmt.Fprintf(&out, "content-type: %s\n", headerOrNone(resp, "Content-Type"))
 	fmt.Fprintf(&out, "retry-after: %s\n", headerOrNone(resp, "Retry-After"))
-	fmt.Fprintf(&out, "stored: %s\n", writer.stored())
+	fmt.Fprintf(&out, "stored:\n%s\n", writer.stored())
 	out.WriteString("body:\n")
 	out.Write(body)
 	out.WriteByte('\n')
@@ -326,9 +390,10 @@ func sendLogRouteCase(t *testing.T, c logRouteCase) string {
 }
 
 // The Log ingest routes answer each fixed request with the same bytes as
-// before: their status, Content-Type, Retry-After, what they stored and their
-// body. A change of one byte fails the test. When an answer is meant to
-// change, run it with -update, and read the diff of the golden files.
+// before: their status, Content-Type, Retry-After, what they stored (each Log
+// batch with its Project and its Logs, as normalised) and their body. A change
+// of one byte fails the test. When an answer is meant to change, run it with
+// -update-log-routes, and read the diff of the golden files.
 //
 // The routes are POST /api/:project_id/logs, POST /api/logs, and the log
 // items on POST /api/:project_id/envelope.
@@ -358,7 +423,7 @@ func TestLogRoutesGolden(t *testing.T) {
 			}
 			want, err := os.ReadFile(file)
 			if err != nil {
-				t.Fatalf("Failed to read %s: %v\nRun with -update to write it.", file, err)
+				t.Fatalf("Failed to read %s: %v\nRun with -update-log-routes to write it.", file, err)
 			}
 			if got != string(want) {
 				t.Errorf("POST %s answered other bytes than %s holds.\ngot:\n%s\nwant:\n%s", c.path, file, got, want)
@@ -367,7 +432,7 @@ func TestLogRoutesGolden(t *testing.T) {
 	}
 
 	// A case that is deleted must not pass unseen: each golden file needs a
-	// case, and with -update the files with no case are deleted.
+	// case, and with -update-log-routes the files with no case are deleted.
 	files, err := filepath.Glob(filepath.Join(logRouteGoldenDir, "*.golden"))
 	if err != nil {
 		t.Fatalf("Failed to list the golden files: %v", err)
@@ -383,6 +448,6 @@ func TestLogRoutesGolden(t *testing.T) {
 			}
 			continue
 		}
-		t.Errorf("%s has no case. Run with -update to delete it.", file)
+		t.Errorf("%s has no case. Run with -update-log-routes to delete it.", file)
 	}
 }

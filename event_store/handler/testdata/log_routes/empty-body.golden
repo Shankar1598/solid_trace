@@ -1,6 +1,7 @@
 status: 200
 content-type: application/json
 retry-after: (none)
-stored: nothing
+stored:
+  nothing
 body:
 {"accepted":0,"dropped":0,"truncated":0}

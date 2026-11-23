@@ -1,6 +1,7 @@
 status: 400
 content-type: text/plain; charset=utf-8
 retry-after: (none)
-stored: nothing
+stored:
+  nothing
 body:
 invalid item header

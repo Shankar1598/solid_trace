@@ -1,6 +1,7 @@
 status: 503
 content-type: text/plain; charset=utf-8
 retry-after: 5
-stored: nothing
+stored:
+  nothing
 body:
 write log batch: write log batch: event writer is shutting down

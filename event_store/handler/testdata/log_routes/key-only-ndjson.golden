@@ -1,6 +1,10 @@
 status: 200
 content-type: application/json
 retry-after: (none)
-stored: 1 Log batch of 3 Logs for Project 1
+stored:
+  Log batch for Project 1, Logs: 3
+    {"attributes":{},"message":"one","time":"2026-11-23T12:00:00Z"}
+    {"attributes":{},"message":"two","time":"2026-11-23T12:00:00Z"}
+    {"attributes":{},"message":"three","time":"2026-11-23T12:00:00Z"}
 body:
 {"accepted":3,"dropped":0,"truncated":0}
