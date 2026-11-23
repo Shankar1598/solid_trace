@@ -18,6 +18,7 @@ class CaptureSetupTest < ActiveSupport::TestCase
       page = props(version)
 
       assert_equal "curl -fsSL #{RELEASES}/download/#{version}/install.sh | sh", page[:install_command], version
+      assert_equal "#{RELEASES}/download/#{version}/marketplace.json", page[:plugin_commands].second.split.last, version
       assert_equal "#{RELEASES}/download/#{version}/marketplace.json",
                    JSON.parse(page[:managed_settings]).dig("extraKnownMarketplaces", "solidtrace", "source", "url"), version
       assert_nil page[:version_note], version
@@ -29,7 +30,7 @@ class CaptureSetupTest < ActiveSupport::TestCase
       page = props(version)
 
       assert_equal "curl -fsSL #{RELEASES}/latest/download/install.sh | sh", page[:install_command], version.inspect
-      assert_equal "#{RELEASES}/latest/download/marketplace.json", page[:plugin_commands].first.split.last, version.inspect
+      assert_equal "#{RELEASES}/latest/download/marketplace.json", page[:plugin_commands].second.split.last, version.inspect
       assert page[:version_note].present?, version.inspect
     end
   end

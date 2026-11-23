@@ -30,7 +30,7 @@ If your team uses Claude Code's [managed settings](https://docs.claude.com/en/do
 }
 ```
 
-Each engineer must still install the CLI and sign in (steps 1 and 3 below).
+Claude Code gets the plugin when it starts on a machine, and the plugin runs from the next start. Each engineer must still install the CLI and sign in (steps 1 and 3 below).
 
 ## For engineers: turn on capture
 
@@ -42,11 +42,19 @@ Each engineer must still install the CLI and sign in (steps 1 and 3 below).
    curl -fsSL https://github.com/Shankar1598/solid_trace/releases/download/v0.19.0/install.sh | sh
    ```
 
-2. Install the Claude Code plugin, unless your Admin pushes it with managed settings:
+2. Install the Claude Code plugin, unless your Admin pushes it with managed settings. Claude Code reads a `github.com` URL as a git repository, so it cannot add the marketplace file from the release's URL. And it does not load a marketplace file that you add as a plain path. So download the file into a `.claude-plugin` folder, and add it from there:
 
    ```bash
-   claude plugin marketplace add https://github.com/Shankar1598/solid_trace/releases/download/v0.19.0/marketplace.json
+   mkdir -p ~/.local/share/solidtrace/.claude-plugin
+   curl -fsSL -o ~/.local/share/solidtrace/.claude-plugin/marketplace.json https://github.com/Shankar1598/solid_trace/releases/download/v0.19.0/marketplace.json
+   claude plugin marketplace add ~/.local/share/solidtrace/.claude-plugin/marketplace.json
    claude plugin install solidtrace@solidtrace
+   ```
+
+   Then check that the list shows `solidtrace@solidtrace` with `Status: ✔ enabled`:
+
+   ```bash
+   claude plugin list
    ```
 
 3. Sign in. The command opens Console in your browser; on a machine with no browser it gives a code for Console's device page. Use the command from the Capture setup page, which has your instance's Ingest URL:

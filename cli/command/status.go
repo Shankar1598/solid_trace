@@ -165,7 +165,7 @@ func pluginStep(claudeDir string) step {
 	data, err := os.ReadFile(filepath.Join(claudeDir, "plugins", "installed_plugins.json"))
 	if err != nil || json.Unmarshal(data, &installed) != nil || len(installed.Plugins[pluginName]) == 0 {
 		s.text = fmt.Sprintf("%s is not installed in %s", pluginName, claudeDir)
-		s.fix = "Run the two 'claude plugin' commands from Console: Settings → Agent sessions → Capture setup. Or ask an Admin to push the plugin with managed settings."
+		s.fix = "Run the plugin commands from Console: Settings → Agent sessions → Capture setup. Then 'claude plugin list' must show it as enabled. Or ask an Admin to push the plugin with managed settings."
 		return s
 	}
 	var settings struct {

@@ -41,11 +41,21 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
     assert page["on"]
   end
 
-  test "the plugin install commands add the release's marketplace file and install solidtrace@solidtrace" do
+  # Claude Code clones a github.com URL as a git repository, and does not
+  # load a marketplace file added as a plain path: the commands download the
+  # file into a .claude-plugin folder and add it from there.
+  test "the plugin install commands download the release's marketplace file, add it and install solidtrace@solidtrace" do
     sign_in_as(@member)
 
-    assert_equal [ "claude plugin marketplace add #{RELEASE}/marketplace.json", "claude plugin install solidtrace@solidtrace" ],
-                 setup_page["plugin_commands"]
+    page = setup_page
+
+    file = "~/.local/share/solidtrace/.claude-plugin/marketplace.json"
+    assert_equal [ "mkdir -p ~/.local/share/solidtrace/.claude-plugin",
+                   "curl -fsSL -o #{file} #{RELEASE}/marketplace.json",
+                   "claude plugin marketplace add #{file}",
+                   "claude plugin install solidtrace@solidtrace" ],
+                 page["plugin_commands"]
+    assert_equal "claude plugin list", page["plugin_check_command"]
   end
 
   test "the managed-settings snippet registers the marketplace with a url source and force-enables the plugin" do

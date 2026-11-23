@@ -16,6 +16,13 @@ module CaptureSetup
   MARKETPLACE = "solidtrace"
   PLUGIN = "solidtrace@#{MARKETPLACE}".freeze
   STATUS_COMMAND = "solidtrace capture status"
+  # Where the plugin commands put the release's marketplace file. Claude Code
+  # reads a github.com URL as a git repository, and it does not load a
+  # marketplace file added as a plain path. It loads one at
+  # <folder>/.claude-plugin/marketplace.json.
+  MARKETPLACE_FILE = "~/.local/share/solidtrace/.claude-plugin/marketplace.json"
+  # It says "enabled" for the plugin when the install worked.
+  PLUGIN_CHECK_COMMAND = "claude plugin list"
   NOT_A_RELEASE = "This instance runs %{version}, which is not a release, so the commands use the newest release."
 
   module_function
@@ -31,7 +38,8 @@ module CaptureSetup
       version: version,
       version_note: (format(NOT_A_RELEASE, version: version) unless release?(version)),
       install_command: "curl -fsSL #{files}/install.sh | sh",
-      plugin_commands: [ "claude plugin marketplace add #{files}/marketplace.json", "claude plugin install #{PLUGIN}" ],
+      plugin_commands: plugin_commands(files),
+      plugin_check_command: PLUGIN_CHECK_COMMAND,
       managed_settings: JSON.pretty_generate(managed_settings(files)),
       login_command: "solidtrace login --ingest-url #{ingest_url} #{console_url}",
       status_command: STATUS_COMMAND,
@@ -47,9 +55,22 @@ module CaptureSetup
     release?(version) ? "#{RELEASES}/download/#{version}" : "#{RELEASES}/latest/download"
   end
 
+  # Download the marketplace file, add it to Claude Code, and install the plugin.
+  def plugin_commands(files)
+    [
+      "mkdir -p #{File.dirname(MARKETPLACE_FILE)}",
+      "curl -fsSL -o #{MARKETPLACE_FILE} #{files}/marketplace.json",
+      "claude plugin marketplace add #{MARKETPLACE_FILE}",
+      "claude plugin install #{PLUGIN}"
+    ]
+  end
+
   # Claude Code's managed settings: the marketplace with a url source (a git
   # source would clone the whole repository on each machine), and the
-  # plugin force-enabled, so a person cannot turn it off.
+  # plugin force-enabled, so a person cannot turn it off. In settings, a url
+  # source loads (Claude Code 2.1.323): the first start of Claude Code adds
+  # the marketplace and gets the plugin, and the plugin runs from the next
+  # start.
   def managed_settings(files)
     {
       extraKnownMarketplaces: { MARKETPLACE => { source: { source: "url", url: "#{files}/marketplace.json" } } },

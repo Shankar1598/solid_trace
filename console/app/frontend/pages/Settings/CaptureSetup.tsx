@@ -15,6 +15,7 @@ interface CaptureSetupProps {
   version_note: string | null
   install_command: string
   plugin_commands: string[]
+  plugin_check_command: string
   managed_settings: string
   login_command: string
   status_command: string
@@ -76,9 +77,16 @@ export default function SettingsCaptureSetup(props: CaptureSetupProps) {
         title="2. Install the plugin"
         description="The Claude Code plugin starts the upload when a turn or an Agent session ends. It holds no URL and no secret."
       >
+        <p className="text-sm text-muted-foreground">
+          Claude Code cannot add the marketplace file from its GitHub URL, so the commands download it into a .claude-plugin folder first.
+        </p>
         <Snippet code={props.plugin_commands.join('\n')} what="Plugin commands" />
         <p className="text-sm text-muted-foreground">
-          Or, if your team uses Claude Code's managed settings, add this to them. Each machine then gets the plugin, and a person cannot turn it off.
+          Then check that the list shows solidtrace@solidtrace as enabled:
+        </p>
+        <Snippet code={props.plugin_check_command} what="Plugin check command" />
+        <p className="text-sm text-muted-foreground">
+          Or, if your team uses Claude Code's managed settings, add this to them. Each machine then gets the plugin, and a person cannot turn it off. Claude Code gets the plugin when it starts on a machine, and the plugin runs from the next start.
         </p>
         <Snippet code={props.managed_settings} what="Managed settings" />
       </FormSection>
