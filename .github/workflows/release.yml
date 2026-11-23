@@ -55,7 +55,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
 
@@ -84,7 +84,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
 
@@ -113,7 +113,7 @@ jobs:
     runs-on: ${{ matrix.platform.runner }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
 
@@ -180,7 +180,7 @@ jobs:
       # The workflow's own commit, so that a run by hand for an older tag
       # also has the script.
       - name: Checkout the tag script
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           sparse-checkout: .github/scripts
 
