@@ -1,0 +1,7 @@
+status: 415
+content-type: application/json
+retry-after: (none)
+stored:
+  nothing
+body:
+{"error":"Unsupported Content-Encoding"}
