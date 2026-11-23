@@ -1,0 +1,6 @@
+status: 200
+content-type: text/plain; charset=utf-8
+retry-after: (none)
+stored: 1 Log batch of 1 Logs for Project 1
+body:
+OK

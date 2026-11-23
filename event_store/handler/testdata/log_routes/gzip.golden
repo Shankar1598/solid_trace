@@ -1,0 +1,6 @@
+status: 200
+content-type: application/json
+retry-after: (none)
+stored: 1 Log batch of 2 Logs for Project 1
+body:
+{"accepted":2,"dropped":0,"truncated":0}

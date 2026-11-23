@@ -1,0 +1,6 @@
+status: 500
+content-type: application/json
+retry-after: (none)
+stored: nothing
+body:
+{"error":"Internal error"}
