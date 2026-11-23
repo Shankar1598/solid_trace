@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Segmented } from '@/components/ui/segmented'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { costText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
@@ -287,7 +288,13 @@ function Transcript({ base, path, subagents, first }: { base: string; path?: str
   const items = showItems(timelineItems(steps, path ? subagents.filter(s => s.tool_use_id) : subagents, cursor === null, order), show)
   return (
     <div className="space-y-2" data-transcript={path ?? 'main'} data-order={order}>
-      {!loaded && !error && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {!loaded && !error && (
+        <div role="status" aria-label="Loading the steps" className="space-y-2">
+          <Skeleton className="h-14" />
+          <Skeleton className="h-6 w-2/3" />
+          <Skeleton className="h-14" />
+        </div>
+      )}
       {loaded && items.length === 0 && <p className="text-sm text-muted-foreground">{steps.length === 0 ? 'No steps.' : 'No steps to show. Turn on tool calls or agent thinking above.'}</p>}
       {inOrder(groupTools(items), order).map(item => <Item key={itemKey(item)} item={item} base={base} subagents={subagents} />)}
       {error && <p className="text-sm text-destructive">{error}</p>}

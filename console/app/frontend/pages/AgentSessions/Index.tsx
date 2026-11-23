@@ -242,7 +242,10 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
                     {title.untitled ? <span className="font-mono text-xs font-normal text-muted-foreground">{title.text}</span> : title.text}
                   </Link>
                   {/* Below md the Start, Person or Run and Repository columns are hidden, so that the table fits: the title's cell gives them. */}
-                  <div className="mt-1 truncate text-xs text-muted-foreground md:hidden">{whoText(row)} · {timeText(row.first)}</div>
+                  <div className="mt-1 flex min-w-0 gap-2 text-xs text-muted-foreground md:hidden">
+                    <span className="truncate">{whoText(row)}</span>
+                    <span className="shrink-0 font-mono">{timeText(row.first)}</span>
+                  </div>
                   <div className="truncate font-mono text-xs text-muted-foreground md:hidden">{row.repository}{row.folder && `/${row.folder}`}</div>
                   {row.flags.length > 0 && (
                     <div className="mt-1 flex gap-1.5 md:hidden">{row.flags.map(flag => <Badge key={flag} variant="warn">{flag}</Badge>)}</div>
