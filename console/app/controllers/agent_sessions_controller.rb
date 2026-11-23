@@ -15,7 +15,12 @@ class AgentSessionsController < ApplicationController
   SEARCH_RANGE = "7d"
 
   def index
-    view = AgentSessionsView.new(organization: @current_org, range: range, filters: AgentSessionsView.filters(params))
+    filters = AgentSessionsView.filters(params)
+    # The Project and Run filters select the Agent sessions of Runs, so the
+    # page has them only while the Factory is on; a link that names them
+    # does not filter out of sight.
+    filters = filters.merge(project: nil, run: nil) unless Dispatcher.on?
+    view = AgentSessionsView.new(organization: @current_org, range: range, filters: filters)
     props = view.to_h.merge(settings_path: agent_session_settings_path(org_slug: @current_org.slug))
     props[:can_turn_on] = admin? unless props[:on]
     props[:search] = search_across(@current_org.agent_project)

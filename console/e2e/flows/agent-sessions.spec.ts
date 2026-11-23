@@ -373,6 +373,10 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect(main).toHaveAttribute('data-order', 'newest')
   await expect(firstStep).toHaveAttribute('data-step', 'agent')
   await expect(firstStep).toContainText('The cart code is in cart.go, and the command printed its lines.')
+  // The agent's reply shows as Markdown: code and bold, with no marks left.
+  await expect(firstStep.locator('code')).toHaveText('cart.go')
+  await expect(firstStep.locator('strong')).toHaveText('its lines')
+  await expect(firstStep).not.toContainText('**')
   await expect(main.locator(':scope > [data-step]').last()).toHaveAttribute('data-step', 'person')
   await expect(agentCall.locator(`[data-subagent="${subagentId}"]`)).toBeVisible()
   await page.reload()

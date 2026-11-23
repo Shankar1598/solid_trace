@@ -58,6 +58,7 @@ type agentSessionsAnswer struct {
 	} `json:"totals"`
 	More         bool     `json:"more"`
 	Repositories []string `json:"repositories"`
+	Projects     []string `json:"projects"`
 }
 
 func listAgentSessions(t *testing.T, env *TestEnv, projectID int64, body map[string]any) agentSessionsAnswer {
@@ -173,6 +174,10 @@ func TestTheAgentSessionsListGivesTheAgentSessionsOfTheRangeLatestFirstWithTheir
 	}
 	if want := []string{"github.com/acme/api", "github.com/acme/shop"}; !slices.Equal(answer.Repositories, want) {
 		t.Errorf("Expected the repositories of the range %v, got %v", want, answer.Repositories)
+	}
+	// The Projects of the range's Runs: an engineer's own Agent session has none.
+	if want := []string{"shop"}; !slices.Equal(answer.Projects, want) {
+		t.Errorf("Expected the Projects of the range's Runs %v, got %v", want, answer.Projects)
 	}
 
 	september := listAgentSessions(t, env, f.project, map[string]any{"from": "2026-09-19T00:00:00Z", "to": "2026-09-21T00:00:00Z"})

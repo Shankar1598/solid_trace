@@ -108,9 +108,11 @@ class AgentSessionsView
   end
 
   # The choices of the Project (Runs) filter: the Organization's Projects
-  # but the Agent Project.
+  # (but the Agent Project) whose Runs have Agent sessions in the range,
+  # and the filter's own. A Project with no Runs would only select none.
   def projects
-    organization.projects.where(agent: false).order(:name).map { |p| { name: p.name, slug: p.slug } }
+    slugs = (Array(answer&.dig("projects")) + [ filters[:project] ].compact).uniq
+    organization.projects.where(agent: false, slug: slugs).order(:name).map { |p| { name: p.name, slug: p.slug } }
   end
 
   # The choices of the repository filter: those of the range, and the

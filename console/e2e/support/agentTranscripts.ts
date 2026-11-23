@@ -123,7 +123,7 @@ export function longSession(cwd: string, opts: {
   main.reply([{ type: 'tool_use', id: 'toolu_flow_bash', name: 'Bash', input: { command: 'seq 1 20000', description: 'Print many lines' } }], opts.usage[1])
   const lines = Array.from({ length: 12_000 }, (_, i) => `line ${i + 1} of the output`).join('\n')
   main.toolResult('toolu_flow_bash', `${lines}\nkey ${opts.secret}\n${opts.outputEnd}`)
-  main.reply([{ type: 'text', text: 'The cart code is in cart.go, and the command printed its lines.' }], opts.usage[2])
+  main.reply([{ type: 'text', text: 'The cart code is in `cart.go`, and the command printed **its lines**.' }], opts.usage[2])
   main.title('ai', 'Find the cart code and print many lines')
 
   return {

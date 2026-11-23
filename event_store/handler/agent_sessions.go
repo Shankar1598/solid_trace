@@ -16,6 +16,7 @@ import (
 type AgentSessionReader interface {
 	AgentSessionList(ctx context.Context, projectID uint32, filter storage.AgentSessionFilter) ([]storage.AgentSessionTotals, error)
 	AgentSessionRepositories(ctx context.Context, projectID uint32, from time.Time) ([]string, error)
+	AgentSessionFactoryProjects(ctx context.Context, projectID uint32, from time.Time) ([]string, error)
 	AgentSessionTotals(ctx context.Context, projectID uint32, sessionIDs ...uuid.UUID) ([]storage.AgentSessionTotals, error)
 	AgentSessionTimeline(ctx context.Context, projectID uint32, session storage.AgentSessionTotals, page storage.AgentTimelinePage) ([]storage.AgentTimelineStep, error)
 	AgentSubagentCalls(ctx context.Context, projectID uint32, session storage.AgentSessionTotals) (map[string]string, error)
@@ -75,6 +76,9 @@ type (
 		// Repositories are the repositories of the Agent sessions stored
 		// in the range, for the repository filter.
 		Repositories []string `json:"repositories"`
+		// Projects are the slugs of the Projects of the Runs whose Agent
+		// sessions are stored in the range, for the Project (Runs) filter.
+		Projects []string `json:"projects"`
 	}
 	agentSessionRow struct {
 		ID              string    `json:"id"`
@@ -157,7 +161,13 @@ func (h *AgentSessionsHandler) List(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
 	}
 
-	answer := agentSessionsAnswer{AgentSessions: []agentSessionRow{}, Repositories: repositories, More: len(sessions) > limit}
+	projects, err := h.sessions.AgentSessionFactoryProjects(ctx, projectID, *req.From)
+	if err != nil {
+		logger.L.Error("Reading the Projects of the Agent sessions' Runs failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+
+	answer := agentSessionsAnswer{AgentSessions: []agentSessionRow{}, Repositories: repositories, Projects: projects, More: len(sessions) > limit}
 	answer.Totals = sumAgentSessions(sessions)
 	for _, s := range sessions[:min(limit, len(sessions))] {
 		answer.AgentSessions = append(answer.AgentSessions, agentSessionRowOf(s))

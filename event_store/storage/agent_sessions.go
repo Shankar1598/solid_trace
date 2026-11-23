@@ -329,21 +329,35 @@ func (s *ClickHouseLogs) AgentSessionList(ctx context.Context, projectID uint32,
 // AgentSessionRepositories are the repositories of the Agent sessions of
 // a Project that the server stored from the day of from, in name order.
 func (s *ClickHouseLogs) AgentSessionRepositories(ctx context.Context, projectID uint32, from time.Time) ([]string, error) {
-	rows, err := s.conn.Query(ctx, `SELECT DISTINCT repository FROM agent_sessions
-		WHERE project_id = ? AND day >= toDate(?) AND repository != '' ORDER BY repository`, projectID, from.Add(-time.Hour))
+	return s.agentSessionValues(ctx, "repository", projectID, from)
+}
+
+// AgentSessionFactoryProjects are the slugs of the Projects of the Runs
+// whose Agent sessions the server stored in a Project from the day of
+// from, in name order: the choices of the Project (Runs) filter.
+func (s *ClickHouseLogs) AgentSessionFactoryProjects(ctx context.Context, projectID uint32, from time.Time) ([]string, error) {
+	return s.agentSessionValues(ctx, "factory_project", projectID, from)
+}
+
+// agentSessionValues are the values of a column of the Agent sessions of
+// a Project that the server stored from the day of from, but the empty one, in name
+// order. column is one of this file's names, never a caller's text.
+func (s *ClickHouseLogs) agentSessionValues(ctx context.Context, column string, projectID uint32, from time.Time) ([]string, error) {
+	rows, err := s.conn.Query(ctx, `SELECT DISTINCT `+column+` FROM agent_sessions
+		WHERE project_id = ? AND day >= toDate(?) AND `+column+` != '' ORDER BY `+column, projectID, from.Add(-time.Hour))
 	if err != nil {
-		return nil, fmt.Errorf("read agent session repositories: %w", err)
+		return nil, fmt.Errorf("read agent session %s values: %w", column, err)
 	}
 	defer rows.Close()
-	repositories := []string{}
+	values := []string{}
 	for rows.Next() {
-		var repository string
-		if err := rows.Scan(&repository); err != nil {
-			return nil, fmt.Errorf("read agent session repositories: %w", err)
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, fmt.Errorf("read agent session %s values: %w", column, err)
 		}
-		repositories = append(repositories, repository)
+		values = append(values, value)
 	}
-	return repositories, rows.Err()
+	return values, rows.Err()
 }
 
 // agentSessionTotals reads the totals of the Agent sessions of a Project

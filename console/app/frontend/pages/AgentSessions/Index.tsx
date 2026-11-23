@@ -85,7 +85,7 @@ function TurnOn({ canTurnOn, settingsPath }: { canTurnOn: boolean; settingsPath:
 }
 
 function SessionsList({ view }: { view: Extract<AgentSessionsProps, { on: true }> }) {
-  const { current_org } = usePage<SharedProps>().props
+  const { current_org, factory_on } = usePage<SharedProps>().props
   const range = rangeOfAnswer(view.range)
   const path = `/${current_org?.slug ?? ''}/agent_sessions`
   const visit = (nextRange: TimeRange, filters: AgentSessionFilters) => router.visit(`${path}${agentSessionsSearch(nextRange, filters)}`)
@@ -118,22 +118,31 @@ function SessionsList({ view }: { view: Extract<AgentSessionsProps, { on: true }
             value={view.filters.repository}
             options={view.repositories.map(r => ({ value: r, label: r }))}
             onChange={value => filter({ repository: value })}
+            last={!factory_on}
           />
-          <FilterSelect
-            label="Project (Runs)"
-            all="All Projects (Runs)"
-            value={view.filters.project}
-            options={view.projects.map(p => ({ value: p.slug, label: p.name }))}
-            onChange={value => filter({ project: value })}
-          />
-          <FilterSelect
-            label="Run or no Run"
-            all="Runs and no Run"
-            value={view.filters.run}
-            options={[{ value: 'run', label: 'Runs only' }, { value: 'none', label: 'No Run' }]}
-            onChange={value => filter({ run: value as RunFilter | null })}
-            last
-          />
+          {/* The Project and Run filters select the Agent sessions of Runs, so they show only while the Factory is on,
+              and the Project filter only when the range has Runs of a Project. */}
+          {factory_on && (
+            <>
+              {view.projects.length > 0 && (
+                <FilterSelect
+                  label="Project (Runs)"
+                  all="All Projects (Runs)"
+                  value={view.filters.project}
+                  options={view.projects.map(p => ({ value: p.slug, label: p.name }))}
+                  onChange={value => filter({ project: value })}
+                />
+              )}
+              <FilterSelect
+                label="Run or no Run"
+                all="Runs and no Run"
+                value={view.filters.run}
+                options={[{ value: 'run', label: 'Runs only' }, { value: 'none', label: 'No Run' }]}
+                onChange={value => filter({ run: value as RunFilter | null })}
+                last
+              />
+            </>
+          )}
         </div>
         <TimeRangePicker range={range} onChange={next => visit(next, view.filters)} />
       </div>
@@ -177,7 +186,8 @@ function FilterSelect({ label, all, value, options, onChange, last }: {
   return (
     <Select value={value ?? ALL} items={items} onValueChange={next => next && onChange(next === ALL ? null : next)}>
       <SelectTrigger aria-label={label} className={last ? 'border-0' : 'border-0 border-r'}><SelectValue /></SelectTrigger>
-      <SelectContent>
+      {/* As wide as the longest choice, so that a long repository shows in full; never wider than the window. */}
+      <SelectContent className="w-max max-w-(--available-width) min-w-(--anchor-width)">
         {Object.entries(items).map(([v, text]) => <SelectItem key={v} value={v}>{text}</SelectItem>)}
       </SelectContent>
     </Select>

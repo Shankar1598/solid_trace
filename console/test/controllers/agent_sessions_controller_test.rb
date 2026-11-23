@@ -47,7 +47,7 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
                           row(CART, user_id: @member.id, cost: 0.00174).except(:title) ],
         totals: { agent_sessions: 2, input_tokens: 20, output_tokens: 100, cache_read_tokens: 2000, cache_write_tokens: 200,
                   cost_usd: 0.00174, no_cost: 1 },
-        more: false, repositories: [ "github.com/acme/shop" ],
+        more: false, repositories: [ "github.com/acme/shop" ], projects: [ "shop" ],
       }.to_json)
   end
 
@@ -87,7 +87,9 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "the filters in the URL go to EventStore and come back on the page, with the choices of each" do
+    InstanceSetting.current.update!(dispatcher_url: "http://dispatcher.test")
     project = turn_on
+    create(:project, organization: @organization, name: "Blog", slug: "blog")
     asked = stub_agent_sessions(project, {
       "from" => "2026-10-02T09:00:00.000Z", "to" => "2026-10-02T10:00:00.000Z", "user_id" => @member.id,
       "repository" => "github.com/acme/api", "project" => "shop", "run" => "run",
@@ -101,10 +103,26 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "person" => @member.id, "repository" => "github.com/acme/api", "project" => "shop", "run" => "run" }, view["filters"])
     assert_equal [ nil, "2026-10-02T09:00:00.000Z", "2026-10-02T10:00:00.000Z" ], view["range"].values_at("span", "from", "to")
     assert_equal [ "Ada", "Bob" ], view["people"].map { |p| p["name"] }
-    # The Projects of Runs: not the Agent Project itself.
+    # The Projects of the range's Runs: not the Agent Project itself, nor a
+    # Project with no Runs in the range.
     assert_equal [ { "name" => "Shop", "slug" => "shop" } ], view["projects"]
     # The repository of the filter stays a choice when the range has none of it.
     assert_equal [ "github.com/acme/api", "github.com/acme/shop" ], view["repositories"]
+  end
+
+  test "while the Factory is off, the Project and Run filters of a link are not sent" do
+    InstanceSetting.current.update!(dispatcher_url: nil)
+    project = turn_on
+    stub_agent_sessions(project, {})
+    sign_in_as(@member)
+
+    view = page(repository: "github.com/acme/shop", project: "shop", run: "run")
+
+    assert_requested(:post, "#{EventStore.base_url}/api/#{project.id}/agent-sessions") do |request|
+      sent = JSON.parse(request.body)
+      sent["repository"] == "github.com/acme/shop" && !sent.key?("project") && !sent.key?("run")
+    end
+    assert_equal({ "person" => nil, "repository" => "github.com/acme/shop", "project" => nil, "run" => nil }, view["filters"])
   end
 
   test "a filter that is not a choice is not sent, and a range that cannot be read is the default" do

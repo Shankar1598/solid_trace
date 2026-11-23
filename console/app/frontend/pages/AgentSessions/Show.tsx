@@ -4,6 +4,7 @@ import { AlertTriangle, Bot, ChevronDown, ChevronRight, Wrench } from 'lucide-re
 import { createContext, useContext, useEffect, useState } from 'react'
 import { AgentSessionSearch } from '@/components/AgentSessionSearch'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
+import { Markdown } from '@/components/Markdown'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -428,7 +429,7 @@ function Message({ step }: { step: TimelineStep }) {
     return (
       <div className="ml-3 border-l-2 border-muted-foreground/30 text-muted-foreground" data-step={kind} data-thinking>
         {title}
-        <div className="px-3 pb-1"><Text step={step} text={text} /></div>
+        <div className="px-3 pb-1"><Text step={step} text={text} markdown /></div>
       </div>
     )
   }
@@ -436,7 +437,7 @@ function Message({ step }: { step: TimelineStep }) {
     return (
       <div className="border" data-step={kind}>
         {title}
-        <div className="px-3 pb-3"><Text step={step} text={text} /></div>
+        <div className="px-3 pb-3"><Text step={step} text={text} markdown /></div>
       </div>
     )
   }
@@ -478,9 +479,16 @@ const SHORT = 1200
 
 /**
  * A step's text: a long one opens on request, and a cut one says so and
- * gives 'Show full', which reads the step's raw line.
+ * gives 'Show full', which reads the step's raw line. With markdown, the
+ * text is drawn as Markdown, as the agent writes its replies.
  */
-function Text({ step, mono = false, text: shownText, short = SHORT }: { step: TimelineStep; mono?: boolean; text?: string; short?: number }) {
+function Text({ step, mono = false, markdown = false, text: shownText, short = SHORT }: {
+  step: TimelineStep
+  mono?: boolean
+  markdown?: boolean
+  text?: string
+  short?: number
+}) {
   const linePath = useContext(LinePath)
   const [open, setOpen] = useState(false)
   const [full, setFull] = useState<RawLine | null>(null)
@@ -517,7 +525,9 @@ function Text({ step, mono = false, text: shownText, short = SHORT }: { step: Ti
             <pre className="max-h-[60vh] max-w-full overflow-auto whitespace-pre-wrap break-words bg-muted/40 p-2 font-mono text-xs">{rawLineText(full.line)}</pre>
           </div>
         )
-        : <pre className={`max-w-full whitespace-pre-wrap break-words text-sm ${mono ? 'bg-muted/40 p-2 font-mono text-xs' : 'font-sans'}`}>{text}</pre>}
+        : markdown
+          ? <Markdown text={text} className="max-w-full text-sm" />
+          : <pre className={`max-w-full whitespace-pre-wrap break-words text-sm ${mono ? 'bg-muted/40 p-2 font-mono text-xs' : 'font-sans'}`}>{text}</pre>}
       <div className="mt-1 flex flex-wrap items-center gap-2">
         {long && !showFull && (
           <button type="button" className="text-xs underline underline-offset-2" onClick={() => setOpen(!open)}>
