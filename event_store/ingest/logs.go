@@ -49,17 +49,18 @@ func (s *Service) IngestLogs(projectID uint32, body Body, ndjson bool) (LogCount
 	return s.storeLogs(projectID, objects, dropped, request, normalise.JSON)
 }
 
-// storeLogs normalises one request's Logs with normaliseLog, against the
-// receipt time and the Project's Retention, stores the ones kept as one Log
-// batch, and wakes Log processing. dropped counts what the request held that
+// storeLogs normalises one request's records with normaliseLog, against the
+// receipt time and the Project's Retention, stores the Logs kept as one Log
+// batch, and wakes Log processing. A record is one Log as sent: a JSON
+// object, or an OTLP log record. dropped counts what the request held that
 // wasn't a Log at all. It adds the request, with its bytes in request, to
 // the Ingest counts of its receipt second. The caller is in the gate.
-func (s *Service) storeLogs(
+func (s *Service) storeLogs[R any](
 	projectID uint32,
-	objects []map[string]json.RawMessage,
+	records []R,
 	dropped int,
 	request models.IngestCount,
-	normaliseLog func(map[string]json.RawMessage, normalise.Receipt) (models.Log, normalise.Outcome),
+	normaliseLog func(R, normalise.Receipt) (models.Log, normalise.Outcome),
 ) (LogCounts, error) {
 	retentionDays, err := s.retention.LogRetentionDays(projectID)
 	if err != nil {
@@ -68,9 +69,9 @@ func (s *Service) storeLogs(
 	receipt := normalise.Receipt{At: s.clock.Now().UTC(), RetentionDays: retentionDays}
 
 	counts := LogCounts{Dropped: dropped}
-	logs := make([]models.Log, 0, len(objects))
-	for _, object := range objects {
-		log, outcome := normaliseLog(object, receipt)
+	logs := make([]models.Log, 0, len(records))
+	for _, record := range records {
+		log, outcome := normaliseLog(record, receipt)
 		switch outcome {
 		case normalise.Dropped:
 			counts.Dropped++
@@ -88,7 +89,7 @@ func (s *Service) storeLogs(
 
 	counts.Accepted = len(logs)
 	request.Requests = 1
-	request.LogsReceived = int64(len(objects) + dropped)
+	request.LogsReceived = int64(len(records) + dropped)
 	request.LogsUnreadable = int64(counts.Dropped)
 	s.counts.count(projectID, receipt.At, request)
 	if len(logs) == 0 {
