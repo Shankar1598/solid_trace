@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -268,9 +269,9 @@ type agentFileTotals struct {
 // latest activity first: of the sessions given, or of all when none are.
 func (s *ClickHouseLogs) AgentSessionTotals(ctx context.Context, projectID uint32, sessionIDs ...uuid.UUID) ([]AgentSessionTotals, error) {
 	if len(sessionIDs) == 0 {
-		return s.agentSessionTotals(ctx, projectID, "")
+		return s.agentSessionTotals(ctx, projectID, AgentSessionOrder{}, "")
 	}
-	return s.agentSessionTotals(ctx, projectID, ` AND session_id IN ?`, sessionIDs)
+	return s.agentSessionTotals(ctx, projectID, AgentSessionOrder{}, ` AND session_id IN ?`, sessionIDs)
 }
 
 // AgentSessionFilter selects the Agent sessions of a list. An Agent
@@ -290,6 +291,8 @@ type AgentSessionFilter struct {
 	Project string
 	// Run is AgentSessionsOfRuns, AgentSessionsOfNoRun, or "" for both.
 	Run string
+	// Order is the order of the list. It selects nothing.
+	Order AgentSessionOrder
 }
 
 // The values of AgentSessionFilter.Run.
@@ -299,7 +302,7 @@ const (
 )
 
 // AgentSessionList reads the totals of the Agent sessions of a Project
-// that the filter selects, latest activity first. The totals of each
+// that the filter selects, in the filter's order. The totals of each
 // Agent session are of all its days that are kept, not only of the range.
 func (s *ClickHouseLogs) AgentSessionList(ctx context.Context, projectID uint32, f AgentSessionFilter) ([]AgentSessionTotals, error) {
 	// A line's time is at most one hour after the time when the server
@@ -333,7 +336,7 @@ func (s *ClickHouseLogs) AgentSessionList(ctx context.Context, projectID uint32,
 	// range.
 	selected += ` AND endsWith(path, '.jsonl') GROUP BY session_id, day, path, version HAVING max(last_time) >= ? AND min(first_time) <= ?`
 	args = append(args, f.From, f.To)
-	return s.agentSessionTotals(ctx, projectID, ` AND session_id IN (`+selected+`)`, args...)
+	return s.agentSessionTotals(ctx, projectID, f.Order, ` AND session_id IN (`+selected+`)`, args...)
 }
 
 // AgentSessionRepositories are the repositories of the Agent sessions of
@@ -371,8 +374,9 @@ func (s *ClickHouseLogs) agentSessionValues(ctx context.Context, column string, 
 }
 
 // agentSessionTotals reads the totals of the Agent sessions of a Project
-// that the condition selects. The condition's args follow the Project.
-func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint32, condition string, conditionArgs ...any) ([]AgentSessionTotals, error) {
+// that the condition selects, in the order. The condition's args follow
+// the Project.
+func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint32, order AgentSessionOrder, condition string, conditionArgs ...any) ([]AgentSessionTotals, error) {
 	query := `SELECT session_id, path, version, min(first_time), max(last_time), any(user_id), any(harness),
 		any(repository), any(folder), any(run_id), any(factory_project), max(parent_session_id), sum(input_tokens),
 		sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens), sum(price_cost_usd), sum(replies),
@@ -421,13 +425,75 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 	for i := range all {
 		sumAgentFiles(&all[i], files[i], flags[i])
 	}
-	slices.SortStableFunc(all, func(a, b AgentSessionTotals) int {
-		if c := b.Last.Compare(a.Last); c != 0 {
+	order.sortSessions(all)
+	return all, nil
+}
+
+// The sorts of a list of Agent sessions (AgentSessionOrder.Sort).
+const (
+	AgentSortLast   = "last"
+	AgentSortStart  = "start"
+	AgentSortTokens = "tokens"
+	AgentSortCost   = "cost"
+)
+
+// IsAgentSort is true for each of the sorts of a list of Agent sessions.
+func IsAgentSort(sort string) bool {
+	return sort == AgentSortLast || sort == AgentSortStart || sort == AgentSortTokens || sort == AgentSortCost
+}
+
+// AgentSessionOrder is the order of a list of Agent sessions: by the last
+// activity (Sort "" or AgentSortLast), the start, the tokens or the
+// estimated cost; the latest or the largest first, unless Ascending. The
+// zero value is the latest activity first.
+type AgentSessionOrder struct {
+	Sort      string
+	Ascending bool
+}
+
+// sortSessions puts sessions in the order. This is the one place of the
+// order of the Agent sessions list: a limit takes the first rows after
+// it. Agent sessions that tie go by id, in both directions, so that a
+// limit always gives the same rows. An Agent session with no cost comes
+// after each with a cost, in both directions: no cost is not a cost of 0,
+// and the cheapest Agent sessions must come first when the cost is
+// ascending.
+func (o AgentSessionOrder) sortSessions(sessions []AgentSessionTotals) {
+	sign := -1
+	if o.Ascending {
+		sign = 1
+	}
+	slices.SortFunc(sessions, func(a, b AgentSessionTotals) int {
+		var c int
+		switch o.Sort {
+		case AgentSortStart:
+			c = sign * a.First.Compare(b.First)
+		case AgentSortTokens:
+			c = sign * cmp.Compare(a.Tokens(), b.Tokens())
+		case AgentSortCost:
+			switch {
+			case a.CostUSD == nil && b.CostUSD == nil:
+			case a.CostUSD == nil:
+				c = 1
+			case b.CostUSD == nil:
+				c = -1
+			default:
+				c = sign * cmp.Compare(*a.CostUSD, *b.CostUSD)
+			}
+		default:
+			c = sign * a.Last.Compare(b.Last)
+		}
+		if c != 0 {
 			return c
 		}
 		return strings.Compare(a.SessionID.String(), b.SessionID.String())
 	})
-	return all, nil
+}
+
+// Tokens are the tokens of each kind of the Agent session, added: the
+// tokens of the Agent sessions page.
+func (t AgentSessionTotals) Tokens() uint64 {
+	return t.Input + t.Output + t.CacheRead + t.CacheWrite
 }
 
 // sumAgentFiles sums the totals of an Agent session's files into t: the

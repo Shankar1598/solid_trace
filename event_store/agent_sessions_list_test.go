@@ -261,6 +261,71 @@ func TestTheAgentSessionsFiltersSelectThePersonTheRepositoryTheProjectAndTheRun(
 	})
 }
 
+// wideSession is an Agent session that starts before the others of the
+// fixture and has the latest activity, with the most tokens and a model
+// with no price, so no cost.
+const wideSession = "c3d4e5f6-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+
+func TestTheAgentSessionsListSortsByEachColumnInBothDirections(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	f := newAgentSessionsFixture(t, env)
+	expectStatus(t, uploadUnit(t, env, f.secret, wideSession, unitUpload{path: "session.jsonl", body: jsonl(
+		personAt("w1", "2026-10-01T08:00:00Z", "A long task"),
+		replyAt("w2", "2026-10-01T08:00:05Z", "msg_w1", "claude-unknown-1", `{"type":"text","text":"Started."}`),
+		replyAt("w3", "2026-10-03T11:00:00Z", "msg_w2", "claude-unknown-1", `{"type":"text","text":"Done."}`),
+	)}), 200)
+	env.ProcessAgentFiles(t)
+
+	// The laptop and the api Agent sessions have the same tokens, so they
+	// go by id; the Run's and the wide one have no cost, so they come after
+	// those with a cost, in both directions, by id.
+	for _, c := range []struct {
+		sort, direction string
+		want            []string
+	}{
+		{"", "", []string{wideSession, runSession, apiSession, laptopSession}},
+		{"last", "desc", []string{wideSession, runSession, apiSession, laptopSession}},
+		{"last", "asc", []string{laptopSession, apiSession, runSession, wideSession}},
+		{"start", "desc", []string{runSession, apiSession, laptopSession, wideSession}},
+		{"start", "asc", []string{wideSession, laptopSession, apiSession, runSession}},
+		{"tokens", "", []string{wideSession, laptopSession, apiSession, runSession}},
+		{"tokens", "asc", []string{runSession, laptopSession, apiSession, wideSession}},
+		{"cost", "desc", []string{laptopSession, apiSession, runSession, wideSession}},
+		{"cost", "asc", []string{apiSession, laptopSession, runSession, wideSession}},
+	} {
+		t.Run(c.sort+" "+c.direction, func(t *testing.T) {
+			body := withFilters(map[string]any{})
+			if c.sort != "" {
+				body["sort"] = c.sort
+			}
+			if c.direction != "" {
+				body["direction"] = c.direction
+			}
+			answer := listAgentSessions(t, env, f.project, body)
+			if got := listedIDs(answer); !slices.Equal(got, c.want) {
+				t.Errorf("Expected %v, got %v", c.want, got)
+			}
+			if answer.Totals.AgentSessions != 4 || answer.Totals.NoCost != 2 {
+				t.Errorf("Expected the totals of the four Agent sessions in each order, got %+v", answer.Totals)
+			}
+		})
+	}
+
+	// The limit takes the first rows of the order, not those of the latest
+	// activity; the totals are still of all.
+	t.Run("a limit after the sort", func(t *testing.T) {
+		answer := listAgentSessions(t, env, f.project, withFilters(map[string]any{"sort": "cost", "direction": "asc", "limit": 2}))
+		if got := listedIDs(answer); !slices.Equal(got, []string{apiSession, laptopSession}) || !answer.More || answer.Totals.AgentSessions != 4 {
+			t.Errorf("Expected the two cheapest rows, more, and the totals of the four, got %v %+v", got, answer)
+		}
+		answer = listAgentSessions(t, env, f.project, withFilters(map[string]any{"sort": "start", "direction": "asc", "limit": 1}))
+		if got := listedIDs(answer); !slices.Equal(got, []string{wideSession}) || !answer.More {
+			t.Errorf("Expected the earliest start only, and more, got %v %+v", got, answer)
+		}
+	})
+}
+
 // The 2-second rule (spec, Storage): if a sessions-page query takes more
 // than 2 seconds, an agent_messages table is necessary. The fixture is a
 // month of ten engineers, each with 12 Agent sessions a day of a main
@@ -327,6 +392,10 @@ func TestTheAgentSessionsListRefusesABadRequest(t *testing.T) {
 		withFilters(map[string]any{"run": "maybe"}),
 		withFilters(map[string]any{"limit": -1}),
 		withFilters(map[string]any{"limit": 501}),
+		withFilters(map[string]any{"sort": "title"}),
+		withFilters(map[string]any{"sort": "Tokens"}),
+		withFilters(map[string]any{"direction": "up"}),
+		withFilters(map[string]any{"sort": "tokens", "direction": "descending"}),
 	} {
 		if status, raw := postQueryApp(t, env, "/api/123/agent-sessions", body); status != 400 {
 			t.Errorf("Expected 400 for %v, got %d: %s", body, status, raw)

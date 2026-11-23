@@ -62,6 +62,10 @@ type agentSessionsRequest struct {
 	Project    string     `json:"project"`
 	Run        string     `json:"run"`
 	Limit      int        `json:"limit"`
+	// Sort is last (also when empty), start, tokens or cost; Direction is
+	// desc (also when empty), the latest or the largest first, or asc.
+	Sort      string `json:"sort"`
+	Direction string `json:"direction"`
 }
 
 type (
@@ -121,8 +125,10 @@ type (
 )
 
 // List answers POST /api/:project_id/agent-sessions: the Agent sessions
-// of the Agent Project that the filters select, latest activity first,
-// at most limit rows, and the totals of all that the filters select.
+// of the Agent Project that the filters select, in the order of the sort
+// and the direction (the latest activity first when they are absent), the
+// first limit rows of that order, and the totals of all that the filters
+// select.
 func (h *AgentSessionsHandler) List(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -141,6 +147,12 @@ func (h *AgentSessionsHandler) List(c *fiber.Ctx) error {
 	if req.Limit < 0 || req.Limit > agentSessionsLimit {
 		return c.Status(400).JSON(fiber.Map{"error": "limit must be from 1 to 500"})
 	}
+	if req.Sort != "" && !storage.IsAgentSort(req.Sort) {
+		return c.Status(400).JSON(fiber.Map{"error": "sort must be last, start, tokens or cost"})
+	}
+	if req.Direction != "" && req.Direction != "desc" && req.Direction != "asc" {
+		return c.Status(400).JSON(fiber.Map{"error": "direction must be desc or asc"})
+	}
 	limit := req.Limit
 	if limit == 0 {
 		limit = agentSessionsLimit
@@ -150,6 +162,7 @@ func (h *AgentSessionsHandler) List(c *fiber.Ctx) error {
 	defer cancel()
 	sessions, err := h.sessions.AgentSessionList(ctx, projectID, storage.AgentSessionFilter{
 		From: *req.From, To: *req.To, UserID: req.UserID, Repository: req.Repository, Project: req.Project, Run: req.Run,
+		Order: storage.AgentSessionOrder{Sort: req.Sort, Ascending: req.Direction == "asc"},
 	})
 	if err != nil {
 		logger.L.Error("Reading the Agent sessions failed", "project_id", projectID, "error", err)
