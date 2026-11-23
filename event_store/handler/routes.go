@@ -49,6 +49,8 @@ func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler, op
 	})
 	if options.RefuseForwardedHTTP {
 		app.Use("/api", RefuseForwardedHTTP)
+		// OTLP senders use /v1/logs, outside /api.
+		app.Use("/v1", RefuseForwardedHTTP)
 	}
 	RegisterIngestRoutes(app, ingestHandler, healthHandler)
 	return app
