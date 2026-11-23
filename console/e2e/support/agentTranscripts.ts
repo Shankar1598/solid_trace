@@ -69,6 +69,13 @@ class Transcript {
     })
   }
 
+  /** A title line as Claude Code writes it: an ai-title, or a person's /rename (custom-title). No uuid, no time. */
+  title(kind: 'ai' | 'custom', text: string) {
+    this.lines.push(kind === 'ai'
+      ? { type: 'ai-title', aiTitle: text, sessionId: this.sessionId }
+      : { type: 'custom-title', customTitle: text, sessionId: this.sessionId })
+  }
+
   text(): string {
     return this.lines.map(l => JSON.stringify(l)).join('\n') + '\n'
   }
@@ -90,10 +97,12 @@ export function shortSession(cwd: string, text: string, usage: Usage, start = mi
  * The long Agent session: a person message with a secret, an Agent tool call
  * whose subagent has its own transcript, and a Bash call whose output is
  * past the Log limit of 64 KiB, with a second secret and an end marker
- * after the cut.
+ * after the cut. Claude Code gives it a title, and the person renames it
+ * to opts.title; a later title of Claude Code's does not change it. The
+ * subagent's own title lines are not the Agent session's.
  */
 export function longSession(cwd: string, opts: {
-  personText: string; subagentId: string; subagentReply: string; outputEnd: string; secret: string
+  personText: string; title: string; subagentId: string; subagentReply: string; outputEnd: string; secret: string
   usage: Usage[]; subagentUsage: Usage
 }): FixtureSession {
   const id = randomUUID()
@@ -101,17 +110,21 @@ export function longSession(cwd: string, opts: {
   const main = new Transcript(id, cwd, start)
   main.person(opts.personText)
   main.reply([{ type: 'tool_use', id: 'toolu_flow_agent', name: 'Agent', input: { description: 'Find the cart code', prompt: 'Find the cart code.' } }], opts.usage[0])
+  main.title('ai', 'Find the cart code')
 
   const sub = new Transcript(id, cwd, new Date(start.getTime() + 3_000), { isSidechain: true, agentId: opts.subagentId })
   // A subagent's prompt is a user line of its own file: not from a person.
   sub.person('Find the cart code.')
   sub.reply([{ type: 'text', text: opts.subagentReply }], opts.subagentUsage, SUBAGENT_MODEL)
+  sub.title('custom', 'A subagent name')
 
   main.toolResult('toolu_flow_agent', opts.subagentReply, { agentId: opts.subagentId, status: 'completed' })
+  main.title('custom', opts.title)
   main.reply([{ type: 'tool_use', id: 'toolu_flow_bash', name: 'Bash', input: { command: 'seq 1 20000', description: 'Print many lines' } }], opts.usage[1])
   const lines = Array.from({ length: 12_000 }, (_, i) => `line ${i + 1} of the output`).join('\n')
   main.toolResult('toolu_flow_bash', `${lines}\nkey ${opts.secret}\n${opts.outputEnd}`)
   main.reply([{ type: 'text', text: 'The cart code is in cart.go, and the command printed its lines.' }], opts.usage[2])
+  main.title('ai', 'Find the cart code and print many lines')
 
   return {
     id,

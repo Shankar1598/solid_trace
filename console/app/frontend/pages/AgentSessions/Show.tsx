@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { costText, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
+import { costText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
   fetchRawLine,
   fetchTimelinePage,
@@ -85,6 +85,7 @@ function saveShow(show: TimelineShow) {
  */
 export default function AgentSessionShow({ agent_session: view }: { agent_session: AgentSessionProps }) {
   const session = view.agent_session
+  const title = session && titleOf(session)
   const [search, setSearch] = useState<string | null>(null)
   const [show, setShow] = useState(readShow)
   const change = (next: Partial<TimelineShow>) => {
@@ -96,9 +97,11 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
     <LinePath.Provider value={view.line_path}>
     <DashboardLayout>
       <PageHeader
-        breadcrumbs={[{ label: 'Agent sessions', href: view.list_path }, { label: session ? whoText(session) : 'Agent session' }]}
-        title={session ? whoText(session) : 'Agent session'}
-        tabTitle="Agent session"
+        breadcrumbs={[{ label: 'Agent sessions', href: view.list_path }, { label: title ? title.text : 'Agent session' }]}
+        title={!title ? 'Agent session' : title.untitled
+          ? <span className="font-mono text-muted-foreground" data-title="untitled">{title.text}</span>
+          : <span data-title>{title.text}</span>}
+        tabTitle={title && !title.untitled ? title.text : 'Agent session'}
         badge={session?.flags.map(flag => <Badge key={flag} variant="warn">{flag}</Badge>)}
         description={session && <span className="font-mono text-xs">{session.id}</span>}
       />

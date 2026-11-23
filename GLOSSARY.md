@@ -285,7 +285,7 @@ An **Organization**'s setting that keeps its members without **Two-factor** out 
 _Avoid_: mandatory 2FA, enforced 2FA
 
 **Agent session**:
-One conversation of one coding agent, kept as its transcript. A resume continues the same Agent session; a fork or a clear starts a new one. Its subagents are parts of it.
+One conversation of one coding agent, kept as its transcript. A resume continues the same Agent session; a fork or a clear starts a new one. Its subagents are parts of it. Its title is the last name that a person gave it (`/rename`), else the last title that Claude Code made for it, else the start of its first person message.
 _Avoid_: session (alone), conversation, thread, chat
 
 **Run**:

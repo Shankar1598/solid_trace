@@ -77,13 +77,14 @@ class AgentSessionsView
 
   # EventStore's rows of Agent sessions, each with its person ({id,
   # name}), or its Run ({id, project}), in place of user_id, run_id and
-  # project. The Agent session page names its header in the same way.
+  # project, and its title ("" for none, also from an EventStore older
+  # than Console). The Agent session page names its header in the same way.
   def self.named_rows(sessions)
     names = User.where(id: sessions.map { |s| s["user_id"] }.uniq).pluck(:id, :name, :email).to_h { |id, name, email| [ id, name.presence || email ] }
     sessions.map do |s|
       run = s["run_id"].presence && { id: s["run_id"], project: s["project"].presence }
       person = s["user_id"].to_i.positive? ? { id: s["user_id"], name: names[s["user_id"]] || "User #{s['user_id']}" } : nil
-      s.except("user_id", "run_id", "project").merge("person" => person, "run" => run)
+      s.except("user_id", "run_id", "project").merge("title" => s["title"].to_s, "person" => person, "run" => run)
     end
   end
 

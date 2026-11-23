@@ -88,10 +88,13 @@ type (
 		Project         string    `json:"project"`
 		ParentSessionID string    `json:"parent_session_id"`
 		Model           string    `json:"model"`
-		Input           uint64    `json:"input_tokens"`
-		Output          uint64    `json:"output_tokens"`
-		CacheRead       uint64    `json:"cache_read_tokens"`
-		CacheWrite      uint64    `json:"cache_write_tokens"`
+		// Title is the title of the Agent session (storage.AgentTitle),
+		// "" for none.
+		Title      string `json:"title"`
+		Input      uint64 `json:"input_tokens"`
+		Output     uint64 `json:"output_tokens"`
+		CacheRead  uint64 `json:"cache_read_tokens"`
+		CacheWrite uint64 `json:"cache_write_tokens"`
 		// CostUSD is the estimated cost at list prices; null is "no cost".
 		CostUSD        *float64 `json:"cost_usd"`
 		PersonMessages uint64   `json:"person_messages"`
@@ -183,7 +186,7 @@ func agentSessionRowOf(s storage.AgentSessionTotals) agentSessionRow {
 	return agentSessionRow{
 		ID: s.SessionID.String(), First: s.First.UTC(), Last: s.Last.UTC(), UserID: s.UserID, Harness: s.Harness,
 		Repository: s.Repository, Folder: s.Folder, RunID: s.RunID, Project: s.Project, ParentSessionID: s.ParentSessionID,
-		Model: s.Model, Input: s.Input, Output: s.Output, CacheRead: s.CacheRead, CacheWrite: s.CacheWrite,
+		Model: s.Model, Title: s.Title, Input: s.Input, Output: s.Output, CacheRead: s.CacheRead, CacheWrite: s.CacheWrite,
 		CostUSD: s.CostUSD, PersonMessages: s.PersonMessages, Turns: s.Turns, ToolCalls: s.ToolCalls,
 		Subagents: s.Subagents, Flags: s.Flags,
 	}

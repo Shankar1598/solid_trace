@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -121,6 +122,20 @@ func (t *sessionTotals) addLine(unit storage.AgentFileUnit, end uint64, object m
 	}
 	if f.costState != nil && end > row.LastCostStateEnd {
 		row.LastCostStateEnd, row.TotalCostUSD = end, *f.costState
+	}
+	if f.title != "" && storage.IsMainTranscript(unit.Path) {
+		title := storage.AgentTitle{Kind: f.titleKind, Order: end, Text: f.title}
+		if f.titleKind == storage.AgentTitleFirstMessage {
+			title.Order = math.MaxUint64 - end
+		}
+		// Only a row with the start of the file knows each person message
+		// before this one. A later range of an Agent session parsed before
+		// titles, which has its first person message in an earlier range,
+		// must not give a later message as the title.
+		firstUnknown := f.titleKind == storage.AgentTitleFirstMessage && !row.HasStart
+		if !firstUnknown && title.After(row.Title) {
+			row.Title = title
+		}
 	}
 }
 

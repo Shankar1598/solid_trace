@@ -84,7 +84,18 @@ Claude Code gets the plugin when it starts on a machine, and the plugin runs fro
 
 ## Read the Agent sessions
 
-Each member opens **Agent sessions** in the Organization's navigation. The page lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first: the start, the last activity, the person or the Run, the repository, the model, the tokens, the estimated cost, and the counts of messages and tool calls.
+Each member opens **Agent sessions** in the Organization's navigation. The page lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first: the title, the start, the last activity, the person or the Run, the repository, the model, the tokens, the estimated cost, and the counts of messages and tool calls.
+
+The title of an Agent session is the one that Claude Code shows for it:
+
+1. The last name that a person gave it with `/rename`. A later `/rename` replaces an earlier one.
+2. Else the last title that Claude Code made for it. Claude Code writes a new title as the Agent session goes on, so the title can change.
+3. Else the start of its first person message, on one line. A slash command shows as the command and its arguments.
+4. Else the Agent session has no title, and the pages show the start of its id, in grey.
+
+Only the main transcript gives the title: a subagent's title lines do not change it. A long title is cut with "…" in the list; hold the pointer on it to read all of it. On a phone, the title is the main text of the row, with the person or the Run, the start and the repository below it.
+
+An Agent session that SolidTrace parsed before v0.23.2 has no title, until new lines of it have a title that Claude Code made or a `/rename`.
 
 - Filter by time, person, repository, **Project (Runs)**, and Run or no Run. The Project filter selects the Agent sessions of Runs only, because an engineer's own Agent session has no Project. Use the repository filter to find those. The filters are in the page's URL, so you can share a filtered view.
 - The totals of tokens and estimated cost are for the Agent sessions that the filters select. The page shows the newest 500 of them; the totals include all of them.
@@ -92,8 +103,9 @@ Each member opens **Agent sessions** in the Organization's navigation. The page 
 
 ### Read one Agent session
 
-Click the person or the Run in the list to open the Agent session page.
+Click a row in the list to open the Agent session page.
 
+- The page's heading is the title of the Agent session.
 - The header shows the person or the Run, the repository, the folder, the parent Agent session (a link, for a fork or a `/clear`), the model, the first and last activity, the tokens by kind, the estimated cost and the flags.
 - The timeline shows the person messages, the agent replies and the tool calls in time order. Each tool call shows its input, with its output below it.
 - A message that a person sent while the agent worked shows at the time when the agent got it, not at the time when the person wrote it.
@@ -112,7 +124,7 @@ An agent can do the same over MCP: `query_logs` on the Agent Project runs a Quer
 
 ### Over MCP
 
-An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both.
+An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them, each with its title, with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both.
 
 ## Set a Project's Factory settings
 

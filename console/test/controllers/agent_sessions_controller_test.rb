@@ -28,8 +28,9 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     AgentSessionsSettings.turn_on(organization: @organization, user: @admin, entries: [ "github.com/acme/shop" ], confirmed: "1").project
   end
 
-  def row(id, user_id:, cost:, run_id: "", project: "", last: "2026-10-02T11:00:06Z")
+  def row(id, user_id:, cost:, run_id: "", project: "", last: "2026-10-02T11:00:06Z", title: nil)
     {
+      title: title,
       id: id, first: "2026-10-02T11:00:00Z", last: last, user_id: user_id, harness: "claude-code",
       repository: "github.com/acme/shop", folder: "", run_id: run_id, project: project, parent_session_id: "",
       model: "claude-opus-5-5", input_tokens: 10, output_tokens: 50, cache_read_tokens: 1000, cache_write_tokens: 100,
@@ -41,8 +42,9 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/agent-sessions")
       .with(body: hash_including(body))
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: {
-        agent_sessions: [ row(RUN, user_id: @admin.id, cost: nil, run_id: "run_42", project: "shop", last: "2026-10-03T10:00:00Z"),
-                          row(CART, user_id: @member.id, cost: 0.00174) ],
+        agent_sessions: [ row(RUN, user_id: @admin.id, cost: nil, run_id: "run_42", project: "shop", last: "2026-10-03T10:00:00Z",
+                              title: "Fix issue 42"),
+                          row(CART, user_id: @member.id, cost: 0.00174).except(:title) ],
         totals: { agent_sessions: 2, input_tokens: 20, output_tokens: 100, cache_read_tokens: 2000, cache_write_tokens: 200,
                   cost_usd: 0.00174, no_cost: 1 },
         more: false, repositories: [ "github.com/acme/shop" ],
@@ -75,6 +77,9 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     assert_nil run["cost_usd"]
     assert_equal [ 10, 50, 1000, 100 ], cart.values_at("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
     assert_equal [ 1, 1 ], cart.values_at("person_messages", "tool_calls")
+    # The title of an Agent session, and "" from an EventStore that gives
+    # none (an EventStore older than Console).
+    assert_equal [ "Fix issue 42", "" ], [ run["title"], cart["title"] ]
     assert_equal({ "agent_sessions" => 2, "input_tokens" => 20, "output_tokens" => 100, "cache_read_tokens" => 2000,
                    "cache_write_tokens" => 200, "cost_usd" => 0.00174, "no_cost" => 1 }, view["totals"])
     assert_equal "estimate at list prices", view["cost_label"]

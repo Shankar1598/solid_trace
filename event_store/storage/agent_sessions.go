@@ -68,6 +68,52 @@ var agentSessionsMigration = clickHouseMigration{version: 11201, statements: []s
 	SETTINGS storage_policy = '` + ClickHouseStoragePolicy + `', non_replicated_deduplication_window = ` + fmt.Sprint(agentFilesDedupWindow),
 }}
 
+// agentSessionTitlesMigration adds the title of each file (AgentTitle) as
+// a (kind, order, text) tuple, so that a part merge keeps the title that
+// wins. A row from before it has the default tuple, (0, 0, ”), which is
+// "no title". An install that has agent_sessions gets the column at its
+// next start; the titles of its old rows stay empty.
+var agentSessionTitlesMigration = clickHouseMigration{version: 11202, statements: []string{
+	`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS title SimpleAggregateFunction(max, Tuple(UInt8, UInt64, String))`,
+}}
+
+// The kinds of an AgentTitle: a higher kind wins over a lower one.
+const (
+	// AgentTitleFirstMessage is the start of the first person message.
+	AgentTitleFirstMessage uint8 = 0
+	// AgentTitleAI is the title that Claude Code makes (an ai-title line).
+	AgentTitleAI uint8 = 1
+	// AgentTitleCustom is the title that a person gives with /rename (a
+	// custom-title line).
+	AgentTitleCustom uint8 = 2
+)
+
+// AgentTitle is the title of an Agent session's file, as the lines of a
+// range give it: the max, as a tuple, of the candidates of its lines. A
+// custom-title wins over an ai-title, and an ai-title over the first
+// person message. Of two lines of one kind, the order decides: for a
+// custom-title or an ai-title it is the line's end offset, so that the
+// last one wins; for a person message it is the max offset less the
+// line's end offset, so that the first one wins. The zero AgentTitle is
+// "no title".
+type AgentTitle struct {
+	Kind  uint8
+	Order uint64
+	Text  string
+}
+
+// After is true when t wins over u, as ClickHouse's max of the tuples
+// decides.
+func (t AgentTitle) After(u AgentTitle) bool {
+	if t.Kind != u.Kind {
+		return t.Kind > u.Kind
+	}
+	if t.Order != u.Order {
+		return t.Order > u.Order
+	}
+	return t.Text > u.Text
+}
+
 // AgentSessionDay is what one range of the parse adds to the totals of
 // one file of one Agent session on one day: a row of agent_sessions.
 type AgentSessionDay struct {
@@ -98,6 +144,9 @@ type AgentSessionDay struct {
 	ToolCalls        uint64
 	HasStart         bool
 	Flags            uint8
+	// Title is the title that the lines of the range give the file. Only
+	// the main transcript has one.
+	Title AgentTitle
 }
 
 // IsSubagentFile is true for the transcript of a subagent, which Claude
@@ -112,10 +161,10 @@ func isTranscript(path string) bool {
 	return strings.HasSuffix(path, ".jsonl")
 }
 
-// isMainTranscript is true for a .jsonl file at the top of the Agent
+// IsMainTranscript is true for a .jsonl file at the top of the Agent
 // session's folder: the transcript of the person's conversation, with its
 // model and its cost-state lines.
-func isMainTranscript(path string) bool {
+func IsMainTranscript(path string) bool {
 	return isTranscript(path) && !strings.Contains(path, "/")
 }
 
@@ -125,7 +174,7 @@ func (s *ClickHouseLogs) insertAgentSessions(ctx context.Context, projectID uint
 	block, err := s.conn.PrepareBatch(ctx, `INSERT INTO agent_sessions (project_id, day, session_id, path, version,
 		first_time, last_time, user_id, harness, repository, folder, run_id, factory_project, parent_session_id,
 		input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, price_cost_usd, replies, unpriced_replies,
-		last_reply, last_cost_state, person_messages, turns, tool_calls, has_start, flags)`)
+		last_reply, last_cost_state, person_messages, turns, tool_calls, has_start, flags, title)`)
 	if err != nil {
 		return err
 	}
@@ -139,7 +188,7 @@ func (s *ClickHouseLogs) insertAgentSessions(ctx context.Context, projectID uint
 			uint64(d.Session.UserID), d.Session.Harness, d.Session.Repository, d.Session.Folder, d.Session.RunID,
 			d.Session.Project, d.Session.ParentSessionID, d.Input, d.Output, d.CacheRead, d.CacheWrite, d.PriceCost,
 			d.Replies, d.UnpricedReplies, []any{d.LastReplyEnd, d.LastModel}, []any{d.LastCostStateEnd, d.TotalCostUSD},
-			d.PersonMessages, d.Turns, d.ToolCalls, hasStart, d.Flags); err != nil {
+			d.PersonMessages, d.Turns, d.ToolCalls, hasStart, d.Flags, []any{d.Title.Kind, d.Title.Order, d.Title.Text}); err != nil {
 			return err
 		}
 	}
@@ -161,7 +210,9 @@ type AgentSessionTotals struct {
 	ParentSessionID string
 	// Model is the model of the latest reply in the main transcript, not
 	// in a subagent's.
-	Model                                string
+	Model string
+	// Title is the title of the main transcript (AgentTitle), "" for none.
+	Title                                string
 	Input, Output, CacheRead, CacheWrite uint64
 	// CostUSD is the estimated cost: the main transcript's last
 	// cost-state line's totalCostUSD when it comes after the last reply
@@ -203,6 +254,7 @@ type agentFileTotals struct {
 	person, turns, toolCalls             uint64
 	hasStart                             bool
 	firstDay, lastDay                    time.Time
+	title                                string
 }
 
 // AgentSessionTotals reads the totals of a Project's Agent sessions,
@@ -302,7 +354,8 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 		sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens), sum(price_cost_usd), sum(replies),
 		sum(unpriced_replies), tupleElement(max(last_reply), 1), tupleElement(max(last_reply), 2),
 		tupleElement(max(last_cost_state), 1), tupleElement(max(last_cost_state), 2),
-		sum(person_messages), sum(turns), sum(tool_calls), max(has_start), groupBitOr(flags), min(day), max(day)
+		sum(person_messages), sum(turns), sum(tool_calls), max(has_start), groupBitOr(flags), min(day), max(day),
+		tupleElement(max(title), 3)
 		FROM agent_sessions WHERE project_id = ?` + condition + ` GROUP BY session_id, path, version ORDER BY session_id, path, version`
 	rows, err := s.conn.Query(ctx, query, append([]any{projectID}, conditionArgs...)...)
 	if err != nil {
@@ -325,7 +378,7 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 		if err := rows.Scan(&t.SessionID, &f.path, &f.version, &f.first, &f.last, &userID, &t.Harness, &t.Repository,
 			&t.Folder, &t.RunID, &t.Project, &t.ParentSessionID, &f.input, &f.output, &f.cacheRead, &f.cacheWrite,
 			&f.priceCost, &f.replies, &f.unpriced, &f.replyEnd, &f.model, &f.costEnd, &f.stateCost,
-			&f.person, &f.turns, &f.toolCalls, &hasStart, &bits, &f.firstDay, &f.lastDay); err != nil {
+			&f.person, &f.turns, &f.toolCalls, &hasStart, &bits, &f.firstDay, &f.lastDay, &f.title); err != nil {
 			return nil, fmt.Errorf("read agent sessions: %w", err)
 		}
 		t.UserID, f.hasStart = int64(userID), hasStart != 0
@@ -399,7 +452,7 @@ func sumAgentFiles(t *AgentSessionTotals, files []agentFileTotals, flags uint8) 
 		t.PersonMessages, t.Turns, t.ToolCalls = t.PersonMessages+f.person, t.Turns+f.turns, t.ToolCalls+f.toolCalls
 		priceCost, replies, unpriced = priceCost+f.priceCost, replies+f.replies, unpriced+f.unpriced
 		partial = partial || !f.hasStart
-		if isMainTranscript(f.path) && (main == nil || f.last.After(main.last)) {
+		if IsMainTranscript(f.path) && (main == nil || f.last.After(main.last)) {
 			main = f
 		}
 	}
@@ -411,7 +464,7 @@ func sumAgentFiles(t *AgentSessionTotals, files []agentFileTotals, flags uint8) 
 		t.CostUSD = &priceCost
 	}
 	if main != nil {
-		t.Model = main.model
+		t.Model, t.Title = main.model, main.title
 	}
 	t.Flags = agentSessionFlags(flags, partial)
 }

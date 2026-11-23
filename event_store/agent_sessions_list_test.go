@@ -32,6 +32,7 @@ type listedAgentSession struct {
 	Project         string   `json:"project"`
 	ParentSessionID string   `json:"parent_session_id"`
 	Model           string   `json:"model"`
+	Title           string   `json:"title"`
 	Input           uint64   `json:"input_tokens"`
 	Output          uint64   `json:"output_tokens"`
 	CacheRead       uint64   `json:"cache_read_tokens"`
@@ -279,7 +280,8 @@ func TestTheAgentSessionsListOfAMonthOfTenEngineersAnswersInLessThanTwoSeconds(t
 			200000 AS cache_write_tokens, 3.5 AS price_cost_usd, 80 AS replies, 0 AS unpriced_replies,
 			tuple(toUInt64(900000), 'claude-opus-5-5') AS last_reply, tuple(toUInt64(0), toFloat64(0)) AS last_cost_state,
 			if(n % 3 = 0, 12, 0) AS person_messages, if(n % 3 = 0, 10, 0) AS turns, 150 AS tool_calls,
-			1 AS has_start, 0 AS flags
+			1 AS has_start, 0 AS flags,
+			if(n % 3 = 0, tuple(toUInt8(1), toUInt64(800000), concat('Session ', toString(s))), tuple(toUInt8(0), toUInt64(0), '')) AS title
 		FROM (SELECT number AS n, intDiv(number, 3) AS s,
 			toDateTime64(?, 6, 'UTC') + toIntervalSecond(intDiv(intDiv(number, 3) * 2592000, ?)) AS at
 			FROM numbers(?))`, projectID, engineers, start, sessions, sessions*3)

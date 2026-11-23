@@ -30,6 +30,7 @@ type transcriptLine struct {
 	Content          json.RawMessage `json:"content"`
 	Attachment       json.RawMessage `json:"attachment"`
 	AiTitle          string          `json:"aiTitle"`
+	CustomTitle      string          `json:"customTitle"`
 	Origin           *lineOrigin     `json:"origin"`
 	// ToolUseResult is Claude Code's own record of a tool's result. For
 	// the Agent tool it names the subagent that the call started.
@@ -134,6 +135,10 @@ type lineFacts struct {
 	deliveredAt json.RawMessage
 	// A cost-state line: its totalCostUSD.
 	costState *float64
+	// A line that can give the Agent session's title: its kind
+	// (storage.AgentTitle) and its text, "" for none.
+	titleKind uint8
+	title     string
 }
 
 type parsedLine struct {
@@ -440,6 +445,13 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 		}
 	case "ai-title":
 		text.WriteString(line.AiTitle)
+		facts.titleKind, facts.title = storage.AgentTitleAI, oneLine(line.AiTitle, maxTitleRunes)
+	case "custom-title":
+		text.WriteString(line.CustomTitle)
+		facts.titleKind, facts.title = storage.AgentTitleCustom, oneLine(line.CustomTitle, maxTitleRunes)
+	}
+	if role == rolePerson {
+		facts.titleKind, facts.title = storage.AgentTitleFirstMessage, personTitle(text.String())
 	}
 	// A line with no text, as Claude Code's own records, has its kind as
 	// its message, so that it is not an empty Log.
@@ -454,6 +466,54 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 	set("level", level)
 	object["message"] = quote(text.String())
 	return object, facts
+}
+
+// maxTitleRunes is the most characters of a title that Claude Code or a
+// person gives, and maxFirstMessageRunes of a title from the first person
+// message: a short start of it.
+const (
+	maxTitleRunes        = 200
+	maxFirstMessageRunes = 80
+)
+
+// personTitle is the title that a person message gives: its start, as the
+// Agent session page shows the message, on one line. The tags that Claude
+// Code adds to a slash command go, and the command and its arguments stay.
+// The output of a local command is Claude Code's, so it gives "".
+func personTitle(text string) string {
+	if command, ok := tagText(text, "command-name"); ok {
+		args, _ := tagText(text, "command-args")
+		return oneLine(command+" "+args, maxFirstMessageRunes)
+	}
+	if _, ok := tagText(text, "local-command-stdout"); ok {
+		return ""
+	}
+	if _, ok := tagText(text, "local-command-stderr"); ok {
+		return ""
+	}
+	text = strings.NewReplacer("<system-reminder>", "", "</system-reminder>", "").Replace(text)
+	return oneLine(text, maxFirstMessageRunes)
+}
+
+// tagText is the text in the first <name>…</name> of text, trimmed.
+func tagText(text, name string) (string, bool) {
+	_, after, ok := strings.Cut(text, "<"+name+">")
+	if !ok {
+		return "", false
+	}
+	inside, _, ok := strings.Cut(after, "</"+name+">")
+	return strings.TrimSpace(inside), ok
+}
+
+// oneLine is text with each run of white space as one space, cut to at
+// most limit characters with "…" at the end.
+func oneLine(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return strings.TrimSpace(string(runes[:limit])) + "…"
 }
 
 // addSource adds where the Log comes from: the repository as its service,

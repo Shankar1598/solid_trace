@@ -26,6 +26,7 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
 
   def header(user_id:, run_id: "", project: "", flags: [])
     {
+      title: "Cart page",
       id: CART, first: "2026-10-02T11:00:00Z", last: "2026-10-02T11:00:09Z", user_id: user_id, harness: "claude-code",
       repository: "github.com/acme/shop", folder: "apps/web", run_id: run_id, project: project, parent_session_id: PARENT,
       model: "claude-opus-5-5", input_tokens: 20, output_tokens: 100, cache_read_tokens: 2000, cache_write_tokens: 200,
@@ -76,6 +77,7 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_nil header["run"]
     assert_equal [ "github.com/acme/shop", "apps/web", PARENT, "claude-opus-5-5", 0.01 ],
       header.values_at("repository", "folder", "parent_session_id", "model", "cost_usd")
+    assert_equal "Cart page", header["title"]
     assert_equal "estimate at list prices", view["cost_label"]
     assert_nil view["resume_warning"]
 

@@ -14,6 +14,7 @@ import {
   agentSessionsSearch,
   costText,
   searchAcrossHref,
+  titleOf,
   tokensText,
   totalTokens,
   whoText,
@@ -218,9 +219,10 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
         <Table aria-label="Agent sessions">
           <TableHeader>
             <TableRow>
-              <TableHead>Start</TableHead>
+              <TableHead>Title</TableHead>
+              <TableHead className="max-md:hidden">Start</TableHead>
               <TableHead className="max-md:hidden">Last activity</TableHead>
-              <TableHead>Person or Run</TableHead>
+              <TableHead className="max-md:hidden">Person or Run</TableHead>
               <TableHead className="max-md:hidden">Repository</TableHead>
               <TableHead className="max-md:hidden">Model</TableHead>
               <TableHead className="text-right">Tokens</TableHead>
@@ -230,15 +232,27 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map(row => (
+            {rows.map(row => {
+              const title = titleOf(row)
+              return (
               <TableRow key={row.id} data-session={row.id} className="cursor-pointer" onClick={e => openRow(e, `${path}/${row.id}`)}>
-                <TableCell className="font-mono text-xs whitespace-nowrap">{timeText(row.first)}</TableCell>
+                <TableCell className="max-w-56 md:max-w-xs xl:max-w-md" data-cell="title">
+                  {/* One line, cut with an ellipsis; the hover text has all of it. */}
+                  <Link href={`${path}/${row.id}`} title={title.untitled ? row.id : title.text} className="block truncate font-medium underline-offset-2 hover:underline">
+                    {title.untitled ? <span className="font-mono text-xs font-normal text-muted-foreground">{title.text}</span> : title.text}
+                  </Link>
+                  {/* Below md the Start, Person or Run and Repository columns are hidden, so that the table fits: the title's cell gives them. */}
+                  <div className="mt-1 truncate text-xs text-muted-foreground md:hidden">{whoText(row)} · {timeText(row.first)}</div>
+                  <div className="truncate font-mono text-xs text-muted-foreground md:hidden">{row.repository}{row.folder && `/${row.folder}`}</div>
+                  {row.flags.length > 0 && (
+                    <div className="mt-1 flex gap-1.5 md:hidden">{row.flags.map(flag => <Badge key={flag} variant="warn">{flag}</Badge>)}</div>
+                  )}
+                </TableCell>
+                <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.first)}</TableCell>
                 <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.last)}</TableCell>
-                <TableCell className="max-md:whitespace-normal max-md:break-all">
+                <TableCell className="max-md:hidden">
                   <Link href={`${path}/${row.id}`} className={`underline-offset-2 hover:underline ${row.run ? 'font-mono text-xs' : ''}`}>{whoText(row)}</Link>
                   {row.flags.map(flag => <Badge key={flag} variant="warn" className="ml-1.5">{flag}</Badge>)}
-                  {/* Below md the Repository column is hidden, so that the table fits. */}
-                  <div className="mt-1 font-mono text-xs break-all text-muted-foreground md:hidden">{row.repository}{row.folder && `/${row.folder}`}</div>
                 </TableCell>
                 <TableCell className="font-mono text-xs max-md:hidden">
                   {row.repository}
@@ -257,7 +271,8 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
                 <TableCell className="text-right font-mono text-xs tabular-nums max-2xl:hidden">{row.person_messages.toLocaleString()}</TableCell>
                 <TableCell className="text-right font-mono text-xs tabular-nums max-2xl:hidden">{row.tool_calls.toLocaleString()}</TableCell>
               </TableRow>
-            ))}
+              )
+            })}
           </TableBody>
         </Table>
       </div>

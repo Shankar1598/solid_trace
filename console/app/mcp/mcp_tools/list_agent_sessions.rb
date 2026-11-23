@@ -9,7 +9,8 @@ module McpTools
     description <<~TEXT.squish
       Lists an Organization's Agent sessions, the recorded conversations of coding agents in its Agent Project:
       each Agent session with activity in the range, latest activity first, as the Agent sessions page lists them.
-      Each row has the id, first and last times, the person (an engineer's own Agent session) or the Run (id and
+      Each row has the id, the title (the last /rename, else the title that Claude Code gave, else the start of the
+      first person message; "" for none), first and last times, the person (an engineer's own Agent session) or the Run (id and
       Project), harness, repository, folder, parent_session_id, model, input, output, cache_read and cache_write
       tokens, cost_usd (an estimate at list prices, null when it has none), person_messages, turns, tool_calls,
       subagents, flags (such as cut or partial) and a link to its Agent session page. totals adds up all the Agent

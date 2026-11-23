@@ -28,6 +28,8 @@ export interface AgentSessionRow {
   folder: string
   parent_session_id: string
   model: string
+  /** The last /rename, else Claude Code's title, else the start of the first person message; "" for none. */
+  title: string
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
@@ -104,6 +106,15 @@ export function costText(usd: number | null): string {
 /** The tokens of each kind, added. */
 export function totalTokens(t: Pick<AgentSessionRow, 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_write_tokens'>): number {
   return t.input_tokens + t.output_tokens + t.cache_read_tokens + t.cache_write_tokens
+}
+
+/**
+ * The title of an Agent session as the pages show it: its title, or, when
+ * it has none, its short id, which the pages show muted.
+ */
+export function titleOf({ id, title }: Pick<AgentSessionRow, 'id' | 'title'>): { text: string; untitled: boolean } {
+  const text = title?.trim() ?? ''
+  return text ? { text, untitled: false } : { text: id.slice(0, 8), untitled: true }
 }
 
 /** Whose an Agent session is: the person, or the Run with its Project. */

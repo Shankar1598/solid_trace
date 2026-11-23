@@ -41,6 +41,7 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     assert_equal [ CART, nil, { "id" => @member.id, "name" => "Bob" }, 0.00174, 1000 ],
       own.values_at("id", "run", "person", "cost_usd", "cache_read_tokens")
     assert_not own.key?("user_id")
+    assert_equal [ "", "Cart page" ], [ run["title"], own["title"] ]
     assert_equal "http://console.test/acme/agent_sessions/#{CART}", own["link"]
     assert_equal({ "agent_sessions" => 2, "input_tokens" => 20, "output_tokens" => 100, "cache_read_tokens" => 2000,
                    "cache_write_tokens" => 200, "cost_usd" => 0.00174, "no_cost" => 1 }, got.json["totals"])
@@ -110,7 +111,8 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     assert_not got.error?
     assert_requested asked
     session = got.json["agent_session"]
-    assert_equal [ CART, "apps/web", { "id" => @member.id, "name" => "Bob" }, nil ], session.values_at("id", "folder", "person", "run")
+    assert_equal [ CART, "Cart page", "apps/web", { "id" => @member.id, "name" => "Bob" }, nil ],
+      session.values_at("id", "title", "folder", "person", "run")
     assert_equal [ "a1" ], got.json["subagents"].pluck("agent_id")
     assert_equal [ "Add a cart page", "cart.go" ], got.json["steps"].pluck("text")
     assert_equal({ "kind" => "person", "name" => "Bob" }, got.json["steps"].first["from"])
@@ -177,6 +179,7 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
 
   def row(id, user_id:, cost:, run_id: "", project: "", folder: "")
     {
+      title: id == CART ? "Cart page" : "",
       id: id, first: "2026-10-02T11:00:00Z", last: "2026-10-02T11:00:06Z", user_id: user_id, harness: "claude-code",
       repository: "github.com/acme/shop", folder: folder, run_id: run_id, project: project, parent_session_id: "",
       model: "claude-opus-5-5", input_tokens: 10, output_tokens: 50, cache_read_tokens: 1000, cache_write_tokens: 100,

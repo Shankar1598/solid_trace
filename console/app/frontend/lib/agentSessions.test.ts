@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionsSearch, costText, searchAcrossHref, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionsSearch, costText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
 
@@ -41,6 +41,19 @@ describe('who an Agent session is of', () => {
     expect(whoText({ ...row, run: { id: 'run_42', project: 'shop' } })).toBe('Run run_42 (shop)')
     expect(whoText({ person: null, run: { id: 'run_42', project: null } })).toBe('Run run_42')
     expect(whoText({ person: null, run: null })).toBe('Unknown')
+  })
+})
+
+describe('the title of an Agent session', () => {
+  const id = '0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41'
+
+  it('is its title', () => {
+    expect(titleOf({ id, title: 'Cart page and checkout' })).toEqual({ text: 'Cart page and checkout', untitled: false })
+  })
+
+  it('is the short id of an Agent session with no title', () => {
+    expect(titleOf({ id, title: '' })).toEqual({ text: '0b6c2f1e', untitled: true })
+    expect(titleOf({ id, title: '  ' })).toEqual({ text: '0b6c2f1e', untitled: true })
   })
 })
 

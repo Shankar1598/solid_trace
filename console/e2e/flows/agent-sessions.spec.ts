@@ -14,7 +14,9 @@ import { shoot, watchErrors } from '../support/screens'
 // SessionEnd hook runs it, to this stack's EventStore. The flow checks the
 // Agent sessions page (rows, totals, the person and repository filters) and
 // one Agent session page: a subagent inside its parent, 'Show full' on a cut
-// tool output, and a secret shown as '*'.
+// tool output, and a secret shown as '*'. Each row and the page show the
+// Agent session's title: the person's /rename, else the start of the first
+// person message.
 //
 // OAuth needs a Console URL: the flow sets this stack's own, and puts the
 // old one back after. The flow stack's ClickHouse keeps the rows of earlier
@@ -190,8 +192,9 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   const secret = fakeAnthropicKey()
   const subagentId = `a${RUN}0f1e2d`
   const outputEnd = `END-OF-OUTPUT-${RUN}`
+  const longTitle = `Cart code hunt, with a title that is too long to show in one line of the Agent sessions list ${RUN}`
   const long = longSession(appDir, {
-    personText: `Find the cart code. My key is ${secret} for the test server.`,
+    personText: `Find the cart code. My key is ${secret} for the test server.`, title: longTitle,
     subagentId, subagentReply: 'It is in cart.go.', outputEnd, secret,
     usage: [
       { input: 11, output: 21, cacheRead: 101, cacheWrite: 31 },
@@ -254,6 +257,16 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect(longRow).toContainText('680')
   await expect(table.locator(`tr[data-session="${members.id}"]`)).toContainText(MEMBER_NAME)
 
+  // The title comes first: the person's /rename, on one line cut with an
+  // ellipsis, with all of it as the hover text; else the start of the
+  // first person message.
+  const longTitleLink = longRow.locator('td[data-cell="title"] a')
+  await expect(longTitleLink).toHaveText(longTitle)
+  await expect(longTitleLink).toHaveAttribute('title', longTitle)
+  await expect(longTitleLink).toHaveCSS('text-overflow', 'ellipsis')
+  await expect.poll(() => longTitleLink.evaluate(a => a.scrollWidth > a.clientWidth), { message: 'the long title is cut' }).toBe(true)
+  await expect(table.locator(`tr[data-session="${members.id}"] td[data-cell="title"] a`)).toHaveText('Fix the cart total.')
+
   // The person filter, with the repository filter: one person's rows.
   await choose(page, 'Person', MEMBER_NAME)
   await expect.poll(() => rowIds(page)).toEqual([members.id])
@@ -265,6 +278,7 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   // The other repository.
   await choose(page, 'Repository', TOOLS)
   await expect.poll(() => rowIds(page)).toEqual([tools.id])
+  await expect(table.locator(`tr[data-session="${tools.id}"] td[data-cell="title"] a`)).toHaveText('Update the build script.')
   await expectTotals(page, { 'Agent sessions': '1', Tokens: '154' })
 
   // The Agent session page of the long session. A click anywhere on the
@@ -272,9 +286,10 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await choose(page, 'Repository', APP)
   await expect.poll(() => rowIds(page)).toEqual([long.id])
   await expect(table.locator(`tr[data-session="${long.id}"]`).getByRole('link', { name: ADMIN_NAME })).toBeVisible()
-  await table.locator(`tr[data-session="${long.id}"] td`).first().click()
+  await table.locator(`tr[data-session="${long.id}"] td`).nth(1).click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/agent_sessions/${long.id}`))
   await expect(page.getByText(long.id, { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(longTitle)
 
   // The header and each person step name the person whose CLI uploaded it.
   const header = page.locator('[data-section="agent-session-header"]')
