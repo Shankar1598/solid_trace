@@ -107,11 +107,11 @@ Click a row in the list to open the Agent session page.
 
 - The page's heading is the title of the Agent session.
 - The header shows the person or the Run, the repository, the folder, the parent Agent session (a link, for a fork or a `/clear`), the model, the first and last activity, the tokens by kind, the estimated cost and the flags.
-- The timeline shows the person messages, the agent replies and the tool calls in time order. Each tool call shows its input, with its output below it.
+- The timeline shows the person messages, the agent replies and the tool calls in time order, the oldest step first, as a chat reads. Choose **Newest first** above the timeline to see the newest step first; **Oldest first** goes back. Your browser keeps the choice, with the choices of what to show. Each tool call shows its input, with its output below it.
 - A message that a person sent while the agent worked shows at the time when the agent got it, not at the time when the person wrote it.
 - Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
 - A subagent shows inside the tool call that started it. Click it to open its steps.
-- A long Agent session loads in pages: click **Load more steps** at the end of the timeline.
+- A long Agent session loads in pages. In the oldest order it loads from its start: click **Load more steps** at the end of the timeline for the later steps. In the newest order it loads from its end: click **Load earlier steps** at the end for the earlier steps.
 - A **cut** or **partial** flag means that the record is not complete, so a resume of this Agent session can fail. The page says so above the header. When a Run's next Execution finds its current Agent session so, it does not resume it: a new Agent session joins the Run, starts with the task and the messages, and becomes the Run's current Agent session. A value marked **cut** was cut at the Log limits; the raw line has all of it.
 - Click **Show full** on a cut value to read its raw line, as the record keeps it: with the secrets redacted.
 - To find a step, type in the search box above the timeline. The search shows the steps of this Agent session, and of its subagents, that have the text, with any case. Click **Clear** to see the timeline again.

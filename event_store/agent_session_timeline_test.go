@@ -253,6 +253,49 @@ func TestALongAgentSessionLoadsInPages(t *testing.T) {
 	expectTexts(t, "the pages together", got, want)
 }
 
+func TestALongAgentSessionLoadsInPagesFromItsEndWithTheNewestOrder(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	env.Clock.Set(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	o := newAgentOrganization(t, env)
+
+	var lines, want []string
+	start := time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC)
+	for i := 0; i < 25; i++ {
+		// Two lines at each second: a page can end between them.
+		at := start.Add(time.Duration(i/2) * time.Second).Format(time.RFC3339)
+		lines = append(lines, personAt(fmt.Sprintf("u%d", i), at, fmt.Sprintf("Message %02d", i)))
+		want = append([]string{fmt.Sprintf("person: Message %02d", i)}, want...)
+	}
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(lines...)}), 200)
+	env.ProcessAgentFiles(t)
+
+	var got []string
+	cursor, pages := "", 0
+	for {
+		body := map[string]any{"limit": 10, "order": "newest"}
+		if cursor != "" {
+			body["cursor"] = cursor
+		}
+		answer := readTimeline(t, env, o.project, laptopSession, body)
+		pages++
+		if len(answer.Steps) > 10 {
+			t.Fatalf("Expected at most 10 steps in a page, got %d", len(answer.Steps))
+		}
+		got = append(got, stepTexts(answer.Steps)...)
+		if cursor = answer.NextCursor; cursor == "" || pages > 5 {
+			break
+		}
+	}
+	if pages != 3 {
+		t.Errorf("Expected 3 pages, got %d", pages)
+	}
+	expectTexts(t, "the pages together, the newest step first", got, want)
+
+	oldest := readTimeline(t, env, o.project, laptopSession, map[string]any{"limit": 2, "order": "oldest"})
+	expectTexts(t, "the oldest order", stepTexts(oldest.Steps), []string{"person: Message 00", "person: Message 01"})
+}
+
 func TestTheAgentSessionPageRefusesABadRequest(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
@@ -273,6 +316,7 @@ func TestTheAgentSessionPageRefusesABadRequest(t *testing.T) {
 		{"a path that the Agent session does not have", laptopSession, map[string]any{"path": "subagents/agent-x.jsonl"}, 404},
 		{"a bad cursor", laptopSession, map[string]any{"cursor": "nope"}, 400},
 		{"a limit over 500", laptopSession, map[string]any{"limit": 501}, 400},
+		{"an order that is not oldest or newest", laptopSession, map[string]any{"order": "random"}, 400},
 	}
 	for _, c := range cases {
 		status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/agent-sessions/%s", o.project, c.session), c.body)

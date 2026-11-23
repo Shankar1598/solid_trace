@@ -68,7 +68,11 @@ type AgentTimelinePage struct {
 	Paths []string
 	// After, if set, is the place of the last step of the page before.
 	After *AgentTimelineCursor
-	Limit int
+	// Newest gives the steps in the reverse order, the newest first, so
+	// that the first page is the end of the timeline and each page after
+	// it is older.
+	Newest bool
+	Limit  int
 	// Search, if set, keeps the steps whose text holds it, with any case.
 	Search string
 	// Role, if set, keeps the steps of that role only.
@@ -97,7 +101,8 @@ func agentSessionLogs(projectID uint32, session AgentSessionTotals, paths []stri
 
 // AgentSessionTimeline reads one page of an Agent session's timeline from
 // its derived Logs: the steps of the files given, in the order of their
-// lines' own times, then path, version and offset. So a message that the
+// lines' own times, then path, version and offset (or in the reverse
+// order, with page.Newest). So a message that the
 // agent got in the middle of a turn shows at the time it got it, which
 // the parse gives its Log. It reads one more step than the limit, so the
 // caller knows if there is a page after it.
@@ -107,7 +112,12 @@ func (s *ClickHouseLogs) AgentSessionTimeline(ctx context.Context, projectID uin
 	num := func(key string) string { return c.Attribute(NumberAttribute, key) }
 	own := "ifNull(parseDateTime64BestEffortOrNull(" + c.Attribute(StringAttribute, "original.time") + ", 6, 'UTC'), time)"
 	version, offset := "toUInt32(ifNull("+num("agent.raw.version")+", 0))", "toUInt64(ifNull("+num("agent.raw.offset")+", 0))"
-	order := own + ", file, " + version + ", " + offset
+	direction, past := "", ">"
+	if page.Newest {
+		direction, past = " DESC", "<"
+	}
+	order := own + direction + ", file" + direction + ", " + version + direction + ", " + offset + direction
+	place := own + ", file, " + version + ", " + offset
 
 	where := agentSessionLogs(projectID, session, page.Paths) + " AND " + str("agent.role") + " != ''"
 	inner := ""
@@ -119,7 +129,7 @@ func (s *ClickHouseLogs) AgentSessionTimeline(ctx context.Context, projectID uin
 	}
 	if page.After != nil {
 		a := page.After
-		inner += fmt.Sprintf(" AND (%s) > (%s, %s, %d, %d)", order, chsql.Time(a.Time), chsql.String(a.Path), a.Version, a.Offset)
+		inner += fmt.Sprintf(" AND (%s) %s (%s, %s, %d, %d)", place, past, chsql.Time(a.Time), chsql.String(a.Path), a.Version, a.Offset)
 	}
 	// The ids of the page first, so that the messages of the other steps
 	// are not read.

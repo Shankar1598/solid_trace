@@ -9,12 +9,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Segmented } from '@/components/ui/segmented'
 import { costText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
+  addPage,
   fetchRawLine,
   fetchTimelinePage,
   fromText,
   groupTools,
+  inOrder,
   isThinking,
   messageText,
   rawLineText,
@@ -27,6 +30,7 @@ import {
   type RawLine,
   type ShownItem,
   type ToolItem,
+  type TimelineOrder,
   type TimelinePage,
   type TimelineShow,
   type TimelineStep,
@@ -53,24 +57,35 @@ const LinePath = createContext('')
 /** What the timelines show besides the person messages and the agent replies. */
 const Show = createContext<TimelineShow>({ tools: true, thinking: true })
 
+/** The order of the timelines: the oldest step first, or the newest. */
+const Order = createContext<TimelineOrder>('oldest')
+
 /** True inside a subagent's own timeline, whose steps need no subagent badge. */
 const InSubagent = createContext(false)
 
 const SHOW_KEY = 'solid-trace.agent-session.show'
 
-/** The viewer's last choices, kept in the browser only as a convenience. */
-function readShow(): TimelineShow {
+/** What the viewer chose to see, and in which order. */
+type Choices = TimelineShow & { order: TimelineOrder }
+
+const ORDERS = [
+  { value: 'oldest' as const, label: 'Oldest first' },
+  { value: 'newest' as const, label: 'Newest first' },
+]
+
+/** The viewer's last choices, kept in the browser only as a convenience. The oldest step first when none is kept. */
+function readChoices(): Choices {
   try {
     const saved = JSON.parse(localStorage.getItem(SHOW_KEY) ?? '{}')
-    return { tools: saved.tools !== false, thinking: saved.thinking !== false }
+    return { tools: saved.tools !== false, thinking: saved.thinking !== false, order: saved.order === 'newest' ? 'newest' : 'oldest' }
   } catch {
-    return { tools: true, thinking: true }
+    return { tools: true, thinking: true, order: 'oldest' }
   }
 }
 
-function saveShow(show: TimelineShow) {
+function saveChoices(choices: Choices) {
   try {
-    localStorage.setItem(SHOW_KEY, JSON.stringify(show))
+    localStorage.setItem(SHOW_KEY, JSON.stringify(choices))
   } catch {
     // The choices are only a convenience.
   }
@@ -79,19 +94,21 @@ function saveShow(show: TimelineShow) {
 /**
  * The Agent session page: the header of one Agent session and its
  * timeline of person messages, agent replies and tool calls, with each
- * subagent inside the tool call that started it. A long timeline loads in
- * pages. A search shows the steps of this Agent session, its subagents'
+ * subagent inside the tool call that started it, the oldest step first or
+ * the newest. A long timeline loads in pages, from the start in the oldest
+ * order and from the end in the newest. A search shows the steps of this Agent session, its subagents'
  * too, that have the text; 'Show full' on a cut value reads its raw line.
  */
 export default function AgentSessionShow({ agent_session: view }: { agent_session: AgentSessionProps }) {
   const session = view.agent_session
   const title = session && titleOf(session)
   const [search, setSearch] = useState<string | null>(null)
-  const [show, setShow] = useState(readShow)
-  const change = (next: Partial<TimelineShow>) => {
-    const all = { ...show, ...next }
-    setShow(all)
-    saveShow(all)
+  const [choices, setChoices] = useState(readChoices)
+  const show: TimelineShow = { tools: choices.tools, thinking: choices.thinking }
+  const change = (next: Partial<Choices>) => {
+    const all = { ...choices, ...next }
+    setChoices(all)
+    saveChoices(all)
   }
   return (
     <LinePath.Provider value={view.line_path}>
@@ -131,15 +148,20 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
           />
           {search === null
             ? (
+              <Order.Provider value={choices.order}>
               <Show.Provider value={show}>
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs" data-section="timeline-show">
+                  <Segmented label="Order of the steps" value={choices.order} options={ORDERS} onChange={order => change({ order })} />
                   <Toggle id="show-tools" label="Show tool calls" checked={show.tools} onChange={tools => change({ tools })} />
                   <Toggle id="show-thinking" label="Show agent thinking" checked={show.thinking} onChange={thinking => change({ thinking })} />
                 </div>
-                <Transcript base={view.timeline_path} subagents={view.subagents} first={{ steps: view.steps, next_cursor: view.next_cursor }} />
+                {/* The page comes with the first page of the oldest order; the newest order loads its own. */}
+                <Transcript key={choices.order} base={view.timeline_path} subagents={view.subagents}
+                  first={choices.order === 'oldest' ? { steps: view.steps, next_cursor: view.next_cursor } : null} />
               </Show.Provider>
+              </Order.Provider>
             )
-            : <SearchResults key={search} base={view.timeline_path} search={search} />}
+            : <SearchResults key={`${search}/${choices.order}`} base={view.timeline_path} search={search} order={choices.order} />}
         </div>
       )}
     </DashboardLayout>
@@ -156,8 +178,8 @@ function Toggle({ id, label, checked, onChange }: { id: string; label: string; c
   )
 }
 
-/** The steps of the Agent session, its subagents' too, that have the text, in pages. */
-function SearchResults({ base, search }: { base: string; search: string }) {
+/** The steps of the Agent session, its subagents' too, that have the text, in pages, in the order chosen. */
+function SearchResults({ base, search, order }: { base: string; search: string; order: TimelineOrder }) {
   const [steps, setSteps] = useState<TimelineStep[] | null>(null)
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -166,7 +188,7 @@ function SearchResults({ base, search }: { base: string; search: string }) {
     setLoading(true)
     setError(null)
     try {
-      const page = await fetchTimelinePage(base, { search, cursor: after })
+      const page = await fetchTimelinePage(base, { search, cursor: after, order })
       setSteps(current => [...(after ? current ?? [] : []), ...page.steps])
       setCursor(page.next_cursor)
     } catch (e) {
@@ -175,7 +197,7 @@ function SearchResults({ base, search }: { base: string; search: string }) {
       setLoading(false)
     }
   }
-  // The first page once: a new search makes a new SearchResults (its key).
+  // The first page once: a new search or order makes a new SearchResults (its key).
   useEffect(() => { void load(null) }, [])
   return (
     <div className="space-y-2" data-section="search-results">
@@ -230,37 +252,48 @@ function None({ text = 'None' }: { text?: string }) {
   return <span className="text-muted-foreground">{text}</span>
 }
 
-/** One transcript's timeline, the main one or a subagent's, with a button for its next page. */
-function Transcript({ base, path, subagents, first }: { base: string; path?: string; subagents: TimelineSubagent[]; first: TimelinePage }) {
-  const [steps, setSteps] = useState(first.steps)
-  const [cursor, setCursor] = useState(first.next_cursor)
+/**
+ * One transcript's timeline, the main one or a subagent's, in the order
+ * chosen, with a button for its next page at the end: the later steps in
+ * the oldest order, the earlier steps in the newest. With no first page,
+ * it loads its first page itself.
+ */
+function Transcript({ base, path, subagents, first }: { base: string; path?: string; subagents: TimelineSubagent[]; first: TimelinePage | null }) {
+  const order = useContext(Order)
+  const [steps, setSteps] = useState(() => (first ? addPage([], first.steps, order) : []))
+  const [cursor, setCursor] = useState(first ? first.next_cursor : null)
+  const [loaded, setLoaded] = useState(first !== null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const more = async () => {
+  const load = async (after: string | null) => {
     setLoading(true)
     setError(null)
     try {
-      const page = await fetchTimelinePage(base, { path, cursor })
-      setSteps(current => [...current, ...page.steps])
+      const page = await fetchTimelinePage(base, { path, cursor: after, order })
+      setSteps(current => addPage(after ? current : [], page.steps, order))
       setCursor(page.next_cursor)
+      setLoaded(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
   }
+  // The first page once, when none came with the page: a new order makes a new Transcript (its key).
+  useEffect(() => { if (!first) void load(null) }, [])
   // A subagent's own subagents show inside it, so the main timeline shows
   // only those that no call names.
   const show = useContext(Show)
-  const items = showItems(timelineItems(steps, path ? subagents.filter(s => s.tool_use_id) : subagents, cursor === null), show)
+  const items = showItems(timelineItems(steps, path ? subagents.filter(s => s.tool_use_id) : subagents, cursor === null, order), show)
   return (
-    <div className="space-y-2" data-transcript={path ?? 'main'}>
-      {items.length === 0 && <p className="text-sm text-muted-foreground">{steps.length === 0 ? 'No steps.' : 'No steps to show. Turn on tool calls or agent thinking above.'}</p>}
-      {groupTools(items).map(item => <Item key={itemKey(item)} item={item} base={base} subagents={subagents} />)}
+    <div className="space-y-2" data-transcript={path ?? 'main'} data-order={order}>
+      {!loaded && !error && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {loaded && items.length === 0 && <p className="text-sm text-muted-foreground">{steps.length === 0 ? 'No steps.' : 'No steps to show. Turn on tool calls or agent thinking above.'}</p>}
+      {inOrder(groupTools(items), order).map(item => <Item key={itemKey(item)} item={item} base={base} subagents={subagents} />)}
       {error && <p className="text-sm text-destructive">{error}</p>}
       {cursor !== null && (
-        <Button variant="outline" size="sm" onClick={more} disabled={loading}>
-          {loading ? 'Loading…' : 'Load more steps'}
+        <Button variant="outline" size="sm" onClick={() => load(cursor)} disabled={loading}>
+          {loading ? 'Loading…' : order === 'oldest' ? 'Load more steps' : 'Load earlier steps'}
         </Button>
       )}
     </div>
@@ -509,24 +542,14 @@ function Subagent({ subagent, base, subagents, started }: {
 }) {
   const brief = subagentBrief(started?.call ?? null)
   const show = useContext(Show)
-  const [first, setFirst] = useState<TimelinePage | null>(null)
+  const order = useContext(Order)
   const [open, setOpen] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const toggle = async () => {
-    setOpen(!open)
-    if (first || open) return
-    try {
-      setFirst(await fetchTimelinePage(base, { path: subagent.path }))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
   return (
     <div className="border-l-2 border-primary/40 pl-3" data-subagent={subagent.agent_id}>
       <button
         type="button"
         className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 py-1 text-left text-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-        onClick={toggle}
+        onClick={() => setOpen(!open)}
         aria-expanded={open}
         title={`Subagent ${subagent.agent_id}`}
       >
@@ -538,11 +561,9 @@ function Subagent({ subagent, base, subagents, started }: {
         </span>
       </button>
       {open && started && show.tools && <ToolCall tool={{ ...started, subagent: null }} base={base} subagents={subagents} />}
-      {open && error && <p className="text-sm text-destructive">{error}</p>}
-      {open && !error && !first && <p className="text-xs text-muted-foreground">Loading…</p>}
-      {open && first && (
+      {open && (
         <InSubagent.Provider value>
-          <Transcript base={base} path={subagent.path} subagents={subagents} first={first} />
+          <Transcript key={order} base={base} path={subagent.path} subagents={subagents} first={null} />
         </InSubagent.Provider>
       )}
     </div>

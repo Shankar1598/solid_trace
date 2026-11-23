@@ -136,6 +136,20 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_equal "c2", response.parsed_body["next_cursor"]
   end
 
+  test "the newest order goes to EventStore, and an order that is not one is not sent" do
+    stub_session(user_id: @member.id)
+    sign_in_as(@member)
+    url = "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}"
+    get agent_session_timeline_path(org_slug: "acme", id: CART, order: "newest", cursor: "c1"), as: :json
+
+    assert_response :success
+    assert_requested :post, url, body: hash_including("order" => "newest", "cursor" => "c1")
+
+    get agent_session_timeline_path(org_slug: "acme", id: CART, order: "random"), as: :json
+    assert_response :success
+    assert_requested(:post, url) { |request| !JSON.parse(request.body).key?("order") }
+  end
+
   test "a search inside the Agent session goes to EventStore and gives its matching steps as JSON" do
     stub_session(body: { "search" => "cart" }, user_id: @member.id)
     sign_in_as(@member)

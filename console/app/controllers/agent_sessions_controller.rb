@@ -46,7 +46,7 @@ class AgentSessionsController < ApplicationController
   # 503 when EventStore cannot answer.
   def timeline
     view = AgentSessionView.new(organization: @current_org, id: params[:id], path: params[:path], cursor: params[:cursor],
-      search: params[:search])
+      search: params[:search], order: params[:order])
     raise ActiveRecord::RecordNotFound unless view.found?
 
     event_store = view.event_store

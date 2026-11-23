@@ -21,23 +21,28 @@ class AgentSessionView
   # A cut or partial record cannot always be resumed (story 31).
   RESUME_FLAGS = %w[cut partial].freeze
   RESUME_WARNING = "The record of this Agent session is cut or partial, so a resume of this Agent session can fail."
+  # The orders of the timeline: the oldest step first (EventStore's
+  # default), or the newest first, whose first page is the end.
+  ORDERS = %w[oldest newest].freeze
   STEP_KINDS = { "person" => "person", "assistant" => "agent", "tool" => "tool",
                  "not from a person" => "not from a person", "system" => "system" }.freeze
 
-  attr_reader :organization, :id, :path, :cursor, :search, :limit
+  attr_reader :organization, :id, :path, :cursor, :search, :limit, :order
 
   # path is the subagent transcript whose timeline the page gives, nil for
   # the main transcript; cursor, the next_cursor of the page before.
   # search, if given, keeps the steps whose text has it, with any case;
   # with no path, from all the Agent session's transcripts. limit is the
-  # most steps on the page, EventStore's default (200) when nil.
-  def initialize(organization:, id:, path: nil, cursor: nil, search: nil, limit: nil)
+  # most steps on the page, EventStore's default (200) when nil. order is
+  # one of ORDERS; another value is the oldest first.
+  def initialize(organization:, id:, path: nil, cursor: nil, search: nil, limit: nil, order: nil)
     @organization = organization
     @id = id
     @path = path.presence
     @cursor = cursor.presence
     @search = search.to_s.strip.presence
     @limit = limit
+    @order = ORDERS.include?(order.to_s) ? order.to_s : nil
   end
 
   def project
@@ -110,7 +115,7 @@ class AgentSessionView
   def answer
     event_store_answer("Agent session") do
       EventStore.agent_session!(project_id: project.id, id: id, path: path, cursor: cursor, search: search, limit: limit,
-        read_timeout: TIMEOUT_SECONDS)
+        order: order, read_timeout: TIMEOUT_SECONDS)
     rescue EventStore::NotFound
       @not_found = true
       nil

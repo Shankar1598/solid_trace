@@ -175,8 +175,8 @@ class EventStore
     # from all the Agent session's transcripts. Raises NotFound for an
     # Agent session or a path that the Project does not have, else as
     # transactions! does.
-    def agent_session!(project_id:, id:, path: nil, cursor: nil, limit: nil, search: nil, read_timeout: 10)
-      body = { path: path, cursor: cursor, limit: limit, search: search }.compact
+    def agent_session!(project_id:, id:, path: nil, cursor: nil, limit: nil, search: nil, order: nil, read_timeout: 10)
+      body = { path: path, cursor: cursor, limit: limit, search: search, order: order }.compact
       post!("#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(id)}", body, read_timeout: read_timeout, open_timeout: 3)
     end
 

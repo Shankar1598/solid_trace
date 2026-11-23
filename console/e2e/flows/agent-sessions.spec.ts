@@ -349,5 +349,25 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await page.getByLabel('Show tool calls').click()
   await expect(bash).toBeVisible()
 
+  // The order: the oldest step first by default, as a chat reads. The
+  // newest order loads the end of the timeline and shows the last reply
+  // first, with the subagent still inside its tool call. The choice stays
+  // after a reload.
+  const main = page.locator('[data-transcript="main"]')
+  const firstStep = main.locator(':scope > [data-step]').first()
+  await expect(page.getByRole('button', { name: 'Oldest first' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(firstStep).toHaveAttribute('data-step', 'person')
+  await page.getByRole('button', { name: 'Newest first' }).click()
+  await expect(main).toHaveAttribute('data-order', 'newest')
+  await expect(firstStep).toHaveAttribute('data-step', 'agent')
+  await expect(firstStep).toContainText('The cart code is in cart.go, and the command printed its lines.')
+  await expect(main.locator(':scope > [data-step]').last()).toHaveAttribute('data-step', 'person')
+  await expect(agentCall.locator(`[data-subagent="${subagentId}"]`)).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Newest first' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(firstStep).toContainText('The cart code is in cart.go')
+  await page.getByRole('button', { name: 'Oldest first' }).click()
+  await expect(firstStep).toHaveAttribute('data-step', 'person')
+
   expect(errors).toEqual([])
 })

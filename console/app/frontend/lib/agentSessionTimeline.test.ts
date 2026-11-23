@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromText, groupTools, linePath, messageText, rawLineText, showItems, spanText, subagentBrief, timelineItems, timelinePath, toolCounts, toolSummary, type TimelineItem, type TimelineStep, type TimelineSubagent } from './agentSessionTimeline'
+import { addPage, fromText, groupTools, inOrder, linePath, messageText, rawLineText, showItems, spanText, subagentBrief, timelineItems, timelinePath, toolCounts, toolSummary, type ShownItem, type TimelineItem, type TimelineStep, type TimelineSubagent, type ToolItem } from './agentSessionTimeline'
 
 let offset = 0
 function step(role: string, text: string, more: Partial<TimelineStep> = {}): TimelineStep {
@@ -74,6 +74,49 @@ describe('fromText', () => {
     expect(fromText({ kind: 'person', name: null })).toBe('Person')
     expect(fromText({ kind: 'not from a person' })).toBe('Not from a person')
     expect(fromText({ kind: 'agent' })).toBe('Agent')
+  })
+})
+
+describe('the order of the timeline', () => {
+  const one = step('person', 'One', { time: '2026-10-02T11:00:01Z' })
+  const two = step('assistant', 'Two', { line: 'assistant/text', time: '2026-10-02T11:00:02Z' })
+  const three = step('person', 'Three', { time: '2026-10-02T11:00:03Z' })
+  const four = step('assistant', 'Four', { line: 'assistant/text', time: '2026-10-02T11:00:04Z' })
+
+  it('keeps the loaded steps in time order: a page of the oldest order goes after them, of the newest order before them', () => {
+    expect(addPage([one, two], [three, four], 'oldest')).toEqual([one, two, three, four])
+    expect(addPage([three, four], [two, one], 'newest')).toEqual([one, two, three, four])
+  })
+
+  it('shows the newest item first in the newest order, also inside a group of tool calls', () => {
+    const tool = (id: string): ToolItem => ({ kind: 'tool', call: step('assistant', '{}', { line: 'assistant/tool_use', tool_name: 'Read', tool_use_id: id }), result: null, subagent: null })
+    const [a, b, c] = [tool('A'), tool('B'), tool('C')]
+    const person = { kind: 'step' as const, step: one }
+    const shown: ShownItem[] = [person, { kind: 'tools', tools: [a, b, c] }]
+
+    expect(inOrder(shown, 'oldest')).toEqual(shown)
+    expect(inOrder(shown, 'newest')).toEqual([{ kind: 'tools', tools: [c, b, a] }, person])
+  })
+
+  it('in the newest order, puts a subagent that no call names only where the loaded steps reach it', () => {
+    const s = subagent({ tool_use_id: '', first: '2026-10-02T11:00:02.500Z' })
+    const late = subagent({ tool_use_id: '', path: 'subagents/agent-a2.jsonl', agent_id: 'a2', first: '2026-10-02T11:00:05Z' })
+
+    // The newest page holds three and four: the older subagent waits for
+    // its page, and the subagent after the last step shows at the end.
+    expect(timelineItems([three, four], [s, late], false, 'newest')).toEqual([
+      { kind: 'step', step: three }, { kind: 'step', step: four }, { kind: 'subagent', subagent: late },
+    ])
+    // All pages: each at its first time.
+    expect(timelineItems([one, two, three, four], [s, late], true, 'newest')).toEqual([
+      { kind: 'step', step: one }, { kind: 'step', step: two }, { kind: 'subagent', subagent: s },
+      { kind: 'step', step: three }, { kind: 'step', step: four }, { kind: 'subagent', subagent: late },
+    ])
+  })
+
+  it('asks EventStore for the newest order, and nothing for the oldest, its default', () => {
+    expect(timelinePath('/acme/agent_sessions/x/timeline', { order: 'newest', cursor: 'c2' })).toBe('/acme/agent_sessions/x/timeline?cursor=c2&order=newest')
+    expect(timelinePath('/acme/agent_sessions/x/timeline', { order: 'oldest' })).toBe('/acme/agent_sessions/x/timeline')
   })
 })
 

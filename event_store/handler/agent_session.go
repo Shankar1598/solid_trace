@@ -36,6 +36,10 @@ type agentSessionRequest struct {
 	// With no path, it looks in all the Agent session's transcripts, the
 	// subagents' too.
 	Search string `json:"search"`
+	// Order is "oldest" (also when empty), the oldest step first, or
+	// "newest", the newest step first: then the first page is the end of
+	// the timeline, and a cursor gives the older steps before it.
+	Order string `json:"order"`
 }
 
 type (
@@ -107,6 +111,9 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 	if req.Limit < 0 || req.Limit > agentTimelineLimit {
 		return c.Status(400).JSON(fiber.Map{"error": "limit must be from 1 to 500"})
 	}
+	if req.Order != "" && req.Order != "oldest" && req.Order != "newest" {
+		return c.Status(400).JSON(fiber.Map{"error": "order must be oldest or newest"})
+	}
 	if utf8.RuneCountInString(req.Search) > agentSearchLimit {
 		return c.Status(400).JSON(fiber.Map{"error": "a search must have at most 1000 characters"})
 	}
@@ -151,7 +158,8 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 	if req.Path != "" && len(paths) == 0 {
 		return c.Status(404).JSON(fiber.Map{"error": "the Agent session has no such transcript"})
 	}
-	steps, err := h.sessions.AgentSessionTimeline(ctx, projectID, session, storage.AgentTimelinePage{Paths: paths, After: after, Limit: limit, Search: req.Search})
+	steps, err := h.sessions.AgentSessionTimeline(ctx, projectID, session, storage.AgentTimelinePage{Paths: paths, After: after, Limit: limit, Search: req.Search,
+		Newest: req.Order == "newest"})
 	if err != nil {
 		return fail("timeline", err)
 	}

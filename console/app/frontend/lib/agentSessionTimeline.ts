@@ -47,6 +47,13 @@ export interface TimelinePage {
   next_cursor: string | null
 }
 
+/**
+ * The order in which the page shows a timeline: the oldest step first, as
+ * a chat reads, or the newest first. In the newest order the first page is
+ * the end of the timeline, and each next page is older.
+ */
+export type TimelineOrder = 'oldest' | 'newest'
+
 export type TimelineItem =
   | { kind: 'step'; step: TimelineStep }
   | { kind: 'tool'; call: TimelineStep | null; result: TimelineStep | null; subagent: TimelineSubagent | null }
@@ -56,17 +63,24 @@ const isCall = (s: TimelineStep) => s.line.endsWith('tool_use') && !!s.tool_use_
 const isResult = (s: TimelineStep) => s.role === 'tool'
 
 /**
- * The items of the steps loaded so far. A subagent that no tool call names
- * shows at its first time, when the steps reach it, or at the end when
- * `done` (no page is left).
+ * The items of the steps loaded so far, which are in time order (addPage).
+ * A subagent that no tool call names shows at its first time, when the
+ * steps reach it, or at the end when the end is loaded. In the oldest
+ * order the end is loaded when `done` (no page is left); in the newest
+ * order the end is always loaded, and a subagent before the first loaded
+ * step waits until its page loads, or `done`.
  */
-export function timelineItems(steps: TimelineStep[], subagents: TimelineSubagent[], done: boolean): TimelineItem[] {
+export function timelineItems(steps: TimelineStep[], subagents: TimelineSubagent[], done: boolean, order: TimelineOrder = 'oldest'): TimelineItem[] {
   const calls = new Set(steps.filter(isCall).map(s => s.tool_use_id))
   const results = new Map<string, TimelineStep>()
   for (const s of steps) if (isResult(s) && s.tool_use_id && calls.has(s.tool_use_id)) results.set(s.tool_use_id, s)
   const byCall = new Map(subagents.filter(s => s.tool_use_id).map(s => [s.tool_use_id, s]))
   const byAgent = new Map(subagents.map(s => [s.agent_id, s]))
-  const loose = subagents.filter(s => !s.tool_use_id).sort((a, b) => a.first.localeCompare(b.first))
+  let loose = subagents.filter(s => !s.tool_use_id).sort((a, b) => a.first.localeCompare(b.first))
+  if (order === 'newest' && !done) {
+    const start = steps.length > 0 ? Date.parse(steps[0].time) : Infinity
+    loose = loose.filter(s => Date.parse(s.first) >= start)
+  }
 
   const items: TimelineItem[] = []
   const placeLoose = (before: string | null) => {
@@ -87,8 +101,27 @@ export function timelineItems(steps: TimelineStep[], subagents: TimelineSubagent
       items.push({ kind: 'step', step: s })
     }
   }
-  if (done) placeLoose(null)
+  if (done || order === 'newest') placeLoose(null)
   return items
+}
+
+/**
+ * The steps loaded so far with the steps of one more page, in time order:
+ * a page of the oldest order comes after them, and a page of the newest
+ * order, which is newest first, comes before them.
+ */
+export function addPage(steps: TimelineStep[], page: TimelineStep[], order: TimelineOrder): TimelineStep[] {
+  return order === 'oldest' ? [...steps, ...page] : [...[...page].reverse(), ...steps]
+}
+
+/**
+ * The shown items, which are in time order, in the order of the page: in
+ * the newest order the newest item first, also inside a group of tool
+ * calls. A tool call keeps its input before its output.
+ */
+export function inOrder(shown: ShownItem[], order: TimelineOrder): ShownItem[] {
+  if (order === 'oldest') return shown
+  return [...shown].reverse().map(item => item.kind === 'tools' ? { ...item, tools: [...item.tools].reverse() } : item)
 }
 
 const KIND_TEXT: Record<string, string> = {
@@ -104,16 +137,19 @@ export function fromText(from: StepFrom): string {
 export interface TimelineOptions {
   path?: string
   cursor?: string | null
+  /** The oldest order is EventStore's default, so only the newest is sent. */
+  order?: TimelineOrder
   /** Keeps the steps that have this text, with any case; with no path, from all transcripts. */
   search?: string
 }
 
 /** The URL of one page of a transcript's timeline, or of the steps that a search finds. */
-export function timelinePath(base: string, { path, cursor, search }: TimelineOptions): string {
+export function timelinePath(base: string, { path, cursor, search, order }: TimelineOptions): string {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   if (cursor) params.set('cursor', cursor)
   if (search?.trim()) params.set('search', search.trim())
+  if (order === 'newest') params.set('order', order)
   const query = params.toString()
   return query ? `${base}?${query}` : base
 }
