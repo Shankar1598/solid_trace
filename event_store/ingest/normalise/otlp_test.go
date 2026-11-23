@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +202,8 @@ func TestAnOTLPBodyOfAnotherTypeIsKeptAsOriginalMessage(t *testing.T) {
 		{"double", func(v pcommon.Value) { v.SetDouble(0.5) }, 0.5},
 		{"bool", func(v pcommon.Value) { v.SetBool(true) }, true},
 		{"array", func(v pcommon.Value) { v.SetEmptySlice().FromRaw([]any{"a", "b"}) }, []any{"a", "b"}},
+		// Bytes aren't text, so they are no message.
+		{"bytes", func(v pcommon.Value) { v.SetEmptyBytes().FromRaw([]byte{0xde, 0xad, 0xbe, 0xef}) }, "3q2+7w=="},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -280,6 +283,22 @@ func TestOTLPEnvironmentComesFromTheNewNameElseTheOldName(t *testing.T) {
 	}
 }
 
+func TestOTLPEnvironmentComesFromTheHighestLayerWithAnyOfItsNames(t *testing.T) {
+	l := newOTLPLog()
+	l.resource.Attributes().PutStr("deployment.environment.name", "a")
+	l.record.Attributes().PutStr("deployment.environment", "b")
+
+	log, _ := l.normalise()
+
+	if log.Environment != "b" {
+		t.Errorf("Expected environment b from the record, got %q", log.Environment)
+	}
+	want := map[string]any{"deployment.environment.name": "a"}
+	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got)
+	}
+}
+
 func TestTheOTLPScopeNameAndVersionAreOtelScopeAttributes(t *testing.T) {
 	l := newOTLPLog()
 	l.scope.SetName("io.example.checkout")
@@ -299,6 +318,44 @@ func TestTheOTLPEventNameIsTheEventNameAttribute(t *testing.T) {
 	want := map[string]any{"event.name": "order.failed"}
 	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected Attributes %v, got %v", want, got)
+	}
+}
+
+func TestOTLPProtocolFieldsWinOverAttributesOfTheSameNameInAnyForm(t *testing.T) {
+	forms := []struct {
+		name string
+		put  func(m pcommon.Map, name string)
+	}{
+		{"dotted", func(m pcommon.Map, name string) { m.PutStr(name, "attribute") }},
+		{"nested", func(m pcommon.Map, name string) {
+			parts := strings.Split(name, ".")
+			for _, part := range parts[:len(parts)-1] {
+				m = m.PutEmptyMap(part)
+			}
+			m.PutStr(parts[len(parts)-1], "attribute")
+		}},
+	}
+	for _, form := range forms {
+		t.Run(form.name, func(t *testing.T) {
+			l := newOTLPLog()
+			l.scope.SetName("io.example.checkout")
+			l.scope.SetVersion("1.2.0")
+			form.put(l.scope.Attributes(), "otel.scope.name")
+			form.put(l.scope.Attributes(), "otel.scope.version")
+			l.record.SetEventName("order.failed")
+			form.put(l.record.Attributes(), "event.name")
+
+			log, _ := l.normalise()
+
+			want := map[string]any{
+				"otel.scope.name":    "io.example.checkout",
+				"otel.scope.version": "1.2.0",
+				"event.name":         "order.failed",
+			}
+			if got := attributes(t, log); !reflect.DeepEqual(got, want) {
+				t.Errorf("Expected Attributes %v, got %v", want, got)
+			}
+		})
 	}
 }
 
@@ -360,6 +417,20 @@ func TestOTLPAttributesNamedAsBuiltInFieldsOrSolidTraceAreKeptAsOriginal(t *test
 	}
 	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected Attributes\n%v\ngot\n%v", want, got)
+	}
+}
+
+// The rename of an attribute named message wins over the sender's own
+// original.message, as the JSON route's original.<field> does.
+func TestAnOTLPAttributeRenamedToOriginalMessageWinsOverTheSendersOwn(t *testing.T) {
+	log := normaliseOTLPRecord(func(r plog.LogRecord) {
+		r.Attributes().PutStr("message", "renamed")
+		r.Attributes().PutStr("original.message", "the sender's")
+	})
+
+	want := map[string]any{"original.message": "renamed"}
+	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
+		t.Errorf("Expected Attributes %v, got %v", want, got)
 	}
 }
 

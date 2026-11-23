@@ -14,14 +14,15 @@ import (
 	"github.com/solidtrace/event_store/models"
 )
 
-// otlpLevels are the Levels of the OTLP severity numbers 1 to 24, four
-// numbers to each Level.
+// otlpLevels are the Levels of the OTLP severity_number values 1 to 24, four
+// values to each Level.
 var otlpLevels = [...]string{"trace", "debug", "info", "warn", "error", "fatal"}
 
-// otlpAliases are the Attributes an OTLP log record's built-in fields are
-// read from, best first, as for a JSON Log: the first one present fills the
-// field and is consumed, and any others present stay Attributes. The other
-// built-in fields come from the record's own fields.
+// otlpAliases are the Attributes that an OTLP log record's built-in fields
+// are read from, best first. The highest layer that has one of a field's
+// names fills the field, from its best name present. That name is consumed,
+// and any others stay Attributes. The other built-in fields come from the
+// record's own fields.
 var otlpAliases = [fieldCount][]string{
 	service:     {"service.name"},
 	environment: {"deployment.environment.name", "deployment.environment"},
@@ -29,52 +30,64 @@ var otlpAliases = [fieldCount][]string{
 
 // OTLP normalises one OTLP log record, with the resource and the
 // instrumentation scope it was sent under, by the rules JSON follows (ADR
-// 0002).
+// 0002), and by the OTLP rules below.
 //
 // The resource, scope and record attributes are Attributes in one flat
 // namespace, with no prefix. When two layers give the same name, the record
-// wins over the scope, and the scope wins over the resource. In one layer, an
-// attribute wins over a field of the same name, as in a Sentry record. The
-// scope's name and version are otel.scope.name and otel.scope.version, and the
-// record's event name is event.name. An attribute named as a built-in field
-// is kept as original.<field>.
+// wins over the scope, and the scope wins over the resource. The scope's name
+// and version are otel.scope.name and otel.scope.version, and the record's
+// event_name is event.name. In one layer, these fields win over an attribute
+// of the same name, in the dotted or the nested form. An attribute named as a
+// built-in field is kept as original.<field>.
 //
 // The time is the record's time, else its observed time. The Level comes from
-// the severity number, else from the severity text. A body that isn't a
-// string is kept as original.message. The flags, the dropped attributes
-// counts, the schema URLs, and the severity text when the severity number
-// gives the Level, aren't kept.
+// severity_number 1 to 24, else from severity_text. A body that isn't a
+// string is kept as original.message, and bytes are base64. The flags, the
+// dropped attributes counts, the schema URLs, and severity_text when
+// severity_number gives the Level, aren't kept.
 func OTLP(resource pcommon.Resource, scope pcommon.InstrumentationScope, record plog.LogRecord, r Receipt) (models.Log, Outcome) {
-	scopeFields := make(map[string]json.RawMessage, 2)
+	// The fields go on top of the flattened attributes, so that they win over
+	// both forms of an attribute.
+	scopeAttributes := flatten(members(scope.Attributes()))
 	if name := scope.Name(); name != "" {
-		scopeFields["otel.scope.name"] = quote(name)
+		scopeAttributes["otel.scope.name"] = quote(name)
 	}
 	if version := scope.Version(); version != "" {
-		scopeFields["otel.scope.version"] = quote(version)
+		scopeAttributes["otel.scope.version"] = quote(version)
 	}
-	recordFields := make(map[string]json.RawMessage, 1)
+	recordAttributes := flatten(members(record.Attributes()))
 	if name := record.EventName(); name != "" {
-		recordFields["event.name"] = quote(name)
+		recordAttributes["event.name"] = quote(name)
 	}
 
 	// Each layer is flattened by itself, so a record's {"http": {"method":
 	// …}} still wins over a resource's "http.method".
-	s := sent{attributes: flatten(members(resource.Attributes(), nil))}
-	maps.Copy(s.attributes, flatten(members(scope.Attributes(), scopeFields)))
-	maps.Copy(s.attributes, flatten(members(record.Attributes(), recordFields)))
+	s := sent{attributes: flatten(members(resource.Attributes()))}
+	maps.Copy(s.attributes, scopeAttributes)
+	maps.Copy(s.attributes, recordAttributes)
 
+	// The rename wins over a sender's own original.<field>, as on the JSON
+	// route.
 	for _, name := range names {
 		if raw, ok := s.attributes[name]; ok {
 			delete(s.attributes, name)
 			s.attributes["original."+name] = raw
 		}
 	}
+	// The merged Attributes stand for the resource layer: when the record and
+	// the scope have none of a field's names, the names in it came from the
+	// resource. The merged value of the name found is that layer's value, as
+	// no higher layer has the name.
+	layers := [...]map[string]json.RawMessage{recordAttributes, scopeAttributes, s.attributes}
 	for f, aliases := range otlpAliases {
-		for _, name := range aliases {
-			if raw, ok := s.attributes[name]; ok {
-				s.fields[f] = raw
-				delete(s.attributes, name)
-				break
+	search:
+		for _, layer := range layers {
+			for _, name := range aliases {
+				if _, ok := layer[name]; ok {
+					s.fields[f] = s.attributes[name]
+					delete(s.attributes, name)
+					break search
+				}
 			}
 		}
 	}
@@ -86,8 +99,8 @@ func OTLP(resource pcommon.Resource, scope pcommon.InstrumentationScope, record 
 	if t != 0 {
 		s.fields[timeField] = strconv.AppendUint(nil, uint64(t), 10)
 	}
-	// A severity number out of the range, with no text, is kept as
-	// original.level.
+	// A severity_number out of the range 1 to 24, with no severity_text, is
+	// kept as original.level.
 	switch number := record.SeverityNumber(); {
 	case number >= 1 && number <= 24:
 		s.fields[level] = quote(otlpLevels[(number-1)/4])
@@ -96,7 +109,14 @@ func OTLP(resource pcommon.Resource, scope pcommon.InstrumentationScope, record 
 	case number != 0:
 		s.fields[level] = strconv.AppendInt(nil, int64(number), 10)
 	}
-	if body := record.Body(); body.Type() != pcommon.ValueTypeEmpty {
+	switch body := record.Body(); body.Type() {
+	case pcommon.ValueTypeEmpty:
+	case pcommon.ValueTypeBytes:
+		// Bytes aren't text, so they are no message. They are set after the
+		// rename, so they win over an attribute named message, as a body of
+		// another type does.
+		s.attributes["original.message"] = appendValue(nil, body)
+	default:
 		s.fields[message] = appendValue(nil, body)
 	}
 	if id := record.TraceID(); !id.IsEmpty() {
@@ -108,16 +128,13 @@ func OTLP(resource pcommon.Resource, scope pcommon.InstrumentationScope, record 
 	return normaliseSent(s, r)
 }
 
-// members returns the members of a JSON object that holds the attributes m,
-// added to fields. An attribute wins over a field of the same name.
-func members(m pcommon.Map, fields map[string]json.RawMessage) map[string]json.RawMessage {
-	if fields == nil {
-		fields = make(map[string]json.RawMessage, m.Len())
-	}
+// members returns the attributes m as the members of a JSON object.
+func members(m pcommon.Map) map[string]json.RawMessage {
+	object := make(map[string]json.RawMessage, m.Len())
 	for name, value := range m.All() {
-		fields[name] = appendValue(nil, value)
+		object[name] = appendValue(nil, value)
 	}
-	return fields
+	return object
 }
 
 // appendValue appends an OTLP value as JSON. An int64 is its exact digits,
@@ -169,6 +186,7 @@ func appendValue(b []byte, v pcommon.Value) []byte {
 	return b
 }
 
+// quote returns s as a JSON string.
 func quote(s string) json.RawMessage {
 	b, _ := jsontext.AppendQuote(nil, s)
 	return b
