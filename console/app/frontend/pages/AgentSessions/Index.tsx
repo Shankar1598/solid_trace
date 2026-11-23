@@ -1,5 +1,6 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot } from 'lucide-react'
 import { AgentSessionSearch } from '@/components/AgentSessionSearch'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
@@ -12,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   agentSessionsSearch,
+  agoText,
   costText,
   nextOrder,
   orderOf,
@@ -244,6 +246,7 @@ function SessionsTable({ rows, more, total, path, order, onSort }: {
   onSort: (order: AgentSessionOrder) => void
 }) {
   const sortHead = { order, onSort }
+  const now = useNow()
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto border">
@@ -283,7 +286,10 @@ function SessionsTable({ rows, more, total, path, order, onSort }: {
                   )}
                 </TableCell>
                 <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.first)}</TableCell>
-                <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.last)}</TableCell>
+                <TableCell className="text-xs whitespace-nowrap max-md:hidden" data-cell="last">
+                  {/* How long ago, so that a live Agent session stands out; the hover text has the time. */}
+                  <time dateTime={row.last} title={format(new Date(row.last), 'MMM d, HH:mm:ss')}>{agoText(row.last, now)}</time>
+                </TableCell>
                 <TableCell className="max-md:hidden">
                   {/* Plain text: the row opens the Agent session, and the title is its link. */}
                   <span className={row.run ? 'font-mono text-xs' : undefined}>{whoText(row)}</span>
@@ -369,6 +375,17 @@ function openRow(e: React.MouseEvent<HTMLTableRowElement>, href: string) {
     return
   }
   router.visit(href)
+}
+
+// The time now, again each 30 seconds, so that "a few seconds ago" ages
+// while the page is open.
+function useNow(): Date {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
+  return now
 }
 
 function timeText(time: string): string {

@@ -1,6 +1,7 @@
 // The Agent sessions page: its search (the range, the filters and the
 // order stay in the URL, so that a filtered view can be shared), and how
 // its numbers read. The rows and totals come from AgentSessionsView.
+import { formatDistanceStrict } from 'date-fns'
 import { EMPTY_BUILDER, queryOf } from './logs/builder'
 import { searchOf } from './logs/explorerState'
 import type { TimeRange } from './timeRange'
@@ -151,6 +152,18 @@ export function costText(usd: number | null): string {
   if (usd === null) return 'No cost'
   if (usd > 0 && usd < 0.005) return '<$0.01'
   return dollars.format(usd)
+}
+
+/**
+ * How long ago a time was, as the list shows the last activity: "a few
+ * seconds ago" in its first minute, then "5 minutes ago", "3 hours ago",
+ * "2 days ago". A time a little after now (another clock) is "a few
+ * seconds ago" too.
+ */
+export function agoText(time: string, now: Date = new Date()): string {
+  const seconds = Math.max(0, (now.getTime() - Date.parse(time)) / 1000)
+  if (seconds < 60) return 'a few seconds ago'
+  return `${formatDistanceStrict(new Date(time), now, { roundingMethod: 'floor' })} ago`
 }
 
 /** The tokens of each kind, added. */

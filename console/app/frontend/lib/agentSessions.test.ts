@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionsSearch, costText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionsSearch, agoText, costText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
 
@@ -107,5 +107,22 @@ describe('the search across Agent sessions', () => {
     expect(params.get('range')).toBe('7d')
     expect(params.get('mode')).toBe('builder')
     expect(params.get('q')).toBe(`['agent-sessions']\n| search "the \\"cart\\" page"`)
+  })
+})
+
+describe('agoText', () => {
+  const now = new Date('2026-11-23T12:00:00Z')
+
+  it('gives a few seconds in the first minute, also for a time after now', () => {
+    expect(agoText('2026-11-23T12:00:00Z', now)).toBe('a few seconds ago')
+    expect(agoText('2026-11-23T11:59:01Z', now)).toBe('a few seconds ago')
+    expect(agoText('2026-11-23T12:00:05Z', now)).toBe('a few seconds ago')
+  })
+
+  it('gives whole minutes, hours and days after that', () => {
+    expect(agoText('2026-11-23T11:59:00Z', now)).toBe('1 minute ago')
+    expect(agoText('2026-11-23T11:55:30Z', now)).toBe('4 minutes ago')
+    expect(agoText('2026-11-23T09:10:00Z', now)).toBe('2 hours ago')
+    expect(agoText('2026-11-21T10:00:00Z', now)).toBe('2 days ago')
   })
 })

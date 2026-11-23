@@ -272,6 +272,10 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   // activity first. The order is in the URL, and a filter keeps it.
   const orderedIds = () => table.locator('tr[data-session]').evaluateAll(rows => rows.map(r => r.getAttribute('data-session')!))
   await expect(table.getByRole('columnheader', { name: 'Last activity' })).toHaveAttribute('aria-sort', 'descending')
+  // The last activity reads as how long ago, with the time in its hover text.
+  const last = table.locator(`tr[data-session="${members.id}"] td[data-cell="last"] time`)
+  await expect(last).toHaveText(/ ago$/)
+  await expect(last).toHaveAttribute('title', /^[A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2}:\d{2}$/)
   const tokensHead = table.getByRole('columnheader', { name: 'Tokens' })
   await expect(tokensHead).not.toHaveAttribute('aria-sort')
   await tokensHead.getByRole('button', { name: 'Tokens' }).click()
