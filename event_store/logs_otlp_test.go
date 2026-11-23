@@ -103,10 +103,12 @@ func TestOTLPProtobufAndJSONLogsAreStoredWithTheirFieldsAndCounted(t *testing.T)
 			expectNoneRejected(t, otlpResponse(t, resp, c.responseType))
 			env.ProcessLogs(t)
 
+			// The records' times in nanoseconds, as a Log keeps them: to
+			// the microsecond. Newest first.
 			times := []time.Time{
-				time.Date(2026, 11, 23, 23, 12, 34, 57_687_412, time.UTC),
-				time.Date(2026, 11, 23, 23, 12, 34, 57_682_582, time.UTC),
-				time.Date(2026, 11, 23, 23, 12, 34, 57_617_942, time.UTC),
+				time.Date(2026, 11, 23, 23, 12, 34, 57_687_000, time.UTC),
+				time.Date(2026, 11, 23, 23, 12, 34, 57_682_000, time.UTC),
+				time.Date(2026, 11, 23, 23, 12, 34, 57_617_000, time.UTC),
 			}
 			var want []listedLog
 			for _, at := range times {
