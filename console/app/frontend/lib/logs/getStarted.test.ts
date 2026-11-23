@@ -5,8 +5,8 @@ const ingest: IngestTarget = { url: 'http://localhost:4000', projectId: 7, key: 
 const code = (id: string, to = ingest) => snippets(to).find(s => s.id === id)!.code
 
 describe('snippets for an empty Project', () => {
-  it('offers curl, Vector, Fluent Bit and a Sentry SDK, in that order', () => {
-    expect(snippets(ingest).map(s => s.label)).toEqual(['curl', 'Vector', 'Fluent Bit', 'Sentry SDK'])
+  it('offers curl, Vector, Fluent Bit, a Sentry SDK and OpenTelemetry, in that order', () => {
+    expect(snippets(ingest).map(s => s.label)).toEqual(['curl', 'Vector', 'Fluent Bit', 'Sentry SDK', 'OpenTelemetry'])
   })
 
   it('fills in the key-only Log route and the Project\'s key', () => {
@@ -38,8 +38,27 @@ describe('snippets for an empty Project', () => {
     expect(code('sentry')).toContain("dsn: 'http://abc123@localhost:4000/7'")
   })
 
+  it('gives OpenTelemetry the bare Ingest URL and key, for a Collector and for an SDK', () => {
+    const otel = code('opentelemetry')
+    expect(otel).toContain('otlp_http:')
+    expect(otel).not.toContain('otlphttp')
+    expect(otel).toMatch(/\n    endpoint: http:\/\/localhost:4000\n/)
+    expect(otel).toContain('      Authorization: "Bearer abc123"')
+    expect(otel).toContain('exporters: [otlp_http]')
+    expect(otel).toContain('OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4000/v1/logs\n')
+    expect(otel).toContain('OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer abc123\n')
+    expect(otel).toContain('OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf')
+    expect(otel).not.toContain('/api/')
+
+    const secure = code('opentelemetry', { ...ingest, url: 'https://logs.example.com/ingest/' })
+    expect(secure).toContain('    endpoint: https://logs.example.com/ingest\n')
+    expect(secure).toContain('OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example.com/ingest/v1/logs\n')
+    expect(secure).not.toContain('/api/')
+  })
+
   it('leaves a placeholder for a Project without a key', () => {
     expect(code('curl', { ...ingest, key: null })).toContain('Bearer YOUR_PROJECT_KEY')
+    expect(code('opentelemetry', { ...ingest, key: null })).toContain('Authorization: "Bearer YOUR_PROJECT_KEY"')
   })
 })
 

@@ -10,7 +10,7 @@ export interface IngestTarget {
 }
 
 export interface Snippet {
-  id: 'curl' | 'vector' | 'fluent-bit' | 'sentry'
+  id: 'curl' | 'vector' | 'fluent-bit' | 'sentry' | 'opentelemetry'
   label: string
   /** What the snippet is: a shell command or a config file. */
   note: string
@@ -33,11 +33,17 @@ export function sentryDsn(target: IngestTarget): string {
   return `${base.protocol}//${target.key ?? NO_KEY}@${base.host}${base.pathname.replace(/\/+$/, '')}/${target.projectId}`
 }
 
-/** The snippets an empty Project shows: curl, Vector, Fluent Bit and a Sentry SDK. */
+/** The bare Ingest URL, without a trailing slash: a Collector adds /v1/logs to it, and an SDK needs it added. */
+function otlpEndpoint({ url }: IngestTarget): string {
+  return new URL(url).href.replace(/\/+$/, '')
+}
+
+/** The snippets an empty Project shows: curl, Vector, Fluent Bit, a Sentry SDK and OpenTelemetry. */
 export function snippets(target: IngestTarget): Snippet[] {
   const key = target.key ?? NO_KEY
   const route = logsRoute(target)
   const https = route.protocol === 'https:'
+  const otlp = otlpEndpoint(target)
   const port = route.port || (https ? '443' : '80')
   return [
     {
@@ -99,6 +105,29 @@ export function snippets(target: IngestTarget): Snippet[] {
         '})',
         '',
         "Sentry.logger.info('Hello from Sentry', { service: 'api' })",
+      ].join('\n'),
+    },
+    {
+      id: 'opentelemetry',
+      label: 'OpenTelemetry',
+      note: 'An exporter and a logs pipeline for an OpenTelemetry Collector (set receivers to your own), then the environment variables for an SDK that sends without one. EventStore takes OTLP over HTTP, not gRPC.',
+      code: [
+        'exporters:',
+        '  otlp_http:',
+        `    endpoint: ${otlp}`,
+        '    headers:',
+        `      Authorization: "Bearer ${key}"`,
+        '',
+        'service:',
+        '  pipelines:',
+        '    logs:',
+        '      receivers: [otlp]',
+        '      exporters: [otlp_http]',
+        '',
+        '# For an SDK, with no Collector, set these instead:',
+        `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${otlp}/v1/logs`,
+        `OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer ${key}`,
+        'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf',
       ].join('\n'),
     },
   ]
