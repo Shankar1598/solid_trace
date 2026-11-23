@@ -55,7 +55,8 @@ export interface TimelinePage {
 export type TimelineOrder = 'oldest' | 'newest'
 
 export type TimelineItem =
-  | { kind: 'step'; step: TimelineStep }
+  /** A message. A slash command has its output in it, when the output is loaded. */
+  | { kind: 'step'; step: TimelineStep; output?: TimelineStep }
   | { kind: 'tool'; call: TimelineStep | null; result: TimelineStep | null; subagent: TimelineSubagent | null }
   | { kind: 'subagent'; subagent: TimelineSubagent }
 
@@ -88,17 +89,30 @@ export function timelineItems(steps: TimelineStep[], subagents: TimelineSubagent
       items.push({ kind: 'subagent', subagent: loose.shift()! })
     }
   }
+  const inputs = commandInputs(steps)
+  // The last slash command that its output can join: until a person
+  // message, an agent's step or a tool call comes after it.
+  let command: Extract<TimelineItem, { kind: 'step' }> | null = null
   for (const s of steps) {
+    if (inputs.has(s.id)) continue
     placeLoose(s.time)
     if (isCall(s)) {
+      command = null
       const result = results.get(s.tool_use_id!) ?? null
       const subagent = byCall.get(s.tool_use_id!) ?? (result?.subagent_id ? byAgent.get(result.subagent_id) ?? null : null)
       items.push({ kind: 'tool', call: s, result, subagent })
     } else if (isResult(s)) {
+      command = null
       if (s.tool_use_id && calls.has(s.tool_use_id)) continue
       items.push({ kind: 'tool', call: null, result: s, subagent: s.subagent_id ? byAgent.get(s.subagent_id) ?? null : null })
+    } else if (commandOutput(s) !== null && command) {
+      command.output = s
+      command = null
     } else {
-      items.push({ kind: 'step', step: s })
+      const item: TimelineItem = { kind: 'step', step: s }
+      items.push(item)
+      if (isCommand(s)) command = item
+      else if (commandOutput(s) === null && (s.from.kind === 'person' || s.from.kind === 'agent')) command = null
     }
   }
   if (done || order === 'newest') placeLoose(null)
@@ -314,19 +328,99 @@ export function spanText(first: string, last: string): string {
   return `${Math.floor(minutes / 60)} h ${minutes % 60} min`
 }
 
+/** The text in the first <name>…</name> of text, trimmed; undefined for none. */
+function tagText(text: string, name: string): string | undefined {
+  return text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim()
+}
+
 /**
  * A message's text as a person reads it: Claude Code's tags for a slash
- * command and its output become the command and the output, and its
- * <system-reminder> wrappers go.
+ * command and its output become the command and the output, with no
+ * colour codes of the terminal, and its <system-reminder> wrappers go.
+ * Claude Code's caveat before a command is for the model, so it gives ''
+ * and does not show.
  */
 export function messageText(text: string): string {
-  const tag = (name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim()
-  const command = tag('command-name')
+  const command = tagText(text, 'command-name')
   if (command !== undefined) {
-    const args = tag('command-args')
+    const args = tagText(text, 'command-args')
     return [command, args].filter(Boolean).join(' ')
   }
-  const out = tag('local-command-stdout') ?? tag('local-command-stderr')
-  if (out !== undefined) return out
+  const out = tagText(text, 'local-command-stdout') ?? tagText(text, 'local-command-stderr')
+  if (out !== undefined) return stripAnsi(out).trim()
+  if (tagText(text, 'local-command-caveat') !== undefined) return ''
   return text.replace(/<\/?system-reminder>/g, '').trim()
+}
+
+/**
+ * The text with no escape sequences of a terminal: the colours and styles
+ * (CSI, as ESC[2m), the links and titles (OSC) and the other two-character
+ * escapes. Claude Code keeps them in a command's output.
+ */
+export function stripAnsi(text: string): string {
+  return text
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b[@-Z\\-_]/g, '')
+}
+
+/** A slash command that a person gave: Claude Code's <command-name> line. */
+export const isCommand = (s: TimelineStep) => s.text.includes('<command-name>')
+
+/**
+ * The output of a slash command, as a person reads it, or null for a step
+ * that is not one. A parse before v0.23.3 gave the output the person's
+ * role, so the text decides.
+ */
+export function commandOutput(s: TimelineStep): string | null {
+  const out = tagText(s.text, 'local-command-stdout') ?? tagText(s.text, 'local-command-stderr')
+  return out === undefined ? null : stripAnsi(out).trim()
+}
+
+/** How far the input of a slash command can be before its <command-name> line. */
+const INPUT_BEFORE_COMMAND_MS = 10_000
+
+/**
+ * The ids of the steps that are the input of a slash command: Claude Code
+ * writes what the person typed (`/compact`) and then the command in its
+ * tags, so the command shows once. The input is a person message that is
+ * the same command, at most INPUT_BEFORE_COMMAND_MS before the command,
+ * with no person message, agent step or tool call between them.
+ */
+function commandInputs(steps: TimelineStep[]): Set<string> {
+  const inputs = new Set<string>()
+  const words = (text: string) => text.replace(/\s+/g, ' ').trim()
+  steps.forEach((s, i) => {
+    if (s.from.kind !== 'person' || isCommand(s) || commandOutput(s) !== null || !s.text.trim().startsWith('/')) return
+    for (const next of steps.slice(i + 1)) {
+      if (Date.parse(next.time) - Date.parse(s.time) > INPUT_BEFORE_COMMAND_MS) return
+      if (isCommand(next)) {
+        if (messageText(next.text) === words(s.text)) inputs.add(s.id)
+        return
+      }
+      if (commandOutput(next) === null && (next.from.kind === 'person' || next.from.kind === 'agent' || next.from.kind === 'tool')) return
+    }
+  })
+  return inputs
+}
+
+const COMPACTION_SUMMARY = 'This session is being continued from a previous conversation'
+
+/** The summary that Claude Code writes as the first message after it compacts the conversation. */
+export const isCompactionSummary = (s: TimelineStep) => s.from.kind !== 'person' && s.text.startsWith(COMPACTION_SUMMARY)
+
+/**
+ * The compaction summary as Markdown: each of Claude Code's tags in it, as
+ * <tools-used-before-summary>, is a heading of its words, and its
+ * <system-reminder> wrappers go.
+ */
+export function compactionSummaryText(text: string): string {
+  return text
+    .replace(/<\/?system-reminder>/g, '')
+    .replace(/<([a-z]+(?:-[a-z]+)+)>/g, (_, name: string) => {
+      const words = name.replace(/-/g, ' ')
+      return `\n\n**${words[0].toUpperCase()}${words.slice(1)}**\n\n`
+    })
+    .replace(/<\/[a-z]+(?:-[a-z]+)+>/g, '\n')
+    .trim()
 }

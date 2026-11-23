@@ -15,11 +15,15 @@ import { Switch } from '@/components/ui/switch'
 import { costText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
   addPage,
+  commandOutput,
+  compactionSummaryText,
   fetchRawLine,
   fetchTimelinePage,
   fromText,
   groupTools,
   inOrder,
+  isCommand,
+  isCompactionSummary,
   isThinking,
   messageText,
   rawLineText,
@@ -317,7 +321,7 @@ function itemKey(item: ShownItem): string {
 
 function Item({ item, base, subagents }: { item: ShownItem; base: string; subagents: TimelineSubagent[] }) {
   if (item.kind === 'subagent') return <Subagent subagent={item.subagent} base={base} subagents={subagents} />
-  if (item.kind === 'step') return <Message step={item.step} />
+  if (item.kind === 'step') return <Message step={item.step} output={item.output} />
   if (item.kind === 'tools') return <ToolGroup tools={item.tools} base={base} subagents={subagents} />
   return <ToolCall tool={item} base={base} subagents={subagents} />
 }
@@ -407,8 +411,10 @@ function ToolCall({ tool, base, subagents }: { tool: ToolItem; base: string; sub
  * sees the conversation first: the person's messages are the strongest,
  * the agent's replies are cards, its thinking is quiet text, and the text
  * that Claude Code adds (commands, skills, reminders) is quiet and folds.
+ * A slash command is the person's: it shows as they typed it, in mono,
+ * with Claude Code's output under it.
  */
-function Message({ step }: { step: TimelineStep }) {
+function Message({ step, output }: { step: TimelineStep; output?: TimelineStep }) {
   const inSubagent = useContext(InSubagent)
   const kind = step.from.kind
   const text = messageText(step.text)
@@ -418,10 +424,14 @@ function Message({ step }: { step: TimelineStep }) {
       icon={kind === 'agent' ? <Bot className="h-3.5 w-3.5" aria-hidden /> : null} />
   )
   if (kind === 'person') {
+    const command = isCommand(step)
     return (
-      <div className="border border-l-4 border-primary/40 border-l-primary bg-primary/10" data-step={kind}>
+      <div className="border border-l-4 border-primary/40 border-l-primary bg-primary/10" data-step={kind} data-command={command || undefined}>
         {title}
-        <div className="px-3 pb-3"><Text step={step} text={text} /></div>
+        <div className="px-3 pb-3">
+          {command ? <pre className="max-w-full whitespace-pre-wrap break-words font-mono text-sm">{text}</pre> : <Text step={step} text={text} />}
+          {output && <CommandOutput step={output} />}
+        </div>
       </div>
     )
   }
@@ -441,10 +451,51 @@ function Message({ step }: { step: TimelineStep }) {
       </div>
     )
   }
+  if (isCompactionSummary(step)) return <CompactionSummary step={step} />
   return (
     <div className="border border-dashed text-muted-foreground" data-step={kind}>
       {title}
       <div className="px-3 pb-2"><Text step={step} text={text} short={300} /></div>
+    </div>
+  )
+}
+
+/**
+ * The output of a slash command, under the command, as Claude Code's
+ * terminal shows it: quiet, after the ⎿ mark, with no colour codes.
+ */
+function CommandOutput({ step }: { step: TimelineStep }) {
+  const error = step.text.includes('<local-command-stderr>')
+  return (
+    <div className="mt-1 flex gap-2 font-mono text-xs text-muted-foreground" data-command-output title={`Claude Code's output, ${clock(step.time)}`}>
+      <span aria-hidden className="select-none">⎿</span>
+      <div className={`min-w-0 flex-1 ${error ? 'text-destructive' : ''}`}>
+        <Text step={step} text={commandOutput(step) ?? ''} short={300} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The summary that Claude Code writes when it compacts the conversation:
+ * one quiet line, as a tool call, that opens to the summary. Claude Code's
+ * tags in it show as headings.
+ */
+function CompactionSummary({ step }: { step: TimelineStep }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className={open ? 'border border-dashed' : undefined} data-step={step.from.kind} data-compaction-summary>
+      <button type="button" className={FOLD} onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Fold open={open} />
+        <span className="shrink-0 font-medium text-foreground">Compaction summary</span>
+        <span className="min-w-0 flex-1 truncate">{fromText(step.from)}</span>
+        <span className="shrink-0 font-mono max-sm:hidden">{clock(step.time)}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 text-muted-foreground">
+          <Text step={step} text={compactionSummaryText(step.text)} markdown />
+        </div>
+      )}
     </div>
   )
 }

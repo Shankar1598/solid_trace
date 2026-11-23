@@ -318,6 +318,27 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect(prompt).not.toContainText(ADMIN_NAME)
   await expect(subagent.locator('[data-step="person"]')).toHaveCount(0)
 
+  // The /compact shows once, as the person typed it, with Claude Code's
+  // output under it and no colour codes of the terminal. The caveat for
+  // the model does not show. The summary is one folded line, and its tags
+  // show as headings.
+  const transcript = page.locator('[data-transcript="main"]')
+  const command = transcript.locator('[data-step="person"][data-command]')
+  await expect(command).toHaveCount(1)
+  await expect(command).toContainText('/compact')
+  await expect(command.locator('[data-command-output]')).toHaveText(/^⎿\s*Compacted \(ctrl\+o to see full summary\)$/)
+  await expect(transcript.locator('[data-step="person"]').filter({ hasText: '/compact' })).toHaveCount(1)
+  await expect(transcript).not.toContainText('[2m')
+  await expect(transcript).not.toContainText('Caveat')
+  const summary = transcript.locator('[data-compaction-summary]')
+  await expect(summary).toHaveCount(1)
+  await expect(summary).toContainText('Compaction summary')
+  await expect(summary).not.toContainText('The person asked where the cart code is.')
+  await summary.getByRole('button', { name: /Compaction summary/ }).click()
+  await expect(summary).toContainText('The person asked where the cart code is.')
+  await expect(summary.locator('strong').first()).toHaveText('Tools used before summary')
+  await expect(summary).not.toContainText('<tools-used-before-summary>')
+
   // The Bash output is past the Log limit: cut, and 'Show full' reads the
   // whole raw line, which has the end marker and the second secret redacted.
   // A tool call shows as one line, its description; it opens on a click.
@@ -377,6 +398,9 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect(firstStep.locator('code')).toHaveText('cart.go')
   await expect(firstStep.locator('strong')).toHaveText('its lines')
   await expect(firstStep).not.toContainText('**')
+  // A GitHub table in the reply shows as a table.
+  await expect(firstStep.locator('table td').first()).toHaveText('cart.go')
+  await expect(firstStep).not.toContainText('| ---')
   await expect(main.locator(':scope > [data-step]').last()).toHaveAttribute('data-step', 'person')
   await expect(agentCall.locator(`[data-subagent="${subagentId}"]`)).toBeVisible()
   await page.reload()

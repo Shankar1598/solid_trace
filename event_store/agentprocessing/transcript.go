@@ -453,6 +453,11 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 		text.WriteString(line.CustomTitle)
 		facts.titleKind, facts.title = storage.AgentTitleCustom, oneLine(line.CustomTitle, maxTitleRunes)
 	}
+	if role == rolePerson && isCommandOutput(text.String()) {
+		// Claude Code writes the output of a slash command as a user line:
+		// the output is Claude Code's, not the person's.
+		role = roleNotPerson
+	}
 	if role == rolePerson {
 		facts.titleKind, facts.title = storage.AgentTitleFirstMessage, personTitle(text.String())
 	}
@@ -488,14 +493,19 @@ func personTitle(text string) string {
 		args, _ := tagText(text, "command-args")
 		return oneLine(command+" "+args, maxFirstMessageRunes)
 	}
-	if _, ok := tagText(text, "local-command-stdout"); ok {
-		return ""
-	}
-	if _, ok := tagText(text, "local-command-stderr"); ok {
+	if isCommandOutput(text) {
 		return ""
 	}
 	text = strings.NewReplacer("<system-reminder>", "", "</system-reminder>", "").Replace(text)
 	return oneLine(text, maxFirstMessageRunes)
+}
+
+// isCommandOutput is true for the output of a slash command, which Claude
+// Code writes in <local-command-stdout> or <local-command-stderr>.
+func isCommandOutput(text string) bool {
+	_, stdout := tagText(text, "local-command-stdout")
+	_, stderr := tagText(text, "local-command-stderr")
+	return stdout || stderr
 }
 
 // tagText is the text in the first <name>…</name> of text, trimmed.

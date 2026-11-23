@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addPage, fromText, groupTools, inOrder, linePath, messageText, rawLineText, showItems, spanText, subagentBrief, timelineItems, timelinePath, toolCounts, toolSummary, type ShownItem, type TimelineItem, type TimelineStep, type TimelineSubagent, type ToolItem } from './agentSessionTimeline'
+import { addPage, commandOutput, compactionSummaryText, fromText, groupTools, inOrder, isCompactionSummary, linePath, messageText, rawLineText, showItems, spanText, stripAnsi, subagentBrief, timelineItems, timelinePath, toolCounts, toolSummary, type ShownItem, type TimelineItem, type TimelineStep, type TimelineSubagent, type ToolItem } from './agentSessionTimeline'
 
 let offset = 0
 function step(role: string, text: string, more: Partial<TimelineStep> = {}): TimelineStep {
@@ -234,5 +234,111 @@ describe('messageText', () => {
   it('removes the system-reminder wrappers, and keeps other text as it is', () => {
     expect(messageText('<system-reminder>\nCall the tool.\n</system-reminder>')).toBe('Call the tool.')
     expect(messageText('Fix the <b>cart</b>.')).toBe('Fix the <b>cart</b>.')
+  })
+
+  it("removes the terminal's colour codes from a command's output", () => {
+    expect(messageText('<local-command-stdout>\u001b[2mCompacted (ctrl+o to see full summary)\u001b[22m</local-command-stdout>'))
+      .toBe('Compacted (ctrl+o to see full summary)')
+    expect(messageText('<local-command-stderr>\u001b[31;1mError:\u001b[0m no model</local-command-stderr>')).toBe('Error: no model')
+  })
+
+  it("gives no text for Claude Code's caveat before a command, so that it does not show", () => {
+    expect(messageText('<local-command-caveat>The command below was run directly in Claude Code, not by you.</local-command-caveat>')).toBe('')
+    expect(messageText('<local-command-caveat>Caveat: the messages below were made by local commands.</local-command-caveat>')).toBe('')
+  })
+})
+
+describe('stripAnsi', () => {
+  it('removes the escape sequences of a terminal and keeps the text', () => {
+    expect(stripAnsi('\u001b[2mdim\u001b[22m, \u001b[38;5;246mgrey\u001b[39m, \u001b[?25lcursor\u001b[K')).toBe('dim, grey, cursor')
+    expect(stripAnsi('\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007')).toBe('link')
+    expect(stripAnsi('No codes [2m here')).toBe('No codes [2m here')
+  })
+})
+
+describe('commandOutput', () => {
+  it("is the output of a slash command, also from a parse that gave it the person's role", () => {
+    expect(commandOutput(step('person', '<local-command-stdout>\u001b[2mCompacted\u001b[22m</local-command-stdout>'))).toBe('Compacted')
+    expect(commandOutput(step('not from a person', '<local-command-stderr>No model</local-command-stderr>'))).toBe('No model')
+    expect(commandOutput(step('person', 'Compacted'))).toBeNull()
+  })
+})
+
+describe('a slash command in the timeline', () => {
+  // The lines that Claude Code writes for /compact, in time order: the
+  // input, the caveat and the command at the same second, the summary,
+  // and the output when the compaction ends.
+  const compact = () => {
+    const input = step('person', '/compact', { time: '2026-11-11T15:00:18.522Z' })
+    const caveat = step('not from a person', '<local-command-caveat>The command below was run directly in Claude Code.</local-command-caveat>', { time: '2026-11-11T15:00:18.532Z' })
+    const command = step('person', '<command-name>/compact</command-name>\n  <command-message>compact</command-message>\n  <command-args></command-args>', { time: '2026-11-11T15:00:18.532Z' })
+    const summary = step('not from a person', 'This session is being continued from a previous conversation that ran out of context.', { time: '2026-11-11T15:00:54Z' })
+    const boundary = step('system', 'Conversation compacted', { line: 'system/compact_boundary', time: '2026-11-11T15:00:54.379Z' })
+    const output = step('not from a person', '<local-command-stdout>\u001b[2mCompacted (ctrl+o to see full summary)\u001b[22m</local-command-stdout>', { time: '2026-11-11T15:00:54.478Z' })
+    return { input, caveat, command, summary, boundary, output }
+  }
+
+  it('is one command step, with its output inside it', () => {
+    const { input, caveat, command, summary, boundary, output } = compact()
+    expect(timelineItems([input, caveat, command, summary, boundary, output], [], true)).toEqual([
+      { kind: 'step', step: caveat },
+      { kind: 'step', step: command, output },
+      { kind: 'step', step: summary },
+      { kind: 'step', step: boundary },
+    ])
+  })
+
+  it('stays one step in the newest order, with its output inside it', () => {
+    const { input, caveat, command, summary, boundary, output } = compact()
+    const items = inOrder(timelineItems([input, caveat, command, summary, boundary, output], [], true, 'newest'), 'newest')
+    expect(items.map(i => i.kind === 'step' ? i.step.id : '')).toEqual([boundary.id, summary.id, command.id, caveat.id])
+    expect(items[2]).toEqual({ kind: 'step', step: command, output })
+  })
+
+  it('keeps an output from a parse that gave it the person\'s role inside its command', () => {
+    const { command } = compact()
+    const output = step('person', '<local-command-stdout>Set model to Opus</local-command-stdout>', { time: '2026-11-11T15:00:19Z' })
+    expect(timelineItems([command, output], [], true)).toEqual([{ kind: 'step', step: command, output }])
+  })
+
+  it('does not join an output to a command before a person message or an agent reply', () => {
+    const { command, output } = compact()
+    const reply = step('assistant', 'Done.', { line: 'assistant/text', time: '2026-11-11T15:00:20Z' })
+    expect(timelineItems([command, reply, output], [], true)).toEqual([
+      { kind: 'step', step: command },
+      { kind: 'step', step: reply },
+      { kind: 'step', step: output },
+    ])
+  })
+
+  it('keeps a person message that only looks like the command when it is not just before it', () => {
+    const { command } = compact()
+    const typed = step('person', '/compact', { time: '2026-11-11T14:00:00Z' })
+    const reply = step('assistant', 'Use /compact.', { line: 'assistant/text', time: '2026-11-11T14:00:05Z' })
+    expect(timelineItems([typed, reply, command], [], true).map(i => i.kind === 'step' && i.step.id))
+      .toEqual([typed.id, reply.id, command.id])
+  })
+
+  it('takes the input with its arguments as the same command', () => {
+    const input = step('person', '/review the cart PR', { time: '2026-11-11T15:00:18Z' })
+    const command = step('person', '<command-name>/review</command-name><command-args>the cart PR</command-args>', { time: '2026-11-11T15:00:18.1Z' })
+    expect(timelineItems([input, command], [], true)).toEqual([{ kind: 'step', step: command }])
+  })
+})
+
+describe('the compaction summary', () => {
+  it('is the summary that Claude Code writes when it compacts the conversation', () => {
+    expect(isCompactionSummary(step('not from a person', 'This session is being continued from a previous conversation that ran out of context.'))).toBe(true)
+    expect(isCompactionSummary(step('person', 'This session is being continued from a previous conversation, said the person.'))).toBe(false)
+    expect(isCompactionSummary(step('not from a person', 'Stop hook feedback'))).toBe(false)
+  })
+
+  it("shows Claude Code's tags as headings", () => {
+    const text = 'This session is being continued.\n<tools-used-before-summary>Read, Bash</tools-used-before-summary>\n<system-reminder>Plan</system-reminder>'
+    const shown = compactionSummaryText(text)
+    expect(shown).not.toMatch(/<\/?[a-z-]+>/)
+    expect(shown).toContain('**Tools used before summary**')
+    expect(shown).toContain('Read, Bash')
+    expect(shown).toContain('Plan')
   })
 })
