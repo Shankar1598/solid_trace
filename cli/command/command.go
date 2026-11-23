@@ -66,9 +66,12 @@ Usage:
       The same, in the background: it reads the hook input, starts
       solidtrace capture with it, and returns at once. The hooks of the
       SolidTrace plugin for Claude Code run this.
-  solidtrace capture status
-      Show the Organization, its captured repositories, and each Agent
-      session on this machine as uploaded, not in the list, or failed.
+  solidtrace capture status [--all]
+      Show whether capture works on this machine: each setup step (the
+      sign-in, the Claude Code plugin, the captured repositories list and
+      the uploads) as done or not done, with what to do, and a count of the
+      Agent sessions on this machine as uploaded, not captured, failed or
+      not checked yet. --all lists each Agent session.
   solidtrace start [--project PROJECT] [--branch BRANCH] [--dispatcher URL] PROMPT
       Start a Run: an agent works on PROMPT with the Factory settings of
       PROJECT. With no --project, the Project is the one whose Factory
@@ -215,7 +218,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return login(ctx, args[1:], env)
 	case "capture":
 		if len(args) > 1 && args[1] == "status" {
-			return captureStatus(ctx, env)
+			return captureStatus(ctx, args[2:], env)
 		}
 		if len(args) > 1 && args[1] == "--detach" {
 			return detachHook(env)

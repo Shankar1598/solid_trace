@@ -215,10 +215,10 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
     expect.stringMatching(new RegExp(`^\\S+ ${notCaptured.id}: not in the captured repositories \\(.*notes-${RUN}\\), nothing sent$`)),
   ])
   expect(captureLog(member)).toBe('')
-  const status = execFileSync(cli, ['capture', 'status'], { env: admin.env, stdio: 'pipe' }).toString()
+  const status = execFileSync(cli, ['capture', 'status', '--all'], { env: admin.env, stdio: 'pipe' }).toString()
   expect(status).toMatch(new RegExp(`${long.id}\\s+uploaded\\s+${APP}`))
   expect(status).toMatch(new RegExp(`${tools.id}\\s+uploaded\\s+${TOOLS}`))
-  expect(status).toMatch(new RegExp(`${notCaptured.id}\\s+not in the list`))
+  expect(status).toMatch(new RegExp(`${notCaptured.id}\\s+not captured`))
 
   // The member's CLI cannot add to, or read, the admin's Agent session: a
   // transcript with the admin's session id is refused when the CLI asks
@@ -267,10 +267,12 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect.poll(() => rowIds(page)).toEqual([tools.id])
   await expectTotals(page, { 'Agent sessions': '1', Tokens: '154' })
 
-  // The Agent session page of the long session.
+  // The Agent session page of the long session. A click anywhere on the
+  // row opens it, not only on the name: here on the start time.
   await choose(page, 'Repository', APP)
   await expect.poll(() => rowIds(page)).toEqual([long.id])
-  await table.locator(`tr[data-session="${long.id}"]`).getByRole('link', { name: ADMIN_NAME }).click()
+  await expect(table.locator(`tr[data-session="${long.id}"]`).getByRole('link', { name: ADMIN_NAME })).toBeVisible()
+  await table.locator(`tr[data-session="${long.id}"] td`).first().click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/agent_sessions/${long.id}`))
   await expect(page.getByText(long.id, { exact: true })).toBeVisible()
 
@@ -289,9 +291,11 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   const agentCall = page.locator('[data-step="tool"][data-tool="Agent"]')
   const subagent = agentCall.locator(`[data-subagent="${subagentId}"]`)
   await expect(subagent).toBeVisible()
-  await subagent.getByRole('button', { name: `Subagent ${subagentId}` }).click()
+  // It is named by the description that the main agent gave it.
+  await subagent.getByRole('button', { name: /^Subagent: Find the cart code/ }).click()
   await expect(subagent.getByText('It is in cart.go.', { exact: true })).toBeVisible()
-  await expect(subagent.getByText(`subagent ${subagentId}`, { exact: true }).first()).toBeVisible()
+  // Inside the subagent its steps need no badge that names it again.
+  await expect(subagent.getByText(`subagent ${subagentId}`, { exact: true })).toHaveCount(0)
   // The subagent's prompt is not from a person, so it has no person's name.
   const prompt = subagent.locator('[data-step="not from a person"]')
   await expect(prompt).toContainText('Find the cart code.')
@@ -301,7 +305,11 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
 
   // The Bash output is past the Log limit: cut, and 'Show full' reads the
   // whole raw line, which has the end marker and the second secret redacted.
+  // A tool call shows as one line, its description; it opens on a click.
   const bash = page.locator('[data-step="tool"][data-tool="Bash"]')
+  await expect(bash).toContainText('Print many lines')
+  await expect(bash.getByText('Output', { exact: true })).toHaveCount(0)
+  await bash.getByRole('button', { name: /Print many lines/ }).click()
   await expect(bash.getByText('cut', { exact: true })).toBeVisible()
   await expect(bash).not.toContainText(outputEnd)
   await bash.getByRole('button', { name: 'Show full' }).click()
@@ -312,6 +320,19 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await shoot(page, 'agent-session-show-full')
   await bash.getByRole('button', { name: 'Show the step' }).click()
   await expect(raw).toHaveCount(0)
+
+  // With tool calls turned off, the tool calls go, and the subagent that
+  // the Agent tool call started stays, with its name. The choice stays
+  // after a reload.
+  await page.getByLabel('Show tool calls').click()
+  await expect(bash).toHaveCount(0)
+  await expect(subagent.getByRole('button', { name: /^Subagent: Find the cart code/ })).toBeVisible()
+  await expect(person).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel('Show tool calls')).not.toBeChecked()
+  await expect(bash).toHaveCount(0)
+  await page.getByLabel('Show tool calls').click()
+  await expect(bash).toBeVisible()
 
   expect(errors).toEqual([])
 })

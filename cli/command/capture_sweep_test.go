@@ -61,24 +61,24 @@ func (s *agentSession) age(d time.Duration) {
 	}
 }
 
-func (w *world) status() string {
+func (w *world) status(args ...string) string {
 	w.t.Helper()
 	before := len(w.stdout.String())
-	if code := w.run("capture", "status"); code != 0 {
+	if code := w.run(append([]string{"capture", "status"}, args...)...); code != 0 {
 		w.t.Fatalf("capture status: exit %d\nstderr: %s", code, w.stderr)
 	}
 	return w.stdout.String()[before:]
 }
 
-// statusOf is the line of 'capture status' for an Agent session.
+// statusOf is the line of 'capture status --all' for an Agent session.
 func (w *world) statusOf(id string) string {
 	w.t.Helper()
-	for _, line := range strings.Split(w.status(), "\n") {
+	for _, line := range strings.Split(w.status("--all"), "\n") {
 		if strings.Contains(line, id) {
 			return line
 		}
 	}
-	w.t.Fatalf("capture status has no line for %s:\n%s", id, w.status())
+	w.t.Fatalf("capture status --all has no line for %s:\n%s", id, w.status("--all"))
 	return ""
 }
 
@@ -176,7 +176,7 @@ func TestTheSweepUploadsARepositoryAddedLaterAndStopsForARemovedOne(t *testing.T
 	if s.stored(s.main()) != "" {
 		t.Fatalf("uploaded before the repository was in the list")
 	}
-	if line := w.statusOf(crashedID); !strings.Contains(line, "not in the list") {
+	if line := w.statusOf(crashedID); !strings.Contains(line, "not captured") {
 		t.Errorf("status before: %q", line)
 	}
 
@@ -206,7 +206,7 @@ func TestTheSweepUploadsARepositoryAddedLaterAndStopsForARemovedOne(t *testing.T
 			t.Errorf("the sweep sent %s for a removed repository", r.Method)
 		}
 	}
-	if line := w.statusOf(crashedID); !strings.Contains(line, "not in the list") {
+	if line := w.statusOf(crashedID); !strings.Contains(line, "not captured") {
 		t.Errorf("status after the removal: %q", line)
 	}
 }
@@ -380,7 +380,7 @@ func TestCaptureStatusShowsTheOrganizationItsListAndWhoCanReadTheUploads(t *test
 			t.Errorf("capture status has no %q:\n%s", want, out)
 		}
 	}
-	for id, want := range map[string]string{crashedID: "uploaded", otherID: "not in the list",
+	for id, want := range map[string]string{crashedID: "uploaded", otherID: "not captured",
 		unchecked.id: "not checked yet"} {
 		if line := w.statusOf(id); !strings.Contains(line, want) {
 			t.Errorf("status of %s: %q, want %q", id, line, want)
@@ -429,7 +429,7 @@ func TestWithNoListTheSweepMarksTheChangedAgentSessionsOfACapturedRepositoryFail
 	if line := w.statusOf(crashedID); !strings.Contains(line, "failed") {
 		t.Errorf("status of an Agent session with bytes not sent, after a sweep with no list: %q", line)
 	}
-	if line := w.statusOf(otherID); !strings.Contains(line, "not in the list") {
+	if line := w.statusOf(otherID); !strings.Contains(line, "not captured") {
 		t.Errorf("status of an Agent session not in the list: %q", line)
 	}
 }
@@ -555,5 +555,80 @@ func TestCaptureStatusWithNoNetworkShowsTheListKeptOnThisMachine(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("capture status has no %q:\n%s", want, out)
 		}
+	}
+}
+
+// installPlugin writes Claude Code's record of the SolidTrace plugin, and
+// its settings when settings is not "".
+func (w *world) installPlugin(settings string) {
+	w.t.Helper()
+	claude := filepath.Dir(w.projectsDir())
+	files := map[string]string{
+		"plugins/installed_plugins.json": `{"version":2,"plugins":{"solidtrace@solidtrace":[{"scope":"user","version":"1.2.3"}]}}`,
+	}
+	if settings != "" {
+		files["settings.json"] = settings
+	}
+	for name, body := range files {
+		path := filepath.Join(claude, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			w.t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			w.t.Fatal(err)
+		}
+	}
+}
+
+func TestCaptureStatusChecksEachSetupStep(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+
+	out := w.status()
+	for _, want := range []string{"Capture is off", "✓ Sign-in", "✗ Claude Code plugin", "is not installed", "claude plugin"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("with no plugin, capture status has no %q:\n%s", want, out)
+		}
+	}
+
+	w.installPlugin(`{"enabledPlugins":{"solidtrace@solidtrace":false}}`)
+	if out := w.status(); !strings.Contains(out, "✗ Claude Code plugin") || !strings.Contains(out, "turned off") {
+		t.Errorf("with the plugin turned off:\n%s", out)
+	}
+
+	w.installPlugin(`{"enabledPlugins":{"solidtrace@solidtrace":true}}`)
+	out = w.status()
+	for _, want := range []string{"Capture works", "✓ Claude Code plugin", "1.2.3", "✓ Captured repositories", "✓ Uploads"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("with the plugin on, capture status has no %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCaptureStatusCountsTheAgentSessionsAndListsEachOnlyWithAll(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	w.installPlugin("")
+	captured := w.sessionWithID(crashedID, w.gitRepo("origin=https://bitbucket.org/acme/shop.git"))
+	captured.begin("{\"n\":1}\n")
+	captured.stop()
+	private := w.sessionWithID(otherID, t.TempDir())
+	private.begin("{\"n\":1}\n")
+	private.stop()
+	unchecked := w.sessionWithID("5f6e7d8c-9b0a-4f1e-8d2c-3b4a5f6e7d8c", t.TempDir())
+	unchecked.begin("{\"n\":1}\n")
+
+	out := w.status()
+	for _, want := range []string{"Agent sessions on this machine", ": 3\n", "1  uploaded", "1  not captured", "0  failed",
+		"1  not checked yet", "Uploaded, by repository", "bitbucket.org/acme/shop", "capture status --all"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("capture status has no %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, crashedID) {
+		t.Errorf("capture status lists the full id of an Agent session with no --all:\n%s", out)
+	}
+	if out := w.status("--all"); !strings.Contains(out, crashedID) || !strings.Contains(out, otherID) || !strings.Contains(out, unchecked.id) {
+		t.Errorf("capture status --all does not list each Agent session:\n%s", out)
 	}
 }

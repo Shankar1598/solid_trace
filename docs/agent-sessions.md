@@ -63,7 +63,7 @@ Each engineer must still install the CLI and sign in (steps 1 and 3 below).
    solidtrace capture status
    ```
 
-   It shows your Organization, its captured repositories, and each Agent session on this machine as "uploaded", "not in the list" or "failed".
+   It tells you if capture works on this machine. It marks each setup step with ✓ or ✗ (the sign-in, the Claude Code plugin, the captured repositories list and the uploads) and tells you what to do for each ✗. Then it counts the Agent sessions on this machine as "uploaded", "not captured", "failed" or "not checked yet", and shows the failures and the newest Agent sessions. `solidtrace capture status --all` lists each Agent session.
 
 ### What uploads, and when
 

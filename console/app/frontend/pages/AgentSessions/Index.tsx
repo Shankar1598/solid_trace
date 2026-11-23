@@ -231,7 +231,7 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
           </TableHeader>
           <TableBody>
             {rows.map(row => (
-              <TableRow key={row.id} data-session={row.id}>
+              <TableRow key={row.id} data-session={row.id} className="cursor-pointer" onClick={e => openRow(e, `${path}/${row.id}`)}>
                 <TableCell className="font-mono text-xs whitespace-nowrap">{timeText(row.first)}</TableCell>
                 <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden">{timeText(row.last)}</TableCell>
                 <TableCell className="max-md:whitespace-normal max-md:break-all">
@@ -268,6 +268,22 @@ function SessionsTable({ rows, more, total, path }: { rows: AgentSessionRow[]; m
       )}
     </div>
   )
+}
+
+/**
+ * Opens an Agent session when a click lands anywhere on its row. A click on
+ * the name's link is the link's own, and a click that ends a text selection
+ * does not open, so that the row's text can still be copied. Ctrl or Cmd
+ * opens a new tab, as on the link.
+ */
+function openRow(e: React.MouseEvent<HTMLTableRowElement>, href: string) {
+  if ((e.target as HTMLElement).closest('a')) return
+  if (window.getSelection()?.toString()) return
+  if (e.metaKey || e.ctrlKey) {
+    window.open(href, '_blank')
+    return
+  }
+  router.visit(href)
 }
 
 function timeText(time: string): string {

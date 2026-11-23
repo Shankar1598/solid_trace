@@ -9,4 +9,4 @@ The plugin holds no instance URL and no secret. It needs:
 1. The `solidtrace` CLI on your `PATH`, from the same SolidTrace release (its `install.sh`).
 2. `solidtrace login`, once. Console's capture setup page gives the full command.
 
-`solidtrace capture status` shows your Organization, its captured repositories, and each Agent session on this machine as uploaded, not in the list, or failed. A failure goes to `capture.log` in the solidtrace config directory.
+`solidtrace capture status` tells you if capture works on this machine: it checks the sign-in, this plugin, the captured repositories list and the uploads, and counts the Agent sessions on this machine as uploaded, not captured, failed or not checked yet. `--all` lists each Agent session. A failure goes to `capture.log` in the solidtrace config directory.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromText, linePath, rawLineText, timelineItems, timelinePath, type TimelineStep, type TimelineSubagent } from './agentSessionTimeline'
+import { fromText, groupTools, linePath, messageText, rawLineText, showItems, spanText, subagentBrief, timelineItems, timelinePath, toolCounts, toolSummary, type TimelineItem, type TimelineStep, type TimelineSubagent } from './agentSessionTimeline'
 
 let offset = 0
 function step(role: string, text: string, more: Partial<TimelineStep> = {}): TimelineStep {
@@ -103,5 +103,93 @@ describe("'Show full'", () => {
     expect(rawLineText('{"type":"user","message":{"content":"Hi"}}'))
       .toBe('{\n  "type": "user",\n  "message": {\n    "content": "Hi"\n  }\n}')
     expect(rawLineText('{"type":"user", cut')).toBe('{"type":"user", cut')
+  })
+})
+
+describe('groupTools', () => {
+  const tool = (name: string, more: Partial<Extract<TimelineItem, { kind: 'tool' }>> = {}): Extract<TimelineItem, { kind: 'tool' }> => ({
+    kind: 'tool', call: step('assistant', '{}', { line: 'assistant/tool_use', tool_name: name, tool_use_id: `t${offset}` }), result: null, subagent: null, ...more,
+  })
+
+  it('folds a run of three or more tool calls into one group, and keeps a shorter run as it is', () => {
+    const person = { kind: 'step' as const, step: step('person', 'Fix it') }
+    const reply = { kind: 'step' as const, step: step('assistant', 'Done.', { line: 'assistant/text' }) }
+    const [a, b, c, d, e] = [tool('Bash'), tool('Read'), tool('Bash'), tool('Edit'), tool('Edit')]
+
+    expect(groupTools([person, a, b, c, reply, d, e])).toEqual([person, { kind: 'tools', tools: [a, b, c] }, reply, d, e])
+  })
+
+  it('never puts a tool call that started a subagent in a group', () => {
+    const [a, b] = [tool('Read'), tool('Read')]
+    const agent = tool('Agent', { subagent: subagent() })
+    const [c, d] = [tool('Grep'), tool('Grep')]
+
+    expect(groupTools([a, b, agent, c, d])).toEqual([a, b, agent, c, d])
+  })
+
+  it('counts the calls of each tool in a group, in the order they came', () => {
+    expect(toolCounts([tool('Bash'), tool('Read'), tool('Bash')])).toBe('Bash 2, Read 1')
+  })
+})
+
+describe('toolSummary', () => {
+  const call = (text: string) => step('assistant', text, { line: 'assistant/tool_use', tool_name: 'Bash', tool_use_id: 'x' })
+
+  it('shows the description of a tool call, else its main value', () => {
+    expect(toolSummary(call('{"command":"ls -la","description":"List files"}'))).toBe('List files')
+    expect(toolSummary(call('{"file_path":"/app/cart.go","limit":40}'))).toBe('/app/cart.go')
+    expect(toolSummary(call('{"command":"go test\\n  ./..."}'))).toBe('go test ./...')
+  })
+
+  it('shows the start of an input that is not whole JSON', () => {
+    expect(toolSummary(call('{"command":"cat a.txt'))).toBe('{"command":"cat a.txt')
+    expect(toolSummary(null)).toBe('')
+  })
+})
+
+describe('showItems', () => {
+  const person = { kind: 'step' as const, step: step('person', 'Fix it') }
+  const thinking = { kind: 'step' as const, step: step('assistant', 'Hmm.', { line: 'assistant/thinking' }) }
+  const reply = { kind: 'step' as const, step: step('assistant', 'Done.', { line: 'assistant/text' }) }
+  const read = { kind: 'tool' as const, call: step('assistant', '{}', { line: 'assistant/tool_use', tool_name: 'Read', tool_use_id: 'r' }), result: null, subagent: null }
+  const s = subagent()
+  const agent = { kind: 'tool' as const, call: step('assistant', '{}', { line: 'assistant/tool_use', tool_name: 'Agent', tool_use_id: 'toolu_9' }), result: null, subagent: s }
+  const items = [person, thinking, read, agent, reply]
+
+  it('shows each item when both are on', () => {
+    expect(showItems(items, { tools: true, thinking: true })).toEqual(items)
+  })
+
+  it('hides the thinking, and the tool calls but not one that started a subagent', () => {
+    expect(showItems(items, { tools: false, thinking: false })).toEqual([person, agent, reply])
+  })
+})
+
+describe('subagentBrief', () => {
+  it('reads the description and the type of the subagent from the tool call', () => {
+    const call = step('assistant', '{"description":"Audit v2 search","subagent_type":"general-purpose","prompt":"Read it."}', { line: 'assistant/tool_use', tool_name: 'Agent', tool_use_id: 'x' })
+    expect(subagentBrief(call)).toEqual({ description: 'Audit v2 search', type: 'general-purpose' })
+    expect(subagentBrief(null)).toEqual({ description: null, type: null })
+  })
+})
+
+describe('spanText', () => {
+  it('tells how long a subagent ran', () => {
+    expect(spanText('2026-10-02T11:00:00Z', '2026-10-02T11:00:45Z')).toBe('45 s')
+    expect(spanText('2026-10-02T11:01:10Z', '2026-10-02T11:14:41Z')).toBe('14 min')
+    expect(spanText('2026-10-02T11:00:00Z', '2026-10-02T13:05:00Z')).toBe('2 h 5 min')
+  })
+})
+
+describe('messageText', () => {
+  it('shows a slash command and its output as a person reads them', () => {
+    expect(messageText('<command-name>/model</command-name>\n  <command-message>model</command-message>\n  <command-args></command-args>')).toBe('/model')
+    expect(messageText('<command-name>/review</command-name><command-args>main</command-args>')).toBe('/review main')
+    expect(messageText('<local-command-stdout>Kept model as `Opus`</local-command-stdout>')).toBe('Kept model as `Opus`')
+  })
+
+  it('removes the system-reminder wrappers, and keeps other text as it is', () => {
+    expect(messageText('<system-reminder>\nCall the tool.\n</system-reminder>')).toBe('Call the tool.')
+    expect(messageText('Fix the <b>cart</b>.')).toBe('Fix the <b>cart</b>.')
   })
 })

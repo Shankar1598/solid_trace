@@ -160,3 +160,137 @@ export function rawLineText(line: string): string {
     return line
   }
 }
+
+export type ToolItem = Extract<TimelineItem, { kind: 'tool' }>
+
+/** A timeline item as the page shows it: a run of tool calls is one group. */
+export type ShownItem = TimelineItem | { kind: 'tools'; tools: ToolItem[] }
+
+/** The shortest run of tool calls that folds into one group. */
+export const GROUP_FROM = 3
+
+/**
+ * The items with each run of GROUP_FROM or more tool calls in one group, so
+ * that the person messages and the agent replies are easy to find. A tool
+ * call that started a subagent is never in a group, so the subagent shows.
+ */
+export function groupTools(items: TimelineItem[]): ShownItem[] {
+  const shown: ShownItem[] = []
+  let run: ToolItem[] = []
+  const end = () => {
+    if (run.length >= GROUP_FROM) shown.push({ kind: 'tools', tools: run })
+    else shown.push(...run)
+    run = []
+  }
+  for (const item of items) {
+    if (item.kind === 'tool' && !item.subagent) {
+      run.push(item)
+      continue
+    }
+    end()
+    shown.push(item)
+  }
+  end()
+  return shown
+}
+
+const SUMMARY_KEYS = ['description', 'command', 'file_path', 'path', 'pattern', 'url', 'query', 'skill', 'prompt']
+
+/**
+ * One line that tells what a tool call did: the input's description, else
+ * its command, file, pattern or other main value, else the input as it is.
+ */
+export function toolSummary(call: TimelineStep | null): string {
+  if (!call) return ''
+  let input: unknown = null
+  try {
+    input = JSON.parse(call.text)
+  } catch {
+    // A cut input is not whole JSON: show its start.
+  }
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    for (const key of SUMMARY_KEYS) {
+      const value = (input as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.trim()) return oneLine(value)
+    }
+  }
+  return oneLine(call.text)
+}
+
+/** The tools of a group and how many calls each has, as "Bash 5, Read 4". */
+export function toolCounts(tools: ToolItem[]): string {
+  const counts = new Map<string, number>()
+  for (const t of tools) {
+    const name = (t.call ?? t.result)?.tool_name || 'Tool'
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  return [...counts].map(([name, n]) => `${name} ${n}`).join(', ')
+}
+
+function oneLine(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim()
+  return line.length > 200 ? `${line.slice(0, 200)}…` : line
+}
+
+/** What the timeline shows besides the person messages and the agent replies. */
+export interface TimelineShow {
+  tools: boolean
+  thinking: boolean
+}
+
+/** A step of the agent's thinking. */
+export const isThinking = (s: TimelineStep) => s.line.endsWith('/thinking')
+
+/**
+ * The items that the choices show. With no tool calls, a tool call that
+ * started a subagent stays, as the page shows it as that subagent.
+ */
+export function showItems(items: TimelineItem[], show: TimelineShow): TimelineItem[] {
+  return items.filter(item => {
+    if (item.kind === 'step') return show.thinking || !isThinking(item.step)
+    if (item.kind === 'tool') return show.tools || !!item.subagent
+    return true
+  })
+}
+
+/** What the main agent asked of a subagent, from the tool call that started it. */
+export interface SubagentBrief {
+  description: string | null
+  type: string | null
+}
+
+export function subagentBrief(call: TimelineStep | null): SubagentBrief {
+  try {
+    const input = JSON.parse(call?.text ?? '')
+    const text = (v: unknown) => (typeof v === 'string' && v.trim() ? oneLine(v) : null)
+    return { description: text(input?.description), type: text(input?.subagent_type) }
+  } catch {
+    return { description: null, type: null }
+  }
+}
+
+/** How long from first to last, in words: "45 s", "13 min", "2 h 5 min". */
+export function spanText(first: string, last: string): string {
+  const seconds = Math.max(0, Math.round((Date.parse(last) - Date.parse(first)) / 1000))
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} min`
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+}
+
+/**
+ * A message's text as a person reads it: Claude Code's tags for a slash
+ * command and its output become the command and the output, and its
+ * <system-reminder> wrappers go.
+ */
+export function messageText(text: string): string {
+  const tag = (name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim()
+  const command = tag('command-name')
+  if (command !== undefined) {
+    const args = tag('command-args')
+    return [command, args].filter(Boolean).join(' ')
+  }
+  const out = tag('local-command-stdout') ?? tag('local-command-stderr')
+  if (out !== undefined) return out
+  return text.replace(/<\/?system-reminder>/g, '').trim()
+}

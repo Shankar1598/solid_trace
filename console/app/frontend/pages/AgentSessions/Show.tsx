@@ -8,16 +8,27 @@ import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { costText, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
   fetchRawLine,
   fetchTimelinePage,
   fromText,
+  groupTools,
+  isThinking,
+  messageText,
   rawLineText,
+  showItems,
+  spanText,
+  subagentBrief,
   timelineItems,
+  toolCounts,
+  toolSummary,
   type RawLine,
-  type TimelineItem,
+  type ShownItem,
+  type ToolItem,
   type TimelinePage,
+  type TimelineShow,
   type TimelineStep,
   type TimelineSubagent,
 } from '@/lib/agentSessionTimeline'
@@ -39,6 +50,32 @@ interface AgentSessionProps {
 /** The URL of the raw lines of this Agent session, for 'Show full'. */
 const LinePath = createContext('')
 
+/** What the timelines show besides the person messages and the agent replies. */
+const Show = createContext<TimelineShow>({ tools: true, thinking: true })
+
+/** True inside a subagent's own timeline, whose steps need no subagent badge. */
+const InSubagent = createContext(false)
+
+const SHOW_KEY = 'solid-trace.agent-session.show'
+
+/** The viewer's last choices, kept in the browser only as a convenience. */
+function readShow(): TimelineShow {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SHOW_KEY) ?? '{}')
+    return { tools: saved.tools !== false, thinking: saved.thinking !== false }
+  } catch {
+    return { tools: true, thinking: true }
+  }
+}
+
+function saveShow(show: TimelineShow) {
+  try {
+    localStorage.setItem(SHOW_KEY, JSON.stringify(show))
+  } catch {
+    // The choices are only a convenience.
+  }
+}
+
 /**
  * The Agent session page: the header of one Agent session and its
  * timeline of person messages, agent replies and tool calls, with each
@@ -49,6 +86,12 @@ const LinePath = createContext('')
 export default function AgentSessionShow({ agent_session: view }: { agent_session: AgentSessionProps }) {
   const session = view.agent_session
   const [search, setSearch] = useState<string | null>(null)
+  const [show, setShow] = useState(readShow)
+  const change = (next: Partial<TimelineShow>) => {
+    const all = { ...show, ...next }
+    setShow(all)
+    saveShow(all)
+  }
   return (
     <LinePath.Provider value={view.line_path}>
     <DashboardLayout>
@@ -84,12 +127,29 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
             active={search !== null}
           />
           {search === null
-            ? <Transcript base={view.timeline_path} subagents={view.subagents} first={{ steps: view.steps, next_cursor: view.next_cursor }} />
+            ? (
+              <Show.Provider value={show}>
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs" data-section="timeline-show">
+                  <Toggle id="show-tools" label="Show tool calls" checked={show.tools} onChange={tools => change({ tools })} />
+                  <Toggle id="show-thinking" label="Show agent thinking" checked={show.thinking} onChange={thinking => change({ thinking })} />
+                </div>
+                <Transcript base={view.timeline_path} subagents={view.subagents} first={{ steps: view.steps, next_cursor: view.next_cursor }} />
+              </Show.Provider>
+            )
             : <SearchResults key={search} base={view.timeline_path} search={search} />}
         </div>
       )}
     </DashboardLayout>
     </LinePath.Provider>
+  )
+}
+
+function Toggle({ id, label, checked, onChange }: { id: string; label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Checkbox id={id} checked={checked} onCheckedChange={next => onChange(next === true)} />
+      <label htmlFor={id} className="cursor-pointer select-none">{label}</label>
+    </div>
   )
 }
 
@@ -188,11 +248,12 @@ function Transcript({ base, path, subagents, first }: { base: string; path?: str
   }
   // A subagent's own subagents show inside it, so the main timeline shows
   // only those that no call names.
-  const items = timelineItems(steps, path ? subagents.filter(s => s.tool_use_id) : subagents, cursor === null)
+  const show = useContext(Show)
+  const items = showItems(timelineItems(steps, path ? subagents.filter(s => s.tool_use_id) : subagents, cursor === null), show)
   return (
     <div className="space-y-2" data-transcript={path ?? 'main'}>
-      {items.length === 0 && <p className="text-sm text-muted-foreground">No steps.</p>}
-      {items.map(item => <Item key={itemKey(item)} item={item} base={base} subagents={subagents} />)}
+      {items.length === 0 && <p className="text-sm text-muted-foreground">{steps.length === 0 ? 'No steps.' : 'No steps to show. Turn on tool calls or agent thinking above.'}</p>}
+      {groupTools(items).map(item => <Item key={itemKey(item)} item={item} base={base} subagents={subagents} />)}
       {error && <p className="text-sm text-destructive">{error}</p>}
       {cursor !== null && (
         <Button variant="outline" size="sm" onClick={more} disabled={loading}>
@@ -203,51 +264,158 @@ function Transcript({ base, path, subagents, first }: { base: string; path?: str
   )
 }
 
-function itemKey(item: TimelineItem): string {
+function itemKey(item: ShownItem): string {
   if (item.kind === 'step') return item.step.id
   if (item.kind === 'subagent') return item.subagent.path
+  if (item.kind === 'tools') return `tools-${itemKey(item.tools[0])}`
   return (item.call ?? item.result)!.id
 }
 
-function Item({ item, base, subagents }: { item: TimelineItem; base: string; subagents: TimelineSubagent[] }) {
+function Item({ item, base, subagents }: { item: ShownItem; base: string; subagents: TimelineSubagent[] }) {
   if (item.kind === 'subagent') return <Subagent subagent={item.subagent} base={base} subagents={subagents} />
   if (item.kind === 'step') return <Message step={item.step} />
-  const { call, result, subagent } = item
-  const step = (call ?? result)!
+  if (item.kind === 'tools') return <ToolGroup tools={item.tools} base={base} subagents={subagents} />
+  return <ToolCall tool={item} base={base} subagents={subagents} />
+}
+
+/** The classes of the one-line button that opens a tool call or a group. */
+const FOLD = 'flex w-full min-w-0 items-center gap-2 px-3 py-1 text-left text-xs text-muted-foreground outline-none hover:bg-muted/40 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring'
+
+function Fold({ open }: { open: boolean }) {
+  return open
+    ? <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+    : <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+}
+
+/**
+ * A run of tool calls as one line that tells how many calls of each tool
+ * it has. It opens to show each call as one line.
+ */
+function ToolGroup({ tools, base, subagents }: { tools: ToolItem[]; base: string; subagents: TimelineSubagent[] }) {
+  const [open, setOpen] = useState(false)
+  const first = (tools[0].call ?? tools[0].result)!
+  const lastTool = tools[tools.length - 1]
+  const last = (lastTool.result ?? lastTool.call)!
+  const failed = tools.filter(t => t.result?.level === 'error').length
   return (
-    <div className="border" data-step="tool" data-tool={step.tool_name}>
-      <StepTitle step={step} icon={<Wrench className="h-3.5 w-3.5" aria-hidden />} label={step.tool_name || 'Tool'} />
-      <div className="space-y-2 px-3 pb-3">
-        {call && <Value label="Input" step={call} />}
-        {result && <Value label="Output" step={result} error={result.level === 'error'} />}
-        {!result && <p className="text-xs text-muted-foreground">No output yet.</p>}
-        {subagent && <Subagent subagent={subagent} base={base} subagents={subagents} />}
+    <div data-tool-group className={open ? 'border' : undefined}>
+      <button type="button" className={FOLD} onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Fold open={open} />
+        <Wrench className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="shrink-0 font-medium text-foreground">{tools.length} tool calls</span>
+        <span className="min-w-0 flex-1 truncate">{toolCounts(tools)}</span>
+        {failed > 0 && <Badge variant="error">{failed} failed</Badge>}
+        <span className="shrink-0 font-mono max-sm:hidden">{clock(first.time)}–{clock(last.time)}</span>
+      </button>
+      {open && (
+        <div className="ml-4 border-l pb-1">
+          {tools.map(tool => <ToolCall key={itemKey(tool)} tool={tool} base={base} subagents={subagents} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A tool call as one line: the tool and what it did. It opens to show the
+ * input and the output. A subagent that the call started always shows.
+ */
+function ToolCall({ tool, base, subagents }: { tool: ToolItem; base: string; subagents: TimelineSubagent[] }) {
+  const [open, setOpen] = useState(false)
+  const { call, result, subagent } = tool
+  if (subagent) {
+    // The call only starts the subagent, and its output is Claude Code's
+    // note to the main agent, so the subagent is what shows.
+    return (
+      <div data-step="tool" data-tool={(call ?? result)!.tool_name}>
+        <Subagent subagent={subagent} base={base} subagents={subagents} started={tool} />
       </div>
-    </div>
-  )
-}
-
-function Message({ step }: { step: TimelineStep }) {
-  const person = step.from.kind === 'person'
+    )
+  }
+  const step = (call ?? result)!
+  const failed = result?.level === 'error'
+  const summary = toolSummary(call)
   return (
-    <div className={person ? 'border border-primary/30 bg-primary/5' : 'border'} data-step={step.from.kind}>
-      <StepTitle step={step} label={fromText(step.from)} icon={step.from.kind === 'agent' ? <Bot className="h-3.5 w-3.5" aria-hidden /> : null} />
-      <div className="px-3 pb-3"><Text step={step} /></div>
+    <div data-step="tool" data-tool={step.tool_name} className={open ? 'border' : undefined}>
+      <button type="button" className={FOLD} onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Fold open={open} />
+        <Wrench className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="shrink-0 font-medium text-foreground">{step.tool_name || 'Tool'}</span>
+        <span className="min-w-0 flex-1 truncate">{summary}</span>
+        {failed && <Badge variant="error">error</Badge>}
+        {!result && <span className="shrink-0">no output yet</span>}
+        <span className="shrink-0 font-mono max-sm:hidden">{clock(step.time)}</span>
+        {step.tokens && <span className="shrink-0 font-mono max-md:hidden">{stepTokensText(step)}</span>}
+      </button>
+      {open && (
+        <div className="space-y-2 px-3 pb-3">
+          {call && <Value label="Input" step={call} />}
+          {result && <Value label="Output" step={result} error={failed} />}
+          {!result && <p className="text-xs text-muted-foreground">No output yet.</p>}
+        </div>
+      )}
     </div>
   )
 }
 
-function StepTitle({ step, label, icon }: { step: TimelineStep; label: string; icon: React.ReactNode }) {
+/**
+ * One message, weighted by whom it is from, so that a person who scrolls
+ * sees the conversation first: the person's messages are the strongest,
+ * the agent's replies are cards, its thinking is quiet text, and the text
+ * that Claude Code adds (commands, skills, reminders) is quiet and folds.
+ */
+function Message({ step }: { step: TimelineStep }) {
+  const inSubagent = useContext(InSubagent)
+  const kind = step.from.kind
+  const text = messageText(step.text)
+  if (!text) return null
+  const title = (
+    <StepTitle step={step} label={fromText(step.from)} subagentBadge={!inSubagent}
+      icon={kind === 'agent' ? <Bot className="h-3.5 w-3.5" aria-hidden /> : null} />
+  )
+  if (kind === 'person') {
+    return (
+      <div className="border border-l-4 border-primary/40 border-l-primary bg-primary/10" data-step={kind}>
+        {title}
+        <div className="px-3 pb-3"><Text step={step} text={text} /></div>
+      </div>
+    )
+  }
+  if (kind === 'agent' && isThinking(step)) {
+    return (
+      <div className="ml-3 border-l-2 border-muted-foreground/30 text-muted-foreground" data-step={kind} data-thinking>
+        {title}
+        <div className="px-3 pb-1"><Text step={step} text={text} /></div>
+      </div>
+    )
+  }
+  if (kind === 'agent') {
+    return (
+      <div className="border" data-step={kind}>
+        {title}
+        <div className="px-3 pb-3"><Text step={step} text={text} /></div>
+      </div>
+    )
+  }
+  return (
+    <div className="border border-dashed text-muted-foreground" data-step={kind}>
+      {title}
+      <div className="px-3 pb-2"><Text step={step} text={text} short={300} /></div>
+    </div>
+  )
+}
+
+function StepTitle({ step, label, icon, subagentBadge = true }: { step: TimelineStep; label: string; icon: React.ReactNode; subagentBadge?: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-xs">
       {icon}
       <span className="font-medium">{label}</span>
-      {step.line.endsWith('/thinking') && <Badge>thinking</Badge>}
-      {step.path.includes('subagents/') && <Badge>subagent {step.path.split('/').pop()?.replace(/^agent-|\.jsonl$/g, '')}</Badge>}
-      <span className="font-mono text-muted-foreground">{format(new Date(step.time), 'HH:mm:ss')}</span>
+      {isThinking(step) && <Badge>thinking</Badge>}
+      {subagentBadge && step.path.includes('subagents/') && <Badge>subagent {step.path.split('/').pop()?.replace(/^agent-|\.jsonl$/g, '')}</Badge>}
+      <span className="font-mono text-muted-foreground">{clock(step.time)}</span>
       {step.tokens && (
         <span className="font-mono text-muted-foreground" title={`${step.tokens.input} input, ${step.tokens.output} output, ${step.tokens.cache_read} cache read, ${step.tokens.cache_write} cache write`}>
-          {tokensText(step.tokens.input + step.tokens.output + step.tokens.cache_read + step.tokens.cache_write)} tokens · {costText(step.cost_usd)}
+          {stepTokensText(step)}
         </span>
       )}
     </div>
@@ -269,15 +437,16 @@ const SHORT = 1200
  * A step's text: a long one opens on request, and a cut one says so and
  * gives 'Show full', which reads the step's raw line.
  */
-function Text({ step, mono = false }: { step: TimelineStep; mono?: boolean }) {
+function Text({ step, mono = false, text: shownText, short = SHORT }: { step: TimelineStep; mono?: boolean; text?: string; short?: number }) {
   const linePath = useContext(LinePath)
   const [open, setOpen] = useState(false)
   const [full, setFull] = useState<RawLine | null>(null)
   const [showFull, setShowFull] = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const long = step.text.length > SHORT
-  const text = long && !open ? `${step.text.slice(0, SHORT)}…` : step.text
+  const body = shownText ?? step.text
+  const long = body.length > short
+  const text = long && !open ? `${body.slice(0, short)}…` : body
   const toggleFull = async () => {
     if (showFull || full) {
       setShowFull(!showFull)
@@ -324,8 +493,19 @@ function Text({ step, mono = false }: { step: TimelineStep; mono?: boolean }) {
   )
 }
 
-/** A subagent inside its parent: its steps load when a member opens it. */
-function Subagent({ subagent, base, subagents }: { subagent: TimelineSubagent; base: string; subagents: TimelineSubagent[] }) {
+/**
+ * A subagent inside its parent, named by the description that the main
+ * agent gave it. Its steps load when a member opens it; the tool call that
+ * started it is one folded line above them.
+ */
+function Subagent({ subagent, base, subagents, started }: {
+  subagent: TimelineSubagent
+  base: string
+  subagents: TimelineSubagent[]
+  started?: ToolItem
+}) {
+  const brief = subagentBrief(started?.call ?? null)
+  const show = useContext(Show)
   const [first, setFirst] = useState<TimelinePage | null>(null)
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -340,16 +520,39 @@ function Subagent({ subagent, base, subagents }: { subagent: TimelineSubagent; b
   }
   return (
     <div className="border-l-2 border-primary/40 pl-3" data-subagent={subagent.agent_id}>
-      <button type="button" className="flex items-center gap-1 py-1 text-xs font-medium" onClick={toggle} aria-expanded={open}>
-        {open ? <ChevronDown className="h-3.5 w-3.5" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden />}
-        Subagent {subagent.agent_id}
-        <span className="font-mono font-normal text-muted-foreground">{format(new Date(subagent.first), 'HH:mm:ss')}–{format(new Date(subagent.last), 'HH:mm:ss')}</span>
+      <button
+        type="button"
+        className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 py-1 text-left text-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={toggle}
+        aria-expanded={open}
+        title={`Subagent ${subagent.agent_id}`}
+      >
+        <Fold open={open} />
+        <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="font-medium">Subagent{brief.description ? `: ${brief.description}` : ` ${subagent.agent_id}`}</span>
+        <span className="font-mono text-muted-foreground">
+          {brief.type && `${brief.type}, `}{clock(subagent.first)}–{clock(subagent.last)}, {spanText(subagent.first, subagent.last)}
+        </span>
       </button>
+      {open && started && show.tools && <ToolCall tool={{ ...started, subagent: null }} base={base} subagents={subagents} />}
       {open && error && <p className="text-sm text-destructive">{error}</p>}
       {open && !error && !first && <p className="text-xs text-muted-foreground">Loading…</p>}
-      {open && first && <Transcript base={base} path={subagent.path} subagents={subagents} first={first} />}
+      {open && first && (
+        <InSubagent.Provider value>
+          <Transcript base={base} path={subagent.path} subagents={subagents} first={first} />
+        </InSubagent.Provider>
+      )}
     </div>
   )
+}
+
+function stepTokensText(step: TimelineStep): string {
+  const t = step.tokens!
+  return `${tokensText(t.input + t.output + t.cache_read + t.cache_write)} tokens · ${costText(step.cost_usd)}`
+}
+
+function clock(time: string): string {
+  return format(new Date(time), 'HH:mm:ss')
 }
 
 function timeText(time: string): string {
