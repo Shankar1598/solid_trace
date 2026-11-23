@@ -338,15 +338,27 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
 
   // With tool calls turned off, the tool calls go, and the subagent that
   // the Agent tool call started stays, with its name. The choice stays
-  // after a reload.
-  await page.getByLabel('Show tool calls').click()
+  // after a reload. The two choices are switches: a click on the label
+  // turns one, and Space turns the one with the focus.
+  const toolCalls = page.getByRole('switch', { name: 'Show tool calls' })
+  const thinking = page.getByRole('switch', { name: 'Show agent thinking' })
+  await expect(toolCalls).toHaveAttribute('aria-checked', 'true')
+  await expect(thinking).toHaveAttribute('aria-checked', 'true')
+  await page.getByText('Show tool calls', { exact: true }).click()
+  await expect(toolCalls).toHaveAttribute('aria-checked', 'false')
+  // An on switch looks on: its fill is not the fill of an off switch, also
+  // in the dark theme.
+  const fill = (l: Locator) => l.evaluate(e => getComputedStyle(e).backgroundColor)
+  expect(await fill(thinking)).not.toBe(await fill(toolCalls))
   await expect(bash).toHaveCount(0)
   await expect(subagent.getByRole('button', { name: /^Subagent: Find the cart code/ })).toBeVisible()
   await expect(person).toBeVisible()
   await page.reload()
-  await expect(page.getByLabel('Show tool calls')).not.toBeChecked()
+  await expect(toolCalls).toHaveAttribute('aria-checked', 'false')
   await expect(bash).toHaveCount(0)
-  await page.getByLabel('Show tool calls').click()
+  await toolCalls.focus()
+  await page.keyboard.press('Space')
+  await expect(toolCalls).toHaveAttribute('aria-checked', 'true')
   await expect(bash).toBeVisible()
 
   // The order: the oldest step first by default, as a chat reads. The

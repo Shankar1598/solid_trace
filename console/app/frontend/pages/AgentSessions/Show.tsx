@@ -8,8 +8,8 @@ import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Segmented } from '@/components/ui/segmented'
+import { Switch } from '@/components/ui/switch'
 import { costText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
   addPage,
@@ -172,7 +172,7 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
 function Toggle({ id, label, checked, onChange }: { id: string; label: string; checked: boolean; onChange: (checked: boolean) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <Checkbox id={id} checked={checked} onCheckedChange={next => onChange(next === true)} />
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
       <label htmlFor={id} className="cursor-pointer select-none">{label}</label>
     </div>
   )
