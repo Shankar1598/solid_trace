@@ -201,7 +201,7 @@ func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrInvalidEventJSON):
 		return c.Status(400).SendString(err.Error())
-	case errors.Is(err, ingest.ErrInvalidOTLP):
+	case errors.Is(err, ingest.ErrInvalidOTLP), errors.Is(err, ingest.ErrInvalidOTLPMetrics):
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrOverloaded), errors.Is(err, storage.ErrShuttingDown):
 		// Not 429: on a 429 without Retry-After, Sentry SDKs stop sending

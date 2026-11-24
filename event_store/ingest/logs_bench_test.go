@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
+	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 
 	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
@@ -211,6 +213,50 @@ func BenchmarkOTLPBodyToLogs(b *testing.B) {
 					b.Fatalf("got %d Logs", len(logs))
 				}
 			}
+			b.ReportMetric(float64(benchLogs*b.N)/b.Elapsed().Seconds(), "logs/s")
+		})
+	}
+}
+
+// BenchmarkOTLPMetricBodyToLogs times the work of one OTLP metrics request,
+// a real Claude Code export of 12 data points: decoding its body and
+// normalising each data point as a Log. Its Logs/s compares with
+// BenchmarkOTLPBodyToLogs, whose request has 100 Logs.
+func BenchmarkOTLPMetricBodyToLogs(b *testing.B) {
+	for _, bench := range []struct {
+		name   string
+		file   string
+		decode func(pmetricotlp.ExportRequest, []byte) error
+	}{
+		{"protobuf", "claude_code_metrics.pb", pmetricotlp.ExportRequest.UnmarshalProto},
+		{"json", "claude_code_metrics.json", pmetricotlp.ExportRequest.UnmarshalJSON},
+	} {
+		body, err := os.ReadFile("normalise/testdata/otlp/" + bench.file)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Run(bench.name, func(b *testing.B) {
+			b.SetBytes(int64(len(body)))
+			b.ReportAllocs()
+			var points []normalise.MetricPoint
+			for b.Loop() {
+				request := pmetricotlp.NewExportRequest()
+				if err := bench.decode(request, body); err != nil {
+					b.Fatal(err)
+				}
+				points = points[:0]
+				for _, resourceMetrics := range request.Metrics().ResourceMetrics().All() {
+					for _, scopeMetrics := range resourceMetrics.ScopeMetrics().All() {
+						for _, metric := range scopeMetrics.Metrics().All() {
+							points = normalise.AppendMetricPoints(points, resourceMetrics.Resource(), scopeMetrics.Scope(), metric)
+						}
+					}
+				}
+				for _, point := range points {
+					normalise.OTLPMetric(point, benchReceipt)
+				}
+			}
+			b.ReportMetric(float64(len(points)*b.N)/b.Elapsed().Seconds(), "logs/s")
 		})
 	}
 }
