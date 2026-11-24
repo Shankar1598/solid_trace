@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Sends Logs to EventStore through an OpenTelemetry Collector, as a real
+# deployment does. The script starts the `otel` profile of
+# docker-compose.dev.yml (local/otel/collector.yaml, with telemetrygen). It
+# sends <count> Logs through the Collector and waits until the Collector has
+# sent them all. It prints what the Collector sent, and it stops the
+# containers that it started.
+#
+#   bin/otel-dev <count> [ingest-url] [key]
+#
+# The Collector sends each Log twice: once as protobuf with gzip, and once as
+# plain JSON. So <count> Logs become 2 x <count> stored Logs, with service
+# telemetrygen and environment dev. Without an ingest-url and a key, the Logs
+# go to the dev stack (http://127.0.0.1:4000) with the seed Project's key,
+# testkey123. For a verify stack, pass its ingest URL, for example
+# http://127.0.0.1:4510.
+#
+# OTEL_DEV_LOG=<file> saves the Collector's log there, for proof.
+#
+# The Collector listens on 127.0.0.1:14318 (OTLP/HTTP) and :14888 (its own
+# metrics). Run one bin/otel-dev at a time. It never touches ClickHouse or
+# MinIO.
+
+set -euo pipefail
+
+usage="usage: bin/otel-dev <count> [ingest-url] [key]"
+if [[ $# -lt 1 || $# -gt 3 || ! ${1:-} =~ ^[1-9][0-9]*$ ]]; then
+  echo "$usage" >&2
+  exit 2
+fi
+count=$1
+# The Collector runs on the host's network. Use 127.0.0.1, because localhost
+# can resolve to ::1 while EventStore listens on IPv4 only.
+ingest_url=${2:-http://127.0.0.1:4000}
+ingest_url=${ingest_url/\/\/localhost/\/\/127.0.0.1}
+ingest_url=${ingest_url%/}
+key=${3:-testkey123}
+
+checkout="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+collector=solidtrace-otel-collector
+generator=solidtrace-otel-telemetrygen
+metrics=http://127.0.0.1:14888/metrics
+
+# Compose needs these three variables for the dev ClickHouse, which this
+# profile does not start. The dummy values only let Compose read the file.
+# An exported variable wins over .env.
+export SOLIDTRACE_DEV_UID=${SOLIDTRACE_DEV_UID:-$(id -u)}
+export SOLIDTRACE_DEV_GID=${SOLIDTRACE_DEV_GID:-$(id -g)}
+export SOLIDTRACE_DEV_STORAGE=${SOLIDTRACE_DEV_STORAGE:-$checkout/storage}
+export SOLIDTRACE_INGEST_URL=$ingest_url
+export SOLIDTRACE_KEY=$key
+export OTEL_LOG_COUNT=$count
+compose() { docker compose -f "$checkout/docker-compose.dev.yml" --profile otel "$@"; }
+
+for name in "$collector" "$generator"; do
+  if docker inspect "$name" >/dev/null 2>&1; then
+    echo "$name is running already, so another bin/otel-dev has the Collector's ports. Wait for it, or stop it: docker rm -f $name" >&2
+    exit 1
+  fi
+done
+
+# Stops what this run started, by name, also after an error or Ctrl-C.
+# With OTEL_DEV_LOG=<file>, it saves the Collector's log first.
+cleanup() {
+  [[ -z ${OTEL_DEV_LOG:-} ]] || docker logs "$collector" >| "$OTEL_DEV_LOG" 2>&1 || true
+  docker rm -f "$generator" "$collector" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# The Collector's counter of sent (or failed) Log records for one exporter.
+counter() {
+  local name=$1 exporter=$2
+  curl -fsS "$metrics" 2>/dev/null |
+    awk -v n="otelcol_exporter_${name}_log_records" -v e="exporter=\"$exporter\"" \
+      'index($0, n "{") == 1 && index($0, e) { total += $NF } END { printf "%d", total }'
+}
+
+echo "Starting the Collector (ingest $ingest_url)"
+compose up --detach --no-deps --quiet-pull otel-collector >/dev/null
+for _ in {1..60}; do
+  curl -fsS -o /dev/null "$metrics" 2>/dev/null && break
+  sleep 0.5
+done
+if ! curl -fsS -o /dev/null "$metrics" 2>/dev/null; then
+  echo "The Collector did not start. See: docker logs $collector" >&2
+  docker logs "$collector" 2>&1 | tail -20 >&2 || true
+  exit 1
+fi
+
+echo "Sending $count Logs through the Collector"
+compose run --rm --no-deps --name "$generator" telemetrygen >/dev/null 2>&1 ||
+  { echo "telemetrygen failed. Run it by hand with docker compose to see why." >&2; exit 1; }
+
+# The Collector holds Logs for up to a second, and an exporter can retry.
+# Wait until each exporter has sent every Log, or until one has failed.
+protobuf=0 json=0 failed=0
+for _ in {1..120}; do
+  protobuf=$(counter sent otlp_http/protobuf)
+  json=$(counter sent otlp_http/json)
+  failed=$(( $(counter send_failed otlp_http/protobuf) + $(counter send_failed otlp_http/json) ))
+  (( failed > 0 || (protobuf >= count && json >= count) )) && break
+  sleep 0.5
+done
+
+errors=$(docker logs "$collector" 2>&1 | grep -i 'dropping data' || true)
+if (( failed > 0 )) || [[ -n $errors ]] || (( protobuf < count || json < count )); then
+  echo "The Collector did not send every Log (protobuf $protobuf, JSON $json, failed $failed of $count):" >&2
+  echo "${errors:-no error in the Collector log}" | tail -20 >&2
+  exit 1
+fi
+
+echo "Sent through the Collector to $ingest_url/v1/logs with key $key:"
+echo "  protobuf with gzip: $protobuf Logs"
+echo "  JSON, no gzip:      $json Logs"
+echo "Expect $((protobuf + json)) Logs with service telemetrygen and environment dev in the Logs explorer."

@@ -10,14 +10,13 @@ The Logs explorer is the Console page where a Project's Logs are searched and re
 - `logs-histogram`: the histogram counts Logs by time and zooms in (`logs-v1-histogram.spec.ts`).
 - `logs-inspector`: a Log opens in the inspector with its Fields (`logs-v1-inspector.spec.ts`, `inspector-extras.spec.ts`).
 - `logs-time-range`: the time-range picker's quick ranges and custom range (`time-range.spec.ts`).
-- `logs-ingest`: a Log sent to ingest is in the explorer.
 
 ## How to get to it (user POV)
 
 - Sidebar navigation `Main`, link `Logs`, which opens `/<org>/projects/<project>/logs`.
 - The mode buttons `Builder`, `Query` and `SQL` on the explorer's bar. The `Run` button, or Ctrl+Enter.
 - The button `Time range: <range>`.
-- A shipper or an application that sends Logs to ingest: `POST /api/<project id>/logs` (NDJSON) with `Authorization: Bearer <project key>`.
+- A shipper, an application or a Collector that sends Logs to ingest. Its routes are in [Log ingest](./log-ingest.md).
 
 ## Driving it with verify
 
@@ -29,8 +28,6 @@ Preconditions:
 - **Builder.** `"$V" flow -- e2e/flows/logs-v1-builder.spec.ts`. Pass: each test passes.
 - **Query mode.** `"$V" flow -- e2e/flows/logs-v1-query.spec.ts`. Pass: each test passes. The trace shows the `Query` textbox, the run, and the error with its line and column.
 - **SQL mode.** `"$V" flow -- e2e/flows/logs-v1-sql.spec.ts`. Pass: a SELECT runs, and changes or reads of other tables are refused.
-- **A Log from ingest.** Get the Project id with `"$V" run -- bin/rails runner 'print Project.find_by!(slug: "solid-trace-project").id'`. Send one Log as a shipper does: `curl -s -X POST http://localhost:4510/api/<id>/logs -H 'Content-Type: application/x-ndjson' -H 'Authorization: Bearer testkey123' --data-binary '{"level":"warn","message":"verify probe 1","service":"verify"}'`. The answer is `200`, which means that the Log is stored. Then run `"$V" snap --path '/solid-trace-org/projects/solid-trace-project/logs?range=1h' --name logs-ingest --wait-text 'verify probe 1'`. Pass: exit 0, and `logs-ingest.aria.txt` has the message.
-- **Side effect.** `curl -s 'http://127.0.0.1:4201/?user=solidtrace' --data-binary "SELECT count() FROM solidtrace_verify_s1.logs WHERE message = 'verify probe 1'"` gives `1`.
 - **Proof.** The traces in `<run>/evidence/flow-<time>/playwright/`, or the `snap` PNG and ARIA files.
 
 ## Gotchas

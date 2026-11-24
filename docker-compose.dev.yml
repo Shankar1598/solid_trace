@@ -86,3 +86,37 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+
+  # An OpenTelemetry Collector and a Log generator, to try OTLP ingest
+  # (POST /v1/logs). They are opt-in, because the dev box is short of memory.
+  # bin/dev and bin/clickhouse-dev do not start them. bin/otel-dev starts
+  # them. Both use the host's network, because EventStore listens on the host.
+  otel-collector:
+    profiles: [otel]
+    image: otel/opentelemetry-collector:0.165.0
+    container_name: solidtrace-otel-collector
+    network_mode: host
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      # Where the Logs go: EventStore's ingest URL and the Project's key. The
+      # defaults are the dev stack and the seed Project (console/db/seeds.rb).
+      SOLIDTRACE_INGEST_URL: "${SOLIDTRACE_INGEST_URL:-http://127.0.0.1:4000}"
+      SOLIDTRACE_KEY: "${SOLIDTRACE_KEY:-testkey123}"
+    volumes:
+      - ./local/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+
+  # Sends OTLP Logs to the Collector (127.0.0.1:14318), then exits. OTEL_LOG_COUNT
+  # is the number of Logs.
+  telemetrygen:
+    profiles: [otel]
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.165.0
+    container_name: solidtrace-otel-telemetrygen
+    network_mode: host
+    command:
+      - logs
+      - --otlp-http
+      - --otlp-insecure
+      - --otlp-endpoint=127.0.0.1:14318
+      - --logs=${OTEL_LOG_COUNT:-50}
+      - --rate=0
+      - --otlp-attributes=deployment.environment.name="dev"
