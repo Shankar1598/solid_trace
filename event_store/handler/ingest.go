@@ -94,19 +94,25 @@ func (h *IngestHandler) Logs(c *fiber.Ctx) error {
 	return h.ingestLogs(c, func(projectID uint32) bool {
 		pathProjectID, err := parseProjectID(c)
 		return err == nil && pathProjectID == projectID
-	})
+	}, h.storeJSONLogs)
 }
 
 // POST /api/logs
 // The Project is the one the key belongs to.
 func (h *IngestHandler) KeyOnlyLogs(c *fiber.Ctx) error {
-	return h.ingestLogs(c, func(uint32) bool { return true })
+	return h.ingestLogs(c, anyProject, h.storeJSONLogs)
 }
 
+func anyProject(uint32) bool { return true }
+
 // ingestLogs authenticates the request's project key, refuses it unless
-// projectAllowed accepts its Project, and ingests the body as that Project's
-// Logs.
-func (h *IngestHandler) ingestLogs(c *fiber.Ctx, projectAllowed func(projectID uint32) bool) error {
+// projectAllowed accepts its Project, reads the body within the Log route's
+// limits, and gives it to store to ingest as that Project's Logs and answer.
+func (h *IngestHandler) ingestLogs(
+	c *fiber.Ctx,
+	projectAllowed func(projectID uint32) bool,
+	store func(c *fiber.Ctx, projectID uint32, body ingest.Body) error,
+) error {
 	publicKey := h.extractSentryKey(c)
 	if publicKey == "" {
 		publicKey = bearerToken(c)
@@ -127,8 +133,13 @@ func (h *IngestHandler) ingestLogs(c *fiber.Ctx, projectAllowed func(projectID u
 	if err != nil {
 		return renderBodyError(c, err)
 	}
+	return store(c, projectID, body)
+}
 
-	counts, err := h.ingest.IngestLogs(projectID, body, isNDJSON(c))
+// storeJSONLogs ingests a body of the JSON Log route, and answers with its
+// counts.
+func (h *IngestHandler) storeJSONLogs(c *fiber.Ctx, projectID uint32, body ingest.Body) error {
+	counts, err := h.ingest.IngestLogs(projectID, body, strings.EqualFold(mediaType(c), "application/x-ndjson"))
 	if err != nil {
 		return h.renderIngestError(c, err)
 	}
@@ -145,9 +156,11 @@ func bearerToken(c *fiber.Ctx) string {
 	return strings.TrimSpace(token)
 }
 
-func isNDJSON(c *fiber.Ctx) bool {
+// mediaType returns the media type of the request's Content-Type, with its
+// parameters removed.
+func mediaType(c *fiber.Ctx) string {
 	mediaType, _, _ := strings.Cut(c.Get(fiber.HeaderContentType), ";")
-	return strings.EqualFold(strings.TrimSpace(mediaType), "application/x-ndjson")
+	return strings.TrimSpace(mediaType)
 }
 
 var errInvalidProjectKey = errors.New("invalid project key")
@@ -187,6 +200,8 @@ func (h *IngestHandler) renderIngestError(c *fiber.Ctx, err error) error {
 	case errors.Is(err, ingest.ErrInvalidItemHeader):
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrInvalidEventJSON):
+		return c.Status(400).SendString(err.Error())
+	case errors.Is(err, ingest.ErrInvalidOTLP):
 		return c.Status(400).SendString(err.Error())
 	case errors.Is(err, ingest.ErrOverloaded), errors.Is(err, storage.ErrShuttingDown):
 		// Not 429: on a 429 without Retry-After, Sentry SDKs stop sending

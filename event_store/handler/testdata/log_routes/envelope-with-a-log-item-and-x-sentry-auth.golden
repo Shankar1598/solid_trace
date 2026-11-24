@@ -1,0 +1,9 @@
+status: 200
+content-type: text/plain; charset=utf-8
+retry-after: (none)
+stored:
+  Log batch for Project 1, Logs: 2
+    {"attributes":{"original.time":1795694400.5},"level":"info","message":"one","time":"2026-11-23T12:00:00Z","trace_id":"5b8efff798038103d269b633813fc60c"}
+    {"attributes":{"original.time":1795694401},"level":"warn","message":"two","time":"2026-11-23T12:00:00Z"}
+body:
+OK

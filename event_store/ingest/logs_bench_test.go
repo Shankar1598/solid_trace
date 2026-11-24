@@ -2,13 +2,20 @@ package ingest
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
+
 	"github.com/solidtrace/event_store/ingest/normalise"
+	"github.com/solidtrace/event_store/models"
 )
 
 // The Log ingest benchmarks time the JSON work of one request: splitting its
@@ -111,6 +118,101 @@ func BenchmarkLogBodyToLogs(b *testing.B) {
 			}
 		}
 	})
+}
+
+// benchOTLPRequest is the Logs of benchLog as one OTLP request: the service
+// and the environment on the resource, the other built-in fields in the
+// record's own fields, and the rest as its attributes.
+func benchOTLPRequest(b *testing.B) plogotlp.ExportRequest {
+	logs := plog.NewLogs()
+	resourceLogs := logs.ResourceLogs().AppendEmpty()
+	resourceLogs.Resource().Attributes().PutStr("service.name", "web")
+	resourceLogs.Resource().Attributes().PutStr("deployment.environment.name", "production")
+	records := resourceLogs.ScopeLogs().AppendEmpty().LogRecords()
+	for i := range benchLogs {
+		var object map[string]any
+		if err := json.Unmarshal([]byte(benchLog(i)), &object); err != nil {
+			b.Fatal(err)
+		}
+		at, err := time.Parse(time.RFC3339Nano, object["timestamp"].(string))
+		if err != nil {
+			b.Fatal(err)
+		}
+		traceID, _ := hex.DecodeString(object["trace_id"].(string))
+		spanID, _ := hex.DecodeString(object["span_id"].(string))
+
+		record := records.AppendEmpty()
+		record.SetTimestamp(pcommon.NewTimestampFromTime(at))
+		record.SetSeverityNumber(plog.SeverityNumberInfo)
+		record.Body().SetStr(object["message"].(string))
+		record.SetTraceID(pcommon.TraceID(traceID))
+		record.SetSpanID(pcommon.SpanID(spanID))
+		for _, name := range []string{"timestamp", "level", "message", "service", "environment", "trace_id", "span_id"} {
+			delete(object, name)
+		}
+		if err := record.Attributes().FromRaw(object); err != nil {
+			b.Fatal(err)
+		}
+	}
+	return plogotlp.NewExportRequestFromLogs(logs)
+}
+
+// otlpRequestLogs normalises each log record of an OTLP request.
+func otlpRequestLogs(request plogotlp.ExportRequest) []models.Log {
+	var logs []models.Log
+	for _, resourceLogs := range request.Logs().ResourceLogs().All() {
+		for _, scopeLogs := range resourceLogs.ScopeLogs().All() {
+			for _, record := range scopeLogs.LogRecords().All() {
+				log, _ := normalise.OTLP(resourceLogs.Resource(), scopeLogs.Scope(), record, benchReceipt)
+				logs = append(logs, log)
+			}
+		}
+	}
+	return logs
+}
+
+// BenchmarkOTLPBodyToLogs times the work of one OTLP request with the Logs of
+// BenchmarkLogBodyToLogs: decoding its body and normalising each Log. It
+// first checks that the Logs are the same as the JSON route's.
+func BenchmarkOTLPBodyToLogs(b *testing.B) {
+	request := benchOTLPRequest(b)
+	objects, _ := logObjects(benchArrayBody(), false)
+	for i, log := range otlpRequestLogs(request) {
+		if want, _ := normalise.JSON(objects[i], benchReceipt); !reflect.DeepEqual(log, want) {
+			b.Fatalf("Expected Log %d the same as from JSON\n%+v\ngot\n%+v", i, want, log)
+		}
+	}
+
+	protobuf, err := request.MarshalProto()
+	if err != nil {
+		b.Fatal(err)
+	}
+	otlpJSON, err := request.MarshalJSON()
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, bench := range []struct {
+		name   string
+		body   []byte
+		decode func(plogotlp.ExportRequest, []byte) error
+	}{
+		{"protobuf", protobuf, plogotlp.ExportRequest.UnmarshalProto},
+		{"json", otlpJSON, plogotlp.ExportRequest.UnmarshalJSON},
+	} {
+		b.Run(bench.name, func(b *testing.B) {
+			b.SetBytes(int64(len(bench.body)))
+			b.ReportAllocs()
+			for b.Loop() {
+				request := plogotlp.NewExportRequest()
+				if err := bench.decode(request, bench.body); err != nil {
+					b.Fatal(err)
+				}
+				if logs := otlpRequestLogs(request); len(logs) != benchLogs {
+					b.Fatalf("got %d Logs", len(logs))
+				}
+			}
+		})
+	}
 }
 
 // BenchmarkTransformedLogs times normalising the objects a Log transform
