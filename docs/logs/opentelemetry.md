@@ -60,6 +60,7 @@ EventStore stores the other Logs of the request. A Log that has a field cut to a
 | --- | --- | --- |
 | `400` | The body does not decode as its Content-Type or Content-Encoding. | Drops the data. |
 | `401` | There is no key, or the key is not known. | Drops the data. |
+| `403` | The install refuses plain HTTP that a load balancer forwarded (`ingest_refuse_forwarded_http`). Use an `https://` URL. | Drops the data. |
 | `413` | The body is over a limit. | Drops the data. |
 | `415` | The Content-Type or the Content-Encoding is not one of the above. | Drops the data. |
 | `500` | An internal error, for example the lookup of the key fails. | Drops the data. |
@@ -80,7 +81,7 @@ Each request that EventStore reads adds to the Project's Ingest counts:
 
 A body that does not decode as OTLP counts as one request with its bytes and no Logs. A request that EventStore turns away as overloaded is counted as overloaded.
 
-A request that EventStore refuses before it reads the body is not counted. These are `401`, `413`, `415`, and a body that does not decompress.
+A request that EventStore refuses before it reads the body is not counted. These are `401`, `403`, `413`, `415`, and a body that does not decompress.
 
 ## Field mapping
 
@@ -114,7 +115,7 @@ service:
       exporters: [otlp_http]
 ```
 
-The receivers take OTLP on port 4317 (gRPC) and port 4318 (HTTP). The Collector sends to EventStore over HTTP only. To send JSON, add `encoding: json` to the exporter.
+The receivers take OTLP on port 4317 (gRPC) and port 4318 (HTTP), on 127.0.0.1 only. To take OTLP from other hosts or containers, set an `endpoint` such as `0.0.0.0:4318` on the protocol. The Collector sends to EventStore over HTTP only. To send JSON, add `encoding: json` to the exporter.
 
 ### An SDK
 
