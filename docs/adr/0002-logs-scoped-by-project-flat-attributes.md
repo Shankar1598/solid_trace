@@ -32,12 +32,12 @@ The names in this table are stored, so they are expensive to change, as the name
 
 ## Amended: How an OTLP metric data point becomes a Log (2026-11-24)
 
-Log ingest takes OTLP metrics ([OTLP metrics ingest](../../.scratch/otlp-metrics/plan.md)). EventStore has no metric store, so each metric data point becomes one Log. The Logs explorer, Dashboards and Monitors then read metrics as they read Logs. A data point is normalised by the rules of an OTLP log record above, with the data point in the place of the record: the same layers, the same flat namespace, the same `original.<field>` rename and the same values. The values of a data point are numbers with the `metric.` prefix, because a bare `value` can be a sender's own Attribute. Each one is a DOUBLE, so a `sum` in a Query adds them all, also an int over 2^53, which loses precision. These Attributes win over a data point attribute of the same name, in the dotted or the nested form, as `event.name` does for a record. The parts of a data point become these Fields:
+Log ingest takes OTLP metrics ([OTLP metrics ingest](../../.scratch/otlp-metrics/plan.md)). EventStore has no metric store, so each metric data point becomes one Log. The Logs explorer, Dashboards and Monitors then read metrics as they read Logs. A data point is normalised by the rules of an OTLP log record above, with the data point in the place of the record: the same layers, the same flat namespace, the same `original.<field>` rename and the same values. The values of a data point are numbers with the `metric.` prefix, because a bare `value` can be a sender's own Attribute. Each value is a DOUBLE. So a `sum` in a Query adds all the values. An int over 2^53 also adds up, but it loses precision. The `metric.` names in the table below are always ours. A sender's attribute with one of these names is kept as `original.<name>`, by the rule for a built-in field name. This rule applies in each layer (resource, scope and data point), in the dotted and the nested form, and also when the Log has no value of that name. So a sender's `metric.value` never adds to a `sum` of `metric.value`. The parts of a data point become these Fields:
 
 | OTLP | Log |
 | --- | --- |
-| metric `name` | `message`. A metric with no name gives Logs with no message. There is no `metric.name`. |
-| data point `time_unix_nano` | `time`. With no time, or a time out of the time window, the rules of a log record apply. |
+| metric `name` | `message`. A metric with an empty name gives Logs with no message, as a log record with an empty body does. There is no `metric.name`. |
+| data point `time_unix_nano` | `time`. A data point has no observed time, so a data point with no time gets the time of its receipt. A time out of the time window is kept as `original.time`, as for a log record. |
 | (none) | `level`: `info` |
 | resource, scope and data point attributes | Attributes, and `service`, `environment`, `otel.scope.name` and `otel.scope.version`, as for a log record. The data point wins over the scope, and the scope wins over the resource. |
 | the metric type | `metric.type`: `sum`, `gauge`, `histogram`, `exponential_histogram` or `summary` |
@@ -46,8 +46,9 @@ Log ingest takes OTLP metrics ([OTLP metrics ingest](../../.scratch/otlp-metrics
 | data point `start_time_unix_nano` | `metric.start_time`, as RFC 3339 text in UTC |
 | the value of a Sum or a Gauge, an int or a double | `metric.value`, a DOUBLE |
 | `count` and `sum` of a Histogram, an ExponentialHistogram or a Summary, and `min` and `max` of a Histogram or an ExponentialHistogram when sent | `metric.count`, `metric.sum`, `metric.min`, `metric.max`, each a DOUBLE |
-| a value that JSON can't hold (NaN, an infinity) | a string, as for a log record |
+| a value that JSON cannot hold (NaN, an infinity) | a string, as for a log record |
 | a data point with the flag "no recorded value" | a Log with no values |
+| a resource, scope or data point attribute named `metric.value`, `metric.count`, `metric.sum`, `metric.min`, `metric.max`, `metric.type`, `metric.unit`, `metric.temporality` or `metric.start_time` | `original.<name>`, also when the Log has no value of that name |
 | `description`, `metadata`, `is_monotonic`, the buckets, the quantiles, the exemplars, the flags and `schema_url` | not kept |
 
 Every metric type is accepted, and none is refused, because a refusal makes a Collector drop the whole request.

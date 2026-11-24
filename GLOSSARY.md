@@ -44,6 +44,10 @@ _Avoid_: event, log line, entry
 A named value on a Log that is not a built-in field. Nested names are flattened to dotted names (`http.method`), an array is one value, and each value keeps its own type, except a whole number too large to hold exactly, which is kept as a string.
 _Avoid_: tag, label, column
 
+**Metric data point**:
+One value of an OpenTelemetry metric at one time, such as a sum, a gauge or a histogram, that Log ingest takes from an OTLP sender. Each one is stored as one Log: the metric name is the message, and the values are Attributes under `metric.`.
+_Avoid_: metric, sample, measurement
+
 **Field**:
 Either a built-in field of a Log or an Attribute; what filters, chips and the field list refer to. Built-in field names are reserved: a value that cannot fill one is kept as an Attribute named `original.<field>`. Names beginning `solidtrace.` are reserved for Attributes SolidTrace sets, and a sender's such key is kept as `original.solidtrace.<rest>`.
 _Avoid_: key, column, property

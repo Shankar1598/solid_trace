@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,9 +47,17 @@ func metricLogs(t *testing.T, metrics pmetric.Metrics, r normalise.Receipt) []mo
 // resource and scope, and returns the Log of each of its data points.
 func normaliseMetric(t *testing.T, fill func(pmetric.Metric)) []models.Log {
 	t.Helper()
+	return metricLogs(t, oneMetric(func(_ pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) { fill(m) }), receipt)
+}
+
+// oneMetric returns metrics with the one metric that fill fills, under the
+// resource and the scope that fill also fills.
+func oneMetric(fill func(pcommon.Resource, pcommon.InstrumentationScope, pmetric.Metric)) pmetric.Metrics {
 	metrics := pmetric.NewMetrics()
-	fill(metrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty())
-	return metricLogs(t, metrics, receipt)
+	resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
+	scopeMetrics := resourceMetrics.ScopeMetrics().AppendEmpty()
+	fill(resourceMetrics.Resource(), scopeMetrics.Scope(), scopeMetrics.Metrics().AppendEmpty())
+	return metrics
 }
 
 // onePoint returns the only Log in logs.
@@ -129,7 +138,7 @@ func TestAGaugeValueIsADoubleAlsoWhenSentAsAnInt(t *testing.T) {
 	if len(logs) != 2 {
 		t.Fatalf("Expected a Log for each data point, got %d", len(logs))
 	}
-	// A Gauge has no temporality, and the metric has no unit.
+	// A gauge has no temporality, and the metric has no unit.
 	for i, value := range []float64{42, 0.5} {
 		want := models.Attributes{
 			Number: map[string]float64{"metric.value": value},
@@ -220,33 +229,106 @@ func TestASummaryGivesItsCountAndSumAndNotItsQuantiles(t *testing.T) {
 	}
 }
 
-// A point attribute named message is renamed, as on the log route. One named
-// as a metric. Attribute, dotted or nested, loses to it, as a record
-// attribute event.name loses to the record's event_name.
-func TestAPointAttributeNamedMessageIsKeptAsOriginalAndOneNamedMetricLoses(t *testing.T) {
-	log := onePoint(t, normaliseMetric(t, func(m pmetric.Metric) {
-		m.SetName("jobs.done")
-		p := m.SetEmptySum().DataPoints().AppendEmpty()
-		p.SetIntValue(7)
-		p.Attributes().PutStr("message", "the sender's")
-		p.Attributes().PutStr("metric.value", "dotted")
-		p.Attributes().PutEmptyMap("metric").PutStr("type", "nested")
-	}))
-
-	if log.Message != "jobs.done" {
-		t.Errorf("Expected the message jobs.done, got %q", log.Message)
+// Each metric. name is ours, also when the Log has no value of that name. A
+// sender's attribute of that name, in any layer and in the dotted or the
+// nested form, is kept as original.<name>, as one named message is. So a
+// sum of metric.value adds only the values of data points.
+func TestASendersAttributeNamedAsAMetricAttributeIsKeptAsOriginal(t *testing.T) {
+	cases := []struct {
+		name string
+		fill func(pcommon.Resource, pcommon.InstrumentationScope, pmetric.Metric)
+		want map[string]any
+	}{
+		{
+			name: "a value we set, dotted and nested in the point",
+			fill: func(_ pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) {
+				p := m.SetEmptySum().DataPoints().AppendEmpty()
+				p.SetIntValue(7)
+				p.Attributes().PutStr("message", "the sender's")
+				p.Attributes().PutStr("metric.value", "dotted")
+				p.Attributes().PutEmptyMap("metric").PutStr("type", "nested")
+			},
+			want: map[string]any{
+				"original.message":      "the sender's",
+				"original.metric.value": "dotted",
+				"original.metric.type":  "nested",
+				"metric.value":          7.0,
+				"metric.type":           "sum",
+			},
+		},
+		{
+			name: "a point with no recorded value",
+			fill: func(_ pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) {
+				p := m.SetEmptyGauge().DataPoints().AppendEmpty()
+				p.SetFlags(pmetric.DefaultDataPointFlags.WithNoRecordedValue(true))
+				p.Attributes().PutDouble("metric.value", 5)
+			},
+			want: map[string]any{"original.metric.value": 5.0, "metric.type": "gauge"},
+		},
+		{
+			name: "a histogram with no sum, min or max",
+			fill: func(_ pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) {
+				p := m.SetEmptyHistogram().DataPoints().AppendEmpty()
+				p.SetCount(2)
+				nested := p.Attributes().PutEmptyMap("metric")
+				nested.PutDouble("sum", 1)
+				nested.PutDouble("min", 2)
+				nested.PutDouble("max", 3)
+			},
+			want: map[string]any{
+				"original.metric.sum": 1.0,
+				"original.metric.min": 2.0,
+				"original.metric.max": 3.0,
+				"metric.count":        2.0,
+				"metric.type":         "histogram",
+			},
+		},
+		{
+			name: "a metric with no unit, in the scope",
+			fill: func(_ pcommon.Resource, s pcommon.InstrumentationScope, m pmetric.Metric) {
+				s.Attributes().PutStr("metric.unit", "ms")
+				m.SetEmptyGauge().DataPoints().AppendEmpty().SetDoubleValue(1)
+			},
+			want: map[string]any{"original.metric.unit": "ms", "metric.value": 1.0, "metric.type": "gauge"},
+		},
+		{
+			name: "the temporality of a gauge",
+			fill: func(_ pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) {
+				p := m.SetEmptyGauge().DataPoints().AppendEmpty()
+				p.SetDoubleValue(1)
+				p.Attributes().PutStr("metric.temporality", "cumulative")
+			},
+			want: map[string]any{"original.metric.temporality": "cumulative", "metric.value": 1.0, "metric.type": "gauge"},
+		},
+		{
+			name: "a point with no start time",
+			fill: func(_ pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) {
+				p := m.SetEmptyGauge().DataPoints().AppendEmpty()
+				p.SetDoubleValue(1)
+				p.Attributes().PutEmptyMap("metric").PutStr("start_time", "yesterday")
+			},
+			want: map[string]any{"original.metric.start_time": "yesterday", "metric.value": 1.0, "metric.type": "gauge"},
+		},
+		{
+			name: "a value in the resource",
+			fill: func(r pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) {
+				r.Attributes().PutDouble("metric.value", 99)
+				m.SetEmptyGauge().DataPoints().AppendEmpty().SetDoubleValue(1)
+			},
+			want: map[string]any{"original.metric.value": 99.0, "metric.value": 1.0, "metric.type": "gauge"},
+		},
 	}
-	want := map[string]any{
-		"original.message": "the sender's",
-		"metric.value":     7.0,
-		"metric.type":      "sum",
-	}
-	if got := attributes(t, log); !reflect.DeepEqual(got, want) {
-		t.Errorf("Expected Attributes\n%v\ngot\n%v", want, got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			log := onePoint(t, metricLogs(t, oneMetric(c.fill), receipt))
+			if got := attributes(t, log); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("Expected Attributes\n%v\ngot\n%v", c.want, got)
+			}
+		})
 	}
 }
 
-// A DOUBLE can't hold 2^53 + 1, so it is the nearest DOUBLE, still a number
+// A DOUBLE cannot hold 2^53 + 1, so it is the nearest DOUBLE, still a number
 // a sum adds up. An int Attribute keeps its exact digits as a string.
 func TestAnIntValueOver2To53IsTheNearestDouble(t *testing.T) {
 	log := onePoint(t, normaliseMetric(t, func(m pmetric.Metric) {
@@ -287,6 +369,65 @@ func TestAMetricWithNoNameGivesLogsWithNoMessage(t *testing.T) {
 	if got := builtInsOf(log); got != want {
 		t.Errorf("Expected\n%+v\ngot\n%+v", want, got)
 	}
+	// No message is set, so there is no original.message either.
+	wantAttributes := map[string]any{"metric.value": 1.0, "metric.type": "sum"}
+	if got := attributes(t, log); !reflect.DeepEqual(got, wantAttributes) {
+		t.Errorf("Expected Attributes\n%v\ngot\n%v", wantAttributes, got)
+	}
+}
+
+// A data point has no observed time, so one with no time gets the time of
+// its receipt.
+func TestADataPointWithNoTimeGetsTheTimeOfItsReceipt(t *testing.T) {
+	log := onePoint(t, normaliseMetric(t, func(m pmetric.Metric) {
+		m.SetName("queue.depth")
+		m.SetEmptyGauge().DataPoints().AppendEmpty().SetDoubleValue(1)
+	}))
+
+	if !log.Time.Equal(receivedAt) {
+		t.Errorf("Expected the time %v, got %v", receivedAt, log.Time)
+	}
+	if _, ok := attributes(t, log)["original.time"]; ok {
+		t.Errorf("Expected no original.time, got %v", log.Attributes)
+	}
+}
+
+func TestTheServiceAndEnvironmentComeFromTheResource(t *testing.T) {
+	log := onePoint(t, metricLogs(t, oneMetric(func(r pcommon.Resource, _ pcommon.InstrumentationScope, m pmetric.Metric) {
+		r.Attributes().PutStr("service.name", "checkout")
+		r.Attributes().PutStr("deployment.environment.name", "production")
+		m.SetName("orders.placed")
+		m.SetEmptyGauge().DataPoints().AppendEmpty().SetDoubleValue(1)
+	}), receipt))
+
+	want := builtIns{Time: receivedAt, Level: "info", Message: "orders.placed", Service: "checkout", Environment: "production"}
+	if got := builtInsOf(log); got != want {
+		t.Errorf("Expected\n%+v\ngot\n%+v", want, got)
+	}
+	wantAttributes := map[string]any{"metric.value": 1.0, "metric.type": "gauge"}
+	if got := attributes(t, log); !reflect.DeepEqual(got, wantAttributes) {
+		t.Errorf("Expected Attributes\n%v\ngot\n%v", wantAttributes, got)
+	}
+}
+
+// A metric name over 64 KB is cut, and the Log is marked, as a long message
+// is on the log route.
+func TestAMetricLogOverALimitIsTruncatedAndMarked(t *testing.T) {
+	long := strings.Repeat("a", 70*kb)
+	var points []normalise.MetricPoint
+	oneMetric(func(r pcommon.Resource, s pcommon.InstrumentationScope, m pmetric.Metric) {
+		m.SetName(long)
+		m.SetEmptyGauge().DataPoints().AppendEmpty().SetDoubleValue(1)
+		points = normalise.AppendMetricPoints(points, r, s, m)
+	})
+
+	log, outcome := normalise.OTLPMetric(points[0], receipt)
+	if outcome != normalise.Truncated || !truncatedFlag(log) {
+		t.Errorf("Expected the Log truncated and marked, got %v and %v", outcome, log.Attributes.Bool)
+	}
+	if log.Message != long[:64*kb] {
+		t.Errorf("Expected the message cut to 64 KB, got %d bytes", len(log.Message))
+	}
 	if got := log.Attributes.Number["metric.value"]; got != 1 {
 		t.Errorf("Expected metric.value 1, got %v", got)
 	}
@@ -306,8 +447,10 @@ func TestADataPointWithNoRecordedValueHasNoValues(t *testing.T) {
 }
 
 // The fixtures are two real exports from Claude Code 2.1.323, with the email,
-// the account, organization, user and session ids swapped for fake values of
-// the same length. The protobuf one is the shutdown export of a session that
+// the account, organization, user and session ids and the OS version swapped
+// for fake values of the same length. The .pb and the .json fixtures are two
+// different exports, not one export in two encodings, so their data points
+// and costs differ. The protobuf one is the shutdown export of a session that
 // wrote and edited files, and the JSON one is from another session.
 var claudeCodeReceipt = normalise.Receipt{At: time.Date(2026, 11, 24, 12, 20, 0, 0, time.UTC), RetentionDays: 30}
 
@@ -379,7 +522,7 @@ func TestAClaudeCodeCostDataPointGivesTheseFieldsAndAttributes(t *testing.T) {
 	wantAttributes := map[string]any{
 		"host.arch":                 "amd64",
 		"os.type":                   "linux",
-		"os.version":                "7.0.0-1017-gcp",
+		"os.version":                "6.8.0-1234-dev",
 		"service.version":           "2.1.323",
 		"otel.scope.name":           "com.anthropic.claude_code",
 		"otel.scope.version":        "2.1.323",

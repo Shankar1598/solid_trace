@@ -52,7 +52,7 @@ func OTLP(resource pcommon.Resource, scope pcommon.InstrumentationScope, record 
 	if name := record.EventName(); name != "" {
 		recordAttributes["event.name"] = quote(name)
 	}
-	s := otlpSent(resource, scope, recordAttributes)
+	s := otlpSent(resource, scope, recordAttributes, nil)
 
 	t := record.Timestamp()
 	if t == 0 {
@@ -93,9 +93,10 @@ func OTLP(resource pcommon.Resource, scope pcommon.InstrumentationScope, record 
 // otlpSent merges the resource, the scope and own into one flat namespace of
 // Attributes. own is the flattened attributes of a log record or a metric
 // data point, with its protocol fields set on top. It renames an attribute
-// named as a built-in field to original.<field>, and picks out the service
-// and the environment.
-func otlpSent(resource pcommon.Resource, scope pcommon.InstrumentationScope, own map[string]json.RawMessage) sent {
+// named as a built-in field, or with one of the names in ours, to
+// original.<name>, and picks out the service and the environment. ours are
+// the names of Attributes that the caller sets after this.
+func otlpSent(resource pcommon.Resource, scope pcommon.InstrumentationScope, own map[string]json.RawMessage, ours []string) sent {
 	// The scope's fields go on top of its flattened attributes, so that they
 	// win over both forms of an attribute.
 	scopeAttributes := flatten(members(scope.Attributes()))
@@ -114,10 +115,12 @@ func otlpSent(resource pcommon.Resource, scope pcommon.InstrumentationScope, own
 
 	// The rename wins over a sender's own original.<field>, as on the JSON
 	// route.
-	for _, name := range names {
-		if raw, ok := s.attributes[name]; ok {
-			delete(s.attributes, name)
-			s.attributes["original."+name] = raw
+	for _, reserved := range [...][]string{names[:], ours} {
+		for _, name := range reserved {
+			if raw, ok := s.attributes[name]; ok {
+				delete(s.attributes, name)
+				s.attributes["original."+name] = raw
+			}
 		}
 	}
 	// The merged Attributes stand for the resource layer: when own and the
