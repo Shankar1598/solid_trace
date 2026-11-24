@@ -71,6 +71,8 @@ export interface AgentSessionRow {
   folder: string
   parent_session_id: string
   model: string
+  /** The effort of the reply whose model is model, as high; "" for none. */
+  effort: string
   /** The last /rename, else Claude Code's title, else the start of the first person message; "" for none. */
   title: string
   input_tokens: number
@@ -145,6 +147,11 @@ const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'U
 /** A count of tokens, short: 12.3K, 4M. */
 export function tokensText(tokens: number): string {
   return shortNumber.format(tokens)
+}
+
+/** A model with the effort of its reply, as "claude-opus-5-5 · high"; the model alone when there is no effort. */
+export function modelText(model: string | undefined, effort: string | undefined): string {
+  return [model, effort].filter(Boolean).join(' · ')
 }
 
 /** An estimated cost in dollars. A cost under a cent is "<$0.01"; no cost is never $0. */

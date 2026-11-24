@@ -29,7 +29,7 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
       title: "Cart page",
       id: CART, first: "2026-10-02T11:00:00Z", last: "2026-10-02T11:00:09Z", user_id: user_id, harness: "claude-code",
       repository: "github.com/acme/shop", folder: "apps/web", run_id: run_id, project: project, parent_session_id: PARENT,
-      model: "claude-opus-5-5", input_tokens: 20, output_tokens: 100, cache_read_tokens: 2000, cache_write_tokens: 200,
+      model: "claude-opus-5-5", effort: "high", input_tokens: 20, output_tokens: 100, cache_read_tokens: 2000, cache_write_tokens: 200,
       cost_usd: 0.01, person_messages: 1, turns: 1, tool_calls: 1, subagents: 1, flags: flags,
     }
   end
@@ -45,7 +45,8 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
       subagents: [ { path: "subagents/agent-a1.jsonl", agent_id: "a1", tool_use_id: "toolu_9", first: "2026-10-02T11:00:02Z", last: "2026-10-02T11:00:03Z" } ],
       steps: [
         step("person", "Add a cart page"),
-        step("assistant", '{"description":"Find the cart"}', line: "assistant/tool_use", tool_name: "Agent", tool_use_id: "toolu_9"),
+        step("assistant", '{"description":"Find the cart"}', line: "assistant/tool_use", tool_name: "Agent", tool_use_id: "toolu_9",
+             model: "claude-opus-5-5", effort: "high"),
         step("tool", "cart.go", line: "user/tool_result", tool_name: "Agent", tool_use_id: "toolu_9", subagent_id: "a1"),
         step("not from a person", "Stop hook feedback: run the report"),
       ],
@@ -75,8 +76,8 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     header = view["agent_session"]
     assert_equal({ "id" => @admin.id, "name" => "Ada" }, header["person"])
     assert_nil header["run"]
-    assert_equal [ "github.com/acme/shop", "apps/web", PARENT, "claude-opus-5-5", 0.01 ],
-      header.values_at("repository", "folder", "parent_session_id", "model", "cost_usd")
+    assert_equal [ "github.com/acme/shop", "apps/web", PARENT, "claude-opus-5-5", "high", 0.01 ],
+      header.values_at("repository", "folder", "parent_session_id", "model", "effort", "cost_usd")
     assert_equal "Cart page", header["title"]
     assert_equal "estimate at list prices", view["cost_label"]
     assert_nil view["resume_warning"]
@@ -84,6 +85,7 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     steps = view["steps"]
     assert_equal [ "Ada", nil, nil, nil ], steps.map { |s| s.dig("from", "name") }
     assert_equal [ "person", "agent", "tool", "not from a person" ], steps.map { |s| s.dig("from", "kind") }
+    assert_equal [ nil, [ "claude-opus-5-5", "high" ], nil, nil ], steps.map { |s| s["model"] && s.values_at("model", "effort") }
     assert_equal "c2", view["next_cursor"]
     assert_equal [ { "path" => "subagents/agent-a1.jsonl", "agent_id" => "a1", "tool_use_id" => "toolu_9",
                      "first" => "2026-10-02T11:00:02Z", "last" => "2026-10-02T11:00:03Z" } ], view["subagents"]

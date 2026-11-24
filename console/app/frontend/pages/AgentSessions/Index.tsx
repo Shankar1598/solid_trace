@@ -15,6 +15,7 @@ import {
   agentSessionsSearch,
   agoText,
   costText,
+  modelText,
   nextOrder,
   orderOf,
   orderText,
@@ -299,7 +300,7 @@ function SessionsTable({ rows, more, total, path, order, onSort }: {
                   {row.repository}
                   {row.folder && <span className="text-muted-foreground">/{row.folder}</span>}
                 </TableCell>
-                <TableCell className="font-mono text-xs max-md:hidden">{row.model || <span className="font-sans text-muted-foreground">None</span>}</TableCell>
+                <TableCell className="font-mono text-xs max-md:hidden">{modelText(row.model, row.effort) || <span className="font-sans text-muted-foreground">None</span>}</TableCell>
                 <TableCell
                   className="text-right font-mono text-xs tabular-nums"
                   title={`${row.input_tokens.toLocaleString()} input, ${row.output_tokens.toLocaleString()} output, ${row.cache_read_tokens.toLocaleString()} cache read, ${row.cache_write_tokens.toLocaleString()} cache write`}

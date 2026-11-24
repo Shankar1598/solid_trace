@@ -12,7 +12,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { costText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
+import { costText, modelText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
   addPage,
   commandOutput,
@@ -229,6 +229,7 @@ function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; 
       ? <Link href={parentPath} className="font-mono text-xs underline underline-offset-2">{session.parent_session_id}</Link>
       : <None />],
     ['Model', session.model ? <span className="font-mono text-xs">{session.model}</span> : <None text="Not known" />],
+    ['Effort', session.effort ? <span className="font-mono text-xs">{session.effort}</span> : <None text="Not known" />],
     ['First', timeText(session.first)],
     ['Last', timeText(session.last)],
     ['Tokens', totalTokens(session) === 0 ? <None text="No tokens" /> : (
@@ -508,6 +509,7 @@ function StepTitle({ step, label, icon, subagentBadge = true }: { step: Timeline
       {isThinking(step) && <Badge>thinking</Badge>}
       {subagentBadge && step.path.includes('subagents/') && <Badge>subagent {step.path.split('/').pop()?.replace(/^agent-|\.jsonl$/g, '')}</Badge>}
       <span className="font-mono text-muted-foreground">{clock(step.time)}</span>
+      {step.model && <span className="font-mono text-muted-foreground max-md:hidden" data-model>{modelText(step.model, step.effort)}</span>}
       {step.tokens && (
         <span className="font-mono text-muted-foreground" title={`${step.tokens.input} input, ${step.tokens.output} output, ${step.tokens.cache_read} cache read, ${step.tokens.cache_write} cache write`}>
           {stepTokensText(step)}

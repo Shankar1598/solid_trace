@@ -38,8 +38,8 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     run, own = got.json["agent_sessions"]
     assert_equal [ RUN, { "id" => "run_42", "project" => "shop" }, { "id" => @admin.id, "name" => "Ada" } ],
       run.values_at("id", "run", "person")
-    assert_equal [ CART, nil, { "id" => @member.id, "name" => "Bob" }, 0.00174, 1000 ],
-      own.values_at("id", "run", "person", "cost_usd", "cache_read_tokens")
+    assert_equal [ CART, nil, { "id" => @member.id, "name" => "Bob" }, 0.00174, 1000, "claude-opus-5-5", "high" ],
+      own.values_at("id", "run", "person", "cost_usd", "cache_read_tokens", "model", "effort")
     assert_not own.key?("user_id")
     assert_equal [ "", "Cart page" ], [ run["title"], own["title"] ]
     assert_equal "http://console.test/acme/agent_sessions/#{CART}", own["link"]
@@ -87,6 +87,13 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
 
     assert_match(/sort/, description)
     assert_match(/most expensive/, description)
+  end
+
+  test "both tools name the effort next to the model" do
+    tools = listed_tools(user: @member).index_by { |tool| tool[:name] }
+
+    assert_match(/model, effort/, tools["list_agent_sessions"][:description])
+    assert_match(/model, effort/, tools["get_agent_session"][:description])
   end
 
   test "list_agent_sessions takes a person by user id too" do
@@ -146,6 +153,7 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     [ run, own ].each do |row|
       assert_equal [], %w[folder parent_session_id flags].select { |name| row.key?(name) }
     end
+    assert_not run.key?("effort"), "an empty effort is left out, as an empty model is"
     assert_equal [ "", "Cart page" ], [ run["title"], own["title"] ], "the title stays, also when it is empty"
     assert_equal [ 0, 0 ], [ run["subagents"], own["subagents"] ], "a number stays, also when it is 0"
   end
@@ -172,7 +180,9 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     assert_equal [ CART, "Cart page", "apps/web", { "id" => @member.id, "name" => "Bob" }, nil ],
       session.values_at("id", "title", "folder", "person", "run")
     assert_equal [ "a1" ], got.json["subagents"].pluck("agent_id")
-    assert_equal [ "Add a cart page", "cart.go" ], got.json["steps"].pluck("text")
+    assert_equal [ "Add a cart page", "Done.", "cart.go" ], got.json["steps"].pluck("text")
+    assert_equal [ "claude-opus-5-5", "high" ], got.json["steps"].second.values_at("model", "effort")
+    assert_equal "high", session["effort"]
     assert_equal({ "kind" => "person", "name" => "Bob" }, got.json["steps"].first["from"])
     assert_equal "c2", got.json["next_cursor"]
     assert_equal "estimate at list prices", got.json["cost_label"]
@@ -235,12 +245,12 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
 
   private
 
-  def row(id, user_id:, cost:, run_id: "", project: "", folder: "")
+  def row(id, user_id:, cost:, run_id: "", project: "", folder: "", effort: "high")
     {
       title: id == CART ? "Cart page" : "",
       id: id, first: "2026-10-02T11:00:00Z", last: "2026-10-02T11:00:06Z", user_id: user_id, harness: "claude-code",
       repository: "github.com/acme/shop", folder: folder, run_id: run_id, project: project, parent_session_id: "",
-      model: "claude-opus-5-5", input_tokens: 10, output_tokens: 50, cache_read_tokens: 1000, cache_write_tokens: 100,
+      model: "claude-opus-5-5", effort: effort, input_tokens: 10, output_tokens: 50, cache_read_tokens: 1000, cache_write_tokens: 100,
       cost_usd: cost, person_messages: 1, turns: 1, tool_calls: 1, subagents: 0, flags: [],
     }
   end
@@ -249,7 +259,7 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
     stub_request(:post, "#{EventStore.base_url}/api/#{@agent.id}/agent-sessions")
       .with(body: hash_including({ from: from, to: to }.merge(filters).stringify_keys))
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: {
-        agent_sessions: [ row(RUN, user_id: @admin.id, cost: nil, run_id: "run_42", project: "shop"),
+        agent_sessions: [ row(RUN, user_id: @admin.id, cost: nil, run_id: "run_42", project: "shop", effort: ""),
                           row(CART, user_id: @member.id, cost: 0.00174) ],
         totals: { agent_sessions: 2, input_tokens: 20, output_tokens: 100, cache_read_tokens: 2000, cache_write_tokens: 200,
                   cost_usd: 0.00174, no_cost: 1 },
@@ -267,7 +277,9 @@ class McpAgentSessionToolsTest < ActiveSupport::TestCase
       agent_session: row(CART, user_id: @member.id, cost: 0.01, folder: "apps/web"),
       subagents: [ { path: "subagents/agent-a1.jsonl", agent_id: "a1", tool_use_id: "toolu_9",
                      first: "2026-10-02T11:00:02Z", last: "2026-10-02T11:00:03Z" } ],
-      steps: [ step("person", "Add a cart page"), step("tool", "cart.go", tool_name: "Agent", tool_use_id: "toolu_9") ],
+      steps: [ step("person", "Add a cart page"),
+               step("assistant", "Done.", line: "assistant/text", model: "claude-opus-5-5", effort: "high"),
+               step("tool", "cart.go", tool_name: "Agent", tool_use_id: "toolu_9") ],
       next_cursor: "c2",
     }
     stub_request(:post, "#{EventStore.base_url}/api/#{@agent.id}/agent-sessions/#{CART}")

@@ -16,10 +16,10 @@ module McpTools
       each Agent session with activity in the range, latest activity first unless sort and direction say otherwise,
       as the Agent sessions page lists them, at most limit rows. Each row has the id, the title (the last /rename, else the title that Claude Code gave,
       else the start of the first person message; "" for none), first and last times, the person (an engineer's own
-      Agent session) or the Run (id and Project), harness, repository, folder, parent_session_id, model, input,
-      output, cache_read and cache_write tokens, cost_usd (an estimate at list prices), person_messages, turns,
+      Agent session) or the Run (id and Project), harness, repository, folder, parent_session_id, model, effort
+      (of the reply of that model, as high), input, output, cache_read and cache_write tokens, cost_usd (an estimate at list prices), person_messages, turns,
       tool_calls, subagents, flags (such as cut or partial) and a link to its Agent session page. A row leaves out
-      each field with no value: an empty folder, parent_session_id, model or flags, the Run of an engineer's own
+      each field with no value: an empty folder, parent_session_id, model, effort or flags, the Run of an engineer's own
       Agent session, and cost_usd when it has no cost. totals adds up all the Agent sessions
       that the filters select, also those that the limit left out; more is true when the limit left some out. When
       more is true, narrow the range, or filter by person or repository, to read the others. repositories lists

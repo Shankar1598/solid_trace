@@ -2,9 +2,10 @@
 
 # One Agent session of an Organization's Agent Project as a member sees it
 # on the Agent session page: its header (the person or the Run, the
-# repository, the folder, the parent Agent session, the model, the times,
-# the tokens by kind, the estimated cost and the flags), its subagents, and
-# one page of its timeline, of the main transcript or of one subagent's.
+# repository, the folder, the parent Agent session, the model and its
+# effort, the times, the tokens by kind, the estimated cost and the
+# flags), its subagents, and one page of its timeline, of the main
+# transcript or of one subagent's.
 # Made here once, so that the page and the MCP server's get_agent_session
 # cannot drift.
 #
