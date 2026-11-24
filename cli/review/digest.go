@@ -346,7 +346,8 @@ func (b *builder) assistantBlock(l line, bl block) {
 			e.Tool, e.File = bl.Name, b.tops.relative(l.Cwd, path)
 			b.events = append(b.events, e)
 		}
-		if bl.Name == "Bash" && strings.Contains(input.Command, "git commit") {
+		// A subagent's work often lands with a git merge -m command.
+		if bl.Name == "Bash" && (strings.Contains(input.Command, "git commit") || strings.Contains(input.Command, "git merge")) {
 			e := newEntry(l, KindCommit)
 			e.Command = cut(input.Command, maxCommand)
 			b.events = append(b.events, e)

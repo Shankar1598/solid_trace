@@ -1,12 +1,12 @@
 # The review record
 
-You read the digest of one coding session and write the record of its reviews: what each review found, what happened to each finding, and what the person said. The team uses the records of many sessions to improve its review skill, so each claim must point at the event that proves it.
+You read the digest of the coding sessions that built one PR, and write the record of the feature: how it started, what changed, what each review found, what happened to each finding, and what the reviews missed. The team uses the records of many sessions to improve its review skill, so each claim must point at the event that proves it.
 
 ## The digest
 
-A JSON file with `session`, `reviews` (the count of review runs) and `events`, in the order of the session. Each event has `seq`, `uuid`, `time` and `kind`:
+A JSON file with `sessions` (each with `id` and `title`), `reviews` (the count of review runs) and `events`, in time order across the sessions. Each event has `seq`, `session`, `uuid`, `time` and `kind`. Before a session's first review, the digest keeps only its `task`, `person`, `commit` and `delegate` events:
 
-- `task`: the person's first message.
+- `task`: the first message of a session.
 - `review_start`: a review began. `skill`, `trigger` (`person` typed it, or the `agent` started it), `args`.
 - `agent_text`: a text that the agent wrote.
 - `findings`: a `solidtrace-findings` block with each finding's `id`, `severity`, `category`, `file`, `line`, `title`, `proof` and `needs`.
@@ -14,7 +14,7 @@ A JSON file with `session`, `reviews` (the count of review runs) and `events`, i
 - `subagent_report`: a subagent's report. A review often runs in subagents, so their reports can hold findings.
 - `person`: a message from the person.
 - `edit`: a file that the agent changed (`tool`, `file`).
-- `commit`: a `git commit` command.
+- `commit`: a `git commit` or `git merge` command.
 
 ## Steps
 
@@ -28,7 +28,13 @@ A JSON file with `session`, `reviews` (the count of review runs) and `events`, i
    - `open`: no event shows what happened to it. Evidence: the report.
 3. **Quote the person.** `person_said` is the person's own words about this finding, at most 200 characters, cut with `…`. Use `null` when the person said nothing about it.
 4. **Find what the review missed.** Go through every `person` event after the first review, one at a time, and every `subagent_report` of a verifier or a test run. For each one, ask: does it name a problem, or ask a question whose answer shows a problem (for example "Have you tested this?", answered "Partly")? A problem that no finding of the review before it names is a `missed` item. `found_by` is `person` when a person message names it, or asks a question that makes the agent find it (also a person who reads deeper and finds more). It is `agent` for a verifier, a test run or a later subagent. Evidence: the person message or the agent's event, and the event where the agent agrees that the problem is real.
-5. **Mark doubt.** When the events let two outcomes fit, choose the one with the stronger evidence and set `"confidence": "low"`. Else `"high"`.
+5. **Write the story.** Short, plain sentences, from the events only:
+   - `started_from`: what the person asked for at the start, in one or two sentences, from the first `task`.
+   - `changes`: what the work changed, one line per part, from the commits and the delegates.
+   - `reviews`: one line per run: what it found, and what happened.
+   - `after_review`: the problems that came up after the reviews, from the person and from later agents, in one line each.
+   - `sessions`: one line per session: what it did in the work.
+6. **Mark doubt.** When the events let two outcomes fit, choose the one with the stronger evidence and set `"confidence": "low"`. Else `"high"`.
 
 Every `evidence` value is a `uuid` from the digest. Write no claim that no event shows.
 
@@ -39,8 +45,15 @@ Write this JSON to the output path:
 ```json
 {
   "version": 1,
-  "session": "<from the digest>",
+  "sessions": [{"id": "<from the digest>", "title": "<from the digest>"}],
   "pr": null,
+  "story": {
+    "started_from": "...",
+    "changes": ["..."],
+    "reviews": ["Run 1 (otlp-01): 4 findings, 3 fixed, 1 disputed."],
+    "after_review": ["..."],
+    "sessions": ["<id>: ..."]
+  },
   "reviews": [
     {
       "run": 1, "skill": "pstack:interrogate", "trigger": "person", "start": "<uuid of the review_start or the delegate>",
