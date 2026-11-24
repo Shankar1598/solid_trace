@@ -1,0 +1,21 @@
+{
+  "session": "s-two",
+  "reviews": 2,
+  "events": [
+    {"seq": 0, "uuid": "u01", "time": "2026-11-01T10:00:00Z", "kind": "task", "text": "Add a retry to the uploader."},
+    {"seq": 1, "uuid": "u05", "time": "2026-11-01T10:02:00Z", "kind": "review_start", "skill": "pstack:interrogate", "trigger": "person", "args": "the retry change"},
+    {"seq": 2, "uuid": "a11", "time": "2026-11-01T10:04:30Z", "kind": "review_report", "text": "Two findings.\n\n```solidtrace-findings\n{\"findings\": [{\"id\": \"F1\", \"severity\": \"high\", \"title\": \"No back-off <between> tries & no cap\"}, {\"id\": \"F2\", \"severity\": \"low\"}]}\n```\n"},
+    {"seq": 3, "uuid": "a11", "time": "2026-11-01T10:04:30Z", "kind": "findings", "findings": {"findings": [{"id": "F1", "severity": "high", "title": "No back-off <between> tries & no cap"}, {"id": "F2", "severity": "low"}]}},
+    {"seq": 4, "uuid": "u16", "time": "2026-11-01T10:06:00Z", "kind": "person", "text": "Fix F1. F2 is trivial, skip it. You missed the log line.\n[image]"},
+    {"seq": 5, "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "Edit", "file": "uploader/retry.go"},
+    {"seq": 6, "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "MultiEdit", "file": "/elsewhere/other.conf"},
+    {"seq": 7, "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "NotebookEdit", "file": "notes/a.ipynb"},
+    {"seq": 8, "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "Write", "file": "uploader/new.go"},
+    {"seq": 9, "uuid": "a18", "time": "2026-11-01T10:07:00Z", "kind": "commit", "command": "git add uploader && git commit -m 'Add a back-off to the retry'"},
+    {"seq": 10, "uuid": "u19", "time": "2026-11-01T10:08:00Z", "kind": "person", "text": "/compact"},
+    {"seq": 11, "uuid": "a21", "time": "2026-11-01T10:09:00Z", "kind": "review_start", "skill": "code-review", "trigger": "agent", "args": "since main"},
+    {"seq": 12, "uuid": "a22", "time": "2026-11-01T10:10:00Z", "kind": "review_report", "text": "Standards: fine.\n```solidtrace-findings\n{\"findings\": [oops\n```"},
+    {"seq": 13, "uuid": "a22", "time": "2026-11-01T10:10:00Z", "kind": "findings", "findings": null, "error": "invalid character 'o' looking for beginning of value"},
+    {"seq": 14, "uuid": "u23", "time": "2026-11-01T10:10:30Z", "kind": "person", "text": "Also check the log line."}
+  ]
+}

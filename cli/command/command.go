@@ -203,6 +203,17 @@ Usage:
       base branch. Each later pr updates the title and description of
       the same PR (a flag that you do not give stays as it is). pr never
       merges.
+  solidtrace review digest --session ID | --file PATH [--skills REGEX]
+      Print the review timeline of one Claude Code transcript as JSON, for
+      an agent that records what a review found and what happened to each
+      finding. --session finds <projects>/*/ID.jsonl in CLAUDE_CONFIG_DIR
+      (else ~/.claude); --file reads PATH. The timeline has the first
+      person message, and from the first review on: each review's start
+      and its report (the last assistant text before the next person
+      message), each solidtrace-findings block, the person's messages, the
+      edits and the commits. A review is a skill whose name matches
+      --skills (review|interrogate by default), that a person or the agent
+      starts.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -252,6 +263,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return report(ctx, args[1:], env)
 	case "pr":
 		return pr(ctx, args[1:], env)
+	case "review":
+		return reviewCommand(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0
