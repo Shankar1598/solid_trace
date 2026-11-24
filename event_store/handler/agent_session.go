@@ -73,6 +73,7 @@ type (
 		ToolUseID  string           `json:"tool_use_id,omitempty"`
 		SubagentID string           `json:"subagent_id,omitempty"`
 		Model      string           `json:"model,omitempty"`
+		Effort     string           `json:"effort,omitempty"`
 		Level      string           `json:"level,omitempty"`
 		Tokens     *agentStepTokens `json:"tokens"`
 		CostUSD    *float64         `json:"cost_usd"`
@@ -191,7 +192,7 @@ func (h *AgentSessionsHandler) Show(c *fiber.Ctx) error {
 		step := agentStep{
 			ID: s.ID.String(), Time: s.Time, Path: s.Path, Version: s.Version, Offset: s.Offset, Line: s.Line, Role: s.Role,
 			Text: s.Text, ToolName: s.ToolName, ToolUseID: s.ToolUseID, SubagentID: s.SubagentID, Model: s.Model,
-			Level: s.Level, CostUSD: s.CostUSD, Cut: s.Cut,
+			Effort: s.Effort, Level: s.Level, CostUSD: s.CostUSD, Cut: s.Cut,
 		}
 		if t := s.Tokens; t != nil {
 			step.Tokens = &agentStepTokens{Input: t.Input, Output: t.Output, CacheRead: t.CacheRead, CacheWrite: t.CacheWrite}

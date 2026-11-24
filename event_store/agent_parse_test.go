@@ -100,6 +100,36 @@ func TestTheParseMakesOneLogForEachLineOfAnAgentSession(t *testing.T) {
 	}
 }
 
+// A reply's Log has the effort of its line as agent.effort, next to
+// agent.model: the line's top-level effort, not its perTurnEffort. A line
+// with no effort, and a line that is not a reply, has no agent.effort.
+func TestAReplyLogHasTheEffortOfItsLine(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	lines := []string{
+		`{"type":"user","effort":"high","timestamp":"2026-10-02T11:00:00Z","message":{"role":"user","content":"Add a cart page"}}`,
+		`{"type":"assistant","effort":"high","perTurnEffort":"low","timestamp":"2026-10-02T11:00:05Z","message":{"id":"msg_1","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"Done"}]}}`,
+		`{"type":"assistant","timestamp":"2026-10-02T11:00:06Z","message":{"id":"msg_2","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"More"}]}}`,
+	}
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(lines...)}), 200)
+
+	logs := sessionLogs(t, env, o.project, laptopSession)
+	if len(logs) != len(lines) {
+		t.Fatalf("Expected %d Logs, got %+v", len(lines), logs)
+	}
+	for i, want := range []string{"", "high", ""} {
+		effort, ok := logs[i].Attributes["agent.effort"]
+		if got, _ := effort.(string); got != want || ok != (want != "") {
+			t.Errorf("Log %d (%q): expected the effort %q, got %v", i, logs[i].Message, want, effort)
+		}
+	}
+	if model := logs[1].Attributes["agent.model"]; model != "claude-opus-5-5" {
+		t.Errorf("Expected the model next to the effort, got %v", model)
+	}
+}
+
 // A failed tool call and a system line of level error have the level
 // error, and each other line the level info, so that a Query or a Monitor
 // on level finds them.

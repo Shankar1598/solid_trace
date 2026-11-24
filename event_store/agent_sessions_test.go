@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,13 @@ func personAt(uuid, at, text string) string {
 func replyAt(uuid, at, msgID, model, block string) string {
 	return `{"type":"assistant","uuid":"` + uuid + `","timestamp":"` + at + `","message":{"id":"` + msgID +
 		`","role":"assistant","model":"` + model + `","content":[` + block + `],"usage":` + oneRequest + `}}`
+}
+
+// replyWithEffortAt is replyAt with the effort of the reply at the top
+// level of the line, where Claude Code writes it next to perTurnEffort.
+func replyWithEffortAt(uuid, at, msgID, model, effort, block string) string {
+	return strings.Replace(replyAt(uuid, at, msgID, model, block), `{"type":"assistant",`,
+		`{"type":"assistant","effort":"`+effort+`","perTurnEffort":"`+effort+`",`, 1)
 }
 
 func toolResultAt(uuid, at, toolUseID string) string {
@@ -135,6 +143,76 @@ func TestAnAgentSessionOverTwoDaysSumsItsTokensCostAndCounts(t *testing.T) {
 	if s.Model != "claude-opus-5-5" || s.Harness != "claude-code" || s.Repository != "github.com/acme/shop" ||
 		s.UserID != o.user || s.RunID != "" || s.ParentSessionID != "" || len(s.Flags) != 0 {
 		t.Errorf("Expected the model of the main transcript's last reply, who and where, and no flags, got %+v", s)
+	}
+}
+
+// The effort of an Agent session is the effort of the latest reply in its
+// main transcript, as its model is. A later reply with no effort, as from
+// a version of Claude Code before effort, gives none.
+func TestTheEffortOfAnAgentSessionIsTheEffortOfTheLatestReplyOfItsMainTranscript(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+
+	first := jsonl(
+		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
+		replyWithEffortAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", "high", `{"type":"text","text":"Done."}`),
+	)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: first}), 200)
+	if s := sessionTotalsOf(t, env, o.project, laptopSession); s.Effort != "high" || s.Model != "claude-opus-5-5" {
+		t.Errorf("Expected the effort and the model of the one reply, got %q and %q", s.Effort, s.Model)
+	}
+
+	second := jsonl(replyWithEffortAt("a2", "2026-10-02T11:01:00Z", "msg_2", "claude-opus-5-5", "xhigh", `{"type":"text","text":"More."}`))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first), body: second}), 200)
+	// A subagent's reply is not a reply of the main transcript.
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "subagents/agent-a1.jsonl", body: jsonl(
+		replyWithEffortAt("s1", "2026-10-02T11:02:00Z", "msg_3", "claude-sonnet-5-5", "low", `{"type":"text","text":"Found it."}`))}), 200)
+	if s := sessionTotalsOf(t, env, o.project, laptopSession); s.Effort != "xhigh" {
+		t.Errorf("Expected the effort of the main transcript's latest reply, got %q", s.Effort)
+	}
+
+	third := jsonl(replyAt("a3", "2026-10-02T11:03:00Z", "msg_4", "claude-opus-5-5", `{"type":"text","text":"Last."}`))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first) + len(second), body: third}), 200)
+	if s := sessionTotalsOf(t, env, o.project, laptopSession); s.Effort != "" || s.Model != "claude-opus-5-5" {
+		t.Errorf("Expected no effort after a latest reply with none, and its model, got %q and %q", s.Effort, s.Model)
+	}
+}
+
+// An install from before effort gets the effort column at its next start.
+// An Agent session parsed before it has no effort, until new lines of it
+// are parsed: the parse does not parse it again.
+func TestAnInstallFromBeforeEffortGetsTheEffortColumnAtItsNextStart(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	first := jsonl(
+		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
+		replyWithEffortAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", "high", `{"type":"text","text":"Done."}`),
+	)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: first}), 200)
+	env.ProcessAgentFiles(t)
+
+	// The database as an install from before effort has it: no effort
+	// column, and no record of the step that adds it.
+	ctx := context.Background()
+	for _, statement := range []string{
+		`ALTER TABLE agent_sessions DROP COLUMN last_reply_effort`,
+		`DELETE FROM schema_migrations WHERE version = 11203`,
+	} {
+		if err := env.ClickHouse.Conn().Exec(ctx, statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	env.Reopen(t)
+
+	if s := sessionTotalsOf(t, env, o.project, laptopSession); s.Effort != "" || s.Model != "claude-opus-5-5" {
+		t.Errorf("Expected no effort for the Agent session parsed before the start, and its model, got %q and %q", s.Effort, s.Model)
+	}
+	second := jsonl(replyWithEffortAt("a2", "2026-10-02T11:01:00Z", "msg_2", "claude-opus-5-5", "max", `{"type":"text","text":"More."}`))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", offset: len(first), body: second}), 200)
+	if s := sessionTotalsOf(t, env, o.project, laptopSession); s.Effort != "max" {
+		t.Errorf("Expected the effort of a reply parsed after the start, got %q", s.Effort)
 	}
 }
 
