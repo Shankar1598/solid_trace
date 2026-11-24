@@ -14,7 +14,7 @@ POST <Ingest URL>/v1/metrics
 - Send Logs to `/v1/logs` and metrics to `/v1/metrics`. EventStore does not take traces.
 - Use OTLP over HTTP. EventStore does not take gRPC, so an exporter must use `http/protobuf` or `http/json`, not `grpc`.
 - The Project is the Project of the key.
-- Both routes take the same keys, encodings and limits, and give the same errors.
+- Both routes take the same keys, encodings and limits, and give the same statuses. The texts of the `400` answers differ by signal. Both routes take every metric type and refuse none.
 
 ## Authentication
 
@@ -70,7 +70,7 @@ For metrics, the 1 MB limit is on the Log that a data point makes, so it is rare
 | `500` | An internal error, for example the lookup of the key fails. | Drops the data. |
 | `503` | EventStore is overloaded or shuts down. The answer has `Retry-After: 5`. | Sends the request again after the wait. |
 
-The OTLP/HTTP specification makes a sender retry `429`, `502`, `503` and `504`, and drop the data on any other error. So a sender does not retry a `500` or a `4xx` other than `429`. A Collector 0.165.0 does this. A test showed it for `400`, `401`, `415` and `503`. The `500` follows from the specification and was not tested. The Collector logs a warning when a `200` has a `partial_success`, and it continues to send. This is the same for `rejected_data_points`.
+The OTLP/HTTP specification makes a sender retry `429`, `502`, `503` and `504`, and drop the data on any other error. So a sender does not retry a `500` or a `4xx` other than `429`. A Collector 0.165.0 does this. A test showed it for `400`, `401`, `415` and `503`. The `500` follows from the specification and was not tested. The Collector logs a warning when a `200` has a `partial_success`, and it continues to send. The Collector does the same for `rejected_data_points` in a metrics response. This was not tested for metrics.
 
 A request that a Collector sends again after a timeout can store its Logs twice. This is true for every Log route.
 
@@ -92,17 +92,17 @@ A request that EventStore refuses before it reads the body is not counted. These
 EventStore has no metric store. Each metric data point is stored as one Log, so the Logs explorer, Dashboards and Monitors read metrics as they read Logs. [ADR 0002](../adr/0002-logs-scoped-by-project-flat-attributes.md#amended-how-an-otlp-metric-data-point-becomes-a-log-2026-11-24) has the table of every rule. It is the one place that has the mapping.
 
 - `message` is the metric name. `time` is the time of the data point. `level` is `info`.
-- `metric.value` is the number of a sum or a gauge. It is always a double. A histogram or a summary has `metric.count` and `metric.sum` in its place, and a histogram also has `metric.min` and `metric.max`. EventStore does not keep the buckets.
+- `metric.value` is the number of a sum or a gauge. It is always a double. A histogram or a summary has `metric.count` and `metric.sum` in its place, and a histogram also has `metric.min` and `metric.max`. An exponential histogram is the same as a histogram. A histogram has `metric.sum`, `metric.min` and `metric.max` only when the sender sends them. A data point with no recorded value has no values. EventStore does not keep the buckets.
 - `metric.type`, `metric.unit`, `metric.temporality` and `metric.start_time` say what kind of metric it is. The resource, scope and data point attributes are Attributes of the Log, as they are for a log record.
 
 This Query adds up one metric for each value of an Attribute:
 
 ```
-| where message == "<metric name>"
+where message == "<metric name>"
 | summarize sum(metric.value) by <attribute>
 ```
 
-**Use delta temporality.** A delta value is the change since the last export, so a `sum` adds the values up correctly. EventStore stores a cumulative value as it comes: each value is the total since `metric.start_time`. A `sum` of cumulative values counts each part of the total again on each export, so the result is too large. For a cumulative metric, read the last value of each series. The SDK tab sets `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`. A Collector that gets cumulative metrics can change them to delta with the `cumulativetodelta` processor of the contrib distribution.
+**Use delta temporality.** A delta value is the change since the last export, so a `sum` adds the values up correctly. EventStore stores a cumulative value as it comes: each value is the total since `metric.start_time`. A `sum` of cumulative values counts each part of the total again on each export, so the result is too large. For a cumulative metric, read the last value of each series. The SDK tab sets `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`. A Collector that gets cumulative metrics can change them to delta with the `cumulativetodelta` processor. This processor is in the contrib Collector (`otelcol-contrib`), not in the core image that the Get started tab uses. It was not tested here. With the delta preference, an SDK still sends up-down counters as cumulative, so a `sum` of those is wrong. Use the last value.
 
 ## Field mapping
 
@@ -157,7 +157,7 @@ OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
 
 The header value has `%20` for the space, as the OpenTelemetry specification asks.
 
-Use `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, not `OTEL_EXPORTER_OTLP_ENDPOINT`. The second variable also sets the endpoint of traces, which EventStore does not take. An SDK uses the first two as they are, so they have the `/v1/logs` and `/v1/metrics` paths in them.
+Use `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, not `OTEL_EXPORTER_OTLP_ENDPOINT`. `OTEL_EXPORTER_OTLP_ENDPOINT` also sets the endpoint of traces, which EventStore does not take. An SDK uses the first two as they are, so they have the `/v1/logs` and `/v1/metrics` paths in them.
 
 ## Related
 
