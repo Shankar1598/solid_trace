@@ -87,8 +87,8 @@ services:
       minio:
         condition: service_healthy
 
-  # An OpenTelemetry Collector and a Log generator, to try OTLP ingest
-  # (POST /v1/logs). They are opt-in, because the dev box is short of memory.
+  # An OpenTelemetry Collector and generators of Logs and Metric data points, to try OTLP
+  # ingest (POST /v1/logs and POST /v1/metrics). They are opt-in, because the dev box is short of memory.
   # bin/dev and bin/clickhouse-dev do not start them. bin/otel-dev starts
   # them. Both use the host's network, because EventStore listens on the host.
   otel-collector:
@@ -118,5 +118,25 @@ services:
       - --otlp-insecure
       - --otlp-endpoint=127.0.0.1:14318
       - --logs=${OTEL_LOG_COUNT:-50}
+      - --rate=0
+      - --otlp-attributes=deployment.environment.name="dev"
+
+  # Sends OTLP Metric data points to the Collector, then exits. OTEL_METRIC_TYPE
+  # is Sum or Gauge, and OTEL_METRIC_COUNT is the number of data points. bin/otel-dev
+  # runs it once for each type. Delta temporality, so that a sum of the values adds up.
+  telemetrygen-metrics:
+    profiles: [otel]
+    image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.165.0
+    container_name: solidtrace-otel-telemetrygen-metrics
+    network_mode: host
+    command:
+      - metrics
+      - --otlp-http
+      - --otlp-insecure
+      - --otlp-endpoint=127.0.0.1:14318
+      - --metric-type=${OTEL_METRIC_TYPE:-Sum}
+      - --aggregation-temporality=delta
+      - --otlp-metric-name=otel_dev.${OTEL_METRIC_NAME:-sum}
+      - --metrics=${OTEL_METRIC_COUNT:-50}
       - --rate=0
       - --otlp-attributes=deployment.environment.name="dev"
