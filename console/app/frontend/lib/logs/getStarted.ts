@@ -33,7 +33,7 @@ export function sentryDsn(target: IngestTarget): string {
   return `${base.protocol}//${target.key ?? NO_KEY}@${base.host}${base.pathname.replace(/\/+$/, '')}/${target.projectId}`
 }
 
-/** The bare Ingest URL, without a trailing slash: a Collector adds /v1/logs to it, and an SDK needs it added. */
+/** The bare Ingest URL, without a trailing slash: a Collector adds /v1/logs or /v1/metrics to it, and an SDK needs it added. */
 function otlpEndpoint({ url }: IngestTarget): string {
   return new URL(url).href.replace(/\/+$/, '')
 }
@@ -110,7 +110,7 @@ export function snippets(target: IngestTarget): Snippet[] {
     {
       id: 'otel-collector',
       label: 'OpenTelemetry Collector',
-      note: 'A config file for an OpenTelemetry Collector.',
+      note: 'A config file for an OpenTelemetry Collector. It sends Logs and metrics.',
       code: [
         'receivers:',
         '  otlp:',
@@ -129,16 +129,23 @@ export function snippets(target: IngestTarget): Snippet[] {
         '    logs:',
         '      receivers: [otlp]',
         '      exporters: [otlp_http]',
+        '    metrics:',
+        '      receivers: [otlp]',
+        '      exporters: [otlp_http]',
       ].join('\n'),
     },
     {
       id: 'otel-sdk',
       label: 'OpenTelemetry SDK',
-      note: 'Environment variables for an OpenTelemetry SDK. EventStore takes OTLP over HTTP, not gRPC.',
+      note: 'Environment variables for an OpenTelemetry SDK, for Logs and metrics. EventStore takes OTLP over HTTP, not gRPC.',
       code: [
         `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${otlp}/v1/logs`,
         `OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20${key}`,
         'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf',
+        `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=${otlp}/v1/metrics`,
+        `OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer%20${key}`,
+        'OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf',
+        'OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta',
       ].join('\n'),
     },
   ]
