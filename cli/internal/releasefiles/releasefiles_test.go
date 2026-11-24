@@ -294,13 +294,16 @@ func TestEachHookOfThePluginStartsCaptureInTheBackground(t *testing.T) {
 
 func TestThePluginsHoldNoInstanceURLAndNoSecret(t *testing.T) {
 	// One plugin serves every install: `login` gives the CLI its
-	// instance. The homepage is the public repository.
+	// instance. The homepage is the public repository, and a skill can
+	// name a public forge's site or API.
 	url := regexp.MustCompile(`[a-z]+://[^\s"]+`)
 	secret := regexp.MustCompile(`(?i)token|secret|password|bearer|authorization|api[_-]?key`)
 	for _, dir := range []string{pluginDir, skillsDir} {
 		checkNoInstanceURLAndNoSecret(t, dir, url, secret)
 	}
 }
+
+var publicURLs = []string{"https://github.com/", "https://bitbucket.org/", "https://api.bitbucket.org/"}
 
 func checkNoInstanceURLAndNoSecret(t *testing.T, dir string, url, secret *regexp.Regexp) {
 	t.Helper()
@@ -313,7 +316,7 @@ func checkNoInstanceURLAndNoSecret(t *testing.T, dir string, url, secret *regexp
 			return err
 		}
 		for _, u := range url.FindAllString(string(data), -1) {
-			if !strings.HasPrefix(u, "https://github.com/") {
+			if !slices.ContainsFunc(publicURLs, func(p string) bool { return strings.HasPrefix(u, p) }) {
 				t.Errorf("%s holds the URL %s", path, u)
 			}
 		}

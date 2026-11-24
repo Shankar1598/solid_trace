@@ -1,7 +1,7 @@
 // Package review reads a Claude Code transcript as a short timeline of its
-// reviews: the task, each review's start and report, the findings blocks,
-// and the person's messages, the edits and the commits after the first
-// review. A small agent reads the timeline, not the transcript, to record
+// reviews: the task, then from the first review on, each review's start,
+// the agent's texts, the findings blocks, the subagents' reports and
+// prompts, and the person's messages, the edits and the commits. A small agent reads the timeline, not the transcript, to record
 // what happened to each finding.
 package review
 
@@ -28,13 +28,15 @@ type Digest struct {
 type Kind string
 
 const (
-	KindTask         Kind = "task"
-	KindReviewStart  Kind = "review_start"
-	KindReviewReport Kind = "review_report"
-	KindFindings     Kind = "findings"
-	KindPerson       Kind = "person"
-	KindEdit         Kind = "edit"
-	KindCommit       Kind = "commit"
+	KindTask        Kind = "task"
+	KindReviewStart Kind = "review_start"
+	KindAgentText   Kind = "agent_text"
+	KindSubagent    Kind = "subagent_report"
+	KindDelegate    Kind = "delegate"
+	KindFindings    Kind = "findings"
+	KindPerson      Kind = "person"
+	KindEdit        Kind = "edit"
+	KindCommit      Kind = "commit"
 )
 
 // Trigger is who started a review.
@@ -46,10 +48,11 @@ const (
 )
 
 // Entry is one step of the timeline. Each Kind sets only its own fields:
-// task, person and review_report set Text; review_start sets Skill,
-// Trigger and Args; findings sets Findings, and Error when the block is
-// not valid JSON (Findings is then null); edit sets Tool and File; commit
-// sets Command.
+// task, person, agent_text and subagent_report set Text; review_start sets
+// Skill, Trigger and Args; delegate sets Text (the subagent's description
+// and prompt); findings sets Findings, and Error when the block is not
+// valid JSON (Findings is then null); edit sets Tool and File; commit sets
+// Command.
 type Entry struct {
 	Seq      int             `json:"seq"`
 	UUID     string          `json:"uuid"`
@@ -70,12 +73,25 @@ type Entry struct {
 // code-review, pstack:interrogate and a team's <team>-review.
 const DefaultSkills = "review|interrogate"
 
-// The most characters of a text, of a review's report, and of a commit
-// command. A review's report holds the findings, so it gets more.
+// The most characters of a text, of a subagent's report, of a subagent's
+// prompt, and of a commit command. A review often runs in subagents, so
+// their reports hold the findings and get more.
 const (
-	maxText    = 4000
-	maxReport  = 12000
-	maxCommand = 300
+	maxText     = 4000
+	maxSubagent = 8000
+	maxPrompt   = 1500
+	maxCommand  = 300
+)
+
+// agentTools are the tools that start a subagent.
+var agentTools = map[string]bool{"Agent": true, "Task": true}
+
+// A subagent that runs in the background reports in a later message: a
+// hand-back message, or a task notification with its result.
+const (
+	handBack        = "<agent-message"
+	asyncLaunched   = "Async agent launched"
+	minNoticeResult = 300
 )
 
 const findingsFence = "```solidtrace-findings"
@@ -103,7 +119,7 @@ var notFromThePerson = []string{
 // sessionId. A line that is not valid JSON is skipped: a live transcript
 // can end in a part of a line.
 func Read(r io.Reader, skills *regexp.Regexp) (Digest, error) {
-	b := builder{skills: skills, tops: map[string]string{}}
+	b := builder{skills: skills, subagents: map[string]bool{}, tops: map[string]string{}}
 	in := bufio.NewReader(r)
 	for {
 		raw, err := in.ReadBytes('\n')
@@ -120,7 +136,6 @@ func Read(r io.Reader, skills *regexp.Regexp) (Digest, error) {
 			return Digest{}, err
 		}
 	}
-	b.closeReport()
 	for i := range b.digest.Events {
 		b.digest.Events[i].Seq = i
 	}
@@ -153,14 +168,18 @@ type origin struct {
 func (o *origin) notAPerson() bool { return o != nil && o.Kind != "" && o.Kind != "human" }
 
 type message struct {
+	Model   string          `json:"model"`
 	Content json.RawMessage `json:"content"`
 }
 
 type block struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text"`
-	Name  string          `json:"name"`
-	Input json.RawMessage `json:"input"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id"`
+	Content   json.RawMessage `json:"content"`
 }
 
 type queuedCommand struct {
@@ -176,17 +195,11 @@ type builder struct {
 	digest  Digest
 	hasTask bool
 	// reviewed is true from the first review start on: only then do the
-	// person's messages, the edits and the commits go in the timeline.
+	// other kinds go in the timeline.
 	reviewed bool
-	// report is the open report of the last review start: the last
-	// assistant text since it, and where that text goes in the timeline.
-	report *report
-	tops   map[string]string
-}
-
-type report struct {
-	at    int
-	entry *Entry
+	// subagents are the ids of the tool uses that started a subagent.
+	subagents map[string]bool
+	tops      map[string]string
 }
 
 func (b *builder) add(l line) {
@@ -199,7 +212,8 @@ func (b *builder) add(l line) {
 	switch l.Type {
 	case "assistant":
 		var m message
-		if json.Unmarshal(l.Message, &m) != nil {
+		// A <synthetic> message is Claude Code's own, such as an API error.
+		if json.Unmarshal(l.Message, &m) != nil || m.Model == "<synthetic>" {
 			return
 		}
 		for _, bl := range blocksOf(m.Content) {
@@ -208,6 +222,8 @@ func (b *builder) add(l line) {
 	case "user":
 		if text, ok := personText(l); ok {
 			b.personMessage(l, text)
+		} else if b.reviewed {
+			b.subagentReports(l)
 		}
 	case "attachment":
 		if text, ok := queuedPersonText(l); ok {
@@ -223,15 +239,14 @@ func newEntry(l line, kind Kind) Entry {
 func (b *builder) assistantBlock(l line, bl block) {
 	switch bl.Type {
 	case "text":
-		if b.report != nil {
-			e := newEntry(l, KindReviewReport)
-			e.Text = cut(bl.Text, maxReport)
-			b.report.at, b.report.entry = len(b.digest.Events), &e
+		if !b.reviewed || strings.TrimSpace(bl.Text) == "" {
+			return
 		}
-		if b.reviewed {
-			if e, ok := findings(l, bl.Text); ok {
-				b.digest.Events = append(b.digest.Events, e)
-			}
+		e := newEntry(l, KindAgentText)
+		e.Text = cut(bl.Text, maxText)
+		b.digest.Events = append(b.digest.Events, e)
+		if e, ok := findings(l, bl.Text); ok {
+			b.digest.Events = append(b.digest.Events, e)
 		}
 	case "tool_use":
 		var input struct {
@@ -240,6 +255,8 @@ func (b *builder) assistantBlock(l line, bl block) {
 			Command      string `json:"command"`
 			FilePath     string `json:"file_path"`
 			NotebookPath string `json:"notebook_path"`
+			Description  string `json:"description"`
+			Prompt       string `json:"prompt"`
 		}
 		_ = json.Unmarshal(bl.Input, &input)
 		if bl.Name == "Skill" && input.Skill != "" && b.skills.MatchString(input.Skill) {
@@ -248,6 +265,12 @@ func (b *builder) assistantBlock(l line, bl block) {
 		}
 		if !b.reviewed {
 			return
+		}
+		if agentTools[bl.Name] {
+			b.subagents[bl.ID] = true
+			e := newEntry(l, KindDelegate)
+			e.Text = cut(strings.TrimSpace(input.Description+"\n\n"+input.Prompt), maxPrompt)
+			b.digest.Events = append(b.digest.Events, e)
 		}
 		if field, ok := editTools[bl.Name]; ok {
 			path := input.FilePath
@@ -273,46 +296,68 @@ func (b *builder) personMessage(l line, text string) {
 	if isCommand {
 		text = strings.TrimSpace("/" + name + " " + args)
 	}
-	isTask := !b.hasTask
+	// A command such as /clear or /model is not the task.
+	isReview := isCommand && name != "" && b.skills.MatchString(name)
+	isTask := !b.hasTask && (!isCommand || isReview)
 	if isTask {
 		b.hasTask = true
 		e := newEntry(l, KindTask)
 		e.Text = cut(text, maxText)
 		b.digest.Events = append(b.digest.Events, e)
 	}
-	if isCommand && name != "" && b.skills.MatchString(name) {
+	if isReview {
 		b.reviewStart(l, name, TriggerPerson, args)
 		return
 	}
 	if isTask || !b.reviewed {
 		return
 	}
-	b.closeReport()
 	e := newEntry(l, KindPerson)
 	e.Text = cut(text, maxText)
 	b.digest.Events = append(b.digest.Events, e)
 }
 
 func (b *builder) reviewStart(l line, skill string, trigger Trigger, args string) {
-	b.closeReport()
 	b.reviewed = true
 	b.digest.Reviews++
 	e := newEntry(l, KindReviewStart)
 	e.Skill, e.Trigger, e.Args = skill, trigger, strings.TrimSpace(args)
 	b.digest.Events = append(b.digest.Events, e)
-	b.report = &report{}
 }
 
-// closeReport puts the open review's report at the place of its text.
-func (b *builder) closeReport() {
-	r := b.report
-	b.report = nil
-	if r == nil || r.entry == nil {
+// subagentReports adds the reports in a user line that is not the
+// person's: a subagent's tool result, a hand-back message, or a task
+// notification's result.
+func (b *builder) subagentReports(l line) {
+	var m message
+	if json.Unmarshal(l.Message, &m) != nil {
 		return
 	}
-	b.digest.Events = append(b.digest.Events, Entry{})
-	copy(b.digest.Events[r.at+1:], b.digest.Events[r.at:])
-	b.digest.Events[r.at] = *r.entry
+	add := func(text string) {
+		e := newEntry(l, KindSubagent)
+		e.Text = cut(strings.TrimSpace(text), maxSubagent)
+		b.digest.Events = append(b.digest.Events, e)
+	}
+	var s string
+	if json.Unmarshal(m.Content, &s) != nil {
+		var parts []string
+		for _, bl := range blocksOf(m.Content) {
+			switch {
+			case bl.Type == "tool_result" && b.subagents[bl.ToolUseID]:
+				if text, _ := contentText(bl.Content); !strings.HasPrefix(text, asyncLaunched) {
+					add(text)
+				}
+			case bl.Type == "text":
+				parts = append(parts, bl.Text)
+			}
+		}
+		s = strings.Join(parts, "\n")
+	}
+	if strings.Contains(s, handBack) {
+		add(s)
+	} else if result, ok := tagText(s, "result"); ok && strings.HasPrefix(strings.TrimSpace(s), "<task-notification>") && len(result) >= minNoticeResult {
+		add(result)
+	}
 }
 
 // findings is the findings entry of an assistant text that holds a

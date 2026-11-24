@@ -138,7 +138,7 @@ func TestReviewDigestTakesAReviewInTheFirstMessageAsTheTaskAndTheStart(t *testin
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	d := decodeDigest(t, stdout)
-	if !reflect.DeepEqual(kinds(d), []string{"task", "review_start", "review_report"}) || d.Reviews != 1 {
+	if !reflect.DeepEqual(kinds(d), []string{"task", "review_start", "agent_text"}) || d.Reviews != 1 {
 		t.Fatalf("digest:\n%s", stdout)
 	}
 	if d.Events[0]["text"] != "/code-review since main" || d.Events[1]["uuid"] != "p1" ||
@@ -161,13 +161,13 @@ func TestReviewDigestStartsAReviewOnlyForASkillThatSkillsMatches(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	d := decodeDigest(t, stdout)
-	if !reflect.DeepEqual(kinds(d), []string{"task", "review_start", "review_report"}) || d.Reviews != 1 ||
+	if !reflect.DeepEqual(kinds(d), []string{"task", "review_start", "agent_text"}) || d.Reviews != 1 ||
 		d.Events[1]["skill"] != "acme-review" || d.Events[1]["trigger"] != "agent" || d.Events[1]["args"] != "the parser" {
 		t.Fatalf("digest:\n%s", stdout)
 	}
 }
 
-func TestReviewDigestCutsLongTextsAndKeepsMoreOfAReport(t *testing.T) {
+func TestReviewDigestCutsLongTexts(t *testing.T) {
 	long := func(n int) string { return strings.Repeat("é", n) }
 	path := transcript(t,
 		userLine("p1", long(5000)),
@@ -185,14 +185,14 @@ func TestReviewDigestCutsLongTextsAndKeepsMoreOfAReport(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	d := decodeDigest(t, stdout)
-	if !reflect.DeepEqual(kinds(d), []string{"task", "review_start", "review_report", "person", "commit", "review_start", "review_report"}) {
+	if !reflect.DeepEqual(kinds(d), []string{"task", "review_start", "agent_text", "person", "commit", "review_start", "agent_text"}) {
 		t.Fatalf("kinds: %v", kinds(d))
 	}
 	for i, want := range map[int]string{
 		0: long(4000) + "…",
-		2: long(10000),
+		2: long(4000) + "…",
 		3: long(4000),
-		6: long(12000) + "…",
+		6: long(4000) + "…",
 	} {
 		if d.Events[i]["text"] != want {
 			t.Errorf("event %d: %d characters, want %d", i, len([]rune(d.Events[i]["text"].(string))), len([]rune(want)))
@@ -261,5 +261,47 @@ func TestReviewDigestRefusesWrongArguments(t *testing.T) {
 	}
 	if code, _, _ := runDigest(t, command.Env{}, "--file", filepath.Join(t.TempDir(), "none.jsonl")); code != 1 {
 		t.Errorf("a missing file: exit %d, want 1", code)
+	}
+}
+
+func TestReviewDigestKeepsTheSubagentsOfAReviewAndSkipsClaudeCodesOwnLines(t *testing.T) {
+	synthetic := assistantLine("a-err", text("API Error: Connection lost mid-response."))
+	synthetic["message"].(map[string]any)["model"] = "<synthetic>"
+	handBack := userLine("u-back", "Another Claude session sent a message:\n<agent-message from=\"a1\">\nF1: the retry has no cap.\n</agent-message>")
+	handBack["isMeta"] = true
+	notice := "<task-notification>\n<task-id>a2</task-id>\n<result>" + strings.Repeat("F2: the log line is missing. ", 12) + "</result>\n</task-notification>"
+	agent := toolUse("Agent", map[string]any{"description": "Fix F1", "prompt": "Add a cap to the retry."})
+	agent["id"] = "t-fix"
+	path := transcript(t,
+		userLine("u-clear", "<command-name>/clear</command-name>"),
+		userLine("u-task", "Add a retry to the uploader."),
+		assistantLine("a-skill", toolUse("Skill", map[string]any{"skill": "code-review", "args": "the retry"})),
+		assistantLine("a-launch", text("The reviews are running.")),
+		handBack,
+		userLine("u-notice", notice),
+		synthetic,
+		assistantLine("a-fix", agent),
+		userLine("u-launched", []map[string]any{{"type": "tool_result", "tool_use_id": "t-fix", "content": "Async agent launched successfully."}}),
+		userLine("u-done", []map[string]any{{"type": "tool_result", "tool_use_id": "t-fix", "content": []map[string]any{{"type": "text", "text": "The cap is in."}}}}),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	want := []string{"task", "review_start", "agent_text", "subagent_report", "subagent_report", "delegate", "subagent_report"}
+	if !reflect.DeepEqual(kinds(d), want) {
+		t.Fatalf("kinds: %v\n%s", kinds(d), stdout)
+	}
+	if d.Events[0]["uuid"] != "u-task" {
+		t.Errorf("task: %v", d.Events[0])
+	}
+	if !strings.Contains(d.Events[3]["text"].(string), "F1: the retry has no cap.") ||
+		!strings.HasPrefix(d.Events[4]["text"].(string), "F2: the log line is missing.") ||
+		d.Events[5]["text"] != "Fix F1\n\nAdd a cap to the retry." ||
+		d.Events[6]["text"] != "The cap is in." {
+		t.Errorf("digest:\n%s", stdout)
 	}
 }
