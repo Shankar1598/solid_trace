@@ -58,23 +58,27 @@ func (s *Service) IngestOTLPLogs(projectID uint32, body Body, encoding OTLPEncod
 }
 
 // IngestOTLPMetrics ingests the body of the OTLP metrics route: one OTLP
-// metrics export request in encoding. Each data point is one Log
+// metrics export request in encoding. Each metric data point is one Log
 // (normalise.OTLPMetric), as ingestOTLP says, and counts as one Log. A body
 // that doesn't decode is ErrInvalidOTLPMetrics.
 func (s *Service) IngestOTLPMetrics(projectID uint32, body Body, encoding OTLPEncoding) (LogCounts, error) {
 	request := pmetricotlp.NewExportRequest()
-	points := func() []normalise.MetricPoint {
-		points := make([]normalise.MetricPoint, 0, request.Metrics().DataPointCount())
-		for _, resourceMetrics := range request.Metrics().ResourceMetrics().All() {
-			for _, scopeMetrics := range resourceMetrics.ScopeMetrics().All() {
-				for _, metric := range scopeMetrics.Metrics().All() {
-					points = normalise.AppendMetricPoints(points, resourceMetrics.Resource(), scopeMetrics.Scope(), metric)
-				}
+	points := func() []normalise.MetricPoint { return metricPoints(request) }
+	return s.ingestOTLP(projectID, body, encoding, request, ErrInvalidOTLPMetrics, points, normalise.OTLPMetric)
+}
+
+// metricPoints lists each metric data point of an OTLP metrics export
+// request, in the order of its resources, scopes and metrics.
+func metricPoints(request pmetricotlp.ExportRequest) []normalise.MetricPoint {
+	points := make([]normalise.MetricPoint, 0, request.Metrics().DataPointCount())
+	for _, resourceMetrics := range request.Metrics().ResourceMetrics().All() {
+		for _, scopeMetrics := range resourceMetrics.ScopeMetrics().All() {
+			for _, metric := range scopeMetrics.Metrics().All() {
+				points = normalise.AppendMetricPoints(points, resourceMetrics.Resource(), scopeMetrics.Scope(), metric)
 			}
 		}
-		return points
 	}
-	return s.ingestOTLP(projectID, body, encoding, request, ErrInvalidOTLPMetrics, points, normalise.OTLPMetric)
+	return points
 }
 
 // otlpRequest is an OTLP export request of one signal, which decodes from

@@ -1,17 +1,26 @@
 package handler_test
 
 import (
+	"bytes"
+	"compress/zlib"
+	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
+
+	"github.com/solidtrace/event_store/storage"
 )
 
-// metricsFixture is a Claude Code metrics export of metrics-01's fixtures: 12
-// data points in protobuf, and 6 in JSON.
-func metricsFixture(t *testing.T, name string) func() []byte {
+// metricsFixtureFunc returns a function that answers the bytes of the file
+// ../ingest/normalise/testdata/otlp/<name>: claude_code_metrics.pb has 12
+// metric data points, and claude_code_metrics.json has 6.
+func metricsFixtureFunc(t *testing.T, name string) func() []byte {
 	t.Helper()
 	body, err := os.ReadFile("../ingest/normalise/testdata/otlp/" + name)
 	if err != nil {
@@ -20,14 +29,14 @@ func metricsFixture(t *testing.T, name string) func() []byte {
 	return func() []byte { return body }
 }
 
-// metricsResponse expects 200 with an OTLP metrics export response in
-// contentType, and decodes it.
-func metricsResponse(t *testing.T, status int, contentType string, body []byte, wantType string) pmetricotlp.ExportResponse {
+// metricsResponse expects resp to be 200 with an OTLP metrics export response
+// in wantType, with body as its body, and decodes it.
+func metricsResponse(t *testing.T, resp *http.Response, body []byte, wantType string) pmetricotlp.ExportResponse {
 	t.Helper()
-	if status != 200 {
-		t.Fatalf("Expected 200, got %d: %s", status, body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("Expected 200, got %d: %s", resp.StatusCode, body)
 	}
-	if contentType != wantType {
+	if contentType := resp.Header.Get("Content-Type"); contentType != wantType {
 		t.Errorf("Expected Content-Type %s, got %q", wantType, contentType)
 	}
 	response := pmetricotlp.NewExportResponse()
@@ -49,15 +58,15 @@ func TestOTLPMetricsAreOneLogBatchOfALogForEachDataPointAndAnsweredInTheirEncodi
 		logs                            string
 	}{
 		// As a Collector sends by default.
-		{"gzip protobuf", "application/x-protobuf", "application/x-protobuf", func() []byte { return gzipped(metricsFixture(t, "claude_code_metrics.pb")()) }, map[string]string{"Content-Encoding": "gzip"}, "Logs: 12"},
-		{"JSON", "application/json; charset=utf-8", "application/json", metricsFixture(t, "claude_code_metrics.json"), nil, "Logs: 6"},
+		{"gzip protobuf", "application/x-protobuf", "application/x-protobuf", func() []byte { return gzipped(metricsFixtureFunc(t, "claude_code_metrics.pb")()) }, map[string]string{"Content-Encoding": "gzip"}, "Logs: 12"},
+		{"JSON", "application/json; charset=utf-8", "application/json", metricsFixtureFunc(t, "claude_code_metrics.json"), nil, "Logs: 6"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			header := with(c.header, "Authorization", "Bearer key-one", "Content-Type", c.contentType)
 			resp, body, writer := sendToIngestApp(t, logRouteCase{path: "/v1/metrics", header: header, body: c.body})
 
-			partial := metricsResponse(t, resp.StatusCode, resp.Header.Get("Content-Type"), body, c.responseType).PartialSuccess()
+			partial := metricsResponse(t, resp, body, c.responseType).PartialSuccess()
 			if partial.RejectedDataPoints() != 0 || partial.ErrorMessage() != "" {
 				t.Errorf("Expected an empty partial success, got %d rejected: %q", partial.RejectedDataPoints(), partial.ErrorMessage())
 			}
@@ -72,8 +81,96 @@ func TestOTLPMetricsAreOneLogBatchOfALogForEachDataPointAndAnsweredInTheirEncodi
 	}
 }
 
+// encoded compresses body in the content coding.
+func encoded(t *testing.T, coding string, body []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	var w interface {
+		Write([]byte) (int, error)
+		Close() error
+	}
+	switch coding {
+	case "deflate":
+		w = zlib.NewWriter(&out)
+	case "br":
+		w = brotli.NewWriter(&out)
+	case "zstd":
+		var err error
+		if w, err = zstd.NewWriter(&out); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("No encoder for %q", coding)
+	}
+	if _, err := w.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+// The keys and content codings of /v1/metrics are those of /v1/logs. This
+// does not check the counts of an overloaded request (RequestsOverloaded):
+// the handler tests can't read the Ingest counts, because sendToIngestApp
+// builds its Service with no writer for them.
+func TestOTLPMetricsTakeTheKeysAndContentCodingsOfTheLogRouteAndRefuseItsLimits(t *testing.T) {
+	protobuf := metricsFixtureFunc(t, "claude_code_metrics.pb")
+	asProtobuf := map[string]string{"Content-Type": "application/x-protobuf"}
+	coded := func(coding string) logRouteCase {
+		return logRouteCase{
+			header: with(asProtobuf, "Authorization", "Bearer key-one", "Content-Encoding", coding),
+			body:   func() []byte { return encoded(t, coding, protobuf()) },
+		}
+	}
+	cases := []struct {
+		name       string
+		c          logRouteCase
+		status     int
+		stored     string
+		retryAfter bool
+	}{
+		{name: "X-Sentry-Auth key", c: logRouteCase{header: with(asProtobuf, "X-Sentry-Auth", "Sentry sentry_version=7, sentry_key=key-one"), body: protobuf}, status: 200, stored: "  Log batch for Project 1, Logs: 12\n"},
+		{name: "sentry_key in the query", c: logRouteCase{path: "/v1/metrics?sentry_key=key-one", header: asProtobuf, body: protobuf}, status: 200, stored: "  Log batch for Project 1, Logs: 12\n"},
+		{name: "deflate", c: coded("deflate"), status: 200, stored: "  Log batch for Project 1, Logs: 12\n"},
+		{name: "br", c: coded("br"), status: 200, stored: "  Log batch for Project 1, Logs: 12\n"},
+		{name: "zstd", c: coded("zstd"), status: 200, stored: "  Log batch for Project 1, Logs: 12\n"},
+		{name: "unsupported Content-Encoding", c: logRouteCase{header: with(asProtobuf, "Authorization", "Bearer key-one", "Content-Encoding", "compress"), body: protobuf}, status: 415},
+		{name: "body over the decoded limit", c: logRouteCase{
+			header: with(asProtobuf, "Authorization", "Bearer key-one", "Content-Encoding", "gzip"),
+			body:   func() []byte { return gzipped(padded(decodedBodyOverLimit)) },
+		}, status: 413},
+		{name: "store is shutting down", c: logRouteCase{
+			header: with(asProtobuf, "Authorization", "Bearer key-one"), body: protobuf,
+			writeErr: fmt.Errorf("write log batch: %w", storage.ErrShuttingDown),
+		}, status: 503, retryAfter: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.c.path == "" {
+				tc.c.path = "/v1/metrics"
+			}
+			resp, body, writer := sendToIngestApp(t, tc.c)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("Expected %d, got %d: %s", tc.status, resp.StatusCode, body)
+			}
+			if got := resp.Header.Get("Retry-After") != ""; got != tc.retryAfter {
+				t.Errorf("Expected a Retry-After: %v, got %q", tc.retryAfter, resp.Header.Get("Retry-After"))
+			}
+			want := tc.stored
+			if want == "" {
+				want = "  nothing"
+			}
+			if stored := writer.stored(); !strings.HasPrefix(stored, want) {
+				t.Errorf("Expected the stored text to start %q, got\n%s", want, stored)
+			}
+		})
+	}
+}
+
 func TestOTLPMetricsRefuseABadKeyContentTypeOrBodyAndStoreNothing(t *testing.T) {
-	protobuf := metricsFixture(t, "claude_code_metrics.pb")
+	protobuf := metricsFixtureFunc(t, "claude_code_metrics.pb")
 	bearer := map[string]string{"Authorization": "Bearer key-one", "Content-Type": "application/x-protobuf"}
 	cases := []struct {
 		name   string
@@ -130,11 +227,11 @@ func TestAnOTLPDataPointOverOneMBAsALogIsARejectedDataPoint(t *testing.T) {
 		header: map[string]string{"Authorization": "Bearer key-one", "Content-Type": "application/x-protobuf"},
 		body:   func() []byte { return request },
 	})
-	partial := metricsResponse(t, resp.StatusCode, resp.Header.Get("Content-Type"), body, "application/x-protobuf").PartialSuccess()
+	partial := metricsResponse(t, resp, body, "application/x-protobuf").PartialSuccess()
 	if partial.RejectedDataPoints() != 1 || !strings.Contains(partial.ErrorMessage(), "1 MB") {
-		t.Errorf("Expected 1 rejected data point over 1 MB, got %d: %q", partial.RejectedDataPoints(), partial.ErrorMessage())
+		t.Errorf("Expected 1 rejected metric data point over 1 MB, got %d: %q", partial.RejectedDataPoints(), partial.ErrorMessage())
 	}
 	if stored := writer.stored(); !strings.HasPrefix(stored, "  Log batch for Project 1, Logs: 1\n") {
-		t.Errorf("Expected only the small data point stored, got\n%s", stored)
+		t.Errorf("Expected only the small metric data point stored, got\n%s", stored)
 	}
 }

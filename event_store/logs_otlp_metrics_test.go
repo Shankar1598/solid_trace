@@ -10,7 +10,7 @@ import (
 
 // The metrics fixtures are two real Claude Code exports, scrubbed (see
 // ingest/normalise/otlp_metric_test.go). They are two exports, not one in two
-// encodings, so their data points and costs differ.
+// encodings, so their metric data points and costs differ.
 var claudeCodeExportedAt = time.Date(2026, 11, 24, 12, 20, 0, 0, time.UTC)
 
 func TestOTLPMetricsAreStoredAsALogForEachDataPointAndCountedAsLogs(t *testing.T) {
@@ -49,7 +49,7 @@ func TestOTLPMetricsAreStoredAsALogForEachDataPointAndCountedAsLogs(t *testing.T
 				unmarshal = response.UnmarshalJSON
 			}
 			if err := unmarshal(raw); err != nil || response.PartialSuccess().RejectedDataPoints() != 0 {
-				t.Errorf("Expected an export response with no rejected data point, got %q: %v", raw, err)
+				t.Errorf("Expected an export response with no rejected metric data point, got %q: %v", raw, err)
 			}
 			env.ProcessLogs(t)
 

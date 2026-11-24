@@ -27,8 +27,8 @@ func (h *IngestHandler) OTLPLogs(c *fiber.Ctx) error {
 }
 
 // POST /v1/metrics
-// The OTLP/HTTP metrics route, as the OTLP Log route is. Each metric data
-// point is stored as one Log.
+// The OTLP/HTTP metrics route. It takes the keys, encodings and limits of the
+// OTLP Log route, and stores each metric data point as one Log.
 func (h *IngestHandler) OTLPMetrics(c *fiber.Ctx) error {
 	return h.ingestLogs(c, anyProject, h.storeOTLPMetrics)
 }
@@ -56,7 +56,7 @@ func (h *IngestHandler) storeOTLPMetrics(c *fiber.Ctx, projectID uint32, body in
 		if dropped > 0 {
 			partial := response.PartialSuccess()
 			partial.SetRejectedDataPoints(int64(dropped))
-			partial.SetErrorMessage(fmt.Sprintf("%d data points are over 1 MB as Logs, after the per-Log limits, and are not stored", dropped))
+			partial.SetErrorMessage(fmt.Sprintf("%d metric data points are over 1 MB as Logs, after the per-Log limits, and are not stored", dropped))
 		}
 		return response
 	})

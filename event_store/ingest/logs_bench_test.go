@@ -219,8 +219,8 @@ func BenchmarkOTLPBodyToLogs(b *testing.B) {
 }
 
 // BenchmarkOTLPMetricBodyToLogs times the work of one OTLP metrics request,
-// a real Claude Code export of 12 data points: decoding its body and
-// normalising each data point as a Log. Its Logs/s compares with
+// a real Claude Code export of 12 metric data points: decoding its body and
+// normalising each metric data point as a Log. Its Logs/s compares with
 // BenchmarkOTLPBodyToLogs, whose request has 100 Logs.
 func BenchmarkOTLPMetricBodyToLogs(b *testing.B) {
 	for _, bench := range []struct {
@@ -244,14 +244,7 @@ func BenchmarkOTLPMetricBodyToLogs(b *testing.B) {
 				if err := bench.decode(request, body); err != nil {
 					b.Fatal(err)
 				}
-				points = points[:0]
-				for _, resourceMetrics := range request.Metrics().ResourceMetrics().All() {
-					for _, scopeMetrics := range resourceMetrics.ScopeMetrics().All() {
-						for _, metric := range scopeMetrics.Metrics().All() {
-							points = normalise.AppendMetricPoints(points, resourceMetrics.Resource(), scopeMetrics.Scope(), metric)
-						}
-					}
-				}
+				points = metricPoints(request)
 				for _, point := range points {
 					normalise.OTLPMetric(point, benchReceipt)
 				}
