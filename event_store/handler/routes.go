@@ -49,7 +49,7 @@ func NewIngestApp(ingestHandler *IngestHandler, healthHandler *HealthHandler, op
 	})
 	if options.RefuseForwardedHTTP {
 		app.Use("/api", RefuseForwardedHTTP)
-		// OTLP senders use /v1/logs, outside /api.
+		// OTLP senders use /v1/logs and /v1/metrics, outside /api.
 		app.Use("/v1", RefuseForwardedHTTP)
 	}
 	RegisterIngestRoutes(app, ingestHandler, healthHandler)
@@ -83,6 +83,7 @@ func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHa
 	app.Post("/api/:project_id/logs", ingestHandler.Logs)
 	app.Post("/api/logs", ingestHandler.KeyOnlyLogs)
 	app.Post("/v1/logs", ingestHandler.OTLPLogs)
+	app.Post("/v1/metrics", ingestHandler.OTLPMetrics)
 }
 
 // RegisterQueryRoutes mounts the routes that serve stored Events and Logs,

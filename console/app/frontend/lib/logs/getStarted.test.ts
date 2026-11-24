@@ -48,7 +48,10 @@ describe('snippets for an empty Project', () => {
     expect(config).not.toContain('otlphttp')
     expect(config).toMatch(/\n    endpoint: http:\/\/localhost:4000\n/)
     expect(config).toContain('    headers:\n      Authorization: "Bearer abc123"')
-    expect(config).toContain('  pipelines:\n    logs:\n      receivers: [otlp]\n      exporters: [otlp_http]')
+    expect(config).toContain('  pipelines:\n    logs:\n      receivers: [otlp]\n      exporters: [otlp_http]\n')
+    // The same exporter sends metrics, to /v1/metrics, which the exporter adds to the endpoint.
+    expect(config).toContain('    metrics:\n      receivers: [otlp]\n      exporters: [otlp_http]')
+    expect(config).not.toContain('/v1/metrics')
     expect(config).not.toContain('OTEL_')
     expect(config).not.toContain('/api/')
     expect(config).not.toContain('/v1/logs')
@@ -63,18 +66,24 @@ describe('snippets for an empty Project', () => {
       'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4000/v1/logs',
       'OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20abc123',
       'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf',
+      'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4000/v1/metrics',
+      'OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer%20abc123',
+      'OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf',
+      // A sum of cumulative values is too large, so metrics go as deltas.
+      'OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta',
     ])
     expect(sdk).not.toContain('/api/')
-    expect(code('otel-sdk', { ...ingest, url: 'https://logs.example.com/ingest/' })).toContain(
-      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example.com/ingest/v1/logs\n',
-    )
+    const secure = code('otel-sdk', { ...ingest, url: 'https://logs.example.com/ingest/' })
+    expect(secure).toContain('OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example.com/ingest/v1/logs\n')
+    expect(secure).toContain('OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://logs.example.com/ingest/v1/metrics\n')
   })
 
   it('leaves a placeholder for a Project without a key', () => {
     const noKey = { ...ingest, key: null }
     expect(code('curl', noKey)).toContain('Bearer YOUR_PROJECT_KEY')
     expect(code('otel-collector', noKey)).toContain('Authorization: "Bearer YOUR_PROJECT_KEY"')
-    expect(code('otel-sdk', noKey)).toContain('Authorization=Bearer%20YOUR_PROJECT_KEY')
+    expect(code('otel-sdk', noKey)).toContain('OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20YOUR_PROJECT_KEY')
+    expect(code('otel-sdk', noKey)).toContain('OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer%20YOUR_PROJECT_KEY')
   })
 })
 

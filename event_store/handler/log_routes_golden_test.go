@@ -319,12 +319,13 @@ func headerOrNone(resp *http.Response, name string) string {
 	return "(none)"
 }
 
-// sendLogRouteCase sends the case to a new ingest app, built as main builds
+// sendToIngestApp sends the case to a new ingest app, built as main builds
 // it: the real handler and the real Log ingest, over a Console SQLite file
-// with the two keys, with a Log writer in memory. This test itself uses no
-// ClickHouse, but the package needs the dev ClickHouse to run: its TestMain
-// (clickhousetest.Main) starts with it. It answers what a golden file holds.
-func sendLogRouteCase(t *testing.T, c logRouteCase) string {
+// with the two keys, with a Log writer in memory. It returns the response,
+// its body, and the writer. This uses no ClickHouse, but the package needs
+// the dev ClickHouse to run: its TestMain (clickhousetest.Main) starts with
+// it.
+func sendToIngestApp(t *testing.T, c logRouteCase) (*http.Response, []byte, *memoryLogWriter) {
 	t.Helper()
 	logger.Init()
 	sqlitePath := filepath.Join(t.TempDir(), "console.sqlite3")
@@ -375,6 +376,14 @@ func sendLogRouteCase(t *testing.T, c logRouteCase) string {
 	if err != nil {
 		t.Fatalf("POST %s: reading the body: %v", c.path, err)
 	}
+	return resp, body, writer
+}
+
+// sendLogRouteCase sends the case to a new ingest app, as sendToIngestApp
+// does, and answers what a golden file holds.
+func sendLogRouteCase(t *testing.T, c logRouteCase) string {
+	t.Helper()
+	resp, body, writer := sendToIngestApp(t, c)
 
 	// The body is all the bytes between the line "body:" and the last newline,
 	// which the file adds so that it ends in one.

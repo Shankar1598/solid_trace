@@ -46,7 +46,7 @@ _Avoid_: tag, label, column
 
 **Metric data point**:
 One value of an OpenTelemetry metric at one time, such as a sum, a gauge or a histogram, that Log ingest takes from an OTLP sender. Each one is stored as one Log: the metric name is the message, and the values are Attributes under `metric.`.
-_Avoid_: metric, sample, measurement
+_Avoid_: a metric, sample, measurement (for one stored point). "Metrics" stays the name of the OpenTelemetry signal, as in "Logs and metrics".
 
 **Field**:
 Either a built-in field of a Log or an Attribute; what filters, chips and the field list refer to. Built-in field names are reserved: a value that cannot fill one is kept as an Attribute named `original.<field>`. Names beginning `solidtrace.` are reserved for Attributes SolidTrace sets, and a sender's such key is kept as `original.solidtrace.<rest>`.

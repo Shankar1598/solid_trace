@@ -1,10 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
-import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { gzipSync } from 'node:zlib'
 import { ORG, PROJECT } from '../support/data'
 import { logCount, openLogs, streamRows } from '../support/logs'
+import { field, fixture, ingest, inspector, key, logsSince, postOtlp } from '../support/otlp'
 import { watchErrors } from '../support/screens'
 
 // OTLP/HTTP Log ingest. A real Collector (otelcol 0.165.0) sent two requests:
@@ -14,33 +11,12 @@ import { watchErrors } from '../support/screens'
 // show in the Logs explorer, with those Fields in the inspector. The
 // Overview's Received numbers go up.
 
-const ingest = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
-const fixtures = resolve(__dirname, '../../../event_store/ingest/normalise/testdata/otlp')
-const protobuf = readFileSync(resolve(fixtures, 'collector.pb'))
-const json = readFileSync(resolve(fixtures, 'collector.json'))
+const protobuf = fixture('collector.pb')
+const json = fixture('collector.json')
 const LOGS_PER_REQUEST = 3
 
-const key = execFileSync('mise', ['exec', '--', 'bin/rails', 'runner',
-  `puts Project.find_by!(slug: ${JSON.stringify(PROJECT)}).project_keys.first.public_key`], {
-  cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
-}).toString().trim()
-
-/**
- * The checkout Logs from the fixtures' day to an hour ahead. The Logs keep
- * the fixtures' own time until the Project's Retention passes it. Then they
- * take the time they arrived. This range holds both.
- */
-function checkoutLogs(): string {
-  const from = new Date(Date.parse('2026-11-22T00:00:00Z')).toISOString()
-  const to = new Date(Date.now() + 3600_000).toISOString()
-  const q = `['${PROJECT}']\n| where service == "checkout"`
-  return `?${new URLSearchParams({ from, to, mode: 'builder', q })}`
-}
-
-const inspector = (page: Page) => page.getByRole('complementary', { name: 'Log inspector' })
-/** An inspector row by its Field name, its value in the second cell. */
-const field = (page: Page, name: string) =>
-  inspector(page).locator('div.group', { has: page.getByText(name, { exact: true }) }).first()
+/** The checkout Logs, from the fixtures' day to an hour ahead. */
+const checkoutLogs = () => logsSince('2026-11-22', `['${PROJECT}']\n| where service == "checkout"`)
 
 /** What the Overview's band says arrived: the Logs of Received, and the requests that brought them. */
 async function received(page: Page): Promise<{ logs: number, requests: number }> {
@@ -61,16 +37,8 @@ test('the Logs of a Collector, as protobuf and as JSON, show in the explorer, th
 
   // What a Collector sends: protobuf with gzip, then JSON. Each request has
   // the Project's key as a Bearer token.
-  const protobufSent = await request.post(`${ingest}/v1/logs`, {
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/x-protobuf', 'Content-Encoding': 'gzip' },
-    data: gzipSync(protobuf),
-  })
-  expect(protobufSent.status(), await protobufSent.text()).toBe(200)
-  const jsonSent = await request.post(`${ingest}/v1/logs`, {
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    data: json,
-  })
-  expect(jsonSent.status(), await jsonSent.text()).toBe(200)
+  await postOtlp(request, '/v1/logs', protobuf, 'application/x-protobuf', true)
+  await postOtlp(request, '/v1/logs', json, 'application/json')
 
   // Log processing stores the Logs about once a second.
   await expect(async () => {
