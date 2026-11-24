@@ -227,7 +227,8 @@ Usage:
       review on also: each review's start, the agent's texts, each
       solidtrace-findings block, the subagents' reports and the edits. A
       review is a skill whose name matches --skills (review|interrogate by
-      default), that a person or the agent starts.
+      default), that a person or the agent starts, or a solidtrace-findings
+      block in the agent's text or a subagent's report.
   solidtrace version
       Print the version of this solidtrace.
 `

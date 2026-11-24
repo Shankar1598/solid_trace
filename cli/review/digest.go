@@ -260,9 +260,9 @@ type builder struct {
 	reviews int
 	events  []Entry
 	hasTask bool
-	// reviewed is true from the first review start on: only then do the
-	// agent's texts, the edits and the subagents' reports go in the
-	// timeline.
+	// reviewed is true from the first review on, a review start or a
+	// findings block: only then do the agent's texts, the edits and the
+	// subagents' reports go in the timeline.
 	reviewed bool
 	// subagents are the ids of the tool uses that started a subagent.
 	subagents map[string]bool
@@ -271,7 +271,9 @@ type builder struct {
 
 func (b *builder) add(l line) {
 	b.titles.add(l)
-	if l.IsSidechain {
+	// A compact summary is Claude Code's own retelling of the session, and it
+	// can quote a findings block or a hand-back.
+	if l.IsSidechain || l.IsCompactSummary {
 		return
 	}
 	if b.session == "" {
@@ -290,7 +292,7 @@ func (b *builder) add(l line) {
 	case "user":
 		if text, ok := personText(l); ok {
 			b.personMessage(l, text)
-		} else if b.reviewed {
+		} else {
 			b.subagentReports(l)
 		}
 	case "attachment":
@@ -307,14 +309,17 @@ func newEntry(l line, kind Kind) Entry {
 func (b *builder) assistantBlock(l line, bl block) {
 	switch bl.Type {
 	case "text":
-		if !b.reviewed || strings.TrimSpace(bl.Text) == "" {
+		// A findings block marks a review, also with no review start before it.
+		found, ok := findings(l, bl.Text)
+		if strings.TrimSpace(bl.Text) == "" || (!ok && !b.reviewed) {
 			return
 		}
+		b.reviewed = true
 		e := newEntry(l, KindAgentText)
 		e.Text = cut(bl.Text, maxText)
 		b.events = append(b.events, e)
-		if e, ok := findings(l, bl.Text); ok {
-			b.events = append(b.events, e)
+		if ok {
+			b.events = append(b.events, found)
 		}
 	case "tool_use":
 		var input struct {
@@ -395,16 +400,25 @@ func (b *builder) reviewStart(l line, skill string, trigger Trigger, args string
 
 // subagentReports adds the reports in a user line that is not the
 // person's: a subagent's tool result, a hand-back message, or a task
-// notification's result.
+// notification's result. A report with a findings block is a review that a
+// subagent ran, so it counts from before the first review start too.
 func (b *builder) subagentReports(l line) {
 	var m message
 	if json.Unmarshal(l.Message, &m) != nil {
 		return
 	}
 	add := func(text string) {
+		found, ok := findings(l, text)
+		if !ok && !b.reviewed {
+			return
+		}
+		b.reviewed = true
 		e := newEntry(l, KindSubagent)
 		e.Text = cut(strings.TrimSpace(text), maxSubagent)
 		b.events = append(b.events, e)
+		if ok {
+			b.events = append(b.events, found)
+		}
 	}
 	var s string
 	if json.Unmarshal(m.Content, &s) != nil {

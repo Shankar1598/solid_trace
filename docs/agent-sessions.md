@@ -134,16 +134,29 @@ An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agen
 
 ## Record what each review found: the skills plugin
 
-The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is not on by default. Its two skills are commands that an engineer types:
+The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is not on by default. It reviews a change in two stages, opens its PR, and records every finding with every decision on it:
 
-- **`/solidtrace-skills:review`** reviews the branch's change. With pstack installed, it follows pstack's `interrogate` skill. Without it, it starts two reviewers. A finding counts only when a run proves it. The reply ends with a `solidtrace-findings` block: each finding with an id (`F1`, `F2`), which a later review in the same session keeps for the same root cause.
-- **`/solidtrace-skills:open-pr`** pushes the branch and opens its PR (Bitbucket, GitHub, or `solidtrace pr` in a Run). While the branch pushes, a Sonnet subagent writes the record of the reviews. For each finding, the record has its outcome (`fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`), what the person said, and the events that prove it. It also lists what the reviews `missed`, found by the person or by a later agent, and tells the `story` of the feature: what the person asked for, what changed, what each review found, and what came up after the reviews. The PR body shows the record for the human reviewer, and the reply ends with it in a `solidtrace-pr-record` block.
+- **`/solidtrace-skills:code-review`** reviews one step of a feature. The agent can also start it after each step of a build. Three reviewers run at the same time: bugs and spec, and tests, on the session's model, and code quality on Sonnet. They read the repository's `REVIEW.md` sections and its coding standards file, when these exist. The agent decides each finding: `fix`, `dispute`, `trivial`, `defer` or `ask`. A verifier checks each finding that the agent disputes or calls trivial. The reply ends with a `solidtrace-findings` block. The block has the model and effort of each reviewer. Each finding has an id (`F1`, `F2`) and its events (`found`, `triage`, `verify`). A later review keeps the id for the same root cause.
+- **`/solidtrace-skills:deep-review`** tries to break the whole branch with several models, and keeps only the findings that a run proves. With pstack installed, it follows pstack's `interrogate` skill.
+- **`/solidtrace-skills:open-pr`** runs the final stage, then pushes the branch and opens its PR (Bitbucket, GitHub, or `solidtrace pr` in a Run). The final stage reviews the whole branch diff, in this order:
+  1. the deep review;
+  2. the high availability and infrastructure reviewer;
+  3. the person's decisions, and the fixes;
+  4. security, last, because a fix can add a fault.
+
+  While the branch pushes, a Sonnet subagent writes the record. Each finding keeps its events in time order:
+  - what the reviewer found;
+  - the agent's decision, and the verifier's verdict;
+  - what the person said, and what the agent then found and changed;
+  - the fix.
+
+  A problem that the person, a later agent or a test run found is a finding too, with `found_by`. So the record also shows what the reviews missed. The record tells the `story` of the feature, and gives the outcome of each finding: `fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`. The PR body shows the record for the human reviewer. The reply ends with it in a `solidtrace-pr-record` block.
 
 A feature often spans several Agent sessions. Before the record, `open-pr` runs `solidtrace review sessions`, which lists the sessions on this machine that made one of the PR's commits (`strong`), checked out its branch, or changed one of its files. The person confirms the list. When no other session has a link, a Haiku subagent reads the titles of the recent sessions in the repository, and the person confirms only the ones it names.
 
-The subagent reads `solidtrace review digest --session A --session B`, not the transcripts: one short timeline of the confirmed sessions in time order. Before a session's first review, it keeps the task, the person's messages, the delegations and the commits. From the first review on, it also has the agent's texts, the findings blocks, the subagents' reports and the edits. A session on Bitbucket needs `BITBUCKET_TOKEN` for `open-pr` to open the PR. Without it, `open-pr` gives the link that opens a new PR, and the body to paste.
+The subagent reads `solidtrace review digest --session A --session B`, not the transcripts: one short timeline of the confirmed sessions in time order. Before a session's first review, it keeps the task, the person's messages, the delegations and the commits. From the first review on (a review start, or a findings block in the agent's text or a subagent's report), it also has the agent's texts, the findings blocks, the subagents' reports and the edits. A session on Bitbucket needs `BITBUCKET_TOKEN` for `open-pr` to open the PR. Without it, `open-pr` gives the link that opens a new PR, and the body to paste.
 
-In a captured repository, the record uploads with the Agent session, so a team can count the outcomes over many sessions with `run_sql` on the Agent Project. For example, this query counts the records in the last 30 days: `SELECT count(*) FROM logs WHERE position(message, '```solidtrace-pr-record') > 0`.
+In a captured repository, the record uploads with the Agent session, so a team can count the outcomes over many sessions with `run_sql` on the Agent Project. For example, this query counts the records in the range that `run_sql` reads: `SELECT count(*) FROM logs WHERE position(message, '```solidtrace-pr-record') > 0`.
 
 ## Set a Project's Factory settings
 

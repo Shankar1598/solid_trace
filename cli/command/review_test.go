@@ -313,6 +313,91 @@ func TestReviewDigestKeepsTheSubagentsOfAReviewAndSkipsClaudeCodesOwnLines(t *te
 	}
 }
 
+func TestReviewDigestTakesAFindingsBlockFromASubagentsReport(t *testing.T) {
+	plan := toolUse("Agent", map[string]any{"description": "Plan the parts", "prompt": "List the parts."})
+	plan["id"] = "t-plan"
+	agent := toolUse("Agent", map[string]any{"description": "Build part 1", "prompt": "Build it, then run code-review."})
+	agent["id"] = "t-part"
+	report := "Part 1 is built.\n```solidtrace-findings\n{\"version\": 2, \"run\": 1, \"findings\": [{\"id\": \"F1\"}]}\n```"
+	path := transcript(t,
+		userLine("u-task", "Build the parser in parts."),
+		assistantLine("a-early", text("I start part 1.")),
+		assistantLine("a-plan", plan),
+		userLine("u-plan", []map[string]any{{"type": "tool_result", "tool_use_id": "t-plan", "content": "There are two parts."}}),
+		assistantLine("a-part", agent),
+		userLine("u-report", []map[string]any{{"type": "tool_result", "tool_use_id": "t-part", "content": []map[string]any{{"type": "text", "text": report}}}}),
+		assistantLine("a-after", text("F1 is real; I fix it.")),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if want := []string{"task", "delegate", "delegate", "subagent_report", "findings", "agent_text"}; !reflect.DeepEqual(kinds(d), want) {
+		t.Fatalf("kinds: %v, want %v\n%s", kinds(d), want, stdout)
+	}
+	if got, _ := json.Marshal(d.Events[4]["findings"]); !strings.Contains(string(got), `"F1"`) || d.Events[4]["uuid"] != "u-report" {
+		t.Errorf("findings: %v", d.Events[4])
+	}
+}
+
+func TestReviewDigestTakesAFindingsBlockFromAHandBack(t *testing.T) {
+	handBack := userLine("u-back", "Another Claude session sent a message:\n<agent-message from=\"a1\">\nPart 1 is built.\n```solidtrace-findings\n{\"version\": 2, \"findings\": []}\n```\n</agent-message>")
+	handBack["isMeta"] = true
+	path := transcript(t, userLine("u-task", "Build the parser in parts."), handBack)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if d := decodeDigest(t, stdout); !reflect.DeepEqual(kinds(d), []string{"task", "subagent_report", "findings"}) {
+		t.Fatalf("kinds: %v\n%s", kinds(d), stdout)
+	}
+}
+
+func TestReviewDigestTakesAFindingsBlockWithNoReviewStartAsAReview(t *testing.T) {
+	path := transcript(t,
+		userLine("u-task", "Add a retry to the uploader."),
+		assistantLine("a-early", text("The retry is in.")),
+		userLine("u-pr", "<command-name>/solidtrace-skills:open-pr</command-name>"),
+		assistantLine("a-deep", text("F1 breaks the retry.\n```solidtrace-findings\n{\"version\": 2, \"skill\": \"deep-review\", \"findings\": []}\n```")),
+		assistantLine("a-after", text("I fix F1.")),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if want := []string{"task", "person", "agent_text", "findings", "agent_text"}; !reflect.DeepEqual(kinds(d), want) {
+		t.Fatalf("kinds: %v, want %v\n%s", kinds(d), want, stdout)
+	}
+	// reviews counts review starts, and a findings block alone is not one.
+	if d.Reviews != 0 {
+		t.Errorf("reviews: %d, want 0", d.Reviews)
+	}
+}
+
+func TestReviewDigestSkipsACompactSummary(t *testing.T) {
+	summary := userLine("u-summary", "This session is being continued from a previous conversation.\n"+
+		"The hand-back is an <agent-message line. The block looks like this:\n```solidtrace-findings\n{\"version\": 1, \"findings\": [{\"id\": \"F1\"}]}\n```")
+	summary["isCompactSummary"] = true
+	path := transcript(t, userLine("u-task", "Build the parser."), summary, assistantLine("a-next", text("I go on with the parser.")))
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if d := decodeDigest(t, stdout); !reflect.DeepEqual(kinds(d), []string{"task"}) {
+		t.Fatalf("kinds: %v\n%s", kinds(d), stdout)
+	}
+}
+
 // in sets the session and the time of a transcript line.
 func in(l map[string]any, session, at string) map[string]any {
 	l["sessionId"], l["timestamp"] = session, at
