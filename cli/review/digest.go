@@ -61,7 +61,7 @@ const (
 // Skill, Trigger and Args; delegate sets Text (the subagent's description
 // and prompt); findings sets Findings, and Error when the block is not
 // valid JSON (Findings is then null); edit sets Tool and File; commit sets
-// Command.
+// Command, and ReviewFindings from the message's Review-Findings trailers.
 type Entry struct {
 	Seq      int             `json:"seq"`
 	Session  string          `json:"session"`
@@ -77,6 +77,8 @@ type Entry struct {
 	Tool     string          `json:"tool,omitempty"`
 	File     string          `json:"file,omitempty"`
 	Command  string          `json:"command,omitempty"`
+	// ReviewFindings are kept whole, because Command is cut.
+	ReviewFindings []string `json:"review_findings,omitempty"`
 }
 
 // DefaultSkills matches the names of the usual review skills, such as
@@ -91,6 +93,8 @@ const (
 	maxSubagent = 8000
 	maxPrompt   = 1500
 	maxCommand  = 300
+	// reviewTrailer names the findings that a commit fixes.
+	reviewTrailer = "Review-Findings:"
 )
 
 // agentTools are the tools that start a subagent.
@@ -352,12 +356,29 @@ func (b *builder) assistantBlock(l line, bl block) {
 			b.events = append(b.events, e)
 		}
 		// A subagent's work often lands with a git merge -m command.
-		if bl.Name == "Bash" && (strings.Contains(input.Command, "git commit") || strings.Contains(input.Command, "git merge")) {
+		if bl.Name == "Bash" && gitCommit.MatchString(input.Command) {
 			e := newEntry(l, KindCommit)
 			e.Command = cut(input.Command, maxCommand)
+			e.ReviewFindings = reviewTrailers(input.Command)
 			b.events = append(b.events, e)
 		}
 	}
+}
+
+// gitCommit matches a command that runs git commit or git merge, at the
+// start of a line or after a shell operator, and not the words in a text.
+var gitCommit = regexp.MustCompile(`(?m)(^|&&|\|\||;|\|)\s*git(\s+-C\s+\S+)*\s+(commit|merge)\b`)
+
+// reviewTrailers returns the values of the Review-Findings trailers in a
+// commit command, such as "run 1: F2, F5".
+func reviewTrailers(command string) []string {
+	var out []string
+	for _, s := range strings.Split(command, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(s), reviewTrailer); ok {
+			out = append(out, strings.TrimSpace(v))
+		}
+	}
+	return out
 }
 
 func (b *builder) personMessage(l line, text string) {

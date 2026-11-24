@@ -55,7 +55,7 @@ Give each finding one decision, with a one-line `why` for every decision but `fi
 - `defer`: it is real, and it belongs to a later step or ticket.
 - `ask`: only the person can decide.
 
-Done when every finding has one decision.
+Done when every finding has one decision. A decision that changes later goes in an update block ([findings.md](findings.md), The update block).
 
 ## 5. Verify what you reject
 
@@ -70,3 +70,13 @@ Done when every `dispute` and `trivial` finding has a verdict.
 Write the findings for the person, one section per reviewer, most severe first: the id, the file and line, the scenario, your decision and the verifier's verdict. Then the confirmations that the reviewers ask the developer for.
 
 End the reply with one block in the format of [findings.md](findings.md). When you run as a subagent, also put the block in your final report, because only that report reaches the session that started you. Then fix the findings with decision `fix`, unless the person asked for a report only.
+
+Commit the fixes with explicit paths. End the commit message with one trailer line for each run whose findings it fixes, before the other trailers:
+
+```
+Review-Findings: run 1: F2, F5, F12
+```
+
+`run` and the ids are those of the block. Then end the reply with an update block that gives each fixed finding a `fix` event with the commit's hash.
+
+Done when each finding with decision `fix` has a `fix` event in an update block.

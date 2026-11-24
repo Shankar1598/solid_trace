@@ -382,6 +382,40 @@ func TestReviewDigestTakesAFindingsBlockWithNoReviewStartAsAReview(t *testing.T)
 	}
 }
 
+func TestReviewDigestKeepsTheReviewFindingsTrailersOfACommit(t *testing.T) {
+	msg := "git commit -m \"Fix the parser\n\n" + strings.Repeat("A long line about the fix. ", 20) +
+		"\n\nReview-Findings: run 1: F2, F5\nReview-Findings: run 2: F1\nCo-Authored-By: x\" -- parser.go"
+	path := transcript(t, userLine("u-task", "Build the parser."), assistantLine("a-commit", toolUse("Bash", map[string]any{"command": msg})))
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if !reflect.DeepEqual(kinds(d), []string{"task", "commit"}) ||
+		!reflect.DeepEqual(d.Events[1]["review_findings"], []any{"run 1: F2, F5", "run 2: F1"}) {
+		t.Fatalf("digest:\n%s", stdout)
+	}
+}
+
+func TestReviewDigestTakesOnlyACommandThatRunsGitCommitAsACommit(t *testing.T) {
+	path := transcript(t, userLine("u-task", "Build the parser."),
+		assistantLine("a-1", toolUse("Bash", map[string]any{"command": "cat > notes.md <<'EOF'\nRun `git commit` with explicit paths.\nEOF"})),
+		assistantLine("a-2", toolUse("Bash", map[string]any{"command": "cd cli && go test ./... && git -C .. commit -q -m x -- a.go"})),
+		assistantLine("a-3", toolUse("Bash", map[string]any{"command": "git merge --no-ff -m y feature"})))
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if !reflect.DeepEqual(kinds(d), []string{"task", "commit", "commit"}) || d.Events[1]["uuid"] != "a-2" {
+		t.Fatalf("digest:\n%s", stdout)
+	}
+}
+
 func TestReviewDigestSkipsACompactSummary(t *testing.T) {
 	summary := userLine("u-summary", "This session is being continued from a previous conversation.\n"+
 		"The hand-back is an <agent-message line. The block looks like this:\n```solidtrace-findings\n{\"version\": 1, \"findings\": [{\"id\": \"F1\"}]}\n```")

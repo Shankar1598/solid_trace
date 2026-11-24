@@ -39,3 +39,25 @@ Each review ends its reply with one block. The block records what each reviewer 
   - `verify`: the verifier's `verdict` (`CONFIRMED`, `PLAUSIBLE` or `REFUTED`), `pushed_back` and `why`.
 - `dropped`: for each reviewer, the findings it dropped itself because it had no scenario, and in `deep-review` the findings that no run proved.
 - With no findings, `findings` is `[]`.
+
+## The update block
+
+A decision or a fix after the report goes in a new block, not only in your text. End the reply with one update block when, after a block:
+
+- you fixed and committed findings,
+- you changed a decision, for example a `trivial` finding that turned out to be real, or
+- the person decided an `ask` finding.
+
+````
+```solidtrace-findings
+{"version": 2, "update": 1,
+ "findings": [
+  {"id": "F12", "events": [{"type": "triage", "decision": "fix", "why": "the digest of this session showed the input"},
+                           {"type": "fix", "commit": "<git rev-parse HEAD>", "files": ["cli/review/digest.go"]}]},
+  {"id": "F3", "events": [{"type": "fix", "commit": "<git rev-parse HEAD>", "files": ["app/routes.go"]}]}]}
+```
+````
+
+- `update`: the `run` of the block that these findings came from, in this transcript. One update block has the findings of one run.
+- `events`: only the new events, in the order they happened. `triage` as above. `fix`: `commit` is the full hash of the commit that holds the fix, and `files` are the files of the fix.
+- A subagent also puts its update block in its final report.
