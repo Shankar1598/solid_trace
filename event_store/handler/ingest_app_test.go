@@ -55,7 +55,7 @@ func TestTheIngestAppRefusesIngestThatAProxyForwardedFromPlainHTTP(t *testing.T)
 		handler.IngestOptions{IdleTimeout: time.Second, RefuseForwardedHTTP: true})
 
 	for _, proto := range []string{"http", "HTTP", " http ", "https, http"} {
-		for _, path := range []string{"/api/logs", "/api/1/logs", "/api/1/envelope", "/api/1/store", "/v1/logs"} {
+		for _, path := range []string{"/api/logs", "/api/1/logs", "/api/1/envelope", "/api/1/store", "/v1/logs", "/v1/metrics"} {
 			code, body := sendForwarded(t, app, "POST", path, proto)
 			if code != fiber.StatusForbidden || !strings.Contains(body, "Use an https:// URL") {
 				t.Errorf("POST %s with X-Forwarded-Proto %q: got %d %q, want 403 that says to use https", path, proto, code, body)
