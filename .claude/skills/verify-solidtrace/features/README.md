@@ -48,6 +48,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 
 - [Sign-in](./sign-in.md): password sign-in, sign-out, wrong password, the member and admin roles.
 - [Logs explorer](./logs-explorer.md): Builder, Query mode, SQL mode, the histogram and the Live tail, on Logs sent through ingest.
+- [Log ingest](./log-ingest.md): Logs sent to every ingest route (JSON, NDJSON, key only, Sentry envelope, OTLP/HTTP) show in the explorer and the Ingest counts, and a real OpenTelemetry Collector drives `/v1/logs`.
 - [Issues](./issues.md): Events through ingest become Issues, and Issues are listed, filtered, resolved and unresolved.
 - [Dashboards](./dashboards.md): make a Dashboard, add Charts from the explorer and from the editor, set the range, lay it out, delete it.
 - [Factory Runs](./factory-runs.md): the Factory section of a Project, Runs started from the CLI, a Monitor or an Issue, the Runs and Run pages, Stop.

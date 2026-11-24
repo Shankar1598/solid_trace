@@ -36,6 +36,12 @@ EventStore listens on two ports. Ingest (`4000`) is public: SDKs and shippers se
 
 `bin/security` scans every component for known vulnerabilities: gems, Rails code, JS packages, Go modules, the VRL crate, secrets in git's history, and the images the install runs.
 
+### OpenTelemetry Collector
+
+To try OTLP Log ingest (`POST /v1/logs`) with a real OpenTelemetry Collector, run `bin/otel-dev <count> [ingest-url] [key]`. It starts the opt-in `otel` profile of `docker-compose.dev.yml` (the Collector `otel/opentelemetry-collector` and `telemetrygen`, configured by `local/otel/collector.yaml`), sends `<count>` Logs through the Collector, waits until the Collector has sent them, and stops the two containers. The Collector sends each Log twice, as protobuf with gzip and as JSON, so `<count>` Logs make `2 x <count>` Logs with service `telemetrygen` and environment `dev`. Without arguments for the ingest URL and the key, they go to the dev stack (`http://127.0.0.1:4000`) with the seed Project's key, `testkey123`. For a verify stack, pass its ingest URL, for example `bin/otel-dev 50 http://127.0.0.1:4510 testkey123`.
+
+The profile is opt-in because the dev box is short of memory: `bin/dev` does not start it. The Collector listens on `127.0.0.1:14318` (OTLP/HTTP) and `127.0.0.1:14888` (its own metrics), not on 4317/4318, so it cannot clash with a Collector that you run yourself. Run one `bin/otel-dev` at a time.
+
 ## Project structure
 
 - `console/` — Rails app (UI, API, MCP server, user management)
