@@ -18,7 +18,7 @@ A JSON file with `session`, `reviews` (the count of review runs) and `events`, i
 
 ## Steps
 
-1. **Find each review run.** Each `review_start` begins one run. A run's findings are in its `findings` event. When a run has no `findings` event, take its findings from the `subagent_report` and `agent_text` events that report that review: give them the ids `T<run>-1`, `T<run>-2` and so on, and set `"source": "text"`. A subagent can also run a review that has no `review_start`, such as a review of a later part of the work. Each such review is one more run, with `"trigger": "subagent"` and `"start"` set to the uuid of its `delegate`.
+1. **Find each review run.** Each `review_start` begins one run. A run's findings are in its `findings` event. When a run has no `findings` event, take its findings from the `subagent_report` and `agent_text` events that report that review: give them the ids `T<run>-1`, `T<run>-2` and so on, and set `"source": "text"`. A subagent can also run a review that has no `review_start`, such as a review of a later part of the work. Each such review is one more run, with `"trigger": "subagent"` and `"start"` set to the uuid of its first `delegate`. One run is one review of one part of the work: the reviewers that review the same part at the same time (for example a standards reviewer and a spec reviewer) are one run, not one run each. A subagent that only verifies or tests the work is not a review.
 2. **Decide the outcome of each finding.** Read the events after the run's report, up to the PR. Use the first outcome in this list that the events prove:
    - `fixed`: an `edit` changes the finding's file after the report, or a `delegate` gives the fix to a subagent and its `subagent_report` or a `commit` says that it is done, and a later run does not report it again. Evidence: the edit, or the delegate and its report, and the person message that asked for it, if one did.
    - `ignored_by_person`: the person said to skip, ignore or leave it. Evidence: that message.
@@ -27,7 +27,7 @@ A JSON file with `session`, `reviews` (the count of review runs) and `events`, i
    - `ignored_trivial`: the agent said that it is too small to fix. Evidence: the event where the agent said so.
    - `open`: no event shows what happened to it. Evidence: the report.
 3. **Quote the person.** `person_said` is the person's own words about this finding, at most 200 characters, cut with `…`. Use `null` when the person said nothing about it.
-4. **Find what the review missed.** A person message after a review that names a problem that no finding of that run names is a `person_findings` item. This includes a person who reads deeper and finds more. Evidence: that message.
+4. **Find what the review missed.** Go through every `person` event after the first review, one at a time, and every `subagent_report` of a verifier or a test run. For each one, ask: does it name a problem, or ask a question whose answer shows a problem (for example "Have you tested this?", answered "Partly")? A problem that no finding of the review before it names is a `missed` item. `found_by` is `person` when a person message names it, or asks a question that makes the agent find it (also a person who reads deeper and finds more). It is `agent` for a verifier, a test run or a later subagent. Evidence: the person message or the agent's event, and the event where the agent agrees that the problem is real.
 5. **Mark doubt.** When the events let two outcomes fit, choose the one with the stronger evidence and set `"confidence": "low"`. Else `"high"`.
 
 Every `evidence` value is a `uuid` from the digest. Write no claim that no event shows.
@@ -50,10 +50,10 @@ Write this JSON to the output path:
       ]
     }
   ],
-  "person_findings": [
-    {"after_run": 1, "summary": "...", "file": "app/y.rb", "evidence": ["<uuid>"]}
+  "missed": [
+    {"after_run": 1, "found_by": "person", "summary": "...", "file": "app/y.rb", "evidence": ["<uuid>"]}
   ]
 }
 ```
 
-For a finding from text, `severity`, `category` and `file` are `null` when the report does not give them. Then reply with one line: the path you wrote, the count of findings by outcome, and the count of `person_findings`.
+For a finding from text, `severity`, `category` and `file` are `null` when the report does not give them. Then reply with one line: the path you wrote, the count of runs, the count of findings by outcome, and the count of `missed` items by `found_by`.

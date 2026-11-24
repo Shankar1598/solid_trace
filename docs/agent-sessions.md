@@ -132,6 +132,17 @@ An agent can do the same over MCP: `query_logs` on the Agent Project runs a Quer
 
 An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them, each with its title, with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both. `list_agent_sessions` gives at most 50 Agent sessions, or the `limit` that the agent sets, at most 200, with the totals of all of them. Its `sort` (`last`, `start`, `tokens` or `cost`) and `direction` (`desc` or `asc`) sort them as the page's headings do, before the limit: `sort: cost` gives the most expensive Agent sessions first. When it says `more`, the agent narrows the range or filters by person or repository.
 
+## Record what each review found: the skills plugin
+
+The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is not on by default. Its two skills are commands that an engineer types:
+
+- **`/solidtrace-skills:review`** reviews the branch's change. With pstack installed, it follows pstack's `interrogate` skill. Without it, it starts two reviewers. A finding counts only when a run proves it. The reply ends with a `solidtrace-findings` block: each finding with an id (`F1`, `F2`), which a later review in the same session keeps for the same root cause.
+- **`/solidtrace-skills:open-pr`** pushes the branch and opens its PR (Bitbucket, GitHub, or `solidtrace pr` in a Run). While the branch pushes, a Sonnet subagent writes the record of the reviews. For each finding, the record has its outcome (`fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`), what the person said, and the events that prove it. It also lists what the reviews `missed`, found by the person or by a later agent. The PR body shows the record for the human reviewer, and the reply ends with it in a `solidtrace-pr-record` block.
+
+The subagent reads `solidtrace review digest --session ID`, not the transcript: a short timeline of the session from its first review on. The digest has the agent's texts, the findings blocks, the subagents' prompts and reports, the person's messages, the edits and the commits. A session on Bitbucket needs `BITBUCKET_TOKEN` for `open-pr` to open the PR. Without it, `open-pr` gives the link that opens a new PR, and the body to paste.
+
+In a captured repository, the record uploads with the Agent session, so a team can count the outcomes over many sessions with `run_sql` on the Agent Project. For example, this query counts the records in the last 30 days: `SELECT count(*) FROM logs WHERE position(message, '```solidtrace-pr-record') > 0`.
+
 ## Set a Project's Factory settings
 
 A Project's page has a **Factory** section when Settings → Instance has the Dispatcher's URL. It shows the Project's **Factory settings**, which the Dispatcher keeps: the repository (host/workspace/name, or a clone URL), the folder in the repository (empty is the root), and the default base branch (empty is the repository's default branch). Each member reads them; only an Admin of the Organization saves them. A save keeps the forge connection that `solidtrace projects set` gave. Console reads and saves them at the Dispatcher as you, with a factory token that lasts 5 minutes.

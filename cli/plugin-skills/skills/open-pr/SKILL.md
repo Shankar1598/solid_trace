@@ -38,7 +38,7 @@ The title is one line that says what the change does. The body has these section
 
 - **Summary**: what changes for the user, and why.
 - **Evidence**: the tests and checks that ran, and their result.
-- **Review**: one row per finding, from the record: id, severity, title, outcome, and what the person said. Then one line per item of `person_findings`, as "Found by the person, not by the review".
+- **Review**: one row per finding, from the record: id, severity, title, outcome, and what the person said. Then one line per item of `missed`, as "Missed by the review, found by the person" or "found by an agent".
 
 Write the body to `$dir/body.md`.
 
