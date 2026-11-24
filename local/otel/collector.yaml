@@ -1,18 +1,18 @@
 # The OpenTelemetry Collector of the dev stack. It is the `otel` profile in
 # docker-compose.dev.yml, and bin/otel-dev starts it. It takes OTLP/HTTP from
-# telemetrygen. It sends each Log twice to EventStore's POST /v1/logs: once as
-# protobuf with gzip (the Collector's default), and once as JSON with no
-# compression.
+# telemetrygen. It sends each Log twice to EventStore's POST /v1/logs, and each
+# Metric data point twice to POST /v1/metrics: once as protobuf with gzip (the
+# Collector's default), and once as JSON with no compression.
 #
 # SOLIDTRACE_INGEST_URL is EventStore's ingest URL, with no path. The exporter
-# adds /v1/logs. SOLIDTRACE_KEY is the Project's key. The defaults are the dev
+# adds /v1/logs and /v1/metrics. SOLIDTRACE_KEY is the Project's key. The defaults are the dev
 # stack on :4000 and the seed Project's key. For a verify stack, set the two
 # variables. bin/otel-dev sets them.
 #
 # The receiver listens on 14318 (HTTP). The Collector's own metrics are on
 # 14888. Both ports are on loopback, so they cannot clash with a Collector of
-# your own on 4317 or 4318. bin/otel-dev reads the metrics to learn that the
-# Collector sent every Log.
+# your own on 4317 or 4318. bin/otel-dev reads these counters to learn that the
+# Collector sent every Log and every Metric data point.
 receivers:
   otlp:
     protocols:
@@ -51,6 +51,10 @@ service:
                 port: 14888
   pipelines:
     logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/protobuf, otlp_http/json]
+    metrics:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlp_http/protobuf, otlp_http/json]

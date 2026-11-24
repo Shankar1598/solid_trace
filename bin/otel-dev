@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Sends Logs to EventStore through an OpenTelemetry Collector, as a real
-# deployment does. The script starts the `otel` profile of
+# Sends Logs and Metric data points to EventStore through an OpenTelemetry Collector, as a
+# real deployment does. The script starts the `otel` profile of
 # docker-compose.dev.yml (local/otel/collector.yaml, with telemetrygen). It
-# sends <count> Logs through the Collector and waits until the Collector has
-# sent them all. It prints what the Collector sent, and it stops the
-# containers that it started.
+# sends <count> Logs and <count> Metric data points through the Collector, and
+# waits until the Collector has sent them all. It prints what the Collector
+# sent, and it stops the containers that it started.
 #
 #   bin/otel-dev <count> [ingest-url] [key]
 #
-# The Collector sends each Log twice: once as protobuf with gzip, and once as
-# plain JSON. So <count> Logs become 2 x <count> stored Logs, with service
-# telemetrygen and environment dev. Without an ingest-url and a key, the Logs
+# The Collector sends each Log and each data point twice: once as protobuf with
+# gzip, and once as plain JSON. So <count> Logs become 2 x <count> stored Logs,
+# with service telemetrygen and environment dev. The <count> data points are
+# half a Sum (otel_dev.sum) and half a Gauge (otel_dev.gauge), and the Sum has
+# the extra one when <count> is odd. Each data point is stored as one Log, so
+# they make 2 x <count> more Logs, with the metric name as the message. The
+# Gauge is left out when <count> is 1. Without an ingest-url and a key, the Logs
 # go to the dev stack (http://127.0.0.1:4000) with the seed Project's key,
 # testkey123. For a verify stack, pass its ingest URL, for example
 # http://127.0.0.1:4510.
@@ -39,7 +43,10 @@ key=${3:-testkey123}
 checkout="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 collector=solidtrace-otel-collector
 generator=solidtrace-otel-telemetrygen
-metrics=http://127.0.0.1:14888/metrics
+metrics_generator=solidtrace-otel-telemetrygen-metrics
+collector_metrics=http://127.0.0.1:14888/metrics
+gauge_count=$((count / 2))
+sum_count=$((count - gauge_count))
 
 # Compose needs these three variables for the dev ClickHouse, which this
 # profile does not start. The dummy values only let Compose read the file.
@@ -52,7 +59,7 @@ export SOLIDTRACE_KEY=$key
 export OTEL_LOG_COUNT=$count
 compose() { docker compose -f "$checkout/docker-compose.dev.yml" --profile otel "$@"; }
 
-for name in "$collector" "$generator"; do
+for name in "$collector" "$generator" "$metrics_generator"; do
   if docker inspect "$name" >/dev/null 2>&1; then
     echo "$name is running already, so another bin/otel-dev has the Collector's ports. Wait for it, or stop it: docker rm -f $name" >&2
     exit 1
@@ -63,53 +70,72 @@ done
 # With OTEL_DEV_LOG=<file>, it saves the Collector's log first.
 cleanup() {
   [[ -z ${OTEL_DEV_LOG:-} ]] || docker logs "$collector" >| "$OTEL_DEV_LOG" 2>&1 || true
-  docker rm -f "$generator" "$collector" >/dev/null 2>&1 || true
+  docker rm -f "$generator" "$metrics_generator" "$collector" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-# The Collector's counter of sent (or failed) Log records for one exporter.
+# The Collector's counter of sent (or failed) Log records or Metric data
+# points for one exporter: counter <sent|send_failed> <log_records|metric_points> <exporter>.
 counter() {
-  local name=$1 exporter=$2
-  curl -fsS "$metrics" 2>/dev/null |
-    awk -v n="otelcol_exporter_${name}_log_records" -v e="exporter=\"$exporter\"" \
+  local name=$1 unit=$2 exporter=$3
+  curl -fsS "$collector_metrics" 2>/dev/null |
+    awk -v n="otelcol_exporter_${name}_${unit}" -v e="exporter=\"$exporter\"" \
       'index($0, n "{") == 1 && index($0, e) { total += $NF } END { printf "%d", total }'
 }
 
 echo "Starting the Collector (ingest $ingest_url)"
 compose up --detach --no-deps --quiet-pull otel-collector >/dev/null
 for _ in {1..60}; do
-  curl -fsS -o /dev/null "$metrics" 2>/dev/null && break
+  curl -fsS -o /dev/null "$collector_metrics" 2>/dev/null && break
   sleep 0.5
 done
-if ! curl -fsS -o /dev/null "$metrics" 2>/dev/null; then
+if ! curl -fsS -o /dev/null "$collector_metrics" 2>/dev/null; then
   echo "The Collector did not start. See: docker logs $collector" >&2
   docker logs "$collector" 2>&1 | tail -20 >&2 || true
   exit 1
 fi
 
-echo "Sending $count Logs through the Collector"
+echo "Sending $count Logs and $count Metric data points through the Collector"
 compose run --rm --no-deps --name "$generator" telemetrygen >/dev/null 2>&1 ||
   { echo "telemetrygen failed. Run it by hand with docker compose to see why." >&2; exit 1; }
+# One telemetrygen run sends one metric type. The Gauge run is left out when its count is 0.
+send_metrics() {
+  local type=$1 name=$2 n=$3
+  (( n > 0 )) || return 0
+  OTEL_METRIC_TYPE=$type OTEL_METRIC_NAME=$name OTEL_METRIC_COUNT=$n \
+    compose run --rm --no-deps --name "$metrics_generator" telemetrygen-metrics >/dev/null 2>&1 ||
+    { echo "telemetrygen metrics ($type) failed. Run it by hand with docker compose to see why." >&2; exit 1; }
+}
+send_metrics Sum sum "$sum_count"
+send_metrics Gauge gauge "$gauge_count"
 
-# The Collector holds Logs for up to a second, and an exporter can retry.
-# Wait until each exporter has sent every Log, or until one has failed.
-protobuf=0 json=0 failed=0
+# The Collector holds data for up to a second, and an exporter can retry.
+# Wait until each exporter has sent every Log and every Metric data point, or
+# until one has failed.
+protobuf=0 json=0 metrics_protobuf=0 metrics_json=0 failed=0
 for _ in {1..120}; do
-  protobuf=$(counter sent otlp_http/protobuf)
-  json=$(counter sent otlp_http/json)
-  failed=$(( $(counter send_failed otlp_http/protobuf) + $(counter send_failed otlp_http/json) ))
-  (( failed > 0 || (protobuf >= count && json >= count) )) && break
+  protobuf=$(counter sent log_records otlp_http/protobuf)
+  json=$(counter sent log_records otlp_http/json)
+  metrics_protobuf=$(counter sent metric_points otlp_http/protobuf)
+  metrics_json=$(counter sent metric_points otlp_http/json)
+  failed=$(( $(counter send_failed log_records otlp_http/protobuf) + $(counter send_failed log_records otlp_http/json) \
+    + $(counter send_failed metric_points otlp_http/protobuf) + $(counter send_failed metric_points otlp_http/json) ))
+  (( failed > 0 || (protobuf >= count && json >= count && metrics_protobuf >= count && metrics_json >= count) )) && break
   sleep 0.5
 done
 
 errors=$(docker logs "$collector" 2>&1 | grep -i 'dropping data' || true)
-if (( failed > 0 )) || [[ -n $errors ]] || (( protobuf < count || json < count )); then
-  echo "The Collector did not send every Log (protobuf $protobuf, JSON $json, failed $failed of $count):" >&2
+if (( failed > 0 )) || [[ -n $errors ]] || (( protobuf < count || json < count || metrics_protobuf < count || metrics_json < count )); then
+  echo "The Collector did not send everything (Logs: protobuf $protobuf, JSON $json; Metric data points: protobuf $metrics_protobuf, JSON $metrics_json; failed $failed; $count of each expected):" >&2
   echo "${errors:-no error in the Collector log}" | tail -20 >&2
   exit 1
 fi
 
-echo "Sent through the Collector to $ingest_url/v1/logs with key $key:"
-echo "  protobuf with gzip: $protobuf Logs"
-echo "  JSON, no gzip:      $json Logs"
-echo "Expect $((protobuf + json)) Logs with service telemetrygen and environment dev in the Logs explorer."
+echo "Sent through the Collector to $ingest_url with key $key:"
+echo "  Logs to /v1/logs:"
+echo "    protobuf with gzip: $protobuf"
+echo "    JSON, no gzip:      $json"
+echo "  Metric data points to /v1/metrics ($sum_count Sum otel_dev.sum, $gauge_count Gauge otel_dev.gauge):"
+echo "    protobuf with gzip: $metrics_protobuf"
+echo "    JSON, no gzip:      $metrics_json"
+echo "Expect $((protobuf + json)) Logs and $((metrics_protobuf + metrics_json)) Logs from data points, with service telemetrygen and environment dev, in the Logs explorer."
