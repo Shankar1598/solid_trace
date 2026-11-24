@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,7 +23,10 @@ func runDigest(t *testing.T, env command.Env, args ...string) (int, string, stri
 }
 
 type digest struct {
-	Session string           `json:"session"`
+	Sessions []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	} `json:"sessions"`
 	Reviews int              `json:"reviews"`
 	Events  []map[string]any `json:"events"`
 }
@@ -113,15 +117,19 @@ func TestReviewDigestGivesTheTimelineOfEachReview(t *testing.T) {
 	}
 }
 
-func TestReviewDigestOfASessionWithNoReviewHasOnlyTheTask(t *testing.T) {
+func TestReviewDigestOfASessionWithNoReviewKeepsOnlyTheStory(t *testing.T) {
 	code, stdout, stderr := runDigest(t, command.Env{}, "--file", filepath.Join("testdata", "review", "no-review.jsonl"))
 
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	d := decodeDigest(t, stdout)
-	if d.Session != "s-none" || d.Reviews != 0 || len(d.Events) != 1 ||
-		d.Events[0]["kind"] != "task" || d.Events[0]["text"] != "Rename the flag." || d.Events[0]["uuid"] != "n1" {
+	if len(d.Sessions) != 1 || d.Sessions[0].ID != "s-none" || d.Sessions[0].Title != "Rename the flag." || d.Reviews != 0 ||
+		!reflect.DeepEqual(kinds(d), []string{"task", "commit", "person", "person"}) {
+		t.Fatalf("digest:\n%s", stdout)
+	}
+	if d.Events[0]["text"] != "Rename the flag." || d.Events[1]["command"] != "git commit -m x" ||
+		d.Events[2]["text"] != "/model opus" || d.Events[3]["text"] != "Good." || d.Events[3]["session"] != "s-none" {
 		t.Fatalf("digest:\n%s", stdout)
 	}
 }
@@ -247,7 +255,6 @@ func TestReviewDigestFindsTheSessionInTheClaudeConfigDir(t *testing.T) {
 func TestReviewDigestRefusesWrongArguments(t *testing.T) {
 	for _, args := range [][]string{
 		{},
-		{"--session", "s-1", "--file", "x.jsonl"},
 		{"--file", "x.jsonl", "--skills", "("},
 		{"--file", "x.jsonl", "extra"},
 	} {
@@ -303,5 +310,57 @@ func TestReviewDigestKeepsTheSubagentsOfAReviewAndSkipsClaudeCodesOwnLines(t *te
 		d.Events[5]["text"] != "Fix F1\n\nAdd a cap to the retry." ||
 		d.Events[6]["text"] != "The cap is in." {
 		t.Errorf("digest:\n%s", stdout)
+	}
+}
+
+// in sets the session and the time of a transcript line.
+func in(l map[string]any, session, at string) map[string]any {
+	l["sessionId"], l["timestamp"] = session, at
+	return l
+}
+
+func TestReviewDigestOfTwoSessionsPutsTheirEventsInTimeOrder(t *testing.T) {
+	plan := transcript(t,
+		in(userLine("a1", "Plan the parser."), "s-a", "2026-11-03T08:00:00Z"),
+		in(assistantLine("a2", text("A plan."),
+			toolUse("Edit", map[string]any{"file_path": "/work/plan.md"}),
+			toolUse("Bash", map[string]any{"command": "git commit -m 'Plan the parser'"})), "s-a", "2026-11-03T08:01:00Z"),
+		in(userLine("a3", "Ship it."), "s-a", "2026-11-03T08:06:00.000Z"),
+	)
+	title := map[string]any{"type": "ai-title", "aiTitle": "Parser review", "sessionId": "s-b"}
+	build := transcript(t,
+		title,
+		in(userLine("b1", "Continue the parser."), "s-b", "2026-11-03T08:02:00Z"),
+		in(assistantLine("b2", toolUse("Skill", map[string]any{"skill": "code-review"})), "s-b", "2026-11-03T08:03:00Z"),
+		in(assistantLine("b3", text("One finding.")), "s-b", "2026-11-03T08:04:00.5Z"),
+		in(assistantLine("b4", toolUse("Write", map[string]any{"file_path": "/work/fix.go"})), "s-b", "2026-11-03T08:06:00Z"),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", plan, "--file", build)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if len(d.Sessions) != 2 || d.Sessions[0].ID != "s-a" || d.Sessions[0].Title != "Plan the parser." ||
+		d.Sessions[1].ID != "s-b" || d.Sessions[1].Title != "Parser review" || d.Reviews != 1 {
+		t.Fatalf("digest:\n%s", stdout)
+	}
+	type step struct{ seq, session, uuid, kind string }
+	var got []step
+	for _, e := range d.Events {
+		got = append(got, step{fmt.Sprint(e["seq"]), e["session"].(string), e["uuid"].(string), e["kind"].(string)})
+	}
+	want := []step{
+		{"0", "s-a", "a1", "task"},
+		{"1", "s-a", "a2", "commit"},
+		{"2", "s-b", "b1", "task"},
+		{"3", "s-b", "b2", "review_start"},
+		{"4", "s-b", "b3", "agent_text"},
+		{"5", "s-a", "a3", "person"},
+		{"6", "s-b", "b4", "edit"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: %v\nwant %v", got, want)
 	}
 }

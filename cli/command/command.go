@@ -203,17 +203,31 @@ Usage:
       base branch. Each later pr updates the title and description of
       the same PR (a flag that you do not give stays as it is). pr never
       merges.
-  solidtrace review digest --session ID | --file PATH [--skills REGEX]
-      Print the review timeline of one Claude Code transcript as JSON, for
-      an agent that records what a review found and what happened to each
-      finding. --session finds <projects>/*/ID.jsonl in CLAUDE_CONFIG_DIR
-      (else ~/.claude); --file reads PATH. The timeline has the first
-      person message, and from the first review on: each review's start
-      and its report (the last assistant text before the next person
-      message), each solidtrace-findings block, the person's messages, the
-      edits and the commits. A review is a skill whose name matches
-      --skills (review|interrogate by default), that a person or the agent
-      starts.
+  solidtrace review sessions [--branch B] [--base REF] [--session ID] [--days N] [--all]
+      Print as JSON the Agent sessions on this machine that link to the PR
+      of branch B (default: the current branch) since REF (default: the
+      merge base with origin/HEAD, else with main), in the git repository
+      of the current folder. It reads the main transcripts that changed in
+      the last N days (default 14) with a cwd in the repository or in one
+      of its worktrees, and the transcripts of their subagents. The links
+      of a session are: the PR's commits whose subject is in one of its
+      git commit or git merge commands (a strong link), its lines on
+      branch B, and the PR's files that it edited. --session ID is the
+      current session: it is always in the list. --all also lists the
+      repository's sessions with no link.
+  solidtrace review digest --session ID... | --file PATH... [--skills REGEX]
+      Print the review timeline of one or more Claude Code transcripts as
+      JSON, for an agent that records what a review found and what
+      happened to each finding. Give --session or --file once for each
+      session. --session finds <projects>/*/ID.jsonl in CLAUDE_CONFIG_DIR
+      (else ~/.claude); --file reads PATH. The events of all sessions are
+      in one list in time order, and each event names its session. Each
+      session has its task (the first person message), the person's
+      messages, the commits and the subagents' prompts, and from its first
+      review on also: each review's start, the agent's texts, each
+      solidtrace-findings block, the subagents' reports and the edits. A
+      review is a skill whose name matches --skills (review|interrogate by
+      default), that a person or the agent starts.
   solidtrace version
       Print the version of this solidtrace.
 `

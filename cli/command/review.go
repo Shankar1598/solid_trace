@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/solidtrace/cli/review"
 )
@@ -16,22 +17,38 @@ import (
 // path of another folder.
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-func reviewCommand(_ context.Context, args []string, env Env) int {
-	if len(args) == 0 || args[0] != "digest" {
-		fmt.Fprintln(env.Stderr, "solidtrace review: give digest --session ID or digest --file PATH")
-		return 2
+func reviewCommand(ctx context.Context, args []string, env Env) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "digest":
+			return reviewDigest(args[1:], env)
+		case "sessions":
+			return reviewSessions(ctx, args[1:], env)
+		}
 	}
+	fmt.Fprintln(env.Stderr, "solidtrace review: give digest or sessions")
+	return 2
+}
+
+// stringList is a flag that can be given more than once.
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ",") }
+func (l *stringList) Set(s string) error { *l = append(*l, s); return nil }
+
+func reviewDigest(args []string, env Env) int {
 	flags := flag.NewFlagSet("review digest", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
-	session := flags.String("session", "", "the Agent session's id")
-	file := flags.String("file", "", "the path of a transcript")
+	var sessions, files stringList
+	flags.Var(&sessions, "session", "the id of an Agent session (more than once for more sessions)")
+	flags.Var(&files, "file", "the path of a main transcript (more than once for more transcripts)")
 	skills := flags.String("skills", review.DefaultSkills, "a regular expression that matches the names of the review skills")
-	positional, ok := parseInterspersed(flags, args[1:])
+	positional, ok := parseInterspersed(flags, args)
 	if !ok {
 		return 2
 	}
-	if len(positional) > 0 || (*session == "") == (*file == "") {
-		fmt.Fprintln(env.Stderr, "solidtrace review digest: give --session ID or --file PATH (one of the two)")
+	if len(positional) > 0 || len(sessions)+len(files) == 0 {
+		fmt.Fprintln(env.Stderr, "solidtrace review digest: give --session ID or --file PATH (one or more)")
 		return 2
 	}
 	pattern, err := regexp.Compile(*skills)
@@ -39,36 +56,51 @@ func reviewCommand(_ context.Context, args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "solidtrace review digest: --skills: %v\n", err)
 		return 2
 	}
-	path := *file
-	if *session != "" {
-		if path, err = sessionTranscript(env.ClaudeProjectsDir, *session); err != nil {
+	type source struct{ id, path string }
+	var sources []source
+	for _, id := range sessions {
+		path, err := sessionTranscript(env.ClaudeProjectsDir, id)
+		if err != nil {
 			fmt.Fprintf(env.Stderr, "solidtrace review digest: %v\n", err)
 			return 1
 		}
+		sources = append(sources, source{id, path})
 	}
+	for _, path := range files {
+		sources = append(sources, source{trimExt(filepath.Base(path)), path})
+	}
+	var digests []review.Digest
+	for _, s := range sources {
+		d, err := readDigest(s.path, s.id, pattern)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "solidtrace review digest: %v\n", err)
+			return 1
+		}
+		digests = append(digests, d)
+	}
+	return printJSON(env, "review digest", review.Merge(digests...))
+}
+
+func readDigest(path, id string, skills *regexp.Regexp) (review.Digest, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "solidtrace review digest: %v\n", err)
-		return 1
+		return review.Digest{}, err
 	}
 	defer f.Close()
-	digest, err := review.Read(f, pattern)
+	d, err := review.Read(f, id, skills)
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "solidtrace review digest: %s: %v\n", path, err)
-		return 1
+		return review.Digest{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if digest.Session == "" {
-		digest.Session = *session
-	}
-	if digest.Session == "" {
-		digest.Session = trimExt(filepath.Base(path))
-	}
+	return d, nil
+}
+
+func printJSON(env Env, verb string, v any) int {
 	out := json.NewEncoder(env.Stdout)
 	// The texts hold code: keep <, > and & as they are.
 	out.SetEscapeHTML(false)
 	out.SetIndent("", "  ")
-	if err := out.Encode(digest); err != nil {
-		fmt.Fprintf(env.Stderr, "solidtrace review digest: %v\n", err)
+	if err := out.Encode(v); err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace %s: %v\n", verb, err)
 		return 1
 	}
 	return 0

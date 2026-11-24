@@ -1,8 +1,10 @@
-// Package review reads a Claude Code transcript as a short timeline of its
-// reviews: the task, then from the first review on, each review's start,
-// the agent's texts, the findings blocks, the subagents' reports and
-// prompts, and the person's messages, the edits and the commits. A small agent reads the timeline, not the transcript, to record
-// what happened to each finding.
+// Package review reads Claude Code transcripts as a short timeline of
+// their reviews: the task, the person's messages, the commits and the
+// subagents' prompts, and from the first review on also each review's
+// start, the agent's texts, the findings blocks, the subagents' reports
+// and the edits. A small agent reads the timeline, not the transcripts, to
+// record what happened to each finding. It also finds the Agent sessions
+// that a PR's branch links to.
 package review
 
 import (
@@ -15,13 +17,20 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
-// Digest is the timeline of one Agent session.
+// Digest is the timeline of one or more Agent sessions.
 type Digest struct {
-	Session string  `json:"session"`
-	Reviews int     `json:"reviews"`
-	Events  []Entry `json:"events"`
+	Sessions []SessionTitle `json:"sessions"`
+	Reviews  int            `json:"reviews"`
+	Events   []Entry        `json:"events"`
+}
+
+// SessionTitle is an Agent session of a Digest.
+type SessionTitle struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // Kind is what an Entry records.
@@ -55,6 +64,7 @@ const (
 // Command.
 type Entry struct {
 	Seq      int             `json:"seq"`
+	Session  string          `json:"session"`
 	UUID     string          `json:"uuid"`
 	Time     string          `json:"time"`
 	Kind     Kind            `json:"kind"`
@@ -115,34 +125,84 @@ var notFromThePerson = []string{
 	"<local-command-caveat>",
 }
 
-// Read reads a transcript into its Digest. The session is the transcript's
-// sessionId. A line that is not valid JSON is skipped: a live transcript
-// can end in a part of a line.
-func Read(r io.Reader, skills *regexp.Regexp) (Digest, error) {
-	b := builder{skills: skills, subagents: map[string]bool{}, tops: map[string]string{}}
+// Read reads the main transcript of one Agent session into its Digest.
+// The session's id is the transcript's sessionId, else id.
+func Read(r io.Reader, id string, skills *regexp.Regexp) (Digest, error) {
+	b := builder{skills: skills, subagents: map[string]bool{}, tops: topLevels{}}
+	if err := eachLine(r, b.add); err != nil {
+		return Digest{}, err
+	}
+	if b.session != "" {
+		id = b.session
+	}
+	for i := range b.events {
+		b.events[i].Session = id
+	}
+	return Merge(Digest{Sessions: []SessionTitle{{ID: id, Title: b.titles.title()}}, Reviews: b.reviews, Events: b.events}), nil
+}
+
+// Merge puts the Digests in one: their events in time order, each
+// session's own events in the order of its transcript, and the events of
+// an earlier Digest first when their times are equal.
+func Merge(digests ...Digest) Digest {
+	all := Digest{Sessions: []SessionTitle{}, Events: []Entry{}}
+	heads := make([]int, len(digests))
+	times := make([][]time.Time, len(digests))
+	for i, d := range digests {
+		all.Sessions = append(all.Sessions, d.Sessions...)
+		all.Reviews += d.Reviews
+		times[i] = eventTimes(d.Events)
+	}
+	for {
+		next := -1
+		for i, d := range digests {
+			if heads[i] < len(d.Events) && (next < 0 || times[i][heads[i]].Before(times[next][heads[next]])) {
+				next = i
+			}
+		}
+		if next < 0 {
+			return all
+		}
+		e := digests[next].Events[heads[next]]
+		e.Seq = len(all.Events)
+		all.Events = append(all.Events, e)
+		heads[next]++
+	}
+}
+
+// eventTimes are the times of events. An event whose time is not valid
+// takes the time of the event before it, so that it stays in its place.
+func eventTimes(events []Entry) []time.Time {
+	times := make([]time.Time, len(events))
+	var last time.Time
+	for i, e := range events {
+		if t, err := time.Parse(time.RFC3339Nano, e.Time); err == nil {
+			last = t
+		}
+		times[i] = last
+	}
+	return times
+}
+
+// eachLine gives each line of a transcript to add. A line that is not
+// valid JSON is skipped: a live transcript can end in a part of a line.
+func eachLine(r io.Reader, add func(line)) error {
 	in := bufio.NewReader(r)
 	for {
 		raw, err := in.ReadBytes('\n')
 		if len(raw) > 0 {
 			var l line
 			if json.Unmarshal(raw, &l) == nil {
-				b.add(l)
+				add(l)
 			}
 		}
 		if errors.Is(err, io.EOF) {
-			break
+			return nil
 		}
 		if err != nil {
-			return Digest{}, err
+			return err
 		}
 	}
-	for i := range b.digest.Events {
-		b.digest.Events[i].Seq = i
-	}
-	if b.digest.Events == nil {
-		b.digest.Events = []Entry{}
-	}
-	return b.digest, nil
 }
 
 type line struct {
@@ -151,6 +211,9 @@ type line struct {
 	Timestamp        string          `json:"timestamp"`
 	SessionID        string          `json:"sessionId"`
 	Cwd              string          `json:"cwd"`
+	GitBranch        string          `json:"gitBranch"`
+	CustomTitle      string          `json:"customTitle"`
+	AITitle          string          `json:"aiTitle"`
 	IsSidechain      bool            `json:"isSidechain"`
 	IsMeta           bool            `json:"isMeta"`
 	IsCompactSummary bool            `json:"isCompactSummary"`
@@ -192,22 +255,27 @@ type queuedCommand struct {
 
 type builder struct {
 	skills  *regexp.Regexp
-	digest  Digest
+	session string
+	titles  titles
+	reviews int
+	events  []Entry
 	hasTask bool
 	// reviewed is true from the first review start on: only then do the
-	// other kinds go in the timeline.
+	// agent's texts, the edits and the subagents' reports go in the
+	// timeline.
 	reviewed bool
 	// subagents are the ids of the tool uses that started a subagent.
 	subagents map[string]bool
-	tops      map[string]string
+	tops      topLevels
 }
 
 func (b *builder) add(l line) {
+	b.titles.add(l)
 	if l.IsSidechain {
 		return
 	}
-	if b.digest.Session == "" {
-		b.digest.Session = l.SessionID
+	if b.session == "" {
+		b.session = l.SessionID
 	}
 	switch l.Type {
 	case "assistant":
@@ -244,9 +312,9 @@ func (b *builder) assistantBlock(l line, bl block) {
 		}
 		e := newEntry(l, KindAgentText)
 		e.Text = cut(bl.Text, maxText)
-		b.digest.Events = append(b.digest.Events, e)
+		b.events = append(b.events, e)
 		if e, ok := findings(l, bl.Text); ok {
-			b.digest.Events = append(b.digest.Events, e)
+			b.events = append(b.events, e)
 		}
 	case "tool_use":
 		var input struct {
@@ -263,28 +331,25 @@ func (b *builder) assistantBlock(l line, bl block) {
 			b.reviewStart(l, input.Skill, TriggerAgent, input.Args)
 			return
 		}
-		if !b.reviewed {
-			return
-		}
 		if agentTools[bl.Name] {
 			b.subagents[bl.ID] = true
 			e := newEntry(l, KindDelegate)
 			e.Text = cut(strings.TrimSpace(input.Description+"\n\n"+input.Prompt), maxPrompt)
-			b.digest.Events = append(b.digest.Events, e)
+			b.events = append(b.events, e)
 		}
-		if field, ok := editTools[bl.Name]; ok {
+		if field, ok := editTools[bl.Name]; ok && b.reviewed {
 			path := input.FilePath
 			if field == "notebook_path" {
 				path = input.NotebookPath
 			}
 			e := newEntry(l, KindEdit)
-			e.Tool, e.File = bl.Name, b.relative(l.Cwd, path)
-			b.digest.Events = append(b.digest.Events, e)
+			e.Tool, e.File = bl.Name, b.tops.relative(l.Cwd, path)
+			b.events = append(b.events, e)
 		}
 		if bl.Name == "Bash" && strings.Contains(input.Command, "git commit") {
 			e := newEntry(l, KindCommit)
 			e.Command = cut(input.Command, maxCommand)
-			b.digest.Events = append(b.digest.Events, e)
+			b.events = append(b.events, e)
 		}
 	}
 }
@@ -303,26 +368,28 @@ func (b *builder) personMessage(l line, text string) {
 		b.hasTask = true
 		e := newEntry(l, KindTask)
 		e.Text = cut(text, maxText)
-		b.digest.Events = append(b.digest.Events, e)
+		b.events = append(b.events, e)
 	}
 	if isReview {
 		b.reviewStart(l, name, TriggerPerson, args)
 		return
 	}
-	if isTask || !b.reviewed {
+	// A command before the task, such as the /clear that starts the
+	// session, is not a step of the work.
+	if isTask || !b.hasTask {
 		return
 	}
 	e := newEntry(l, KindPerson)
 	e.Text = cut(text, maxText)
-	b.digest.Events = append(b.digest.Events, e)
+	b.events = append(b.events, e)
 }
 
 func (b *builder) reviewStart(l line, skill string, trigger Trigger, args string) {
 	b.reviewed = true
-	b.digest.Reviews++
+	b.reviews++
 	e := newEntry(l, KindReviewStart)
 	e.Skill, e.Trigger, e.Args = skill, trigger, strings.TrimSpace(args)
-	b.digest.Events = append(b.digest.Events, e)
+	b.events = append(b.events, e)
 }
 
 // subagentReports adds the reports in a user line that is not the
@@ -336,7 +403,7 @@ func (b *builder) subagentReports(l line) {
 	add := func(text string) {
 		e := newEntry(l, KindSubagent)
 		e.Text = cut(strings.TrimSpace(text), maxSubagent)
-		b.digest.Events = append(b.digest.Events, e)
+		b.events = append(b.events, e)
 	}
 	var s string
 	if json.Unmarshal(m.Content, &s) != nil {
@@ -489,16 +556,19 @@ func cut(text string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
+// topLevels keeps the git top level of each cwd that relative looked up.
+type topLevels map[string]string
+
 // relative is path relative to the git top level of cwd, when path is in
 // it. Else it is path.
-func (b *builder) relative(cwd, path string) string {
+func (tops topLevels) relative(cwd, path string) string {
 	if cwd == "" || !filepath.IsAbs(path) {
 		return path
 	}
-	top, ok := b.tops[cwd]
+	top, ok := tops[cwd]
 	if !ok {
 		top = gitTopLevel(cwd)
-		b.tops[cwd] = top
+		tops[cwd] = top
 	}
 	if top == "" {
 		return path
