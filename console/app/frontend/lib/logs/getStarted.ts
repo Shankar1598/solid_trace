@@ -10,7 +10,7 @@ export interface IngestTarget {
 }
 
 export interface Snippet {
-  id: 'curl' | 'vector' | 'fluent-bit' | 'sentry'
+  id: 'curl' | 'vector' | 'fluent-bit' | 'sentry' | 'otel-collector' | 'otel-sdk'
   label: string
   /** What the snippet is: a shell command or a config file. */
   note: string
@@ -33,11 +33,17 @@ export function sentryDsn(target: IngestTarget): string {
   return `${base.protocol}//${target.key ?? NO_KEY}@${base.host}${base.pathname.replace(/\/+$/, '')}/${target.projectId}`
 }
 
-/** The snippets an empty Project shows: curl, Vector, Fluent Bit and a Sentry SDK. */
+/** The bare Ingest URL, without a trailing slash: a Collector adds /v1/logs to it, and an SDK needs it added. */
+function otlpEndpoint({ url }: IngestTarget): string {
+  return new URL(url).href.replace(/\/+$/, '')
+}
+
+/** The snippets an empty Project shows: curl, Vector, Fluent Bit, a Sentry SDK, an OpenTelemetry Collector and an OpenTelemetry SDK. */
 export function snippets(target: IngestTarget): Snippet[] {
   const key = target.key ?? NO_KEY
   const route = logsRoute(target)
   const https = route.protocol === 'https:'
+  const otlp = otlpEndpoint(target)
   const port = route.port || (https ? '443' : '80')
   return [
     {
@@ -99,6 +105,40 @@ export function snippets(target: IngestTarget): Snippet[] {
         '})',
         '',
         "Sentry.logger.info('Hello from Sentry', { service: 'api' })",
+      ].join('\n'),
+    },
+    {
+      id: 'otel-collector',
+      label: 'OpenTelemetry Collector',
+      note: 'A config file for an OpenTelemetry Collector.',
+      code: [
+        'receivers:',
+        '  otlp:',
+        '    protocols:',
+        '      grpc: {}',
+        '      http: {}',
+        '',
+        'exporters:',
+        '  otlp_http:',
+        `    endpoint: ${otlp}`,
+        '    headers:',
+        `      Authorization: "Bearer ${key}"`,
+        '',
+        'service:',
+        '  pipelines:',
+        '    logs:',
+        '      receivers: [otlp]',
+        '      exporters: [otlp_http]',
+      ].join('\n'),
+    },
+    {
+      id: 'otel-sdk',
+      label: 'OpenTelemetry SDK',
+      note: 'Environment variables for an OpenTelemetry SDK. EventStore takes OTLP over HTTP, not gRPC.',
+      code: [
+        `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${otlp}/v1/logs`,
+        `OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20${key}`,
+        'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf',
       ].join('\n'),
     },
   ]

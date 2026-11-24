@@ -5,8 +5,9 @@ const ingest: IngestTarget = { url: 'http://localhost:4000', projectId: 7, key: 
 const code = (id: string, to = ingest) => snippets(to).find(s => s.id === id)!.code
 
 describe('snippets for an empty Project', () => {
-  it('offers curl, Vector, Fluent Bit and a Sentry SDK, in that order', () => {
-    expect(snippets(ingest).map(s => s.label)).toEqual(['curl', 'Vector', 'Fluent Bit', 'Sentry SDK'])
+  it('offers curl, Vector, Fluent Bit, a Sentry SDK, an OpenTelemetry Collector and an OpenTelemetry SDK, in that order', () => {
+    expect(snippets(ingest).map(s => s.label)).toEqual(['curl', 'Vector', 'Fluent Bit', 'Sentry SDK', 'OpenTelemetry Collector', 'OpenTelemetry SDK'])
+    expect(snippets(ingest).map(s => s.id).slice(4)).toEqual(['otel-collector', 'otel-sdk'])
   })
 
   it('fills in the key-only Log route and the Project\'s key', () => {
@@ -38,8 +39,42 @@ describe('snippets for an empty Project', () => {
     expect(code('sentry')).toContain("dsn: 'http://abc123@localhost:4000/7'")
   })
 
+  it('gives the Collector a config file with receivers, the bare Ingest URL and the key', () => {
+    const config = code('otel-collector')
+    // No YAML parser is in the dependencies, so the shape is checked by lines.
+    expect(config.split('\n').filter(l => /^\S/.test(l))).toEqual(['receivers:', 'exporters:', 'service:'])
+    expect(config).toContain('receivers:\n  otlp:\n    protocols:\n      grpc: {}\n      http: {}\n')
+    expect(config).toContain('exporters:\n  otlp_http:\n')
+    expect(config).not.toContain('otlphttp')
+    expect(config).toMatch(/\n    endpoint: http:\/\/localhost:4000\n/)
+    expect(config).toContain('    headers:\n      Authorization: "Bearer abc123"')
+    expect(config).toContain('  pipelines:\n    logs:\n      receivers: [otlp]\n      exporters: [otlp_http]')
+    expect(config).not.toContain('OTEL_')
+    expect(config).not.toContain('/api/')
+    expect(config).not.toContain('/v1/logs')
+
+    const secure = code('otel-collector', { ...ingest, url: 'https://logs.example.com/ingest/' })
+    expect(secure).toContain('    endpoint: https://logs.example.com/ingest\n')
+  })
+
+  it('gives the SDK only environment variables, with the header percent-encoded', () => {
+    const sdk = code('otel-sdk')
+    expect(sdk.split('\n')).toEqual([
+      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4000/v1/logs',
+      'OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20abc123',
+      'OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf',
+    ])
+    expect(sdk).not.toContain('/api/')
+    expect(code('otel-sdk', { ...ingest, url: 'https://logs.example.com/ingest/' })).toContain(
+      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example.com/ingest/v1/logs\n',
+    )
+  })
+
   it('leaves a placeholder for a Project without a key', () => {
-    expect(code('curl', { ...ingest, key: null })).toContain('Bearer YOUR_PROJECT_KEY')
+    const noKey = { ...ingest, key: null }
+    expect(code('curl', noKey)).toContain('Bearer YOUR_PROJECT_KEY')
+    expect(code('otel-collector', noKey)).toContain('Authorization: "Bearer YOUR_PROJECT_KEY"')
+    expect(code('otel-sdk', noKey)).toContain('Authorization=Bearer%20YOUR_PROJECT_KEY')
   })
 })
 
