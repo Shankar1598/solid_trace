@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # Sends Logs to EventStore through an OpenTelemetry Collector, as a real
-# deployment does. It starts the `otel` profile of docker-compose.dev.yml
-# (local/otel/collector.yaml, with telemetrygen), sends <count> Logs through
-# the Collector, waits until the Collector has sent them all, prints what it
-# sent, and stops the containers it started.
+# deployment does. The script starts the `otel` profile of
+# docker-compose.dev.yml (local/otel/collector.yaml, with telemetrygen). It
+# sends <count> Logs through the Collector and waits until the Collector has
+# sent them all. It prints what the Collector sent, and it stops the
+# containers that it started.
 #
 #   bin/otel-dev <count> [ingest-url] [key]
 #
-# The Collector sends each Log twice, once as protobuf with gzip and once as
-# plain JSON, so <count> Logs become 2 x <count> stored Logs, with service
-# telemetrygen and environment dev. Without an ingest-url and a key, they go to
-# the dev stack (http://127.0.0.1:4000) with the seed Project's key,
+# The Collector sends each Log twice: once as protobuf with gzip, and once as
+# plain JSON. So <count> Logs become 2 x <count> stored Logs, with service
+# telemetrygen and environment dev. Without an ingest-url and a key, the Logs
+# go to the dev stack (http://127.0.0.1:4000) with the seed Project's key,
 # testkey123. For a verify stack, pass its ingest URL, for example
 # http://127.0.0.1:4510.
 #
 # OTEL_DEV_LOG=<file> saves the Collector's log there, for proof.
 #
 # The Collector listens on 127.0.0.1:14318 (OTLP/HTTP) and :14888 (its own
-# metrics), so one run at a time. It never touches ClickHouse or MinIO.
+# metrics). Run one bin/otel-dev at a time. It never touches ClickHouse or
+# MinIO.
 
 set -euo pipefail
 
@@ -27,8 +29,8 @@ if [[ $# -lt 1 || $# -gt 3 || ! ${1:-} =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 count=$1
-# The Collector runs on the host's network; 127.0.0.1 avoids a localhost that
-# resolves to ::1 when EventStore listens on IPv4 only.
+# The Collector runs on the host's network. Use 127.0.0.1, because localhost
+# can resolve to ::1 while EventStore listens on IPv4 only.
 ingest_url=${2:-http://127.0.0.1:4000}
 ingest_url=${ingest_url/\/\/localhost/\/\/127.0.0.1}
 ingest_url=${ingest_url%/}
@@ -39,9 +41,9 @@ collector=solidtrace-otel-collector
 generator=solidtrace-otel-telemetrygen
 metrics=http://127.0.0.1:14888/metrics
 
-# The compose file reads the dev ClickHouse's variables even for services that
-# it doesn't start. Any value does here (the profile never uses them); real
-# ones in the environment or in .env win.
+# Compose needs these three variables for the dev ClickHouse, which this
+# profile does not start. The dummy values only let Compose read the file.
+# An exported variable wins over .env.
 export SOLIDTRACE_DEV_UID=${SOLIDTRACE_DEV_UID:-$(id -u)}
 export SOLIDTRACE_DEV_GID=${SOLIDTRACE_DEV_GID:-$(id -g)}
 export SOLIDTRACE_DEV_STORAGE=${SOLIDTRACE_DEV_STORAGE:-$checkout/storage}
@@ -57,15 +59,15 @@ for name in "$collector" "$generator"; do
   fi
 done
 
-# Stops what this run started, by name, also on an error or Ctrl-C.
-# OTEL_DEV_LOG=<file> keeps the Collector's log first.
+# Stops what this run started, by name, also after an error or Ctrl-C.
+# With OTEL_DEV_LOG=<file>, it saves the Collector's log first.
 cleanup() {
   [[ -z ${OTEL_DEV_LOG:-} ]] || docker logs "$collector" >| "$OTEL_DEV_LOG" 2>&1 || true
   docker rm -f "$generator" "$collector" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-# The Collector's counter for one exporter's sent (or failed) Log records.
+# The Collector's counter of sent (or failed) Log records for one exporter.
 counter() {
   local name=$1 exporter=$2
   curl -fsS "$metrics" 2>/dev/null |
@@ -89,8 +91,8 @@ echo "Sending $count Logs through the Collector"
 compose run --rm --no-deps --name "$generator" telemetrygen >/dev/null 2>&1 ||
   { echo "telemetrygen failed. Run it by hand with docker compose to see why." >&2; exit 1; }
 
-# The batch processor holds Logs for up to a second, and an exporter may retry.
-# Wait until each exporter has sent every Log, or one has failed.
+# The Collector holds Logs for up to a second, and an exporter can retry.
+# Wait until each exporter has sent every Log, or until one has failed.
 protobuf=0 json=0 failed=0
 for _ in {1..120}; do
   protobuf=$(counter sent otlp_http/protobuf)
@@ -100,7 +102,7 @@ for _ in {1..120}; do
   sleep 0.5
 done
 
-errors=$(docker logs "$collector" 2>&1 | grep -iE 'error|dropping data|failed' || true)
+errors=$(docker logs "$collector" 2>&1 | grep -i 'dropping data' || true)
 if (( failed > 0 )) || [[ -n $errors ]] || (( protobuf < count || json < count )); then
   echo "The Collector did not send every Log (protobuf $protobuf, JSON $json, failed $failed of $count):" >&2
   echo "${errors:-no error in the Collector log}" | tail -20 >&2

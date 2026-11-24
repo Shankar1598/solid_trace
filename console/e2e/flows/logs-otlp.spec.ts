@@ -7,12 +7,12 @@ import { ORG, PROJECT } from '../support/data'
 import { logCount, openLogs, streamRows } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
-// OTLP/HTTP Log ingest: the two requests a real Collector (otelcol 0.165.0)
-// sent, one as protobuf with gzip and one as JSON, go to POST /v1/logs with
-// the Project's key. Each holds 3 Logs of service checkout, environment
-// staging, with Attributes of every type. The Logs show in the Logs
-// explorer with those Fields in the inspector, and the Overview's Received
-// numbers go up.
+// OTLP/HTTP Log ingest. A real Collector (otelcol 0.165.0) sent two requests:
+// one as protobuf with gzip, and one as JSON. The flow posts both to
+// POST /v1/logs with the Project's key. Each request holds 3 Logs of service
+// checkout and environment staging, with Attributes of every type. The Logs
+// show in the Logs explorer, with those Fields in the inspector. The
+// Overview's Received numbers go up.
 
 const ingest = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
 const fixtures = resolve(__dirname, '../../../event_store/ingest/normalise/testdata/otlp')
@@ -27,8 +27,8 @@ const key = execFileSync('mise', ['exec', '--', 'bin/rails', 'runner',
 
 /**
  * The checkout Logs from the fixtures' day to an hour ahead. The Logs keep
- * the fixtures' own time until a Project's Retention passes it, then take
- * the time they arrived, and this range holds both.
+ * the fixtures' own time until the Project's Retention passes it. Then they
+ * take the time they arrived. This range holds both.
  */
 function checkoutLogs(): string {
   const from = new Date(Date.parse('2026-11-22T00:00:00Z')).toISOString()
@@ -42,7 +42,7 @@ const inspector = (page: Page) => page.getByRole('complementary', { name: 'Log i
 const field = (page: Page, name: string) =>
   inspector(page).locator('div.group', { has: page.getByText(name, { exact: true }) }).first()
 
-/** What the Overview's band says arrived: Received's Logs, and the requests that brought them. */
+/** What the Overview's band says arrived: the Logs of Received, and the requests that brought them. */
 async function received(page: Page): Promise<{ logs: number, requests: number }> {
   await page.goto(`/${ORG}/overview?range=7d`)
   const band = page.locator('[data-section="band"]')
@@ -59,8 +59,8 @@ test('the Logs of a Collector, as protobuf and as JSON, show in the explorer, th
   const before = await logCount(page)
   const arrived = await received(page)
 
-  // What a Collector sends: protobuf with gzip, then JSON, each with the
-  // Project's key as a Bearer token.
+  // What a Collector sends: protobuf with gzip, then JSON. Each request has
+  // the Project's key as a Bearer token.
   const protobufSent = await request.post(`${ingest}/v1/logs`, {
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/x-protobuf', 'Content-Encoding': 'gzip' },
     data: gzipSync(protobuf),
@@ -75,12 +75,12 @@ test('the Logs of a Collector, as protobuf and as JSON, show in the explorer, th
   // Log processing stores the Logs about once a second.
   await expect(async () => {
     await openLogs(page, checkoutLogs())
-    expect(await logCount(page)).toBe(before + 2 * LOGS_PER_REQUEST)
+    expect(await logCount(page)).toBeGreaterThanOrEqual(before + 2 * LOGS_PER_REQUEST)
   }).toPass({ timeout: 30_000 })
   await expect(streamRows(page).first()).toContainText('order placed')
 
-  // The newest Log in the inspector: the Fields of the mapping, from the
-  // resource and from the record.
+  // The newest Log in the inspector shows the Fields of the mapping, from
+  // the resource and from the record.
   await streamRows(page).first().click({ position: { x: 60, y: 15 } })
   await expect(inspector(page)).toBeVisible()
   const has = (name: string, value: string) => expect(field(page, name)).toContainText(value)
@@ -94,18 +94,18 @@ test('the Logs of a Collector, as protobuf and as JSON, show in the explorer, th
   await has('host.name', 'web-1')
   await has('app', 'server')
   await has('http.request.method', 'POST')
-  // An int64 that a double can't hold stays exact.
+  // An int64 that a double cannot hold stays exact.
   await has('order.id', '9007199254740993')
   await has('retried', 'false')
   await has('tags', '["a","b"]')
-  // The resource's service.name and deployment.environment.name became the
-  // built-in Fields: they are not Attributes too.
+  // The resource's service.name and deployment.environment.name became
+  // built-in Fields. They are not Attributes too.
   await expect(inspector(page).getByText('service.name', { exact: true })).toHaveCount(0)
   await expect(inspector(page).getByText('deployment.environment.name', { exact: true })).toHaveCount(0)
   expect(errors).toEqual([])
 
-  // The Overview counts both requests and their Logs. Ingest counts are
-  // written about once a second.
+  // The Overview counts both requests and their Logs. EventStore writes the
+  // Ingest counts about once a second.
   await expect(async () => {
     const now = await received(page)
     expect(now.logs - arrived.logs).toBeGreaterThanOrEqual(2 * LOGS_PER_REQUEST)

@@ -1,18 +1,18 @@
-# The OpenTelemetry Collector of the dev stack (the `otel` profile in
-# docker-compose.dev.yml, started by bin/otel-dev). It takes OTLP/HTTP from
-# telemetrygen and sends each Log twice to EventStore's POST /v1/logs: once as
-# protobuf with gzip (the Collector's default) and once as JSON, with no
+# The OpenTelemetry Collector of the dev stack. It is the `otel` profile in
+# docker-compose.dev.yml, and bin/otel-dev starts it. It takes OTLP/HTTP from
+# telemetrygen. It sends each Log twice to EventStore's POST /v1/logs: once as
+# protobuf with gzip (the Collector's default), and once as JSON with no
 # compression.
 #
-# SOLIDTRACE_INGEST_URL is EventStore's ingest URL, with no path (the exporter
-# adds /v1/logs). SOLIDTRACE_KEY is the Project's key. The defaults are the dev
-# stack on :4000 and the seed Project's key, so a verify stack needs only the
-# two variables (bin/otel-dev sets them).
+# SOLIDTRACE_INGEST_URL is EventStore's ingest URL, with no path. The exporter
+# adds /v1/logs. SOLIDTRACE_KEY is the Project's key. The defaults are the dev
+# stack on :4000 and the seed Project's key. For a verify stack, set the two
+# variables. bin/otel-dev sets them.
 #
-# The receiver listens on 14318 (HTTP) and the Collector's own metrics on
-# 14888, both on loopback, so they can't clash with a Collector of your own on
-# 4317/4318. bin/otel-dev reads the metrics to know that the Collector sent
-# every Log.
+# The receiver listens on 14318 (HTTP). The Collector's own metrics are on
+# 14888. Both ports are on loopback, so they cannot clash with a Collector of
+# your own on 4317 or 4318. bin/otel-dev reads the metrics to learn that the
+# Collector sent every Log.
 receivers:
   otlp:
     protocols:
@@ -25,7 +25,7 @@ processors:
     timeout: 1s
 
 exporters:
-  # The name is otlp_http: the older otlphttp is deprecated since 0.165.0.
+  # The name is otlp_http. The older name otlphttp is deprecated since 0.165.0.
   otlp_http/protobuf:
     endpoint: ${env:SOLIDTRACE_INGEST_URL:-http://127.0.0.1:4000}
     headers:

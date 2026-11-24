@@ -87,10 +87,10 @@ services:
       minio:
         condition: service_healthy
 
-  # An OpenTelemetry Collector and a Log generator, for trying OTLP ingest
-  # (POST /v1/logs). Opt-in, as the dev box is short of memory: bin/dev and
-  # bin/clickhouse-dev don't start them, bin/otel-dev does. Both use the
-  # host's network, because EventStore listens on the host.
+  # An OpenTelemetry Collector and a Log generator, to try OTLP ingest
+  # (POST /v1/logs). They are opt-in, because the dev box is short of memory.
+  # bin/dev and bin/clickhouse-dev do not start them. bin/otel-dev starts
+  # them. Both use the host's network, because EventStore listens on the host.
   otel-collector:
     profiles: [otel]
     image: otel/opentelemetry-collector:0.165.0
@@ -105,8 +105,8 @@ services:
     volumes:
       - ./local/otel/collector.yaml:/etc/otelcol/config.yaml:ro
 
-  # Sends OTLP Logs to the Collector (127.0.0.1:14318) and exits. The count of
-  # Logs is OTEL_LOG_COUNT.
+  # Sends OTLP Logs to the Collector (127.0.0.1:14318), then exits. OTEL_LOG_COUNT
+  # is the number of Logs.
   telemetrygen:
     profiles: [otel]
     image: ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:v0.165.0
