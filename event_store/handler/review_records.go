@@ -192,6 +192,12 @@ func (h *ReviewRecordsHandler) Show(c *fiber.Ctx) error {
 	return c.JSON(answer)
 }
 
+// sessionReviewRecordsTimeout bounds OfSessions' read. Console waits 3 s
+// for it (ReviewRecordsView::SESSIONS_TIMEOUT_SECONDS), so ClickHouse stops
+// the read when Console has stopped waiting, and a slow ClickHouse does not
+// collect reads that no one waits for.
+const sessionReviewRecordsTimeout = 3 * time.Second
+
 // sessionReviewRecord is the Review record of one Agent session: enough
 // for a link to its page.
 type sessionReviewRecord struct {
@@ -233,7 +239,7 @@ func (h *ReviewRecordsHandler) OfSessions(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"sessions": answer})
 	}
 
-	ctx, cancel := context.WithTimeout(storage.TagRead(c.UserContext(), projectID, storage.ReadReviewRecords), agentSessionsTimeout)
+	ctx, cancel := context.WithTimeout(storage.TagRead(c.UserContext(), projectID, storage.ReadReviewRecords), sessionReviewRecordsTimeout)
 	defer cancel()
 	records, err := h.records.ReviewRecordsOfSessions(ctx, projectID, ids)
 	if err != nil {
