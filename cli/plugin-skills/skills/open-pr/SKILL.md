@@ -1,7 +1,6 @@
 ---
 name: open-pr
-description: Run the final review, push this branch and open its PR, with a record of every review finding and every decision on it.
-disable-model-invocation: true
+description: Run the final review, push this branch and open its PR, with a record of every review finding and every decision on it. Use when the person, or the plan that the agent follows, asks to open the PR of a finished branch, also in local mode.
 ---
 
 # Open PR
