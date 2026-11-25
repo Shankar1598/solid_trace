@@ -200,8 +200,8 @@ These read the run events in the Organization's Agent Project, so they need Agen
 
 - `create_project`: makes a Project with its first key, and optionally a description and how many days its Logs and its traces' Spans are kept.
 - `update_project`: changes a Project's description or how many days its Logs or its traces' Spans are kept. Admins only.
-- `get_project_setup`: how to send a Project its Events and Logs: the DSN, the Log ingest URL and key, and a curl example.
-- `create_key`, `rotate_key`, `delete_key`: a Project's keys. Admins only.
+- `get_project_setup`: how to send a Project its Events and Logs: the DSN, the Log ingest URL and key, and a curl example. For the Agent Project, only its key, with what it is for.
+- `create_key`, `rotate_key`, `delete_key`: a Project's keys. Admins only. The Agent Project can have only one key, for Claude Code's OpenTelemetry, with no DSN ([ADR 0023](adr/0023-the-agent-project-takes-one-key-for-opentelemetry-only.md)).
 - `list_members`: an Organization's members, with their emails and roles.
 - `invite_member`: invites someone by email. Admins only.
 

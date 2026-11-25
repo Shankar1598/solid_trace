@@ -7,26 +7,29 @@ module McpTools
   class GetProjectSetup < Base
     include ProjectKeyTool
 
+    NO_KEY = "This Project has no key. create_key makes one."
+
     description "How to send a Project its Events and Logs: the DSN a Sentry SDK takes, the Log ingest URL and key " \
                 "that shippers and curl send JSON Logs to as a Bearer token, a curl example, and the Project's keys " \
-                "with their ids. The DSN and Log key are the first key's, as the Project and Logs pages show them."
+                "with their ids. The DSN and Log key are the first key's, as the Project and Logs pages show them. " \
+                "The Agent Project's key is for Claude Code's OpenTelemetry only, so it has no DSN, Log ingest URL or curl."
     read_only!
     takes_project
 
     def run
       keys = project.project_keys.order(:id).to_a
       first = keys.first
-      logs_url = project.logs_url(ingest_url)
+      setup = { organization: organization.slug, project: project.slug, dsn: nil, logs: nil, curl: nil,
+                keys: keys.map { |key| key_json(key) } }
 
-      setup = {
-        organization: organization.slug,
-        project: project.slug,
-        dsn: first&.dsn(ingest_url),
-        logs: { url: logs_url, key: first&.public_key },
-        curl: first && curl(logs_url, first.public_key),
-        keys: keys.map { |key| key_json(key) },
-      }
-      setup[:note] = project.agent? ? ProjectKeyPolicy::AGENT_PROJECT : "This Project has no key. create_key makes one." unless first
+      if project.agent?
+        setup[:note] = [ ProjectKey::AGENT_PROJECT, (NO_KEY unless first) ].compact.join(" ")
+      else
+        logs_url = project.logs_url(ingest_url)
+        setup.merge!(dsn: first&.dsn(ingest_url), logs: { url: logs_url, key: first&.public_key },
+                     curl: first && curl(logs_url, first.public_key))
+        setup[:note] = NO_KEY unless first
+      end
 
       json(setup, link: links.project(project))
     end

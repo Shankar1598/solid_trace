@@ -317,11 +317,11 @@ The part of SolidTrace that gives work to coding agents on the team's own machin
 _Avoid_: agent platform, orchestrator
 
 **Agent Project**:
-The **Project** of an **Organization** that holds the **Agent sessions** of its **Runs**, its engineers' Agent sessions in a **Captured repository**, and the record of its Runs.
+The **Project** of an **Organization** that holds the **Agent sessions** of its **Runs**, its engineers' Agent sessions and Claude Code telemetry in a **Captured repository**, and the record of its Runs. It has at most one key, which sends only that telemetry.
 _Avoid_: transcripts project, sessions project
 
 **Captured repository**:
-A repository whose engineers' **Agent sessions** an **Organization** records. An Admin lists it in the **Agent Project**'s settings as `host/workspace/name`, or `host/workspace/*` for a whole workspace, and each member can read the list and the Agent sessions. An Agent session in any other repository, or in no repository, never leaves the engineer's machine.
+A repository whose engineers' **Agent sessions** and Claude Code telemetry an **Organization** records. An Admin lists it in the **Agent Project**'s settings as `host/workspace/name`, or `host/workspace/*` for a whole workspace, and each member can read the list and the Agent sessions. An Agent session in any other repository, or in no repository, never leaves the engineer's machine. Claude Code telemetry of any other repository, or of no repository, is dropped when it arrives.
 _Avoid_: tracked repo, allowed repo
 
 **Redaction pattern**:
@@ -394,6 +394,7 @@ _Avoid_: command, mention, slash command
 - An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
 - An **Organization** with **Require two-factor** admits only members who have **Two-factor**, with an **Authenticator app** or a **Passkey**
 - An **Agent session** belongs to its **Organization**'s **Agent Project**; an engineer's own Agent session has no **Run**, and is recorded only in a **Captured repository**
+- The **Agent Project**'s key sends Claude Code telemetry as **Logs** of the Agent Project; only the telemetry of a **Captured repository** is kept
 - A **Run** works in the repository that its **Project**'s **Factory settings** name, and its record is in the **Agent Project**
 - A **Run** that reports done shows its **Evidence**; with no check that passed, it shows no Evidence
 - A **Run** has one or more **Executions**, and usually one **Agent session**, which each Execution continues

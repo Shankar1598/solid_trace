@@ -9,8 +9,11 @@ class ProjectKeysController < ApplicationController
   def create
     key = @project.project_keys.build
     authorize key
-    key.save!
-    redirect_to project_path(@project, org_slug: @current_org.slug), notice: "Key created successfully"
+    if key.save
+      redirect_to project_path(@project, org_slug: @current_org.slug), notice: "Key created successfully"
+    else
+      redirect_to project_path(@project, org_slug: @current_org.slug), alert: "#{key.errors.full_messages.to_sentence}."
+    end
   end
 
   def rotate

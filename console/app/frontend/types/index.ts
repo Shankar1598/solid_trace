@@ -32,7 +32,7 @@ export interface ProjectKey {
   id: number
   public_key: string
   label?: string
-  dsn: string
+  dsn: string | null
   created_at: string
 }
 

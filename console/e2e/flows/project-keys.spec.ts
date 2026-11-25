@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
-import { MEMBER, ORG } from '../support/data'
+import { ADMIN, MEMBER, ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // The Project page's keys, which only an Organization's admins change: an
@@ -17,14 +17,21 @@ const rails = (code: string) =>
     cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
   })
 
+let agentSlug = ''
+
 test.beforeAll(() => {
   // Made without the key the New Project page gives, so the page offers one.
   rails(`org = Organization.find_by!(slug: ${JSON.stringify(ORG)}); ` +
     `${JSON.stringify([forAdmin, forMember])}.each { |slug| org.projects.create!(name: slug, slug: slug) }`)
+  agentSlug = rails(`org = Organization.find_by!(slug: ${JSON.stringify(ORG)}); ` +
+    `project = org.agent_project || AgentSessionsSettings.turn_on(organization: org, ` +
+    `user: User.find_by!(email: ${JSON.stringify(ADMIN.email)}), entries: ["flows.example/flowteam/*"], confirmed: true).project; ` +
+    `project.project_keys.destroy_all; print project.slug`).toString()
 })
 
 test.afterAll(() => {
-  rails(`Project.where(slug: ${JSON.stringify([forAdmin, forMember])}).destroy_all`)
+  rails(`Project.where(slug: ${JSON.stringify([forAdmin, forMember])}).destroy_all; ` +
+    `Organization.find_by!(slug: ${JSON.stringify(ORG)}).agent_project&.project_keys&.destroy_all`)
 })
 
 const noKeys = (page: Page) => page.getByText('No client keys yet')
@@ -40,6 +47,24 @@ test("an admin generates a key-less Project's key and sees its DSN", async ({ pa
   await expect(noKeys(page)).toHaveCount(0)
   // The DSN, the page's one read-only box.
   await expect(page.locator('input[readonly]')).toHaveValue(/^https?:\/\/[0-9a-f]{32}@[^/]+\/\d+$/)
+  expect(errors).toEqual([])
+})
+
+test("an admin generates the Agent Project's one key and sees the key, not a DSN, with what it is for", async ({ page }) => {
+  const errors = watchErrors(page)
+  await page.goto(`/${ORG}/projects/${agentSlug}`)
+  const forOtel = page.getByText("The Agent Project's key is for Claude Code's OpenTelemetry only.", { exact: false })
+  await expect(forOtel).toBeVisible()
+  await expect(noKeys(page)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Generate a key' }).click()
+
+  await expect(page.getByText('Key created successfully')).toBeVisible()
+  await expect(page.getByText('Key', { exact: true })).toBeVisible()
+  await expect(page.locator('input[readonly]')).toHaveValue(/^[0-9a-f]{32}$/)
+  await expect(page.getByRole('button', { name: 'Copy the key' })).toBeVisible()
+  await expect(forOtel).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Generate a key' })).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
