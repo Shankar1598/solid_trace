@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupOpen, keepGroupOpen } from './sidebarGroups'
+import { groupOpen, saveGroupOpen } from './sidebarGroups'
 import type { StorageLike } from './recentQueries'
 
 function memoryStorage(): StorageLike {
@@ -25,21 +25,21 @@ describe('a sidebar group', () => {
   it('is open on the page of one of its children, whatever the viewer last chose', () => {
     const storage = memoryStorage()
     expect(groupOpen(storage, 'coding_agents', true)).toBe(true)
-    keepGroupOpen(storage, 'coding_agents', false)
+    saveGroupOpen(storage, 'coding_agents', false)
     expect(groupOpen(storage, 'coding_agents', true)).toBe(true)
   })
 
   it('stays as the viewer last left it on the other pages', () => {
     const storage = memoryStorage()
-    keepGroupOpen(storage, 'coding_agents', true)
+    saveGroupOpen(storage, 'coding_agents', true)
     expect(groupOpen(storage, 'coding_agents', false)).toBe(true)
-    keepGroupOpen(storage, 'coding_agents', false)
+    saveGroupOpen(storage, 'coding_agents', false)
     expect(groupOpen(storage, 'coding_agents', false)).toBe(false)
   })
 
   it('works with no storage, or a storage that refuses, open only on its children\'s pages', () => {
     for (const storage of [null, blocked]) {
-      expect(() => keepGroupOpen(storage, 'coding_agents', true)).not.toThrow()
+      expect(() => saveGroupOpen(storage, 'coding_agents', true)).not.toThrow()
       expect(groupOpen(storage, 'coding_agents', false)).toBe(false)
       expect(groupOpen(storage, 'coding_agents', true)).toBe(true)
     }

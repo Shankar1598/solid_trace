@@ -12,7 +12,7 @@ export function groupOpen(storage: StorageLike | null, group: SidebarGroupId, on
   }
 }
 
-export function keepGroupOpen(storage: StorageLike | null, group: SidebarGroupId, open: boolean) {
+export function saveGroupOpen(storage: StorageLike | null, group: SidebarGroupId, open: boolean) {
   try {
     storage?.setItem(keyOf(group), open ? 'open' : 'closed')
   } catch {

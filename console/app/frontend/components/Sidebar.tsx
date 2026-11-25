@@ -3,7 +3,7 @@ import { Link, usePage } from '@inertiajs/react'
 import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Workflow, Check, ChevronsUpDown, Timer, ChevronRight, SquareTerminal, ClipboardCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { navSection, orgSwitchUrl, sidebarItems, type NavSection, type SidebarGroup, type SidebarGroupId, type SidebarLink } from '@/lib/nav'
-import { groupOpen, keepGroupOpen } from '@/lib/sidebarGroups'
+import { groupOpen, saveGroupOpen } from '@/lib/sidebarGroups'
 import { browserStorage } from '@/lib/recentQueries'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { SharedProps } from '@/types'
@@ -41,13 +41,14 @@ function NavGroup({ group, section }: { group: SidebarGroup; section: NavSection
   const [open, setOpen] = useState(() => groupOpen(browserStorage(), group.group, onChildPage))
   const listId = useId()
   const Icon = GROUP_ICONS[group.group]
+  const lit = !open && onChildPage
   const toggle = () => {
-    keepGroupOpen(browserStorage(), group.group, !open)
+    saveGroupOpen(browserStorage(), group.group, !open)
     setOpen(!open)
   }
   return (
     <div data-sidebar-group={group.group}>
-      <button type="button" aria-expanded={open} aria-controls={listId} onClick={toggle} className={entryClass(!open && onChildPage)}>
+      <button type="button" aria-expanded={open} aria-controls={listId} onClick={toggle} data-lit={lit} className={entryClass(lit)}>
         <Icon className="h-4 w-4" />
         {group.label}
         <ChevronRight className={cn("ml-auto h-4 w-4 transition-transform", open && "rotate-90")} aria-hidden />

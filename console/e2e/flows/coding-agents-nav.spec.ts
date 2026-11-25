@@ -25,6 +25,7 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   await page.evaluate(() => localStorage.removeItem('solidtrace.sidebarGroup.coding_agents'))
   await page.reload()
   await expect(heading).toHaveAttribute('aria-expanded', 'false')
+  await expect(heading).toHaveAttribute('data-lit', 'false')
   await expect(sessions).toBeHidden()
   await expect(records).toBeHidden()
   await expect(nav.getByRole('link', { name: 'Runs' })).toHaveCount(0)
@@ -48,6 +49,18 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   // A reload keeps it open.
   await page.reload()
   await expect(heading).toHaveAttribute('aria-expanded', 'true')
+  await expect(records).toHaveAttribute('aria-current', 'page')
+
+  // Closed on Review records, the heading is lit in the place of its
+  // hidden child. Open again, Review records is lit and the heading not.
+  await heading.click()
+  await expect(heading).toHaveAttribute('aria-expanded', 'false')
+  await expect(heading).toHaveAttribute('data-lit', 'true')
+  await expect(sessions).toBeHidden()
+  await expect(records).toBeHidden()
+  await heading.click()
+  await expect(heading).toHaveAttribute('aria-expanded', 'true')
+  await expect(heading).toHaveAttribute('data-lit', 'false')
   await expect(records).toHaveAttribute('aria-current', 'page')
 
   // Dark mode, then Agent sessions from the group: it alone is lit.
@@ -80,12 +93,22 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   expect(errors).toEqual([])
 
   // With no localStorage the group still works: closed elsewhere, open on
-  // its children's pages. The layout's theme script throws then, so page
-  // errors are not checked past this point.
+  // its children's pages. The saved choice is "open", so a closed group on
+  // Issues shows that the page did not read it. The layout's theme script
+  // throws then, so page errors are not checked past this point.
+  await page.evaluate(() => localStorage.setItem('solidtrace.sidebarGroup.coding_agents', 'open'))
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', { get() { throw new Error('blocked') } })
   })
   await page.goto(`/${ORG}/issues`)
+  expect(await page.evaluate(() => {
+    try {
+      void window.localStorage
+      return 'read'
+    } catch {
+      return 'blocked'
+    }
+  })).toBe('blocked')
   await expect(heading).toHaveAttribute('aria-expanded', 'false')
   await heading.click()
   await expect(heading).toHaveAttribute('aria-expanded', 'true')
