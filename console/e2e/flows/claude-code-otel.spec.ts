@@ -164,6 +164,7 @@ async function exactLogs(number: Locator) {
 async function agentOverview(page: Page): Promise<{ received: number; filtered: number }> {
   await page.goto(`/${ORG}/overview?range=7d`)
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+  await expect(page.getByRole('alert'), "EventStore's numbers are unavailable").toHaveCount(0)
   const received = page.locator(`[data-section="projects"] tr[data-project="${setup.slug}"] td:not([data-empty])`).nth(1)
   const filtered = page.locator('[data-section="band"] dt:has-text("Filtered out as not of a Captured repository") + dd')
   return { received: await exactLogs(received), filtered: await exactLogs(filtered) }
@@ -184,7 +185,8 @@ test("Claude Code's OpenTelemetry with the Agent Project's key keeps only the Ca
   await expect(keyBox).toHaveValue(/^[0-9a-f]{32}$/)
   const key = await keyBox.inputValue()
 
-  const before = await agentOverview(page)
+  let before = { received: 0, filtered: 0 }
+  await expect(async () => { before = await agentOverview(page) }).toPass({ timeout: 30_000 })
 
   for (const p of UNTAGGED_PROTOBUF) await postWithKey(request, key, p.route, p.body, true)
   await postWithKey(request, key, '/v1/logs', LOGS)
