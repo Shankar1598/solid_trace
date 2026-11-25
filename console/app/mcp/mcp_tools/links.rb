@@ -87,6 +87,16 @@ module McpTools
       url(routes.agent_session_path(org_slug: organization.slug, id: id))
     end
 
+    def review_records(organization)
+      url(routes.review_records_path(org_slug: organization.slug))
+    end
+
+    # One Review record's page: the newest record of the PR of key, or the
+    # record with id.
+    def review_record(organization, key: nil, id: nil)
+      url(routes.review_record_path(org_slug: organization.slug, key: key, id: id))
+    end
+
     # A fresh Invite link for an Invited user to organization.
     def invite(user, organization)
       user.invite_url(organization, console_url: @console_url)

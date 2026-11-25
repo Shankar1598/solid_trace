@@ -217,6 +217,9 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
     %w[list_agent_sessions get_agent_session].each do |name|
       assert_match "Agent session", tools.fetch(name)["description"]
     end
+    %w[list_review_records get_review_record].each do |name|
+      assert_match "Review record", tools.fetch(name)["description"]
+    end
 
     mcp "tools/call", token: secret, name: "list_agent_sessions", arguments: {}
     assert_not response.parsed_body.dig("result", "isError"), tool_text
@@ -316,7 +319,8 @@ class McpTokenScopesTest < ActionDispatch::IntegrationTest
     assert response.parsed_body.dig("result", "isError")
     assert_match "This token reads only the Project shop", tool_text
 
-    [ [ "list_agent_sessions", {} ], [ "list_runs", {} ], [ "get_run", { run: "r1" } ] ].each do |name, arguments|
+    [ [ "list_agent_sessions", {} ], [ "list_review_records", {} ], [ "get_review_record", { pr: "https://github.com/acme/shop/pull/7" } ],
+      [ "list_runs", {} ], [ "get_run", { run: "r1" } ] ].each do |name, arguments|
       mcp "tools/call", token: secret, name: name, arguments: arguments
       assert response.parsed_body["error"] || response.parsed_body.dig("result", "isError"), name
     end
