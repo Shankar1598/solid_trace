@@ -143,6 +143,9 @@ type lineFacts struct {
 	// (storage.AgentTitle) and its text, "" for none.
 	titleKind uint8
 	title     string
+	// An assistant line of the main transcript that ends a PR's final
+	// reply: its Review record, with no place yet.
+	reviewRecord *storage.ReviewRecord
 }
 
 type parsedLine struct {
@@ -181,7 +184,7 @@ var agentLogIDs = uuid.MustParse("5b0f3c1e-8f53-4d0e-9a52-6c1d2b7e4a90")
 // A remove line follows its attachment at once, so the mid-turn rule needs
 // an upload cut between them at the end of a range, and then the message
 // has the time of its attachment.
-func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseState) ([][]models.Log, []storage.AgentSessionDay, parseState) {
+func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseState) ([][]models.Log, []storage.AgentSessionDay, []storage.ReviewRecord, parseState) {
 	state = state.clone()
 	totals := newSessionTotals(units)
 	var lines []parsedLine
@@ -223,6 +226,7 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 	}
 
 	logs := make([][]models.Log, len(units))
+	var records []storage.ReviewRecord
 	var previous json.RawMessage
 	for i, line := range lines {
 		unit := units[line.unit]
@@ -257,17 +261,22 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 		totals.addLine(unit, line.offset+uint64(line.length), object, timed, f, receipt)
 		keepOnStoredDay(object, receipt.At)
 		addSource(object, unit, line.offset, line.length)
+		id := uuid.NewSHA1(agentLogIDs, fmt.Appendf(nil, "%s/%d/%d/%s", unit.SessionID, unit.Version, line.offset, unit.Path))
+		if r := f.reviewRecord; r != nil {
+			r.ID, r.SessionID, r.Path, r.Version, r.Offset, r.StoredAt = id, unit.SessionID, unit.Path, unit.Version, line.offset, unit.StoredAt.UTC()
+			records = append(records, *r)
+		}
 		log, outcome := normalise.JSON(object, receipt)
 		if outcome == normalise.Dropped {
 			// Not possible with a cut message and these few Attributes; the
 			// raw layer has the line.
 			continue
 		}
-		log.ID = uuid.NewSHA1(agentLogIDs, fmt.Appendf(nil, "%s/%d/%d/%s", unit.SessionID, unit.Version, line.offset, unit.Path))
+		log.ID = id
 		logs[line.unit] = append(logs[line.unit], log)
 	}
 	state.dropOld()
-	return logs, totals.days(), state
+	return logs, totals.days(), records, state
 }
 
 // isSubagentFile is true for the transcript of a subagent.
@@ -372,6 +381,7 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 			}
 			s, blocks := contentOf(msg.Content)
 			text.WriteString(s)
+			var texts []string
 			if role == rolePerson && strings.HasPrefix(s, taskNotification) {
 				role = roleNotPerson
 			}
@@ -382,6 +392,7 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 				switch b.Type {
 				case "text":
 					text.WriteString(b.Text)
+					texts = append(texts, b.Text)
 				case "thinking":
 					// Claude Code can keep a thinking block with no text.
 					if b.Thinking == "" {
@@ -418,6 +429,10 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 				if i == 0 {
 					kind = line.Type + "/" + b.Type
 				}
+			}
+			// The skill's own text has an example block, but on a user line.
+			if line.Type == "assistant" && !subagent && !line.IsSidechain {
+				facts.reviewRecord = reviewRecordOf(texts)
 			}
 		}
 	case "attachment":

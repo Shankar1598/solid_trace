@@ -53,5 +53,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Dashboards](./dashboards.md): make a Dashboard, add Charts from the explorer and from the editor, set the range, lay it out, delete it.
 - [Factory Runs](./factory-runs.md): the Factory section of a Project, Runs started from the CLI, a Monitor or an Issue, the Runs and Run pages, Stop.
 - [Agent sessions](./agent-sessions.md): turn on Agent sessions, CLI sign-in with the device flow, capture, and the Agent sessions pages.
+- [Review records](./review-records.md): the Review record of an open-pr or update-pr Agent session, on the Review records pages and over MCP.
 
 Other flows in `console/e2e/flows/` cover features that are not in the map yet: Overview, Traces, Monitors, Integrations, API tokens, MCP OAuth, two-factor, passkeys, the Log transform, Settings and the palette. Run them with `verify flow` as they are, and add a map file when you verify one of them.

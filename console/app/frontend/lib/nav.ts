@@ -1,7 +1,7 @@
 // Which sidebar entry a page belongs to, from its path alone: the search is
 // left out, since a Query in it can hold any text, such as "/issues".
 
-export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'agent_sessions' | 'runs' | 'projects' | 'settings'
+export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'agent_sessions' | 'review_records' | 'runs' | 'projects' | 'settings'
 
 /** The sidebar's entries, in order, for the Organization `slug`. Runs is the Factory's: with no Dispatcher URL (factoryOn false) there is no Runs entry. */
 export function sidebarItems(slug: string, factoryOn: boolean): { section: NavSection; label: string; href: string }[] {
@@ -13,6 +13,7 @@ export function sidebarItems(slug: string, factoryOn: boolean): { section: NavSe
     ['dashboards', 'Dashboards', 'dashboards'],
     ['monitors', 'Monitors', 'monitors'],
     ['agent_sessions', 'Agent sessions', 'agent_sessions'],
+    ['review_records', 'Review records', 'review_records'],
     ...(factoryOn ? [['runs', 'Runs', 'runs'] as [NavSection, string, string]] : []),
     ['projects', 'Projects', 'projects'],
     ['settings', 'Settings', 'settings/organization'],
@@ -36,6 +37,7 @@ export function navSection(url: string): NavSection | null {
     case 'dashboards':
     case 'monitors':
     case 'agent_sessions':
+    case 'review_records':
     case 'runs':
     case 'settings':
       return first

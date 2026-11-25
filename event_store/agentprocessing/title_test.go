@@ -45,7 +45,7 @@ func titleOf(t *testing.T, path string, ranges ...[]storage.AgentFileUnit) stora
 	var state parseState
 	for _, units := range ranges {
 		var days []storage.AgentSessionDay
-		_, days, state = parseUnits(units, 30, state)
+		_, days, _, state = parseUnits(units, 30, state)
 		for _, d := range days {
 			if d.Path == path && d.Title.After(title) {
 				title = d.Title
@@ -191,7 +191,7 @@ func TestTheTitleOfAnAgentSession(t *testing.T) {
 		old := unitOf(main, 0, person("Fix the cart"), aiTitle("Cart"))
 		trimmed := unitOf(main, 0, person("Fix the cart"), aiTitle("Cart and checkout"))
 		trimmed.Version = 2
-		_, days, _ := parseUnits([]storage.AgentFileUnit{old, trimmed}, 30, parseState{})
+		_, days, _, _ := parseUnits([]storage.AgentFileUnit{old, trimmed}, 30, parseState{})
 		for _, d := range days {
 			if d.Version == 2 && d.Title.Text != "Cart and checkout" {
 				t.Errorf("Expected the title of version 2, got %+v", d.Title)
@@ -200,7 +200,7 @@ func TestTheTitleOfAnAgentSession(t *testing.T) {
 	})
 
 	t.Run("the custom-title's text is the Log's message", func(t *testing.T) {
-		logs, _, _ := parseUnits([]storage.AgentFileUnit{unitOf(main, 0, customTitle("Factory build"))}, 30, parseState{})
+		logs, _, _, _ := parseUnits([]storage.AgentFileUnit{unitOf(main, 0, customTitle("Factory build"))}, 30, parseState{})
 		if len(logs[0]) != 1 || logs[0][0].Message != "Factory build" {
 			t.Errorf("Expected one Log with the message %q, got %+v", "Factory build", logs[0])
 		}

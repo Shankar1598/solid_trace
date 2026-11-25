@@ -174,7 +174,37 @@ A feature often spans several Agent sessions. Before the record, `open-pr` runs 
 
 The record reads `solidtrace review digest --session A --session B`, not the transcripts: one short timeline of the confirmed sessions in time order. Before a session's first review, it keeps the task, the person's messages, the delegations and the commits. From the first review on (a review start, or a findings block in the agent's text or a subagent's report), it also has the agent's texts, the findings blocks, the subagents' reports and the edits. Each commit event keeps the commit's `Review-Findings` trailers whole. Then `solidtrace review check --digest D --record R` checks the record against the digest: each block finding and each trailer reaches the record, each outcome agrees with its events, and each claim cites an event of the digest. It exits 1 when it finds a problem. A session on Bitbucket needs `BITBUCKET_TOKEN` for `open-pr` to open the PR. Without it, `open-pr` gives the link that opens a new PR, and the body to paste.
 
-In a captured repository, the record uploads with the Agent session, so a team can count the outcomes over many sessions with `run_sql` on the Agent Project. For example, this query counts the records in the range that `run_sql` reads: `SELECT count(*) FROM logs WHERE position(message, '```solidtrace-pr-record') > 0`.
+In a captured repository, the record uploads with the Agent session, and SolidTrace keeps it as the PR's **Review record** (see [Read the Review records](#read-the-review-records)).
+
+## Read the Review records
+
+Each member opens **Review records** in the Organization's navigation, next to **Agent sessions**. The page has one row for each PR whose `open-pr` or `update-pr` Agent session uploaded, the PR stored last first: the PR, the round, the time when SolidTrace stored it, the counts of findings, fixed findings, findings that the reviews missed and confirmations not given, and a link to its Agent session. A row shows the newest record of its PR: the highest round. Next to the round, the page says how many earlier records the PR has. A record with no PR (`"pr": null`) has a row of its own for its Agent session, named **No PR**. The page shows the 500 PRs stored last.
+
+- A finding that the reviews missed is one that a person, an agent or a test run found (`found_by`), not a reviewer.
+- A confirmation not given is one whose `given` is false or not known.
+- **Open the PR** opens its PR. A local PR (`local:<path>`) has no link.
+
+Click the PR to open its record. The page shows:
+
+- the PR, its round, the time it was stored, its Agent session and the counts;
+- the story of the feature;
+- the review runs, with the skill, the stage, the step, the reviewers with their models and efforts, and the verifier;
+- each finding with who found it (**missed** when the reviews did not), its severity, its title and place, its decisions in the order of its events (as `trivial, verifier pushed back, person asks fix, fixed`), and its outcome. **Details** shows its scenario and the words of its events: why, what the person said, what the agent found, and the files;
+- the confirmations, each **Given**, **Not given** or **Not known**;
+- the rounds of the PR, when it has more than one. Click a round to open it.
+
+The record is what the agent wrote, with the words of PR commenters in it, so the pages show all of it as text, never as HTML or Markdown.
+
+SolidTrace reads the record from the final reply of the Agent session: the last `solidtrace-pr-record` block of an agent reply in the main transcript, when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). So:
+
+- A record shows when its Agent session uploads: in a captured repository, or in a Run.
+- An Agent session that SolidTrace parsed before Review records came has no Review record. SolidTrace does not read the old lines again.
+- A record that is not valid JSON, or not version 2, does not show. A record in a person's message, a subagent or a tool output does not show.
+- The records follow the Agent Project's Retention, as the Agent sessions do.
+
+### Over MCP
+
+An agent reads the Review records with two MCP tools ([MCP](mcp.md)): `list_review_records` lists the newest record of each PR, as the page does, and `get_review_record` reads one record all of it, byte for byte, with the rounds of its PR. A token with `mcp:read` can call both. To compare the reviews of many PRs, an agent lists the records, then reads each one.
 
 ## Send Claude Code's telemetry to SolidTrace
 

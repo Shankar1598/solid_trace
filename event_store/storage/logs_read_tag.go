@@ -33,6 +33,8 @@ const (
 	ReadRuns = "Runs"
 	// ReadAgentSession reads one Agent session's header and timeline.
 	ReadAgentSession = "Agent session"
+	// ReadReviewRecords reads the Review records list or one record.
+	ReadReviewRecords = "Review records"
 )
 
 // readTag is a Log read's log_comment: its Project, its kind, the run its

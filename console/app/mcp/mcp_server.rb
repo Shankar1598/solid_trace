@@ -43,6 +43,8 @@ module McpServer
     McpTools::GetTrace,
     McpTools::ListAgentSessions,
     McpTools::GetAgentSession,
+    McpTools::ListReviewRecords,
+    McpTools::GetReviewRecord,
     McpTools::ListRuns,
     McpTools::GetRun,
     McpTools::UpdateIssue,
@@ -71,6 +73,7 @@ module McpServer
     list_transactions lists a Project's traced requests and jobs by the time they take, and get_transaction finds where one's time goes.
     get_issue's trace_logs finds an Event's Logs, and get_trace a trace's Spans, Issues and Logs across the Organization's Projects.
     list_agent_sessions lists the recorded Agent sessions of coding agents, and get_agent_session reads one's timeline in pages, or searches it.
+    list_review_records lists the Review record of each PR, and get_review_record reads one whole: each finding of its reviews, every decision on it, and what the reviews missed.
     list_runs lists the factory's Runs, and get_run reads one Run's Executions, report and events.
     An answer ends with a link to the Console page that shows it, for the user to open.
   TEXT

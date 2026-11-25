@@ -594,6 +594,7 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterPerformanceRoutes(env.QueryApp, handler.NewPerformanceHandler(clickHouse))
 	handler.RegisterRedactionRoutes(env.QueryApp)
 	handler.RegisterAgentQueryRoutes(env.QueryApp, handler.NewAgentSessionsHandler(env.ClickHouseLogs))
+	handler.RegisterReviewRecordRoutes(env.QueryApp, handler.NewReviewRecordsHandler(env.ClickHouseLogs))
 	handler.RegisterRunsQueryRoutes(env.QueryApp, handler.NewRunsHandler(env.ClickHouseLogs, env.Clock))
 	handler.RegisterAgentEvidenceRoute(env.QueryApp, handler.NewAgentEvidenceHandler(clickHouse))
 

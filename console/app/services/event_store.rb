@@ -194,6 +194,27 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/agent-sessions/#{ERB::Util.url_encode(id)}/line", body, read_timeout: read_timeout, open_timeout: 3)
     end
 
+    # The Review records of an Agent Project, as EventStore's POST
+    # /review-records answers them: {"review_records" => the newest record
+    # of each PR, the PR stored last first, at most limit, each with its
+    # place, its summary and "earlier", how many older records its PR has,
+    # "more"}. Raises Unavailable as transactions! does.
+    def review_records!(project_id:, limit: nil, read_timeout: 10)
+      post!("#{base_url}/api/#{project_id}/review-records", { limit: limit }.compact, read_timeout: read_timeout, open_timeout: 3)
+    end
+
+    # One Review record of an Agent Project, as EventStore's POST
+    # /review-records/record answers it: {"review_record" => its row, as in
+    # review_records!, "record" => its JSON as text, as its block has it,
+    # "rounds" => all the records of its PR, newest first}. key gives the
+    # newest record of a PR (or of an Agent session id, for a record with
+    # no PR), id one record. Raises NotFound when the Project has no such
+    # record, else as transactions! does.
+    def review_record!(project_id:, key: nil, id: nil, read_timeout: 10)
+      body = { key: key, id: id }.compact
+      post!("#{base_url}/api/#{project_id}/review-records/record", body, read_timeout: read_timeout, open_timeout: 3)
+    end
+
     # The Runs of an Agent Project with a run event in [from, to], as
     # EventStore's POST /runs answers them: {"runs" => [...], "more"}, each
     # Run as its last event shows it, Active Runs first. project (a Project

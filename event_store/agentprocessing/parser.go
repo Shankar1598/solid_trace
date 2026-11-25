@@ -121,7 +121,7 @@ func (p *Parser) parseUnits(projectID uint32) (more bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	logsOfUnits, sessionDays, state := parseUnits(units, retentionDays, state)
+	logsOfUnits, sessionDays, reviewRecords, state := parseUnits(units, retentionDays, state)
 	encoded, err = state.encode()
 	if err != nil {
 		return false, err
@@ -133,7 +133,7 @@ func (p *Parser) parseUnits(projectID uint32) (more bool, err error) {
 		}
 	}
 	insert := storage.LogInsert{After: cursor, UpTo: last, Batches: parsed, Again: again, Range: "agent",
-		AgentSessions: sessionDays}
+		AgentSessions: sessionDays, ReviewRecords: reviewRecords}
 	if err := p.logs.InsertLogBatches(projectID, insert); err != nil {
 		return false, fmt.Errorf("insert the Logs of agent sessions: %w", err)
 	}
