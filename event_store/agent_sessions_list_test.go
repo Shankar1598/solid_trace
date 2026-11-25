@@ -32,6 +32,7 @@ type listedAgentSession struct {
 	Project         string   `json:"project"`
 	ParentSessionID string   `json:"parent_session_id"`
 	Model           string   `json:"model"`
+	Effort          string   `json:"effort"`
 	Title           string   `json:"title"`
 	Input           uint64   `json:"input_tokens"`
 	Output          uint64   `json:"output_tokens"`
@@ -112,7 +113,7 @@ func newAgentSessionsFixture(t *testing.T, env *TestEnv) agentSessionsFixture {
 	env.Clock.Set(time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC))
 	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(
 		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
-		replyAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`),
+		replyWithEffortAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", "high", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}`),
 		toolResultAt("u2", "2026-10-02T11:00:06Z", "toolu_1"),
 	)}), 200)
 	expectStatus(t, uploadUnit(t, env, o.otherSecret, apiSession, unitUpload{path: "session.jsonl", repository: "github.com/acme/api", body: jsonl(
@@ -154,7 +155,7 @@ func TestTheAgentSessionsListGivesTheAgentSessionsOfTheRangeLatestFirstWithTheir
 	}
 	cart := answer.AgentSessions[2]
 	if cart.First != "2026-10-02T11:00:00Z" || cart.Last != "2026-10-02T11:00:06Z" || cart.UserID != f.user ||
-		cart.Repository != "github.com/acme/shop" || cart.Model != "claude-opus-5-5" || cart.Harness != "claude-code" ||
+		cart.Repository != "github.com/acme/shop" || cart.Model != "claude-opus-5-5" || cart.Effort != "high" || cart.Harness != "claude-code" ||
 		cart.Input != 10 || cart.Output != 50 || cart.CacheRead != 1000 || cart.CacheWrite != 100 ||
 		cart.PersonMessages != 1 || cart.ToolCalls != 1 || cart.CostUSD == nil || math.Abs(*cart.CostUSD-0.00174) > 1e-12 {
 		t.Errorf("Unexpected row of the cart Agent session %+v", cart)
@@ -351,7 +352,8 @@ func TestTheAgentSessionsListOfAMonthOfTenEngineersAnswersInLessThanTwoSeconds(t
 			tuple(toUInt64(900000), 'claude-opus-5-5') AS last_reply, tuple(toUInt64(0), toFloat64(0)) AS last_cost_state,
 			if(n % 3 = 0, 12, 0) AS person_messages, if(n % 3 = 0, 10, 0) AS turns, 150 AS tool_calls,
 			1 AS has_start, 0 AS flags,
-			if(n % 3 = 0, tuple(toUInt8(1), toUInt64(800000), concat('Session ', toString(s))), tuple(toUInt8(0), toUInt64(0), '')) AS title
+			if(n % 3 = 0, tuple(toUInt8(1), toUInt64(800000), concat('Session ', toString(s))), tuple(toUInt8(0), toUInt64(0), '')) AS title,
+			tuple(toUInt64(900000), 'high') AS last_reply_effort
 		FROM (SELECT number AS n, intDiv(number, 3) AS s,
 			toDateTime64(?, 6, 'UTC') + toIntervalSecond(intDiv(intDiv(number, 3) * 2592000, ?)) AS at
 			FROM numbers(?))`, projectID, engineers, start, sessions, sessions*3)

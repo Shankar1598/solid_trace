@@ -121,7 +121,7 @@ func (t *sessionTotals) addLine(unit storage.AgentFileUnit, end uint64, object m
 			row.UnpricedReplies++
 		}
 		if end > row.LastReplyEnd {
-			row.LastReplyEnd, row.LastModel = end, stringOf(object["agent.model"])
+			row.LastReplyEnd, row.LastModel, row.LastEffort = end, stringOf(object["agent.model"]), stringOf(object["agent.effort"])
 		}
 	}
 	if f.costState != nil && end > row.LastCostStateEnd {

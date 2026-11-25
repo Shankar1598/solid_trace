@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { ADMIN, MEMBER, ORG } from '../support/data'
-import { fakeAnthropicKey, longSession, MODEL, shortSession, writeSession, type FixtureSession } from '../support/agentTranscripts'
+import { EFFORT, fakeAnthropicKey, longSession, MODEL, shortSession, SUBAGENT_EFFORT, SUBAGENT_MODEL, writeSession, type FixtureSession } from '../support/agentTranscripts'
 import { shoot, watchErrors } from '../support/screens'
 import { newContext } from '../support/video'
 
@@ -254,7 +254,8 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   const longRow = table.locator(`tr[data-session="${long.id}"]`)
   await expect(longRow).toContainText(ADMIN_NAME)
   await expect(longRow).toContainText(APP)
-  await expect(longRow).toContainText(MODEL)
+  // The Model column has the model and the effort of the latest reply.
+  await expect(longRow).toContainText(`${MODEL} · ${EFFORT}`)
   await expect(longRow).toContainText('680')
   await expect(table.locator(`tr[data-session="${members.id}"]`)).toContainText(MEMBER_NAME)
 
@@ -320,7 +321,12 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
 
   // The header and each person step name the person whose CLI uploaded it.
   const header = page.locator('[data-section="agent-session-header"]')
-  await expect(header.locator('div > div').filter({ hasText: /^Person$/ }).locator('xpath=following-sibling::div')).toHaveText(ADMIN_NAME)
+  const fact = (label: string) => header.locator('div > div').filter({ hasText: new RegExp(`^${label}$`) }).locator('xpath=following-sibling::div')
+  await expect(fact('Person')).toHaveText(ADMIN_NAME)
+  // The model and the effort of the main transcript's latest reply, not
+  // the subagent's.
+  await expect(fact('Model')).toHaveText(MODEL)
+  await expect(fact('Effort')).toHaveText(EFFORT)
 
   // The secret shows as '*', byte for byte.
   const person = page.locator('[data-step="person"]').first()
@@ -336,6 +342,7 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   // It is named by the description that the main agent gave it.
   await subagent.getByRole('button', { name: /^Subagent: Find the cart code/ }).click()
   await expect(subagent.getByText('It is in cart.go.', { exact: true })).toBeVisible()
+  await expect(subagent.locator('[data-step="agent"] [data-model]')).toHaveText(`${SUBAGENT_MODEL} · ${SUBAGENT_EFFORT}`)
   // Inside the subagent its steps need no badge that names it again.
   await expect(subagent.getByText(`subagent ${subagentId}`, { exact: true })).toHaveCount(0)
   // The subagent's prompt is not from a person, so it has no person's name.
@@ -421,6 +428,8 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect(main).toHaveAttribute('data-order', 'newest')
   await expect(firstStep).toHaveAttribute('data-step', 'agent')
   await expect(firstStep).toContainText('The cart code is in cart.go, and the command printed its lines.')
+  // Each reply's title has its model and its effort.
+  await expect(firstStep.locator('[data-model]')).toHaveText(`${MODEL} · ${EFFORT}`)
   // The agent's reply shows as Markdown: code and bold, with no marks left.
   await expect(firstStep.locator('code')).toHaveText('cart.go')
   await expect(firstStep.locator('strong')).toHaveText('its lines')

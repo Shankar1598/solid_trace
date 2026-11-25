@@ -17,8 +17,8 @@ module McpTools
       last times. steps is one page of the timeline of the main transcript, or of the subagent transcript at path,
       in time order: each step has its time, role, from (kind person, agent, tool, not from a person or system, and
       the person's name when known), text (a tool call's input JSON), tool_name, tool_use_id, subagent_id, model,
-      tokens, cost_usd, and cut (true when the text was cut to fit). next_cursor reads the page after it, null after
-      the last. With search, steps holds only the steps whose text has it, with any case, from all the transcripts
+      effort (of a reply, as high; left out when it has none), tokens, cost_usd, and cut (true when the text was cut
+      to fit). next_cursor reads the page after it, null after the last. With search, steps holds only the steps whose text has it, with any case, from all the transcripts
       when no path is given. resume_warning says when the record is cut or partial, so a resume can fail.
     TEXT
     read_only!

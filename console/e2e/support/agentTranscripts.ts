@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 
 // Fixture transcripts for the Agent sessions flow, in the shape of Claude
 // Code's .jsonl files: each line has the cwd and the session id, a reply has
-// its model and usage, and a subagent has its own file under
+// its model, its effort and its usage, and a subagent has its own file under
 // <session>/subagents/. The flow writes them into a Claude projects folder,
 // and the real `solidtrace capture` uploads them. Times are a few minutes
 // before now, so the Agent sessions page's 7-day range holds them.
@@ -14,6 +14,9 @@ export const MODEL = 'claude-opus-5-5'
 /** The summary of the long session's /compact, in the shape of Claude Code's. */
 export const COMPACTION_SUMMARY = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n<tools-used-before-summary>Agent</tools-used-before-summary>\n\nSummary:\n1. The person asked where the cart code is.'
 export const SUBAGENT_MODEL = 'claude-sonnet-5-5'
+/** The effort of the main transcript's replies, and of the subagent's. */
+export const EFFORT = 'high'
+export const SUBAGENT_EFFORT = 'low'
 
 /** The tokens of one request, by kind. */
 export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number }
@@ -50,9 +53,9 @@ class Transcript {
     this.add({ type: 'user', message: { role: 'user', content: text } })
   }
 
-  reply(content: Line[], usage: Usage, model = MODEL) {
+  reply(content: Line[], usage: Usage, model = MODEL, effort = EFFORT) {
     this.add({
-      type: 'assistant',
+      type: 'assistant', effort, perTurnEffort: effort,
       message: {
         id: `msg_${randomBytes(12).toString('hex')}`, type: 'message', role: 'assistant', model, content,
         stop_reason: content.some(c => c.type === 'tool_use') ? 'tool_use' : 'end_turn',
@@ -141,7 +144,7 @@ export function longSession(cwd: string, opts: {
   const sub = new Transcript(id, cwd, new Date(start.getTime() + 3_000), { isSidechain: true, agentId: opts.subagentId })
   // A subagent's prompt is a user line of its own file: not from a person.
   sub.person('Find the cart code.')
-  sub.reply([{ type: 'text', text: opts.subagentReply }], opts.subagentUsage, SUBAGENT_MODEL)
+  sub.reply([{ type: 'text', text: opts.subagentReply }], opts.subagentUsage, SUBAGENT_MODEL, SUBAGENT_EFFORT)
   sub.title('custom', 'A subagent name')
 
   main.toolResult('toolu_flow_agent', opts.subagentReply, { agentId: opts.subagentId, status: 'completed' })

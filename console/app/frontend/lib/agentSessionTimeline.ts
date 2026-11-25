@@ -24,7 +24,9 @@ export interface TimelineStep {
   tool_name?: string
   tool_use_id?: string
   subagent_id?: string
+  /** The model and the effort of a reply. */
   model?: string
+  effort?: string
   level?: string
   tokens: { input: number; output: number; cache_read: number; cache_write: number } | null
   cost_usd: number | null

@@ -24,6 +24,7 @@ type timelineStep struct {
 	ToolUseID  string   `json:"tool_use_id"`
 	SubagentID string   `json:"subagent_id"`
 	Model      string   `json:"model"`
+	Effort     string   `json:"effort"`
 	Level      string   `json:"level"`
 	CostUSD    *float64 `json:"cost_usd"`
 	Tokens     *struct {
@@ -86,10 +87,10 @@ func TestTheAgentSessionPageGivesTheHeaderAndTheTimelineInOrder(t *testing.T) {
 
 	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", folder: "apps/web", body: jsonl(
 		personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"),
-		replyAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"cart.go"}}`),
+		replyWithEffortAt("a1", "2026-10-02T11:00:05Z", "msg_1", "claude-opus-5-5", "high", `{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"cart.go"}}`),
 		`{"type":"user","uuid":"u2","timestamp":"2026-10-02T11:00:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"package cart"}]}}`,
 		`{"type":"user","uuid":"u3","isMeta":true,"timestamp":"2026-10-02T11:00:07Z","message":{"role":"user","content":"Stop hook feedback: run the report"}}`,
-		replyAt("a2", "2026-10-02T11:00:09Z", "msg_2", "claude-opus-5-5", `{"type":"text","text":"The cart page is done."}`),
+		replyWithEffortAt("a2", "2026-10-02T11:00:09Z", "msg_2", "claude-opus-5-5", "xhigh", `{"type":"text","text":"The cart page is done."}`),
 		costState(0.01),
 	)}), 200)
 	env.ProcessAgentFiles(t)
@@ -97,7 +98,7 @@ func TestTheAgentSessionPageGivesTheHeaderAndTheTimelineInOrder(t *testing.T) {
 	answer := readTimeline(t, env, o.project, laptopSession, map[string]any{})
 	h := answer.AgentSession
 	if h.ID != laptopSession || h.UserID != o.user || h.Repository != "github.com/acme/shop" || h.Folder != "apps/web" ||
-		h.Model != "claude-opus-5-5" || h.First != "2026-10-02T11:00:00Z" || h.Last != "2026-10-02T11:00:09Z" {
+		h.Model != "claude-opus-5-5" || h.Effort != "xhigh" || h.First != "2026-10-02T11:00:00Z" || h.Last != "2026-10-02T11:00:09Z" {
 		t.Errorf("Expected the header of the engineer's Agent session, got %+v", h)
 	}
 	if h.Input != 20 || h.Output != 100 || h.CacheRead != 2000 || h.CacheWrite != 200 || h.CostUSD == nil || *h.CostUSD != 0.01 {
@@ -117,8 +118,11 @@ func TestTheAgentSessionPageGivesTheHeaderAndTheTimelineInOrder(t *testing.T) {
 	if call.ToolName != "Read" || call.ToolUseID != "toolu_1" || result.ToolName != "Read" || result.ToolUseID != "toolu_1" {
 		t.Errorf("Expected the tool call and its result to carry the tool and its id, got %+v and %+v", call, result)
 	}
-	if call.Tokens == nil || call.Tokens.Output != 50 || call.CostUSD == nil || call.Model != "claude-opus-5-5" {
-		t.Errorf("Expected the request's tokens, cost and model on the reply, got %+v", call)
+	if call.Tokens == nil || call.Tokens.Output != 50 || call.CostUSD == nil || call.Model != "claude-opus-5-5" || call.Effort != "high" {
+		t.Errorf("Expected the request's tokens, cost, model and effort on the reply, got %+v", call)
+	}
+	if result.Model != "" || result.Effort != "" {
+		t.Errorf("Expected no model and no effort on a tool's result, got %+v", result)
 	}
 	if first := answer.Steps[0]; first.Path != "session.jsonl" || first.Version != 1 || first.Offset != 0 || first.Time != "2026-10-02T11:00:00Z" {
 		t.Errorf("Expected the step's raw line and time, got %+v", first)

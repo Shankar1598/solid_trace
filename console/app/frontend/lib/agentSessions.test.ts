@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionsSearch, agoText, costText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionsSearch, agoText, costText, modelText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
 
@@ -71,6 +71,17 @@ describe('the numbers of an Agent session', () => {
     expect(costText(0.00174)).toBe('<$0.01')
     expect(costText(0)).toBe('$0.00')
     expect(costText(null)).toBe('No cost')
+  })
+
+  it('gives the model with its effort, or the model alone', () => {
+    expect(modelText('claude-opus-5-5', 'high')).toBe('claude-opus-5-5 · high')
+    expect(modelText('claude-opus-5-5', '')).toBe('claude-opus-5-5')
+    expect(modelText('claude-opus-5-5', undefined)).toBe('claude-opus-5-5')
+    expect(modelText('', '')).toBe('')
+  })
+
+  it('gives no model text for a synthetic reply', () => {
+    expect(modelText('<synthetic>', undefined)).toBe('')
   })
 })
 

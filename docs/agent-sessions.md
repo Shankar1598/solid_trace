@@ -84,7 +84,7 @@ Claude Code gets the plugin when it starts on a machine, and the plugin runs fro
 
 ## Read the Agent sessions
 
-Each member opens **Agent sessions** in the Organization's navigation. The page lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first unless you sort by another column: the title, the start, the last activity, the person or the Run, the repository, the model, the tokens, the estimated cost, and the counts of messages and tool calls.
+Each member opens **Agent sessions** in the Organization's navigation. The page lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first unless you sort by another column: the title, the start, the last activity, the person or the Run, the repository, the model and its effort (as `claude-opus-5-5 · high`), the tokens, the estimated cost, and the counts of messages and tool calls.
 
 The title of an Agent session is the one that Claude Code shows for it:
 
@@ -103,6 +103,7 @@ The activity of an Agent session is the times of its transcript lines that have 
 - **Last activity** shows how long ago it was: "a few seconds ago" in its first minute, then "5 minutes ago", "3 hours ago" or "2 days ago". It changes each 30 seconds while the page is open. The hover text shows the time. A live Agent session is at the top, with "a few seconds ago" after a reload of the page.
 - Sort the list by **Start**, **Last activity**, **Tokens** or **Estimated cost**: click the column's heading. The first click shows the latest times, the most tokens or the highest cost first; a second click turns the order around. An arrow next to the heading shows the sorted column and its direction. An Agent session with no cost comes after those with a cost, in both directions. The order is in the page's URL (`sort` and `direction`), with the filters, and a change of the range or a filter keeps it.
 - The totals of tokens and estimated cost are for the Agent sessions that the filters select. The page shows the first 500 of them in its order; the totals include all of them. SolidTrace sorts all of them before it takes the 500, so the most expensive Agent sessions of the range are always on the page.
+- The model and the effort of an Agent session are those of the latest reply in its main transcript, not in a subagent's. The effort is the one that Claude Code writes on each reply (`low`, `medium`, `high`, `xhigh` or `max`), from Claude Code 2.1.296. An Agent session that SolidTrace parsed before v0.23.4 has no effort until new lines of it are parsed; its page says "Not known".
 - The cost is an estimate at list prices, not an invoice. It is Claude Code's own estimate when the transcript has one after its last reply, and else the tokens at the list price of each model. An Agent session whose model has no list price has no cost, and the totals say how many Agent sessions they do not include.
 
 ### Read one Agent session
@@ -110,8 +111,8 @@ The activity of an Agent session is the times of its transcript lines that have 
 Click a row in the list to open the Agent session page.
 
 - The page's heading is the title of the Agent session.
-- The header shows the person or the Run, the repository, the folder, the parent Agent session (a link, for a fork or a `/clear`), the model, the first and last activity, the tokens by kind, the estimated cost and the flags.
-- The timeline shows the person messages, the agent replies and the tool calls in time order, the oldest step first, as a chat reads. Choose **Newest first** above the timeline to see the newest step first; **Oldest first** goes back. Your browser keeps the choice, with the choices of what to show. Each tool call shows its input, with its output below it. The agent's replies and its thinking show as Markdown; a person's messages show as plain text.
+- The header shows the person or the Run, the repository, the folder, the parent Agent session (a link, for a fork or a `/clear`), the model, the effort, the first and last activity, the tokens by kind, the estimated cost and the flags.
+- The timeline shows the person messages, the agent replies and the tool calls in time order, the oldest step first, as a chat reads. Choose **Newest first** above the timeline to see the newest step first; **Oldest first** goes back. Your browser keeps the choice, with the choices of what to show. Each tool call shows its input, with its output below it. The agent's replies and its thinking show as Markdown; a person's messages show as plain text. The title of each reply shows its model and its effort, as `claude-opus-5-5 · high`, but not on a small screen.
 - A message that a person sent while the agent worked shows at the time when the agent got it, not at the time when the person wrote it.
 - Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
 - A slash command, such as `/compact`, shows once, as a person message in mono: the command and its arguments. Claude Code's output of the command shows under it, after a ⎿ mark, with no colour codes of the terminal. The output is "Not from a person": it is not a person message, and not a turn. Claude Code's caveat before a command is for the model, and does not show.
@@ -124,7 +125,7 @@ Click a row in the list to open the Agent session page.
 
 ### Search across Agent sessions
 
-To find which Agent session did a thing, type in the search box at the top of the Agent sessions page. It opens the Logs explorer on the Agent Project, with your text as the search, over the last 7 days. Each line of a transcript is a Log there: `file` is the transcript's path, and the attributes under `agent.` hold the Agent session id, the role and the tool name. Choose a longer range in the explorer when you accept a longer wait.
+To find which Agent session did a thing, type in the search box at the top of the Agent sessions page. It opens the Logs explorer on the Agent Project, with your text as the search, over the last 7 days. Each line of a transcript is a Log there: `file` is the transcript's path, and the attributes under `agent.` hold the Agent session id, the role and the tool name. A reply's Log has its model in `agent.model` and its effort in `agent.effort`. Choose a longer range in the explorer when you accept a longer wait.
 
 An agent can do the same over MCP: `query_logs` on the Agent Project runs a Query on the transcript Logs. `list_projects` names the Agent Project.
 

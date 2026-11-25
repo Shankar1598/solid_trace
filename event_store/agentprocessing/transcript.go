@@ -41,6 +41,10 @@ type transcriptLine struct {
 	CommandUUID string `json:"commandUuid"`
 	// A cost-state line: Claude Code's own total of the Agent session.
 	TotalCostUSD *float64 `json:"totalCostUSD"`
+	// Effort is the effort of an assistant line's reply, as low or high.
+	// Claude Code writes it from version 2.1.296, next to perTurnEffort,
+	// which the parse does not read.
+	Effort string `json:"effort"`
 }
 
 type transcriptMessage struct {
@@ -359,6 +363,9 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 		} else if json.Unmarshal(line.Message, &msg) == nil {
 			set("agent.message_id", msg.ID)
 			set("agent.model", msg.Model)
+			if line.Type == "assistant" {
+				set("agent.effort", line.Effort)
+			}
 			// A synthetic message is Claude Code's own, not a request.
 			if line.Type == "assistant" && msg.Usage != nil && msg.Model != "<synthetic>" {
 				facts.messageID, facts.model, facts.usage = msg.ID, msg.Model, msg.Usage

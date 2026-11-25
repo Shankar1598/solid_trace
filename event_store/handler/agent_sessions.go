@@ -96,6 +96,9 @@ type (
 		Project         string    `json:"project"`
 		ParentSessionID string    `json:"parent_session_id"`
 		Model           string    `json:"model"`
+		// Effort is the effort of the reply whose model is Model, "" for
+		// none.
+		Effort string `json:"effort"`
 		// Title is the title of the Agent session (storage.AgentTitle),
 		// "" for none.
 		Title      string `json:"title"`
@@ -209,7 +212,7 @@ func agentSessionRowOf(s storage.AgentSessionTotals) agentSessionRow {
 	return agentSessionRow{
 		ID: s.SessionID.String(), First: s.First.UTC(), Last: s.Last.UTC(), UserID: s.UserID, Harness: s.Harness,
 		Repository: s.Repository, Folder: s.Folder, RunID: s.RunID, Project: s.Project, ParentSessionID: s.ParentSessionID,
-		Model: s.Model, Title: s.Title, Input: s.Input, Output: s.Output, CacheRead: s.CacheRead, CacheWrite: s.CacheWrite,
+		Model: s.Model, Effort: s.Effort, Title: s.Title, Input: s.Input, Output: s.Output, CacheRead: s.CacheRead, CacheWrite: s.CacheWrite,
 		CostUSD: s.CostUSD, PersonMessages: s.PersonMessages, Turns: s.Turns, ToolCalls: s.ToolCalls,
 		Subagents: s.Subagents, Flags: s.Flags,
 	}

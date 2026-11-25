@@ -28,7 +28,8 @@ type AgentTimelineStep struct {
 	// only, without the tool name before it.
 	Text                            string
 	ToolName, ToolUseID, SubagentID string
-	Model, Level                    string
+	// Model and Effort are set on a reply only.
+	Model, Effort, Level string
 	// UUID is the uuid of the line, and SourceUUID the uuid that the
 	// sender gave a message that the agent got in the middle of a turn (a
 	// queued_command attachment). A Run's wrapper gives each message its
@@ -133,12 +134,12 @@ func (s *ClickHouseLogs) AgentSessionTimeline(ctx context.Context, projectID uin
 	}
 	// The ids of the page first, so that the messages of the other steps
 	// are not read.
-	query := fmt.Sprintf(`SELECT id, %s, file, %s, %s, %s, %s, message, %s, %s, %s, %s, ifNull(level, ''),
+	query := fmt.Sprintf(`SELECT id, %s, file, %s, %s, %s, %s, message, %s, %s, %s, %s, %s, ifNull(level, ''),
 		%s, %s, %s, %s, %s, ifNull(%s, false), %s, %s
 		FROM logs WHERE %s AND id IN (SELECT id FROM logs WHERE %s%s ORDER BY %s LIMIT %d)
 		ORDER BY %s`,
 		own, version, offset, str("agent.line"), str("agent.role"), str("agent.tool_name"), str("agent.tool_use_id"),
-		str("agent.subagent_id"), str("agent.model"),
+		str("agent.subagent_id"), str("agent.model"), str("agent.effort"),
 		num("agent.tokens.input"), num("agent.tokens.output"), num("agent.tokens.cache_read"), num("agent.tokens.cache_write"),
 		num("agent.cost_usd"), c.Attribute(BoolAttribute, "solidtrace.truncated"),
 		str("agent.uuid"), str("agent.source_uuid"), where, where, inner, order, page.Limit+1, order)
@@ -155,7 +156,7 @@ func (s *ClickHouseLogs) AgentSessionTimeline(ctx context.Context, projectID uin
 			input, output, cacheRead, cacheWrite *float64
 		)
 		if err := rows.Scan(&step.ID, &step.Time, &step.Path, &step.Version, &step.Offset, &step.Line, &step.Role,
-			&step.Text, &step.ToolName, &step.ToolUseID, &step.SubagentID, &step.Model, &step.Level,
+			&step.Text, &step.ToolName, &step.ToolUseID, &step.SubagentID, &step.Model, &step.Effort, &step.Level,
 			&input, &output, &cacheRead, &cacheWrite, &step.CostUSD, &step.Cut, &step.UUID, &step.SourceUUID); err != nil {
 			return nil, fmt.Errorf("read the agent session timeline: %w", err)
 		}

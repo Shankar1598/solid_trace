@@ -78,6 +78,17 @@ var agentSessionTitlesMigration = clickHouseMigration{version: 11202, statements
 	`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS title SimpleAggregateFunction(max, Tuple(UInt8, UInt64, String))`,
 }}
 
+// agentSessionEffortMigration adds the effort of the latest reply in each
+// file as an (end offset, effort) tuple, with the same end offset as
+// last_reply, so that a part merge keeps the effort of the reply whose
+// model it keeps. A row from before it has the default tuple, (0, ”),
+// which is "no effort". The parse does not parse an Agent session again,
+// so the effort of an old Agent session stays empty until new lines of it
+// are parsed.
+var agentSessionEffortMigration = clickHouseMigration{version: 11203, statements: []string{
+	`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS last_reply_effort SimpleAggregateFunction(max, Tuple(UInt64, String))`,
+}}
+
 // The kinds of an AgentTitle: a higher kind wins over a lower one.
 const (
 	// AgentTitleFirstMessage is the start of the first person message.
@@ -142,9 +153,11 @@ type AgentSessionDay struct {
 	Replies         uint64
 	UnpricedReplies uint64
 	// LastReplyEnd and LastCostStateEnd are the end offsets of the latest
-	// reply and cost-state line in the file; 0 is none.
+	// reply and cost-state line in the file; 0 is none. LastModel and
+	// LastEffort are the model and the effort of that reply, "" for none.
 	LastReplyEnd     uint64
 	LastModel        string
+	LastEffort       string
 	LastCostStateEnd uint64
 	TotalCostUSD     float64
 	PersonMessages   uint64
@@ -182,7 +195,7 @@ func (s *ClickHouseLogs) insertAgentSessions(ctx context.Context, projectID uint
 	block, err := s.conn.PrepareBatch(ctx, `INSERT INTO agent_sessions (project_id, day, session_id, path, version,
 		first_time, last_time, user_id, harness, repository, folder, run_id, factory_project, parent_session_id,
 		input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, price_cost_usd, replies, unpriced_replies,
-		last_reply, last_cost_state, person_messages, turns, tool_calls, has_start, flags, title)`)
+		last_reply, last_cost_state, person_messages, turns, tool_calls, has_start, flags, title, last_reply_effort)`)
 	if err != nil {
 		return err
 	}
@@ -196,7 +209,8 @@ func (s *ClickHouseLogs) insertAgentSessions(ctx context.Context, projectID uint
 			uint64(d.Session.UserID), d.Session.Harness, d.Session.Repository, d.Session.Folder, d.Session.RunID,
 			d.Session.Project, d.Session.ParentSessionID, d.Input, d.Output, d.CacheRead, d.CacheWrite, d.PriceCost,
 			d.Replies, d.UnpricedReplies, []any{d.LastReplyEnd, d.LastModel}, []any{d.LastCostStateEnd, d.TotalCostUSD},
-			d.PersonMessages, d.Turns, d.ToolCalls, hasStart, d.Flags, []any{d.Title.Kind, d.Title.Order, d.Title.Text}); err != nil {
+			d.PersonMessages, d.Turns, d.ToolCalls, hasStart, d.Flags, []any{d.Title.Kind, d.Title.Order, d.Title.Text},
+			[]any{d.LastReplyEnd, d.LastEffort}); err != nil {
 			return err
 		}
 	}
@@ -216,9 +230,11 @@ type AgentSessionTotals struct {
 	RunID           string
 	Project         string
 	ParentSessionID string
-	// Model is the model of the latest reply in the main transcript, not
-	// in a subagent's.
-	Model string
+	// Model and Effort are the model and the effort of the latest reply in
+	// the main transcript, not in a subagent's. Effort is "" when that
+	// reply has none, or when the server parsed it before effort.
+	Model  string
+	Effort string
 	// Title is the title of the main transcript (AgentTitle), "" for none.
 	Title                                string
 	Input, Output, CacheRead, CacheWrite uint64
@@ -256,7 +272,7 @@ type agentFileTotals struct {
 	priceCost                            float64
 	replies, unpriced                    uint64
 	replyEnd                             uint64
-	model                                string
+	model, effort                        string
 	costEnd                              uint64
 	stateCost                            float64
 	person, turns, toolCalls             uint64
@@ -383,7 +399,7 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 		sum(unpriced_replies), tupleElement(max(last_reply), 1), tupleElement(max(last_reply), 2),
 		tupleElement(max(last_cost_state), 1), tupleElement(max(last_cost_state), 2),
 		sum(person_messages), sum(turns), sum(tool_calls), max(has_start), groupBitOr(flags), min(day), max(day),
-		tupleElement(max(title), 3)
+		tupleElement(max(title), 3), tupleElement(max(last_reply_effort), 2)
 		FROM agent_sessions WHERE project_id = ?` + condition + ` GROUP BY session_id, path, version ORDER BY session_id, path, version`
 	rows, err := s.conn.Query(ctx, query, append([]any{projectID}, conditionArgs...)...)
 	if err != nil {
@@ -406,7 +422,7 @@ func (s *ClickHouseLogs) agentSessionTotals(ctx context.Context, projectID uint3
 		if err := rows.Scan(&t.SessionID, &f.path, &f.version, &f.first, &f.last, &userID, &t.Harness, &t.Repository,
 			&t.Folder, &t.RunID, &t.Project, &t.ParentSessionID, &f.input, &f.output, &f.cacheRead, &f.cacheWrite,
 			&f.priceCost, &f.replies, &f.unpriced, &f.replyEnd, &f.model, &f.costEnd, &f.stateCost,
-			&f.person, &f.turns, &f.toolCalls, &hasStart, &bits, &f.firstDay, &f.lastDay, &f.title); err != nil {
+			&f.person, &f.turns, &f.toolCalls, &hasStart, &bits, &f.firstDay, &f.lastDay, &f.title, &f.effort); err != nil {
 			return nil, fmt.Errorf("read agent sessions: %w", err)
 		}
 		t.UserID, f.hasStart = int64(userID), hasStart != 0
@@ -564,7 +580,7 @@ func sumAgentFiles(t *AgentSessionTotals, files []agentFileTotals, flags uint8) 
 		t.CostUSD = &priceCost
 	}
 	if main != nil {
-		t.Model, t.Title = main.model, main.title
+		t.Model, t.Effort, t.Title = main.model, main.effort, main.title
 	}
 	t.Flags = agentSessionFlags(flags, partial)
 }
