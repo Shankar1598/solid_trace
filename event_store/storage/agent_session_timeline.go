@@ -82,12 +82,14 @@ type AgentTimelinePage struct {
 
 // agentSessionLogs is the condition on the derived Logs of the Agent
 // session's files given, at their highest versions, in the days that
-// the server stored them. No paths select no Logs.
+// the server stored them. No paths select no Logs. Only a transcript has
+// derived Logs, so a file of another kind, such as one named otel,
+// selects none.
 func agentSessionLogs(projectID uint32, session AgentSessionTotals, paths []string) string {
 	c := ClickHouseColumns{}
 	var files []string
 	for _, f := range session.Files {
-		if !slices.Contains(paths, f.Path) {
+		if !isTranscript(f.Path) || !slices.Contains(paths, f.Path) {
 			continue
 		}
 		files = append(files, fmt.Sprintf("(file = %s AND %s = %d)", chsql.String(f.Path), c.Attribute(NumberAttribute, "agent.raw.version"), f.Version))

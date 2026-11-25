@@ -111,7 +111,9 @@ type otlpRequest interface {
 // With a filter, the Agent Project's, a record is stored only when the
 // filter keeps its own vcs.repository.url.full. The others are filtered
 // out before they are normalised: they count as received and filtered, not
-// as dropped, so the sender gets no rejection for them.
+// as dropped, so the sender gets no rejection for them. Each Log kept is in
+// the file otelFile, so the server, not the sender, puts it in its range,
+// as IngestRunEvents does.
 //
 // Every request whose body is read adds to its Project's Ingest counts of
 // its second of arrival, and so does one turned away as overloaded. A body
@@ -151,9 +153,20 @@ func (s *Service) ingestOTLP[R ownAttributed](
 		received := len(sent)
 		sent = slices.DeleteFunc(sent, func(r R) bool { return !filter.Keeps(repositoryURL(r.Attributes())) })
 		counted.LogsFiltered = int64(received - len(sent))
+		normaliseRecord := normaliseLog
+		normaliseLog = func(record R, receipt normalise.Receipt) (models.Log, normalise.Outcome) {
+			receipt.File = otelFile
+			return normaliseRecord(record, receipt)
+		}
 	}
 	return s.storeLogs(projectID, sent, 0, counted, normaliseLog)
 }
+
+// otelFile is the file of each Log that the Agent Project's key sends.
+// No read of the Agent Project uses it: a Run's events are in runs/<run
+// id>, the Dispatcher's Logs in dispatcher, and an Agent session's Logs
+// in the paths of its .jsonl files.
+const otelFile = "otel"
 
 // repositoryURL is the vcs.repository.url.full of a record's own
 // attributes, which Claude Code sets with OTEL_METRICS_INCLUDE_REPOSITORY,

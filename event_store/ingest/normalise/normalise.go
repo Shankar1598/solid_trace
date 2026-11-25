@@ -19,7 +19,8 @@ import (
 )
 
 // Receipt is what normalising a Log needs besides the Log itself: when
-// SolidTrace received it, and how long its Project keeps Logs.
+// SolidTrace received it, how long its Project keeps Logs, and the file
+// that the server gives it, if any.
 type Receipt struct {
 	// At is when SolidTrace received the Log. A Log without a usable time of
 	// its own is placed at it.
@@ -27,6 +28,10 @@ type Receipt struct {
 	// RetentionDays is the Project's Retention, in whole days. A Log's time
 	// older than that before At isn't used.
 	RetentionDays int
+	// File, if set, is the Log's file, which the server gives. A sender's
+	// file is then kept as original.file, as is an Attribute named as a
+	// built-in field.
+	File string
 }
 
 // Outcome says what normalising did to a Log.
@@ -177,8 +182,12 @@ type normaliser struct {
 
 // normaliseSent fills a Log's built-in fields from the values sent for them,
 // keeps a value that can't fill its field as original.<field>, and applies the
-// limits.
+// limits. With r.File, the Log's file is r.File.
 func normaliseSent(s sent, r Receipt) (models.Log, Outcome) {
+	if raw, ok := s.attributes["file"]; ok && r.File != "" {
+		delete(s.attributes, "file")
+		s.attributes["original.file"] = raw
+	}
 	var n normaliser
 	for _, name := range slices.Sorted(maps.Keys(s.attributes)) {
 		n.setAttribute(unreserved(name), s.attributes[name])
@@ -214,6 +223,10 @@ func normaliseSent(s sent, r Receipt) (models.Log, Outcome) {
 	}
 
 	n.limitAttributes()
+	// After the limits, so that no limit drops it.
+	if r.File != "" {
+		setIn(&n.log.Attributes.String, "file", r.File)
+	}
 	if Size(n.log) > maxLogBytes {
 		return models.Log{}, Dropped
 	}
