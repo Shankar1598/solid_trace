@@ -149,6 +149,11 @@ async function openAgentLogs(page: Page, day: string, where: string) {
 }
 
 const today = () => new Date().toISOString().slice(0, 10)
+const TEST_TIME = 180_000
+const msToUtcMidnight = () => {
+  const now = new Date()
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - now.getTime()
+}
 const ofThisRun = `flow.run == "${RUN}"`
 
 async function agentOverview(page: Page): Promise<{ received: number; filtered: number }> {
@@ -160,7 +165,11 @@ async function agentOverview(page: Page): Promise<{ received: number; filtered: 
 }
 
 test("Claude Code's OpenTelemetry with the Agent Project's key keeps only the Captured repository's records, in the file otel", async ({ page, request }) => {
-  test.setTimeout(180_000)
+  // The Logs search and the Overview's 7d range count whole UTC days, so the test runs inside one.
+  const wait = msToUtcMidnight() < TEST_TIME ? msToUtcMidnight() + 1_000 : 0
+  test.setTimeout(TEST_TIME + wait)
+  if (wait) await page.waitForTimeout(wait)
+  const day = today()
   const errors = watchErrors(page, [failedLoad(404)])
 
   await page.goto(`/${ORG}/projects/${setup.slug}`)
@@ -197,15 +206,15 @@ test("Claude Code's OpenTelemetry with the Agent Project's key keeps only the Ca
   }
 
   await expect(async () => {
-    await openAgentLogs(page, today(), ofThisRun)
+    await openAgentLogs(page, day, ofThisRun)
     expect(await logCount(page)).toBe(KEPT.length)
   }).toPass({ timeout: 30_000 })
   const rows = streamRows(page)
   for (const kept of KEPT) await expect(rows.filter({ hasText: kept })).toHaveCount(1)
-  await openAgentLogs(page, today(), `${ofThisRun} and file == "otel"`)
+  await openAgentLogs(page, day, `${ofThisRun} and file == "otel"`)
   expect(await logCount(page)).toBe(KEPT.length)
 
-  await openAgentLogs(page, today(), `${ofThisRun} and run.id == "${FORGED_RUN}"`)
+  await openAgentLogs(page, day, `${ofThisRun} and run.id == "${FORGED_RUN}"`)
   await streamRows(page).first().click()
   await expect(inspector(page)).toBeVisible()
   await expect(field(page, 'message')).toContainText(FORGED_LOG)

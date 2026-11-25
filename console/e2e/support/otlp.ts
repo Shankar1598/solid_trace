@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { PROJECT } from './data'
 
-// What the OTLP flows (logs-otlp, logs-otlp-metrics) share: the ingest URL,
+// What the OTLP flows (logs-otlp, logs-otlp-metrics, claude-code-otel) share: the ingest URL,
 // the captured fixtures, the Project's key, a post to an OTLP route, the
 // explorer's search for the Logs that a post made, and the inspector.
 
