@@ -71,6 +71,9 @@ var trailerLine = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*: `)
 type shellCommand struct {
 	words []string
 	stdin []string
+	// outputAway is true when the command's output goes to a pipe, a file
+	// or a $(…), and so not to the tool result.
+	outputAway bool
 }
 
 // commandPrefixes are the words before a command that do not name it.
@@ -190,6 +193,7 @@ func shellCommands(src string) []*shellCommand {
 type shellParser struct {
 	src string
 	pos int
+	fd  string
 }
 
 type heredoc struct {
@@ -230,7 +234,14 @@ func (p *shellParser) commands(inSubstitution bool) []*shellCommand {
 		case c == '&' && p.at(1) == '>':
 			p.pos++
 			p.redirect(cur, &pending)
-		case c == ';' || c == '&' || c == '|':
+		case c == '|' && p.at(1) == '|':
+			p.pos += 2
+			end()
+		case c == '|':
+			cur.outputAway = true
+			p.pos++
+			end()
+		case c == ';' || c == '&':
 			p.pos++
 			end()
 		case c == '(':
@@ -251,6 +262,7 @@ func (p *shellParser) commands(inSubstitution bool) []*shellCommand {
 			w := p.word()
 			// The number of a file descriptor, as in 2>&1, is not a word.
 			if (p.at(0) == '<' || p.at(0) == '>') && strings.Trim(p.src[start:p.pos], "0123456789") == "" {
+				p.fd = p.src[start:p.pos]
 				continue
 			}
 			cur.words = append(cur.words, w)
@@ -276,6 +288,10 @@ func (p *shellParser) redirect(cur *shellCommand, pending *[]heredoc) {
 		p.pos++
 	}
 	kind := p.src[op:p.pos]
+	if (strings.HasPrefix(kind, ">") || strings.HasPrefix(kind, "&>")) && (p.fd == "" || p.fd == "1") {
+		cur.outputAway = true
+	}
+	p.fd = ""
 	for p.at(0) == ' ' || p.at(0) == '\t' {
 		p.pos++
 	}
@@ -397,6 +413,9 @@ func (p *shellParser) substitution() string {
 	start := p.pos
 	p.pos += 2
 	inner := p.commands(true)
+	for _, c := range inner {
+		c.outputAway = true
+	}
 	if len(inner) == 1 && slices.Equal(inner[0].words, []string{"cat"}) && len(inner[0].stdin) == 1 {
 		return strings.TrimRight(inner[0].stdin[0], "\n")
 	}

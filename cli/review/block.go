@@ -70,7 +70,9 @@ func FenceBlock(compact []byte) string {
 // called by its path. bodies are the blocks that the command gives to
 // review block on stdin, when each review block of the command reads a
 // heredoc or a here-string and no review fixed is in it: Claude Code keeps
-// only the start of a long output.
+// only the start of a long output. A review command whose output goes to
+// a pipe or a file, and that gives no block on stdin, is not a call: the
+// tool result does not hold what it printed.
 func blockCommand(command string) (bodies []string, ok bool) {
 	fromStdin := true
 	for _, c := range shellCommands(command) {
@@ -78,16 +80,12 @@ func blockCommand(command string) (bodies []string, ok bool) {
 		if len(w) < 3 || filepath.Base(w[0]) != "solidtrace" || w[1] != "review" {
 			continue
 		}
-		switch w[2] {
-		case "block":
+		switch {
+		case w[2] == "block" && len(c.stdin) > 0:
 			ok = true
-			if len(c.stdin) == 0 {
-				fromStdin = false
-			} else {
-				// As in Bash, the last of more redirections is the stdin.
-				bodies = append(bodies, c.stdin[len(c.stdin)-1])
-			}
-		case "fixed":
+			// As in Bash, the last of more redirections is the stdin.
+			bodies = append(bodies, c.stdin[len(c.stdin)-1])
+		case (w[2] == "block" || w[2] == "fixed") && !c.outputAway:
 			ok, fromStdin = true, false
 		}
 	}

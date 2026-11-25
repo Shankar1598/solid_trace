@@ -46,6 +46,12 @@ func TestReviewDigestTakesTheBlocksThatTheReviewCommandsPrinted(t *testing.T) {
 		userLine("u-fixed", []map[string]any{toolResult("t-fixed", []map[string]any{text(fenced(callUpdateBlock))}, false)}),
 		assistantLine("a-echo", bash("t-echo", "echo 'solidtrace review block'")),
 		userLine("u-echo", []map[string]any{toolResult("t-echo", fenced(callRunBlock), false)}),
+		assistantLine("a-pipe", bash("t-pipe", "solidtrace review fixed | head -c 40")),
+		userLine("u-pipe", []map[string]any{toolResult("t-pipe", "```solidtrace-findings\n{\"version\":2", false)}),
+		assistantLine("a-file", bash("t-file", "solidtrace review fixed > fixed.md 2>&1; x=$(solidtrace review fixed)")),
+		userLine("u-file", []map[string]any{toolResult("t-file", "", false)}),
+		assistantLine("a-err", bash("t-err", "solidtrace review fixed 2>/dev/null || true")),
+		userLine("u-err", []map[string]any{toolResult("t-err", fenced(callUpdateBlock), false)}),
 		assistantLine("a-copy", text("Recorded:\n"+fenced(callRunBlock))),
 	)
 
@@ -61,6 +67,7 @@ func TestReviewDigestTakesTheBlocksThatTheReviewCommandsPrinted(t *testing.T) {
 		{"a-text", "agent_text", ""},
 		{"a-fixed", "commit", ""},
 		{"u-fixed", "findings", ""},
+		{"u-err", "findings", ""},
 		{"a-copy", "agent_text", ""},
 	}
 	if got := steps(d); !reflect.DeepEqual(got, want) {
