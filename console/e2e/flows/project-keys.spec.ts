@@ -4,10 +4,6 @@ import { resolve } from 'node:path'
 import { ADMIN, MEMBER, ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 
-// The Project page's keys, which only an Organization's admins change: an
-// admin generates a key-less Project's key and sees its DSN, and a member
-// sees no button to. Each run makes its own key-less Projects.
-
 const stamp = Date.now()
 const forAdmin = `flow-keys-admin-${stamp}`
 const forMember = `flow-keys-member-${stamp}`
@@ -50,9 +46,14 @@ test("an admin generates a key-less Project's key and sees its DSN", async ({ pa
   expect(errors).toEqual([])
 })
 
-test("an admin generates the Agent Project's one key and sees the key, not a DSN, with what it is for", async ({ page }) => {
+test("an admin goes from Capture setup's telemetry step to the Agent Project, generates its one key, and the step fills it in", async ({ page }) => {
   const errors = watchErrors(page)
-  await page.goto(`/${ORG}/projects/${agentSlug}`)
+  const telemetry = page.locator('#telemetry')
+  await page.goto(`/${ORG}/settings/agent_sessions/setup`)
+  await expect(telemetry).toContainText('"OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer <key>"')
+  await telemetry.getByRole('link', { name: "Agent Project's page" }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/projects/${agentSlug}$`))
+
   const forOtel = page.getByText("The Agent Project's key is for Claude Code's OpenTelemetry only.", { exact: false })
   await expect(forOtel).toBeVisible()
   await expect(noKeys(page)).toBeVisible()
@@ -65,6 +66,11 @@ test("an admin generates the Agent Project's one key and sees the key, not a DSN
   await expect(page.getByRole('button', { name: 'Copy the key' })).toBeVisible()
   await expect(forOtel).toBeVisible()
   await expect(page.getByRole('button', { name: 'Generate a key' })).toHaveCount(0)
+
+  const key = await page.locator('input[readonly]').inputValue()
+  await page.goto(`/${ORG}/settings/agent_sessions/setup#telemetry`)
+  await expect(telemetry).toContainText(`"OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer ${key}"`)
+  await expect(telemetry).not.toContainText('<key>')
   expect(errors).toEqual([])
 })
 

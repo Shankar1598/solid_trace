@@ -32,6 +32,8 @@ If your team uses Claude Code's [managed settings](https://docs.claude.com/en/do
 
 Claude Code gets the plugin when it starts on a machine, and the plugin runs from the next start. Each engineer must still install the CLI and sign in (steps 1 and 3 below).
 
+Step 5 of the Capture setup page gives a managed-settings block that also sends Claude Code's telemetry. See [Send Claude Code's telemetry to SolidTrace](#send-claude-codes-telemetry-to-solidtrace).
+
 ## For engineers: turn on capture
 
 **Settings → Agent sessions → Capture setup** in Console gives each command with your instance's version and addresses filled in. Each member of the Organization can open it.
@@ -173,6 +175,106 @@ A feature often spans several Agent sessions. Before the record, `open-pr` runs 
 The record reads `solidtrace review digest --session A --session B`, not the transcripts: one short timeline of the confirmed sessions in time order. Before a session's first review, it keeps the task, the person's messages, the delegations and the commits. From the first review on (a review start, or a findings block in the agent's text or a subagent's report), it also has the agent's texts, the findings blocks, the subagents' reports and the edits. Each commit event keeps the commit's `Review-Findings` trailers whole. Then `solidtrace review check --digest D --record R` checks the record against the digest: each block finding and each trailer reaches the record, each outcome agrees with its events, and each claim cites an event of the digest. It exits 1 when it finds a problem. A session on Bitbucket needs `BITBUCKET_TOKEN` for `open-pr` to open the PR. Without it, `open-pr` gives the link that opens a new PR, and the body to paste.
 
 In a captured repository, the record uploads with the Agent session, so a team can count the outcomes over many sessions with `run_sql` on the Agent Project. For example, this query counts the records in the range that `run_sql` reads: `SELECT count(*) FROM logs WHERE position(message, '```solidtrace-pr-record') > 0`.
+
+## Send Claude Code's telemetry to SolidTrace
+
+Claude Code can send OpenTelemetry events and metrics while it works. SolidTrace stores them as Logs of the Agent Project, next to the Agent sessions. The records arrive in real time, but they do not hold the transcript.
+
+### What the records hold
+
+- An event for each prompt, reply, API request, tool result and hook, with its counts and durations: for example the tokens, `duration_ms`, the tool name and if the tool call was a success.
+- The metrics: the cost, the tokens, the sessions, the lines of code, the commits, the pull requests and the active time.
+- The model and the effort of each API request.
+- The cost (`cost_usd` on `claude_code.api_request`, and the `claude_code.cost.usage` metric) is Claude Code's estimate at list prices. It is not an invoice, the same as the cost on the Agent sessions page.
+- The engineer's email address, the account id and the Claude Code session id, on each record.
+- The repository: `vcs.repository.url.full`, `vcs.owner.name`, `vcs.repository.name` and `vcs.provider.name`.
+
+The records do not hold the text of a prompt or a reply (Claude Code sends `<REDACTED>`), Bash commands or tool inputs. The settings do not set `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_TOOL_DETAILS`, because they send that text. Do not add them: Claude Code sends the records of each repository on the machine, also of the repositories that SolidTrace does not capture. Without `OTEL_LOG_TOOL_DETAILS`, Claude Code also hides the names of your own skills and subagents (as `custom_skill` and `custom`). To see which skills ran, read the Agent sessions.
+
+### Turn it on
+
+1. An Admin opens the Agent Project's page in **Projects** and clicks **Generate a key**. The Agent Project can have only one key. Each member of the Organization can read it.
+2. Open **Settings → Agent sessions → Capture setup**, step 5, **Send telemetry (optional)**. It gives the settings with your instance's Ingest URL and the key filled in.
+3. Add the `env` block to `~/.claude/settings.json` on each machine:
+
+   ```json
+   {
+     "env": {
+       "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+       "OTEL_LOGS_EXPORTER": "otlp",
+       "OTEL_METRICS_EXPORTER": "otlp",
+       "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+       "OTEL_EXPORTER_OTLP_ENDPOINT": "https://solidtrace.example.com:4443",
+       "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer <key>",
+       "OTEL_METRICS_INCLUDE_REPOSITORY": "1"
+     }
+   }
+   ```
+
+   Or, if your team uses Claude Code's managed settings, use step 5's managed-settings block in place of the block of step 2. It has the plugin and the `env` block, so each machine gets both.
+4. Start Claude Code again. Claude Code reads these variables only when it starts.
+
+Claude Code ignores these variables in a repository's `.claude/settings.json`. Put them in the user settings or in the managed settings.
+
+### Which records SolidTrace keeps
+
+- Ingest keeps a record only when its `vcs.repository.url.full` matches a captured repository. It drops each other record when it arrives, and does not store it: the records of other repositories, and the records with no repository. Claude Code sends two events (`managed_settings_resolved` and the first `hook_execution_start`) before it reads the repository, so SolidTrace always drops them.
+- When the captured repositories list is empty, Ingest drops every record.
+- Claude Code reads only the `origin` remote, one time, in the folder where the session starts. So the records of a captured repository arrive only from a clone whose `origin` is that repository. SolidTrace drops all the records of a clone with no `origin`.
+- A change to the captured repositories applies to the next request.
+- Claude Code gets a success for a dropped record, so it shows no warning. The Overview shows the dropped records in **Received → Kept → Stored**, as a slice after Kept and as **Filtered out as not of a Captured repository** below it. Look there when no record arrives.
+- The key works only on `/v1/logs` and `/v1/metrics` ([ADR 0023](adr/0023-the-agent-project-takes-one-key-for-opentelemetry-only.md)). It cannot send JSON Logs, a Sentry SDK's Events or Spans.
+
+### Read the records
+
+SolidTrace stores each record of the key in the file `otel`, and keeps a `file` that the sender sends as `original.file`. The Agent sessions and the Runs are in other files, so start each Query with `file == "otel"`.
+
+Open **Logs** and choose the Agent Project. Each event is a Log with the event's name as its message, such as `claude_code.api_request`. Each metric data point is a Log with the metric's name as its message and its number in `metric.value` (see [Metrics](logs/opentelemetry.md#metrics)). Claude Code sends delta metrics, so `sum(metric.value)` adds them up correctly.
+
+The estimated cost by model and effort:
+
+```
+where file == "otel" and message == "claude_code.cost.usage"
+| summarize sum(metric.value) by model, effort
+```
+
+The tokens by kind (`input`, `output`, `cacheRead` and `cacheCreation`) and model:
+
+```
+where file == "otel" and message == "claude_code.token.usage"
+| summarize sum(metric.value) by type, model
+```
+
+The estimated cost by engineer and day:
+
+```
+where file == "otel" and message == "claude_code.cost.usage"
+| summarize sum(metric.value) by user.email, bin(time, 1d)
+```
+
+The estimated cost by repository:
+
+```
+where file == "otel" and message == "claude_code.cost.usage"
+| summarize sum(metric.value) by vcs.repository.name
+```
+
+The tool calls, their failures and their time, by tool. On a tool result, Claude Code sends `success` and `duration_ms` as text, so the Query compares `success` with `"false"` and changes `duration_ms` to a number with `toint`:
+
+```
+where file == "otel" and message == "claude_code.tool_result"
+| summarize calls = count(), failed = countif(success == "false"), p95_ms = percentile(toint(duration_ms), 95) by tool_name
+| sort by calls desc
+```
+
+The API requests and their time, by model:
+
+```
+where file == "otel" and message == "claude_code.api_request"
+| summarize count(), avg(duration_ms), percentile(duration_ms, 95) by model
+```
+
+An agent can run the same Queries over MCP, with `query_logs` on the Agent Project.
 
 ## Set a Project's Factory settings
 

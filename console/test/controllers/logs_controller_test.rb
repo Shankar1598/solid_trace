@@ -51,12 +51,34 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
   test "the explorer has where to send the Project's Logs, for an empty Project's snippets" do
     key = create(:project_key, project: @project)
 
-    assert_equal({ "url" => "http://www.example.com:4000", "key" => key.public_key }, explorer_page["ingest"])
+    assert_equal({ "kind" => "snippets", "url" => "http://www.example.com:4000", "key" => key.public_key }, explorer_page["get_started"])
 
     ENV["PUBLIC_INGEST_URL"] = "https://ingest.example.com/"
-    assert_equal "https://ingest.example.com", explorer_page["ingest"]["url"]
+    assert_equal "https://ingest.example.com", explorer_page["get_started"]["url"]
   ensure
     ENV.delete("PUBLIC_INGEST_URL")
+  end
+
+  test "the empty Agent Project's explorer points to Claude Code's telemetry on the Capture setup page, not to snippets" do
+    @project = create(:project, organization: @organization, name: "Agent sessions", agent: true)
+    assert_equal({ "kind" => "telemetry", "capture_setup_path" => "/#{@organization.slug}/settings/agent_sessions/setup#telemetry",
+                   "has_key" => false },
+                 explorer_page["get_started"])
+
+    create(:project_key, project: @project)
+    assert explorer_page["get_started"]["has_key"]
+  end
+
+  test "the Agent Project sends no test Log, as its key cannot" do
+    @project = create(:project, organization: @organization, name: "Agent sessions", agent: true)
+    create(:project_key, project: @project)
+    ingest = stub_request(:post, %r{/api/#{@project.id}/logs\z})
+
+    post test_project_logs_url(@project, org_slug: @organization.slug), as: :json
+
+    assert_response :unprocessable_content
+    assert_equal ProjectKey::AGENT_PROJECT, response.parsed_body["error"]
+    assert_not_requested ingest
   end
 
   test "the explorer learns after it opens whether the Project has Logs in its Retention" do

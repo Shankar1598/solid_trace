@@ -6,7 +6,8 @@ import { cn } from '@/lib/utils'
  * divides it from the section before, so a form reads as a column of steps.
  * `actions` sit at the right of the title: a switch or a refresh.
  */
-export function FormSection({ title, description, actions, children, className }: {
+export function FormSection({ id, title, description, actions, children, className }: {
+  id?: string
   title: ReactNode
   description?: ReactNode
   actions?: ReactNode
@@ -14,7 +15,7 @@ export function FormSection({ title, description, actions, children, className }
   className?: string
 }) {
   return (
-    <section className={cn('space-y-4 border-t pt-6', className)}>
+    <section id={id} className={cn('space-y-4 border-t pt-6', className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0 space-y-1">
           <h2 className="text-sm font-semibold">{title}</h2>

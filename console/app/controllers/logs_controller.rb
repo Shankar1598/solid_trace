@@ -35,8 +35,7 @@ class LogsController < ApplicationController
       project: ProjectOptionSerializer.new(@project).as_json,
       projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
       sql_queries_enabled: InstanceSetting.current.sql_queries_enabled?,
-      # Where the Project's Logs go, for an empty Project's snippets.
-      ingest: { url: public_ingest_url, key: project_key&.public_key },
+      get_started: get_started,
       # Loaded once the page shows, so EventStore never holds the page up.
       has_logs: InertiaRails.defer { logs_in_retention? },
     }
@@ -46,6 +45,8 @@ class LogsController < ApplicationController
   # a shipper would send it, so an empty Project's page can show one at once.
   # Answers the Log's time.
   def send_test
+    return render json: { error: ProjectKey::AGENT_PROJECT }, status: :unprocessable_content if @project.agent?
+
     key = project_key
     return render json: { error: "This Project has no key. Add one in its settings, then send a test Log." }, status: :unprocessable_content unless key
 
@@ -168,6 +169,18 @@ class LogsController < ApplicationController
   # The key snippets show and the test Log is sent with: the Project's first.
   def project_key
     @project.project_keys.order(:id).first
+  end
+
+  def get_started
+    if @project.agent?
+      {
+        kind: "telemetry",
+        capture_setup_path: capture_setup_path(org_slug: @current_org.slug, anchor: "telemetry"),
+        has_key: project_key.present?,
+      }
+    else
+      { kind: "snippets", url: public_ingest_url, key: project_key&.public_key }
+    end
   end
 
   # Whether any Log is in the Project's Retention, up to the hour ahead
