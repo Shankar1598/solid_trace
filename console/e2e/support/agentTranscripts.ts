@@ -192,9 +192,9 @@ export function openPrSession(cwd: string, opts: { exampleRecord: string; record
     main.person(`End the reply with the record:\n\n\`\`\`solidtrace-pr-record\n${opts.exampleRecord}\n\`\`\``)
     main.reply([{ type: 'text', text: `Opened the PR.\n\n\`\`\`solidtrace-pr-record\n${opts.record}\n\`\`\`` }], usage)
   } else {
-    main.person(`Send the record:\n\n\`\`\`\nsolidtrace review final <<'EOF'\n${opts.exampleRecord}\nEOF\n\`\`\``)
+    main.person(`Send the record:\n\n\`\`\`\nsolidtrace review final <<'SOLIDTRACE_RECORD_END'\n${opts.exampleRecord}\nSOLIDTRACE_RECORD_END\n\`\`\``)
     const toolUseId = `toolu_${randomBytes(8).toString('hex')}`
-    main.reply([{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: `solidtrace review final <<'EOF'\n${opts.record}\nEOF`, description: 'Send the Review record' } }], usage)
+    main.reply([{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: `solidtrace review final <<'SOLIDTRACE_RECORD_END'\n${opts.record}\nSOLIDTRACE_RECORD_END`, description: 'Send the Review record' } }], usage)
     const parsed = JSON.parse(opts.record) as { round: number; findings: { outcome: string }[] }
     const fixed = parsed.findings.filter(f => f.outcome === 'fixed').length
     main.toolResult(toolUseId, `record: round ${parsed.round}, ${parsed.findings.length} findings, ${fixed} fixed`)
