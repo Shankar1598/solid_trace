@@ -2,6 +2,7 @@ package agentprocessing
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,11 +12,12 @@ import (
 )
 
 // The Review record of a PR (ADR 0024): the open-pr and update-pr skills
-// end their final reply with the record in a solidtrace-pr-record block.
-// The parse keeps the last such block of an assistant line of the main
-// transcript, when it is a record of version 2 in valid JSON, all of it,
-// with the place of its line and the counts that the Review records page
-// lists.
+// send the record to solidtrace review final in a heredoc. Before that,
+// they ended their final reply with the record in a solidtrace-pr-record
+// block. The parse keeps the last such call or block of an assistant line
+// of the main transcript, when it is a record of version 2 in valid JSON,
+// all of it, with the place of its line and the counts that the Review
+// records page lists.
 
 // reviewRecord is a record of version 2 with four findings, one by each
 // kind of finder, and three confirmations: given, not given, and with no
@@ -42,6 +44,29 @@ func reply(texts ...string) string {
 
 func finalReply(record string) string {
 	return reply("The PR is https://github.com/acme/shop/pull/7.\n\n```solidtrace-pr-record\n" + record + "\n```\n")
+}
+
+// bashCalls is an assistant line with one Bash tool use for each command,
+// after the texts.
+func bashCalls(texts []string, commands ...string) string {
+	var content []map[string]any
+	for _, t := range texts {
+		content = append(content, map[string]any{"type": "text", "text": t})
+	}
+	for i, c := range commands {
+		content = append(content, map[string]any{"type": "tool_use", "id": "toolu_" + string(rune('a'+i)), "name": "Bash", "input": map[string]string{"command": c}})
+	}
+	line, _ := json.Marshal(map[string]any{
+		"type": "assistant", "uuid": "a3", "timestamp": "2026-11-20T10:01:00Z",
+		"message": map[string]any{"id": "msg_3", "role": "assistant", "model": "claude-opus-5-5", "content": content},
+	})
+	return string(line)
+}
+
+// finalCall is the call of solidtrace review final with record in a
+// heredoc, as the skills send it.
+func finalCall(record string) string {
+	return "solidtrace review final <<'EOF'\n" + record + "\nEOF"
 }
 
 // recordsOf parses the units as one range and gives their Review records.
@@ -141,5 +166,95 @@ func TestEachFinalReplyOfAnAgentSessionIsARecordAndAParseAgainGivesTheSameRows(t
 	}
 	if again := recordsOf(unit); !reflect.DeepEqual(again, records) {
 		t.Errorf("Expected a parse again to give the same rows, %+v, got %+v", records, again)
+	}
+}
+
+func TestOnlyOneCallOfReviewFinalWithAHeredocIsARecord(t *testing.T) {
+	round3 := strings.Replace(reviewRecord, `"round":2`, `"round":3`, 1)
+	cases := []struct {
+		name  string
+		path  string
+		lines []string
+		round uint32
+	}{
+		{"the call of the skills", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord))}, 2},
+		{"a path to solidtrace", "session.jsonl", []string{bashCalls(nil, "/home/ann/.local/bin/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF\n")}, 2},
+		{"a plain heredoc word, whose body the shell changes", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<REC\n"+reviewRecord+"\nREC")}, 0},
+		{"a word in single quotes on one side only", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF\n"+reviewRecord+"\nEOF")}, 0},
+		{"a comment line and a blank line before the call", "session.jsonl", []string{bashCalls(nil, "# Send the Review record\n\n"+finalCall(reviewRecord))}, 2},
+		{"blank lines after the end word", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord)+"\n \n\n")}, 2},
+		{"only comment lines", "session.jsonl", []string{bashCalls(nil, "# solidtrace review final <<'EOF'")}, 0},
+		{"a heredoc word in double quotes", "session.jsonl", []string{bashCalls(nil, "solidtrace  review final << \"EOF\"\n"+reviewRecord+"\nEOF")}, 2},
+		{"cat with a heredoc", "session.jsonl", []string{bashCalls(nil, "cat <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"another review command", "session.jsonl", []string{bashCalls(nil, "solidtrace review block <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"a name that only ends in solidtrace", "session.jsonl", []string{bashCalls(nil, "/bin/notsolidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"a pipe", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF' | tee out\n"+reviewRecord+"\nEOF")}, 0},
+		{"a command before it", "session.jsonl", []string{bashCalls(nil, "cd /tmp && solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"a command after it", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord)+"\necho done")}, 0},
+		{"a command after it on the first line", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF'; echo done\n"+reviewRecord+"\nEOF")}, 0},
+		{"a redirect", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF' > out.txt\n"+reviewRecord+"\nEOF")}, 0},
+		{"a command substitution", "session.jsonl", []string{bashCalls(nil, "$(pwd)/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"a command before it with no space", "session.jsonl", []string{bashCalls(nil, "cd /tmp&&/bin/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"a comment", "session.jsonl", []string{bashCalls(nil, "#/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"a variable set before another command", "session.jsonl", []string{bashCalls(nil, "X=/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
+		{"quotes that do not match", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF\"\n"+reviewRecord+"\nEOF")}, 0},
+		{"a path in the home folder", "session.jsonl", []string{bashCalls(nil, "~/.local/bin/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 2},
+		{"a heredoc with no end", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF'\n"+reviewRecord)}, 0},
+		{"a body that is not valid JSON", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord[:len(reviewRecord)-1]))}, 0},
+		{"a body of another version", "session.jsonl", []string{bashCalls(nil, finalCall(strings.Replace(reviewRecord, `"version":2`, `"version":1`, 1)))}, 0},
+		{"a subagent's call", "subagents/agent-a1.jsonl", []string{bashCalls(nil, finalCall(reviewRecord))}, 0},
+		{"a sidechain call", "session.jsonl", []string{strings.Replace(bashCalls(nil, finalCall(reviewRecord)), `"type":"assistant"`, `"type":"assistant","isSidechain":true`, 1)}, 0},
+		{"a call after a block in one line", "session.jsonl",
+			[]string{bashCalls([]string{"```solidtrace-pr-record\n" + reviewRecord + "\n```"}, finalCall(round3))}, 3},
+		{"the last call of a line decides", "session.jsonl", []string{bashCalls(nil, finalCall(round3), finalCall(`{"version": 2, ...}`))}, 0},
+		{"a call, then a reply block on a later line", "session.jsonl",
+			[]string{bashCalls(nil, finalCall(reviewRecord)), finalReply(round3)}, 3},
+		{"a reply block, then a call on a later line", "session.jsonl",
+			[]string{finalReply(reviewRecord), bashCalls(nil, finalCall(round3))}, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			records := recordsOf(unitOf(c.path, 0, c.lines...))
+			if c.round == 0 {
+				if len(records) != 0 {
+					t.Fatalf("Expected no Review record, got %+v", records)
+				}
+				return
+			}
+			if len(records) == 0 {
+				t.Fatal("Expected a Review record, got none")
+			}
+			last := records[len(records)-1]
+			if last.Round != c.round || last.PR != "https://github.com/acme/shop/pull/7" || last.Summary.Findings != 4 {
+				t.Fatalf("Expected the last Review record to be of round %d, got %+v", c.round, records)
+			}
+		})
+	}
+}
+
+func TestACallOfReviewFinalKeepsTheRecordAsItsBody(t *testing.T) {
+	lines := []string{person("Open the PR"), bashCalls([]string{"I send the record."}, finalCall(reviewRecord))}
+	records := recordsOf(unitOf("session.jsonl", 0, lines...))
+	if len(records) != 1 || records[0].Record != reviewRecord || records[0].Title != "Cart page & <checkout>" ||
+		records[0].Summary != (storage.ReviewSummary{Findings: 4, Fixed: 2, Missed: 3, NotGiven: 2}) {
+		t.Fatalf("Expected the record of the call, all of it, got %+v", records)
+	}
+}
+
+func TestTheCallOfTheOpenPRSkillIsACallThatTheParseReads(t *testing.T) {
+	skill, err := os.ReadFile("../../cli/plugin-skills/skills/open-pr/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, found := strings.Cut(string(skill), "## 8. Final reply")
+	_, rest, _ = strings.Cut(rest, "````\n")
+	example, _, _ := strings.Cut(rest, "\n````")
+	if !found || !strings.Contains(example, `{"version": 2, ...}`) {
+		t.Fatalf("Expected the Final reply step of open-pr to give the call with an example record, got %q", example)
+	}
+	call := strings.Replace(example, `{"version": 2, ...}`, reviewRecord, 1)
+	records := recordsOf(unitOf("session.jsonl", 0, bashCalls(nil, call)))
+	if len(records) != 1 || records[0].Record != reviewRecord {
+		t.Fatalf("Expected the skill's call to give its record, got %+v for %q", records, example)
 	}
 }

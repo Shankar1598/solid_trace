@@ -12,13 +12,14 @@ import (
 
 // reviewRecordsMigration makes review_records, the Review records that the
 // parse finds in Agent sessions (ADR 0024): one row for each assistant line
-// of a main transcript whose last solidtrace-pr-record block is a record.
-// A row has the place of its line, as the line's Log has, what the Review
-// records page lists of the record, and the record as the block has it,
-// all of it: a Log cuts a string at 64 KiB. day is the UTC day on which the
-// server stored the line's unit, as in agent_session_files, so that
-// Retention, Project deletion and the disk limit drop a Review record with
-// its Agent session. A parse again of the same line replaces its row.
+// of a main transcript whose last solidtrace review final call or
+// solidtrace-pr-record block is a record. A row has the place of its line,
+// as the line's Log has, what the Review records page lists of the record,
+// and the record as the call or the block has it, all of it: a Log cuts a
+// string at 64 KiB. day is the UTC day on which the server stored the
+// line's unit, as in agent_session_files, so that Retention, Project
+// deletion and the disk limit drop a Review record with its Agent session.
+// A parse again of the same line replaces its row.
 // After the Agent session steps.
 var reviewRecordsMigration = clickHouseMigration{version: 11205, statements: []string{
 	`CREATE TABLE IF NOT EXISTS review_records (
@@ -112,21 +113,38 @@ type ReviewRecordPR struct {
 // record, the latest first (compareStores). Of the records of one path of an Agent
 // session, only those of its highest version count, as a read of the
 // session reads only that version: after a trim, the new version repeats
-// the lines of the old one.
+// the lines of the old one. Of the records of one Agent session with the
+// same PR and round, only the last line counts: a review final call that
+// the CLI refused and the call again after it are one round.
 func ReviewRecordsByPR(records []ReviewRecord) []ReviewRecordPR {
 	type file struct {
 		session uuid.UUID
 		path    string
+	}
+	type round struct {
+		session uuid.UUID
+		pr      string
+		round   uint32
 	}
 	highest := map[file]uint32{}
 	for _, r := range records {
 		f := file{r.SessionID, r.Path}
 		highest[f] = max(highest[f], r.Version)
 	}
+	last := map[round]ReviewRecord{}
+	for _, r := range records {
+		if r.Version != highest[file{r.SessionID, r.Path}] {
+			continue
+		}
+		k := round{r.SessionID, r.PR, r.Round}
+		if l, ok := last[k]; !ok || cmp.Or(cmp.Compare(r.Path, l.Path), cmp.Compare(r.Offset, l.Offset)) > 0 {
+			last[k] = r
+		}
+	}
 	index := map[string]int{}
 	var prs []ReviewRecordPR
 	for _, r := range records {
-		if r.Version != highest[file{r.SessionID, r.Path}] {
+		if last[round{r.SessionID, r.PR, r.Round}].ID != r.ID {
 			continue
 		}
 		i, ok := index[r.Key()]

@@ -9,7 +9,8 @@ import (
 )
 
 // The Review records of an Agent Project (ADR 0024): the parse finds the
-// record that open-pr or update-pr ends its final reply with, and the read
+// record that open-pr or update-pr sends to solidtrace review final, or
+// that an older session ends its final reply with, and the read
 // API lists the newest record of each PR and gives one record whole, with
 // the rounds of its PR.
 
@@ -210,6 +211,39 @@ func TestAReviewRecordParsedAgainAfterACrashIsListedOnce(t *testing.T) {
 	status, shown := showReviewRecord(t, env, o.project, map[string]any{"key": "https://github.com/acme/shop/pull/7"})
 	if status != 200 || len(shown.Rounds) != 1 {
 		t.Errorf("Expected one round, got %d %+v", status, shown.Rounds)
+	}
+}
+
+// reviewFinalCall is an assistant line that sends the record to
+// solidtrace review final, as the skills do.
+func reviewFinalCall(record string) string {
+	line, _ := json.Marshal(map[string]any{
+		"type": "assistant", "uuid": "a8", "timestamp": "2026-10-02T11:29:00Z",
+		"message": map[string]any{"id": "msg_8", "role": "assistant", "model": "claude-opus-5-5", "content": []map[string]any{
+			{"type": "tool_use", "id": "toolu_8", "name": "Bash", "input": map[string]string{"command": "solidtrace review final <<'EOF'\n" + record + "\nEOF"}},
+		}},
+	})
+	return string(line)
+}
+
+func TestACallOfReviewFinalThatTheCLIRefusedAndItsRetryAreOneRound(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	const pr = "https://github.com/acme/shop/pull/7"
+	good := prRecord(pr, 1, 4)
+	refused := strings.Replace(good, `"round":1`, `"round":1,"summary":"not a field"`, 1)
+
+	body := jsonl(transcript[0], reviewFinalCall(refused), reviewFinalCall(good))
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: body}), 200)
+
+	answer := listReviewRecords(t, env, o.project)
+	if len(answer.ReviewRecords) != 1 || answer.ReviewRecords[0].Earlier != 0 || answer.ReviewRecords[0].Round != 1 {
+		t.Fatalf("Expected one round 1 with no earlier round, got %+v", answer.ReviewRecords)
+	}
+	status, shown := showReviewRecord(t, env, o.project, map[string]any{"key": pr})
+	if status != 200 || shown.Record != good || len(shown.Rounds) != 1 {
+		t.Errorf("Expected the retry as the only round, got %d %+v", status, shown.Rounds)
 	}
 }
 

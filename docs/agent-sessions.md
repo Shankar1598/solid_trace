@@ -162,7 +162,7 @@ The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is no
   - what the person said, and what the agent then found and changed;
   - the fix.
 
-  A problem that the person, a later agent or a test run found is a finding too, with `found_by`. So the record also shows what the reviews missed. The record tells the `story` of the feature, and gives the outcome of each finding: `fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`. The PR body shows the record for the human reviewer. The reply ends with it in a `solidtrace-pr-record` block.
+  A problem that the person, a later agent or a test run found is a finding too, with `found_by`. So the record also shows what the reviews missed. The record tells the `story` of the feature, and gives the outcome of each finding: `fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`. The PR body shows the record for the human reviewer. At the end, the agent sends the record to `solidtrace review final` in a heredoc, which checks it and prints one line with its round and counts. The final reply gives the PR and a short summary, not the JSON of the record.
 
 - **`/solidtrace-skills:update-pr`** works on the feedback on the open PR: its comments, its reviews (also from a review bot) and its failed checks. Each change request becomes a finding with `found_by` (the comment's author, the bot or the check). The agent decides and fixes each one, runs security on the fix diff, and replies to each comment. Then it writes the next round of the record, and updates the PR body. A record replaces the earlier rounds of the same PR. `update-pr local` reads the feedback from `<branch>.comments.md` next to the local PR file.
 
@@ -202,11 +202,12 @@ Click the PR to open its record. The page shows:
 
 The record is what the agent wrote, with the words of PR commenters in it, so the pages show all of it as text, never as HTML or Markdown.
 
-SolidTrace reads the record from the final reply of the Agent session: the last `solidtrace-pr-record` block of an agent reply in the main transcript, when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). So:
+SolidTrace reads the record from the `solidtrace review final` call of the Agent session: the heredoc of a Bash call in the main transcript that is only that command, with the heredoc's word in quotes (`<<'EOF'`), when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). An Agent session from before that command gives its record in a `solidtrace-pr-record` block of its final reply, and SolidTrace reads that block too. When one agent message has more than one record, the last one counts. So:
 
 - A record shows when its Agent session uploads: in a captured repository, or in a Run.
 - An Agent session that SolidTrace parsed before Review records came has no Review record. SolidTrace does not read the old lines again.
-- A record that is not valid JSON, or not version 2, does not show. A record in a person's message, a subagent or a tool output does not show.
+- A record that is not valid JSON, or not version 2, does not show. A record in a person's message, a subagent or a tool output does not show. A `review final` call with other shell text in its command (a pipe, `&&`, `;`, a redirect or a second command), or with `<<EOF` and no quotes, does not show.
+- When `review final` refuses a record and the agent sends it again, the two calls are one round: of one Agent session's records with the same PR and round, only the last one shows.
 - The records follow the Agent Project's Retention, as the Agent sessions do.
 
 ### Over MCP

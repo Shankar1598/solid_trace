@@ -8,31 +8,41 @@ import (
 	"github.com/solidtrace/cli/review"
 )
 
-// maxBlock is the most bytes of a block on stdin.
-const maxBlock = 1 << 20
+// maxStdin is the most bytes of a block or a record on stdin.
+const maxStdin = 1 << 20
 
-func reviewBlock(args []string, env Env) int {
-	flags := flag.NewFlagSet("review block", flag.ContinueOnError)
+// readStdin parses the flags of the command name, which takes no
+// arguments, and reads at most maxStdin bytes of what on stdin. A code
+// that is not 0 is the exit code of a failure.
+func readStdin(args []string, env Env, name, what string) (data []byte, code int) {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	positional, ok := parseInterspersed(flags, args)
 	if !ok {
-		return 2
+		return nil, 2
 	}
 	if len(positional) > 0 {
-		fmt.Fprintln(env.Stderr, "solidtrace review block: give the block's JSON on stdin, and no arguments")
-		return 2
+		fmt.Fprintf(env.Stderr, "solidtrace %s: give the %s's JSON on stdin, and no arguments\n", name, what)
+		return nil, 2
 	}
-	var data []byte
 	if env.Stdin != nil {
 		var err error
-		if data, err = io.ReadAll(io.LimitReader(env.Stdin, maxBlock+1)); err != nil {
-			fmt.Fprintf(env.Stderr, "solidtrace review block: %v\n", err)
-			return 1
+		if data, err = io.ReadAll(io.LimitReader(env.Stdin, maxStdin+1)); err != nil {
+			fmt.Fprintf(env.Stderr, "solidtrace %s: %v\n", name, err)
+			return nil, 1
 		}
 	}
-	if len(data) > maxBlock {
-		fmt.Fprintf(env.Stderr, "solidtrace review block: the block is more than %d bytes\n", maxBlock)
-		return 1
+	if len(data) > maxStdin {
+		fmt.Fprintf(env.Stderr, "solidtrace %s: the %s is more than %d bytes\n", name, what, maxStdin)
+		return nil, 1
+	}
+	return data, 0
+}
+
+func reviewBlock(args []string, env Env) int {
+	data, code := readStdin(args, env, "review block", "block")
+	if code != 0 {
+		return code
 	}
 	block, problems := review.CheckBlock(data)
 	if len(problems) > 0 {

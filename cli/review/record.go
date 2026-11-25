@@ -1,8 +1,11 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"strings"
@@ -18,6 +21,43 @@ type Record struct {
 	Reviews       []RecordReview       `json:"reviews"`
 	Findings      []RecordFinding      `json:"findings"`
 	Confirmations []RecordConfirmation `json:"confirmations"`
+}
+
+// recordVersion is the version of the record that review record prints
+// and review final takes.
+const recordVersion = 2
+
+// ReadFinal decodes data as one review record of version 2, the record
+// that open-pr and update-pr give to review final. A field that the record
+// does not have, no sessions, no findings or a round below 1 is an error.
+func ReadFinal(data []byte) (Record, error) {
+	var v struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(data, &v) == nil && v.Version != recordVersion {
+		return Record{}, fmt.Errorf("version %d is not %d", v.Version, recordVersion)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var r Record
+	if err := dec.Decode(&r); err != nil {
+		if err == io.EOF {
+			return Record{}, errors.New("no JSON")
+		}
+		return Record{}, fmt.Errorf("not a review record: %w", err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return Record{}, errors.New("text after the record")
+	}
+	switch {
+	case r.Sessions == nil:
+		return Record{}, errors.New("no sessions")
+	case r.Findings == nil:
+		return Record{}, errors.New("no findings")
+	case r.Round < 1:
+		return Record{}, fmt.Errorf("round %d is not 1 or more", r.Round)
+	}
+	return r, nil
 }
 
 // Story is what the record tells in words. Only the notes give it.
@@ -195,7 +235,7 @@ func newRecordBuilder(d Digest) *recordBuilder {
 		sessions = []SessionTitle{}
 	}
 	b.r = Record{
-		Version:  2,
+		Version:  recordVersion,
 		Sessions: sessions,
 		Round:    1,
 		Story:    Story{Changes: []string{}, Reviews: []string{}, AfterReview: []string{}, Sessions: []string{}},

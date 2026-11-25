@@ -185,13 +185,13 @@ func TestReviewUsageListsEachVerb(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	command.Run(context.Background(), []string{"--help"}, command.Env{Stdout: &stdout, Stderr: &stderr})
 	for _, want := range []string{"solidtrace review check --digest PATH --record PATH", "solidtrace review fixed [COMMIT]",
-		"solidtrace review block\n", "solidtrace review record --digest PATH [--notes PATH] [--pr URL] [--round N]"} {
+		"solidtrace review block\n", "solidtrace review final\n", "solidtrace review record --digest PATH [--notes PATH] [--pr URL] [--round N]"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("the usage has no %q", want)
 		}
 	}
 	command.Run(context.Background(), []string{"review"}, command.Env{Stdout: &stdout, Stderr: &stderr})
-	if !strings.Contains(stderr.String(), "give digest, sessions, check, fixed, block or record") {
+	if !strings.Contains(stderr.String(), "give digest, sessions, check, fixed, block, record or final") {
 		t.Errorf("review with no verb: %s", stderr.String())
 	}
 }

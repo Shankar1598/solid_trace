@@ -300,6 +300,14 @@ Usage:
       update block has update and findings with id and events only. A
       field that the format does not have is a problem. Exit 1 with each
       problem on stderr when the block is not valid.
+  solidtrace review final
+      Read the review record of a PR (version 2, as review record prints
+      it) as JSON on stdin, check it, and print its round and its counts
+      of findings and fixed findings on one line. open-pr and update-pr
+      end with this command in a heredoc: SolidTrace keeps the record
+      from the command in the Agent session that the capture uploads.
+      It sends nothing. Exit 1 when the JSON is not a record of version
+      2, or has a field that the record does not have.
   solidtrace version
       Print the version of this solidtrace.
 `
