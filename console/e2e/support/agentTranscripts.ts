@@ -178,16 +178,28 @@ export function longSession(cwd: string, opts: {
 
 /**
  * An open-pr Agent session: the person starts the skill, whose text comes
- * in as a user line with its own example record, and the final reply ends
- * with the PR's Review record in its block.
+ * in as a user line with its own example record. The agent sends the PR's
+ * Review record to solidtrace review final in a heredoc, and the final
+ * reply gives only the PR. With `inReply`, the session is one from before
+ * that command: the final reply ends with the record in its block.
  */
-export function openPrSession(cwd: string, opts: { exampleRecord: string; record: string; minutesAgo: number }): FixtureSession {
+export function openPrSession(cwd: string, opts: { exampleRecord: string; record: string; minutesAgo: number; inReply?: boolean }): FixtureSession {
   const id = randomUUID()
   const main = new Transcript(id, cwd, minutesAgo(opts.minutesAgo))
+  const usage = { input: 3, output: 30, cacheRead: 300, cacheWrite: 30 }
   main.person('/solidtrace-skills:open-pr')
-  main.person(`End the reply with the record:\n\n\`\`\`solidtrace-pr-record\n${opts.exampleRecord}\n\`\`\``)
-  main.reply([{ type: 'text', text: `Opened the PR.\n\n\`\`\`solidtrace-pr-record\n${opts.record}\n\`\`\`` }],
-    { input: 3, output: 30, cacheRead: 300, cacheWrite: 30 })
+  if (opts.inReply) {
+    main.person(`End the reply with the record:\n\n\`\`\`solidtrace-pr-record\n${opts.exampleRecord}\n\`\`\``)
+    main.reply([{ type: 'text', text: `Opened the PR.\n\n\`\`\`solidtrace-pr-record\n${opts.record}\n\`\`\`` }], usage)
+  } else {
+    main.person(`Send the record:\n\n\`\`\`\nsolidtrace review final <<'EOF'\n${opts.exampleRecord}\nEOF\n\`\`\``)
+    const toolUseId = `toolu_${randomBytes(8).toString('hex')}`
+    main.reply([{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: `solidtrace review final <<'EOF'\n${opts.record}\nEOF`, description: 'Send the Review record' } }], usage)
+    const parsed = JSON.parse(opts.record) as { round: number; findings: { outcome: string }[] }
+    const fixed = parsed.findings.filter(f => f.outcome === 'fixed').length
+    main.toolResult(toolUseId, `record: round ${parsed.round}, ${parsed.findings.length} findings, ${fixed} fixed`)
+    main.reply([{ type: 'text', text: 'Opened the PR.' }], usage)
+  }
   return { id, files: { [`${id}.jsonl`]: main.text() } }
 }
 

@@ -467,9 +467,10 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
 })
 
 /**
- * A PR's Review record, as open-pr and update-pr write it (version 2): the
- * first four findings each show one path of a finding, and the rest make
- * the record longer than a Log keeps (64 KiB) when there are many.
+ * A PR's Review record, as open-pr and update-pr write it (version 2, one
+ * line of JSON): the first four findings each show one path of a finding,
+ * and the rest make the record longer than a Log keeps (64 KiB) when there
+ * are many.
  */
 function reviewRecord(pr: string, round: number, findings: number): string {
   const f = (n: number) => `${round}.F${n}`
@@ -511,10 +512,10 @@ function reviewRecord(pr: string, round: number, findings: number): string {
       { id: 'C2', run: 1, reviewer: 'security', ask: 'Confirm that the total is not cached per person.', given: false },
       { id: 'C3', run: 1, reviewer: 'ha-and-infrastructure', ask: 'Confirm the deploy order.', given: null },
     ],
-  }, null, 2)
+  })
 }
 
-test('the final reply of an open-pr Agent session gives its Review record, on the Review records pages and over MCP', async ({ page, baseURL }) => {
+test('the review final call of an open-pr Agent session, or the final reply of an older one, gives its Review record, on the Review records pages and over MCP', async ({ page, baseURL }) => {
   test.setTimeout(240_000)
   const errors = watchErrors(page)
   const origin = new URL(baseURL!).origin
@@ -522,9 +523,11 @@ test('the final reply of an open-pr Agent session gives its Review record, on th
   await page.goto(`/${ORG}/review_records`)
   await signIn(page, reviewer, origin)
 
-  // Two rounds of one PR, in two Agent sessions. Round 2 is past the Log
-  // limit, so only the parse's own copy keeps all of it. The skill's text
-  // is a user line with an example record, which is not a Review record.
+  // Two rounds of one PR, in two Agent sessions. Round 1 is a session from
+  // before solidtrace review final, with the record in its final reply.
+  // Round 2 sends it to solidtrace review final, and is past the Log limit,
+  // so only the parse's own copy keeps all of it. The skill's text is a
+  // user line with an example record, which is not a Review record.
   const shopDir = gitRepository(SHOP)
   const pr = `https://github.example/flowteam/shop-${RUN}/pull/7`
   const examplePr = `https://github.example/flowteam/shop-${RUN}/pull/EXAMPLE`
@@ -532,7 +535,7 @@ test('the final reply of an open-pr Agent session gives its Review record, on th
   const round2 = reviewRecord(pr, 2, 240)
   expect(Buffer.byteLength(round2)).toBeGreaterThan(64 * 1024)
   const example = reviewRecord(examplePr, 1, 4)
-  const first = openPrSession(shopDir, { exampleRecord: example, record: round1, minutesAgo: 30 })
+  const first = openPrSession(shopDir, { exampleRecord: example, record: round1, minutesAgo: 30, inReply: true })
   const second = openPrSession(shopDir, { exampleRecord: example, record: round2, minutesAgo: 10 })
   capture(reviewer, first, shopDir)
   capture(reviewer, second, shopDir)

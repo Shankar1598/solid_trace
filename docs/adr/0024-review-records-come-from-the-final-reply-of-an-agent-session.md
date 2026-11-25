@@ -11,7 +11,16 @@ The `open-pr` and `update-pr` skills end their final reply with the PR's **Revie
 - **The newest record of a PR.** A PR's key is its `pr`, else the Agent session id. The newest record of a key has the highest round, then the latest store time. A later round replaces the earlier rounds of the same PR on the list, and the record's page links to the earlier rounds.
 - **The same readers as the Agent sessions.** Each member who can read the Agent sessions can read the Review records, on the Review records page and with the MCP tools `list_review_records` and `get_review_record`. The record is the agent's text, with the words of PR commenters in it, so the pages show it as text only, never as HTML or Markdown, and link a PR only when it is a web address.
 
-We chose this because the record already uploads with its Agent session. The parse reads only what the upload brings: no new ingest route, no new CLI command, and no change to the skills.
+We chose this because the record already uploads with its Agent session. The parse reads only what the upload brings: no new ingest route. (The first form had no new CLI command and no change to the skills. See the next section for the change that came later.)
+
+## The record moves to a call of `solidtrace review final`
+
+The block put the whole record on the person's screen, as one line of JSON that can be 100 KB or more. Now the skills send the record to `solidtrace review final` in a heredoc, in one Bash call, and the final reply gives only the PR and a short summary. Claude Code shows a Bash call folded, and the transcript keeps the heredoc byte for byte, so the record uploads with its Agent session as before. This follows `solidtrace review block`, which sends the findings blocks in the same way.
+
+- **The command checks, and sends nothing.** `review final` decodes the record as version 2 and prints one line with its round and counts. It exits 1 when the JSON is not a record, so the agent fixes it and calls again. The capture uploads the call with the transcript.
+- **The parse reads the call.** For an assistant line of a main transcript, the parse also reads each Bash tool use whose command is only `solidtrace review final` (or a path that ends in `/solidtrace`) with a heredoc, and nothing more. A pipe, `&&`, `;`, a redirect, `$(…)` or a second command gives no record, because then the heredoc is not surely what the command read. The heredoc goes through the same check as a block. Over the line's blocks and calls, in their order, the last one counts.
+- **No check of the tool result.** The parse checks the JSON itself. When the command refused the record, the agent's next call comes in a later line, and the last record counts.
+- **The block stays.** Agent sessions from before this change keep their records, because the parse still reads the block.
 
 ## Considered options
 

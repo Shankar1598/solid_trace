@@ -398,7 +398,7 @@ _Avoid_: command, mention, slash command
 - An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
 - An **Organization** with **Require two-factor** admits only members who have **Two-factor**, with an **Authenticator app** or a **Passkey**
 - An **Agent session** belongs to its **Organization**'s **Agent Project**; an engineer's own Agent session has no **Run**, and is recorded only in a **Captured repository**
-- A **Review record** comes from the final reply of an **Agent session**, and is in the same **Agent Project**, with the same **Retention**
+- A **Review record** comes from the `solidtrace review final` call at the end of an **Agent session** (in an older Agent session, from its final reply), and is in the same **Agent Project**, with the same **Retention**
 - The **Agent Project**'s key sends Claude Code telemetry as **Logs** of the Agent Project; only the telemetry of a **Captured repository** is kept
 - A **Run** works in the repository that its **Project**'s **Factory settings** name, and its record is in the **Agent Project**
 - A **Run** that reports done shows its **Evidence**; with no check that passed, it shows no Evidence

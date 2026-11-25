@@ -70,12 +70,14 @@ Open the PR as [platforms.md](platforms.md) says, in Open a PR.
 
 ## 8. Final reply
 
-Give the PR's URL, or in local mode the file's path. Then run the command of step 4.4 again, with the same `--round`, and with `--pr` set to that URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened), and end the reply with the record in one `solidtrace-pr-record` block, as one line of JSON:
+Run the command of step 4.4 again, with the same `--round`, and with `--pr` set to the PR's URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened). Then send the record to `solidtrace review final` in one Bash call, with the record's JSON as one line in a heredoc:
 
 ````
-```solidtrace-pr-record
+solidtrace review final <<'EOF'
 {"version": 2, ...}
-```
+EOF
 ````
 
-This block is how SolidTrace keeps the record: the reply uploads with the session.
+This call is how SolidTrace keeps the record: the call uploads with the session. Put the whole JSON in the heredoc, not a path to its file, and keep `'EOF'` in single quotes, so that the shell does not change the text of the record. The command must be only this call: no pipe, `&&`, `;`, redirect or other command, or SolidTrace does not keep the record. It prints the round and the counts on one line. When it refuses the record (exit 1), fix what it names and run it again.
+
+Then give the PR's URL, or in local mode the file's path, and a short summary of the findings. Do not write the record's JSON in the reply.

@@ -12,9 +12,10 @@ import (
 
 // reviewRecordsMigration makes review_records, the Review records that the
 // parse finds in Agent sessions (ADR 0024): one row for each assistant line
-// of a main transcript whose last solidtrace-pr-record block is a record.
+// of a main transcript whose last solidtrace review final call or
+// solidtrace-pr-record block is a record.
 // A row has the place of its line, as the line's Log has, what the Review
-// records page lists of the record, and the record as the block has it,
+// records page lists of the record, and the record as the call or the block has it,
 // all of it: a Log cuts a string at 64 KiB. day is the UTC day on which the
 // server stored the line's unit, as in agent_session_files, so that
 // Retention, Project deletion and the disk limit drop a Review record with
