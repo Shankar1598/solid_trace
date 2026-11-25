@@ -115,7 +115,7 @@
       ]
     },
     {
-      "name": "a repository not in the list is refused; the host's letter case, .git and a workspace entry match",
+      "name": "a repository not in the list is refused; the letter case, .git and a workspace entry match",
       "steps": [
         {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 403,
          "query": {"path": "{session}.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "github.com/someone/private"},
@@ -128,6 +128,9 @@
          "body_text": "{\"n\":1}\n"},
         {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
          "query": {"path": "{session}/a.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/acme-tools/deploy"},
+         "body_text": "{\"n\":1}\n"},
+        {"method": "POST", "path": "/agent-sessions/{session}/files", "status": 200,
+         "query": {"path": "{session}/b.jsonl", "version": "1", "offset": "0", "harness": "claude-code", "repository": "bitbucket.org/ACME/Shop"},
          "body_text": "{\"n\":1}\n"}
       ]
     },

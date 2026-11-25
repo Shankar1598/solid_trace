@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/auth"
+	"github.com/solidtrace/event_store/captured"
 	"github.com/solidtrace/event_store/pkg/logger"
 	"github.com/solidtrace/event_store/storage"
 )
@@ -329,27 +330,13 @@ func (h *AgentHandler) capturedRepository(c *fiber.Ctx, token auth.Token, reposi
 		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The captured repositories could not be read. Try again later."})
 	}
 	for _, entry := range entries {
-		if repositoryMatches(entry, repository) {
+		if captured.Matches(entry, repository) {
 			return true, nil
 		}
 	}
 	return false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": fmt.Sprintf(
 		"The repository %s is not in the captured repositories of %s, so its Agent sessions are not uploaded. An Admin adds it in Console on Settings → Agent sessions.",
 		repository, token.Organization.Name)})
-}
-
-// repositoryMatches reports whether a repository (host/workspace/name)
-// matches a captured repositories entry: host/workspace/name, or
-// host/workspace/* for each repository of the workspace. The host is
-// compared in lower case and a .git ending is ignored, as capture
-// normalises a remote and Console normalises an entry.
-func repositoryMatches(entry, repository string) bool {
-	host, rest, _ := strings.Cut(strings.TrimSuffix(repository, ".git"), "/")
-	repository = strings.ToLower(host) + "/" + rest
-	if workspace, ok := strings.CutSuffix(entry, "/*"); ok {
-		return strings.HasPrefix(repository, workspace+"/")
-	}
-	return repository == entry
 }
 
 // relativePathProblem is what is wrong with a path under a root, or "": it

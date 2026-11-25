@@ -4,10 +4,13 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/solidtrace/cli/capture"
 )
 
 // files answers what the fake has of an Agent session, as the real
@@ -195,15 +198,8 @@ func (f *AgentAPI) upload(w http.ResponseWriter, r *http.Request) {
 	answer(true)
 }
 
-// captured is the server's match of a repository with the list.
+// captured is the server's match of a repository with the list, by the
+// rule that the CLI and EventStore share.
 func captured(entries []string, repository string) bool {
-	host, rest, _ := strings.Cut(strings.TrimSuffix(repository, ".git"), "/")
-	repository = strings.ToLower(host) + "/" + rest
-	for _, entry := range entries {
-		if workspace, ok := strings.CutSuffix(entry, "/*"); ok && strings.HasPrefix(repository, workspace+"/") ||
-			entry == repository {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(entries, func(entry string) bool { return capture.Matches(entry, repository) })
 }
