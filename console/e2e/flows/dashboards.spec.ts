@@ -222,6 +222,12 @@ test('a grouped line chart draws its threshold line once, above every value, out
   await editor.getByLabel('Threshold 1 label').fill('Limit')
   await editor.getByRole('group', { name: 'Threshold 1 severity' }).getByRole('button', { name: 'Critical' }).click()
   await expect(editor.locator('[data-chart-preview] .chart-threshold-line')).toHaveCount(1)
+  // The preview shows the table as Table, its cells tags, and then the line again.
+  const viz = editor.getByRole('group', { name: 'Viz' })
+  await viz.getByRole('button', { name: 'Table' }).click()
+  await expect(editor.locator('[data-chart-preview] [data-table-row]').first()).toBeVisible()
+  await viz.getByRole('button', { name: 'Line' }).click()
+  await expect(editor.locator('[data-chart-preview] .chart-threshold-line')).toHaveCount(1)
   await editor.getByRole('button', { name: 'Save chart' }).click()
   await expect(editor).toHaveCount(0)
   await chartsRan(page, 1)
