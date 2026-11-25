@@ -24,3 +24,11 @@ a7815d313be6ac9c2a40cfc85bc2a2b29e21f781:factory/dispatcher/config_test.go:gener
 55d2e1f193df104916aa900e9fd3aa59c3948264:factory/cmd/dispatcher/main_test.go:generic-api-key:95
 55d2e1f193df104916aa900e9fd3aa59c3948264:factory/dispatcher/settings_test.go:generic-api-key:242
 af16c9439892aaa8a66d667639aebb5488ab44ae:event_store/agent_sessions_list_test.go:generic-api-key:18
+# The verify-solidtrace notes' curl examples, with the dev seed's fixed test key (console/db/seeds.rb) on localhost
+56b31d75b6d367b7014246f68c63c4bc59f4451e:.claude/skills/verify-solidtrace/features/logs-explorer.md:curl-auth-header:32
+891a0305b2ac6696f54ba19b1bce6d148a903aa1:.claude/skills/verify-solidtrace/features/log-ingest.md:curl-auth-header:32
+891a0305b2ac6696f54ba19b1bce6d148a903aa1:.claude/skills/verify-solidtrace/features/log-ingest.md:curl-auth-header:40
+891a0305b2ac6696f54ba19b1bce6d148a903aa1:.claude/skills/verify-solidtrace/features/log-ingest.md:curl-auth-header:41
+891a0305b2ac6696f54ba19b1bce6d148a903aa1:.claude/skills/verify-solidtrace/features/log-ingest.md:curl-auth-header:42
+891a0305b2ac6696f54ba19b1bce6d148a903aa1:.claude/skills/verify-solidtrace/features/log-ingest.md:curl-auth-header:44
+a9588dc6fc474f18a3208cb68d95aa61a5cba48b:.claude/skills/verify-solidtrace/features/log-ingest.md:curl-auth-header:50
