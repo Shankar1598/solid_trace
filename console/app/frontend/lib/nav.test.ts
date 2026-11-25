@@ -35,6 +35,12 @@ describe('the sidebar entry of a page', () => {
     expect(orgSwitchUrl('/acme/agent_sessions?person=3', 'meta')).toBe('/meta/agent_sessions')
   })
 
+  it('is Review records for the list and each record, whatever its PR holds', () => {
+    expect(navSection('/acme/review_records')).toBe('review_records')
+    expect(navSection('/acme/review_records/record?key=https%3A%2F%2Fgithub.com%2Facme%2Fshop%2Fpull%2F7')).toBe('review_records')
+    expect(orgSwitchUrl('/acme/review_records/record?id=x', 'meta')).toBe('/meta/review_records')
+  })
+
   it('is Runs for the Runs page with its filters', () => {
     expect(navSection('/acme/runs')).toBe('runs')
     expect(navSection('/acme/runs?state=waiting_on_person&project=shop')).toBe('runs')
@@ -111,12 +117,12 @@ describe('the sidebar entries', () => {
   it('have no Runs entry on an install with no Dispatcher URL', () => {
     const labels = sidebarItems('acme', false).map(i => i.label)
     expect(labels).not.toContain('Runs')
-    expect(labels).toEqual(['Overview', 'Issues', 'Logs', 'Performance', 'Dashboards', 'Monitors', 'Agent sessions', 'Projects', 'Settings'])
+    expect(labels).toEqual(['Overview', 'Issues', 'Logs', 'Performance', 'Dashboards', 'Monitors', 'Agent sessions', 'Review records', 'Projects', 'Settings'])
   })
 
-  it('have the Runs entry after Agent sessions when the Factory is on', () => {
+  it('have the Runs entry after Agent sessions and Review records when the Factory is on', () => {
     const items = sidebarItems('acme', true)
-    expect(items.map(i => i.label).slice(6, 9)).toEqual(['Agent sessions', 'Runs', 'Projects'])
+    expect(items.map(i => i.label).slice(6, 10)).toEqual(['Agent sessions', 'Review records', 'Runs', 'Projects'])
     expect(items.find(i => i.label === 'Runs')).toEqual({ section: 'runs', label: 'Runs', href: '/acme/runs' })
   })
 })

@@ -99,6 +99,8 @@ Rails.application.routes.draw do
       constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
     get "agent_sessions/:id/line", to: "agent_sessions#line", as: :agent_session_line,
       constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
+    get "review_records", to: "review_records#index", as: :review_records
+    get "review_records/record", to: "review_records#show", as: :review_record
     get "runs", to: "runs#index", as: :runs
     get "runs/:id", to: "runs#show", as: :run, constraints: { id: /[A-Za-z0-9_-]{1,64}/ }
     get "runs/:id/evidence", to: "runs#evidence", as: :run_evidence, constraints: { id: /[A-Za-z0-9_-]{1,64}/ }

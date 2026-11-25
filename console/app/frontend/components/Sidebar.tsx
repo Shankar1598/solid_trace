@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Workflow, Check, ChevronsUpDown, Timer } from 'lucide-react'
+import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, ClipboardCheck, Workflow, Check, ChevronsUpDown, Timer } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { navSection, orgSwitchUrl, sidebarItems, type NavSection } from '@/lib/nav'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -12,7 +12,7 @@ import { buttonVariants } from '@/components/ui/button'
 
 const SECTION_ICONS: Record<NavSection, typeof Gauge> = {
   overview: Gauge, issues: List, logs: ScrollText, performance: Timer, dashboards: LayoutDashboard, monitors: BellRing,
-  agent_sessions: Bot, runs: Workflow, projects: GitMerge, settings: Settings,
+  agent_sessions: Bot, review_records: ClipboardCheck, runs: Workflow, projects: GitMerge, settings: Settings,
 }
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
