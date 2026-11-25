@@ -250,8 +250,8 @@ func (c *blockChecker) runBlock(v map[string]any) {
 	}
 	if skipped, ok := m["skipped"]; ok {
 		s, _ := skipped.(string)
-		if s != "docs only" && s != "person" && !strings.HasPrefix(s, "covered by ") {
-			c.problem("skipped", "%s is not \"docs only\", \"person\" or \"covered by <head>\"", show(skipped))
+		if s != "no code" && s != "person" && !strings.HasPrefix(s, "covered by ") {
+			c.problem("skipped", "%s is not \"no code\", \"person\" or \"covered by <head>\"", show(skipped))
 		}
 	}
 	seen := map[string]bool{}
