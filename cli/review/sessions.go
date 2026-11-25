@@ -34,8 +34,8 @@ type Session struct {
 
 // Links are what link an Agent session to a PR.
 type Links struct {
-	// Commits is how many of the PR's commits have a subject that a git
-	// commit or git merge command of the session holds.
+	// Commits is how many of the PR's commits have the subject of the
+	// message of a git commit or git merge command of the session.
 	Commits int `json:"commits"`
 	// BranchLines is how many lines of the transcripts the PR's branch
 	// was checked out for.
@@ -58,7 +58,9 @@ type SessionList struct {
 
 // Link reads the transcripts of the Agent session id, its main transcript
 // and its subagents' transcripts, for its links to the PR of c. inRepo is
-// true when a line has a cwd in one of c's Roots.
+// true when a line has a cwd in one of c's Roots, or when the session made
+// a commit of the PR or has lines on its branch: a worktree outside the
+// repository's folder is often removed when its work ends.
 func Link(id, main string, subagents []string, c Change) (s Session, inRepo bool, err error) {
 	k := linker{
 		c:        c,
@@ -66,7 +68,7 @@ func Link(id, main string, subagents []string, c Change) (s Session, inRepo bool
 		files:    map[string]bool{},
 		made:     map[int]bool{},
 		changed:  map[string]bool{},
-		tops:     topLevels{},
+		paths:    paths{tops: topLevels{}},
 	}
 	for i, subject := range c.Subjects {
 		k.subjects[i] = collapse(subject)
@@ -87,7 +89,7 @@ func Link(id, main string, subagents []string, c Change) (s Session, inRepo bool
 		Links: Links{Commits: len(k.made), BranchLines: k.branchLines, Files: len(k.changed)},
 	}
 	s.Strong = s.Links.Commits > 0
-	return s, k.inRepo, nil
+	return s, k.inRepo || s.Strong || s.Links.BranchLines > 0, nil
 }
 
 type linker struct {
@@ -101,9 +103,7 @@ type linker struct {
 	inRepo      bool
 	first, last time.Time
 	titles      titles
-	tops        topLevels
-	// start is the first cwd of the transcript that the linker reads.
-	start string
+	paths       paths
 }
 
 func (k *linker) read(path string, isMain bool) error {
@@ -112,7 +112,7 @@ func (k *linker) read(path string, isMain bool) error {
 		return err
 	}
 	defer f.Close()
-	k.start = ""
+	k.paths.start = ""
 	return eachLine(f, func(l line) {
 		if isMain {
 			k.titles.add(l)
@@ -130,9 +130,7 @@ func (k *linker) add(l line) {
 			k.last = t
 		}
 	}
-	if k.start == "" {
-		k.start = l.Cwd
-	}
+	k.paths.see(l.Cwd)
 	if !k.inRepo && l.Cwd != "" && inside(l.Cwd, k.c.Roots) {
 		k.inRepo = true
 	}
@@ -157,11 +155,13 @@ func (k *linker) add(l line) {
 		}
 		_ = json.Unmarshal(bl.Input, &input)
 		// A merge commit's subject is in its git merge -m command.
-		if bl.Name == "Bash" && (strings.Contains(input.Command, "git commit") || strings.Contains(input.Command, "git merge")) {
-			command := collapse(input.Command)
-			for i, subject := range k.subjects {
-				if subject != "" && !k.made[i] && strings.Contains(command, subject) {
-					k.made[i] = true
+		if bl.Name == "Bash" {
+			for _, message := range commitMessages(input.Command) {
+				made := subject(message)
+				for i, s := range k.subjects {
+					if s != "" && s == made {
+						k.made[i] = true
+					}
 				}
 			}
 		}
@@ -170,24 +170,11 @@ func (k *linker) add(l line) {
 			if field == "notebook_path" {
 				path = input.NotebookPath
 			}
-			if rel := k.relative(l.Cwd, path); k.files[rel] {
+			if rel := k.paths.relative(l.Cwd, path); k.files[rel] {
 				k.changed[rel] = true
 			}
 		}
 	}
-}
-
-// relative is path relative to the git top level of cwd. A subagent's
-// worktree is often removed when it ends, so for a cwd that is not there
-// now, the top level is the transcript's first cwd: the worktree's top
-// level, where the subagent started.
-func (k *linker) relative(cwd, path string) string {
-	if _, err := os.Stat(cwd); err != nil && filepath.IsAbs(path) && k.start != "" && inside(cwd, []string{k.start}) {
-		if rel, err := filepath.Rel(k.start, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return rel
-		}
-	}
-	return k.tops.relative(cwd, path)
 }
 
 // inside is true when dir is one of roots or in one of them.
@@ -201,8 +188,8 @@ func inside(dir string, roots []string) bool {
 	return false
 }
 
-// collapse is s with each run of white space as one space, so that a
-// subject matches a command that wraps it or puts it in a heredoc.
+// collapse is s with each run of white space as one space, as git log %s
+// gives a subject.
 func collapse(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 const maxTitle = 80

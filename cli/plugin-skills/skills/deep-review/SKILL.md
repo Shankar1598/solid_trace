@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Deep review
 
-Adversaries on different models try to break the change. A finding counts only when a run proves it. `open-pr` runs this once for each PR, in its final stage. The person can also type it at any time.
+Several adversaries try to break the change. A finding counts only when a run proves it. `open-pr` runs this once for each PR, in its final stage. The person can also type it at any time.
 
 ## 1. Frame
 
@@ -14,18 +14,13 @@ The scope is what the person names. Else it is the branch diff from its merge ba
 
 ## 2. Break it
 
-Find pstack's interrogate skill:
+Spawn one adversary for each entry of the `deep-review` role in `${CLAUDE_SKILL_DIR}/../code-review/models.md`, all in one message. Give each `isolation: "worktree"`, so that its repros do not touch your checkout. A new worktree can start from another commit, so each prompt starts with `git checkout --detach <HEAD from step 1>`. Copy the scope's uncommitted changes into each worktree. Give each the scope, the intent, and this brief:
 
-```bash
-ls -d ~/.claude/plugins/cache/*/pstack/*/skills/interrogate 2>/dev/null | sort -V | tail -1
-```
+> Break this change. Prove each finding with a run against the real code: a failing test, a repro script, or command output that shows the wrong behavior. Keep repros in your own worktree, and do not commit or push. Report each finding with a title, the file and line, the exact command, the output it printed, and the output that the intent needs. Report only what you ran. That leaves out style, naming, structure, and risks that need a future change to matter. No findings is a valid result. Then give the count of things you tried and dropped.
 
-- **pstack is installed.** Read `SKILL.md` in that folder and follow it, with the scope and the intent from step 1. Its verified findings are the findings of this review. Its adversaries are the `reviewers` of the block, with the models of the `interrogate reviewers` line in `~/.claude/rules/pstack-models.md`, or interrogate's defaults when that line is not there.
-- **pstack is not installed.** Spawn two adversaries at the same time: one with `model: "opus"`, and one with no `model`. Give each the scope, the intent, and this brief:
+Run each finding's command again yourself, on your own build of HEAD. Keep a finding when its output shows a failure that breaks the intent. Merge findings that have the same root cause: the first adversary that found it is `reviewer`, and the others go in `also`. Name the adversaries `adversary-1`, `adversary-2` and on, in the order of the role's list.
 
-  > Break this change. Prove each finding with a run against the real code: a failing test, a repro script, or command output that shows the wrong behavior. Report each finding with a title, the file and line, the exact command, the output it printed, and the output that the intent needs. Report only what you ran. No findings is a valid result.
-
-  Run each finding's command again yourself. Keep a finding when its output shows a failure that breaks the intent. Merge findings that have the same root cause.
+Done when every adversary has returned, and every kept finding failed again in your own run.
 
 ## 3. Decide each finding
 

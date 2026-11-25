@@ -25,6 +25,10 @@ type Digest struct {
 	Sessions []SessionTitle `json:"sessions"`
 	Reviews  int            `json:"reviews"`
 	Events   []Entry        `json:"events"`
+	// A Digest from Read also keeps all the events of its session, and the
+	// times of its start and of its first review, for Merge.
+	all             []Entry
+	start, reviewed time.Time
 }
 
 // SessionTitle is an Agent session of a Digest.
@@ -79,11 +83,16 @@ type Entry struct {
 	Command  string          `json:"command,omitempty"`
 	// ReviewFindings are kept whole, because Command is cut.
 	ReviewFindings []string `json:"review_findings,omitempty"`
+	// gated is true for an agent's text, an edit or a subagent's report
+	// from before the session's first review.
+	gated bool
 }
 
-// DefaultSkills matches the names of the usual review skills, such as
-// code-review, pstack:interrogate and a team's <team>-review.
-const DefaultSkills = "review|interrogate"
+// DefaultSkills matches the names of the usual review skills: a name whose
+// last part (after the last ":") is review or interrogate, or ends in
+// -review, such as code-review, pstack:interrogate and a team's
+// <team>-review. It does not match preview-deploy.
+const DefaultSkills = `(^|:)(review|interrogate)$|-review$`
 
 // The most characters of a text, of a subagent's report, of a subagent's
 // prompt, and of a commit command. A review often runs in subagents, so
@@ -132,46 +141,90 @@ var notFromThePerson = []string{
 // Read reads the main transcript of one Agent session into its Digest.
 // The session's id is the transcript's sessionId, else id.
 func Read(r io.Reader, id string, skills *regexp.Regexp) (Digest, error) {
-	b := builder{skills: skills, subagents: map[string]bool{}, tops: topLevels{}}
+	b := builder{
+		skills:    skills,
+		subagents: map[string]bool{},
+		asks:      map[string]bool{},
+		edits:     map[string]int{},
+		rejected:  map[int]bool{},
+		paths:     paths{tops: topLevels{}},
+	}
 	if err := eachLine(r, b.add); err != nil {
 		return Digest{}, err
 	}
 	if b.session != "" {
 		id = b.session
 	}
-	for i := range b.events {
-		b.events[i].Session = id
+	events := []Entry{}
+	for i, e := range b.events {
+		if !b.rejected[i] {
+			e.Session = id
+			events = append(events, e)
+		}
 	}
-	return Merge(Digest{Sessions: []SessionTitle{{ID: id, Title: b.titles.title()}}, Reviews: b.reviews, Events: b.events}), nil
+	d := Digest{
+		Sessions: []SessionTitle{{ID: id, Title: b.titles.title()}},
+		Reviews:  b.reviews,
+		all:      events,
+		start:    b.start,
+		reviewed: b.reviewedAt,
+	}
+	d.Events = Merge(Digest{Sessions: d.Sessions, Events: d.timeline(false)}).Events
+	return d, nil
 }
 
 // Merge puts the Digests in one: their events in time order, each
 // session's own events in the order of its transcript, and the events of
-// an earlier Digest first when their times are equal.
+// an earlier Digest first when their times are equal. A session that
+// starts after the first review of a Digest keeps all its events, also
+// those from before a review of its own.
 func Merge(digests ...Digest) Digest {
+	var first time.Time
+	for _, d := range digests {
+		if !d.reviewed.IsZero() && (first.IsZero() || d.reviewed.Before(first)) {
+			first = d.reviewed
+		}
+	}
 	all := Digest{Sessions: []SessionTitle{}, Events: []Entry{}}
 	heads := make([]int, len(digests))
+	sources := make([][]Entry, len(digests))
 	times := make([][]time.Time, len(digests))
 	for i, d := range digests {
 		all.Sessions = append(all.Sessions, d.Sessions...)
 		all.Reviews += d.Reviews
-		times[i] = eventTimes(d.Events)
+		sources[i] = d.timeline(!first.IsZero() && d.start.After(first))
+		times[i] = eventTimes(sources[i])
 	}
 	for {
 		next := -1
-		for i, d := range digests {
-			if heads[i] < len(d.Events) && (next < 0 || times[i][heads[i]].Before(times[next][heads[next]])) {
+		for i, events := range sources {
+			if heads[i] < len(events) && (next < 0 || times[i][heads[i]].Before(times[next][heads[next]])) {
 				next = i
 			}
 		}
 		if next < 0 {
 			return all
 		}
-		e := digests[next].Events[heads[next]]
+		e := sources[next][heads[next]]
 		e.Seq = len(all.Events)
 		all.Events = append(all.Events, e)
 		heads[next]++
 	}
+}
+
+// timeline is the events of d: all of them when keepGated is true, else
+// those from the session's first review on and the story before it.
+func (d Digest) timeline(keepGated bool) []Entry {
+	if d.all == nil {
+		return d.Events
+	}
+	var events []Entry
+	for _, e := range d.all {
+		if keepGated || !e.gated {
+			events = append(events, e)
+		}
+	}
+	return events
 }
 
 // eventTimes are the times of events. An event whose time is not valid
@@ -247,6 +300,7 @@ type block struct {
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
+	IsError   bool            `json:"is_error"`
 }
 
 type queuedCommand struct {
@@ -266,11 +320,21 @@ type builder struct {
 	hasTask bool
 	// reviewed is true from the first review on, a review start or a
 	// findings block: only then do the agent's texts, the edits and the
-	// subagents' reports go in the timeline.
+	// subagents' reports go in the timeline. The events from before it
+	// are gated.
 	reviewed bool
-	// subagents are the ids of the tool uses that started a subagent.
+	// start is the time of the first line, now of the last line with a
+	// time, and reviewedAt of the line of the first review.
+	start, now, reviewedAt time.Time
+	// subagents are the ids of the tool uses that started a subagent, and
+	// asks those of AskUserQuestion.
 	subagents map[string]bool
-	tops      topLevels
+	asks      map[string]bool
+	// edits has the index in events of each edit, by its tool use id, and
+	// rejected the edits whose tool result is an error.
+	edits    map[string]int
+	rejected map[int]bool
+	paths    paths
 }
 
 func (b *builder) add(l line) {
@@ -283,6 +347,13 @@ func (b *builder) add(l line) {
 	if b.session == "" {
 		b.session = l.SessionID
 	}
+	if t, err := time.Parse(time.RFC3339Nano, l.Timestamp); err == nil {
+		if b.start.IsZero() {
+			b.start = t
+		}
+		b.now = t
+	}
+	b.paths.see(l.Cwd)
 	switch l.Type {
 	case "assistant":
 		var m message
@@ -297,11 +368,13 @@ func (b *builder) add(l line) {
 		if text, ok := personText(l); ok {
 			b.personMessage(l, text)
 		} else {
-			b.subagentReports(l)
+			b.toolResults(l)
 		}
 	case "attachment":
 		if text, ok := queuedPersonText(l); ok {
 			b.personMessage(l, text)
+		} else if text, ok := queuedNotice(l); ok {
+			b.notice(l, text)
 		}
 	}
 }
@@ -310,21 +383,35 @@ func newEntry(l line, kind Kind) Entry {
 	return Entry{UUID: l.UUID, Time: l.Timestamp, Kind: kind}
 }
 
+func (b *builder) markReviewed() {
+	if !b.reviewed {
+		b.reviewed, b.reviewedAt = true, b.now
+	}
+}
+
+// addGated adds an event that is in the timeline only from a review on,
+// and gives its index.
+func (b *builder) addGated(e Entry) int {
+	e.gated = !b.reviewed
+	b.events = append(b.events, e)
+	return len(b.events) - 1
+}
+
 func (b *builder) assistantBlock(l line, bl block) {
 	switch bl.Type {
 	case "text":
-		// A findings block marks a review, also with no review start before it.
-		found, ok := findings(l, bl.Text)
-		if strings.TrimSpace(bl.Text) == "" || (!ok && !b.reviewed) {
+		if strings.TrimSpace(bl.Text) == "" {
 			return
 		}
-		b.reviewed = true
+		// A findings block marks a review, also with no review start before it.
+		found := findings(l, bl.Text)
+		if len(found) > 0 {
+			b.markReviewed()
+		}
 		e := newEntry(l, KindAgentText)
 		e.Text = cut(bl.Text, maxText)
-		b.events = append(b.events, e)
-		if ok {
-			b.events = append(b.events, found)
-		}
+		b.addGated(e)
+		b.events = append(b.events, found...)
 	case "tool_use":
 		var input struct {
 			Skill        string `json:"skill"`
@@ -340,45 +427,34 @@ func (b *builder) assistantBlock(l line, bl block) {
 			b.reviewStart(l, input.Skill, TriggerAgent, input.Args)
 			return
 		}
+		if bl.Name == "AskUserQuestion" {
+			b.asks[bl.ID] = true
+		}
 		if agentTools[bl.Name] {
 			b.subagents[bl.ID] = true
 			e := newEntry(l, KindDelegate)
 			e.Text = cut(strings.TrimSpace(input.Description+"\n\n"+input.Prompt), maxPrompt)
 			b.events = append(b.events, e)
 		}
-		if field, ok := editTools[bl.Name]; ok && b.reviewed {
+		if field, ok := editTools[bl.Name]; ok {
 			path := input.FilePath
 			if field == "notebook_path" {
 				path = input.NotebookPath
 			}
 			e := newEntry(l, KindEdit)
-			e.Tool, e.File = bl.Name, b.tops.relative(l.Cwd, path)
-			b.events = append(b.events, e)
+			e.Tool, e.File = bl.Name, b.paths.relative(l.Cwd, path)
+			b.edits[bl.ID] = b.addGated(e)
 		}
 		// A subagent's work often lands with a git merge -m command.
-		if bl.Name == "Bash" && gitCommit.MatchString(input.Command) {
-			e := newEntry(l, KindCommit)
-			e.Command = cut(input.Command, maxCommand)
-			e.ReviewFindings = reviewTrailers(input.Command)
-			b.events = append(b.events, e)
+		if bl.Name == "Bash" {
+			if messages := commitMessages(input.Command); len(messages) > 0 {
+				e := newEntry(l, KindCommit)
+				e.Command = cut(input.Command, maxCommand)
+				e.ReviewFindings = reviewTrailers(messages)
+				b.events = append(b.events, e)
+			}
 		}
 	}
-}
-
-// gitCommit matches a command that runs git commit or git merge, at the
-// start of a line or after a shell operator, and not the words in a text.
-var gitCommit = regexp.MustCompile(`(?m)(^|&&|\|\||;|\|)\s*git(\s+-C\s+\S+)*\s+(commit|merge)\b`)
-
-// reviewTrailers returns the values of the Review-Findings trailers in a
-// commit command, such as "run 1: F2, F5".
-func reviewTrailers(command string) []string {
-	var out []string
-	for _, s := range strings.Split(command, "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(s), reviewTrailer); ok {
-			out = append(out, strings.TrimSpace(v))
-		}
-	}
-	return out
 }
 
 func (b *builder) personMessage(l line, text string) {
@@ -388,9 +464,10 @@ func (b *builder) personMessage(l line, text string) {
 	if isCommand {
 		text = strings.TrimSpace("/" + name + " " + args)
 	}
-	// A command such as /clear or /model is not the task.
 	isReview := isCommand && name != "" && b.skills.MatchString(name)
-	isTask := !b.hasTask && (!isCommand || isReview)
+	// A command such as /clear or /model is not the task, but a skill such
+	// as /tdd or /open-pr is the work.
+	isTask := !b.hasTask && (!isCommand || name != "" && !housekeeping[name])
 	if isTask {
 		b.hasTask = true
 		e := newEntry(l, KindTask)
@@ -406,101 +483,178 @@ func (b *builder) personMessage(l line, text string) {
 	if isTask || !b.hasTask {
 		return
 	}
+	b.person(l, text)
+}
+
+// housekeeping are the slash commands of Claude Code that do no work.
+var housekeeping = map[string]bool{
+	"add-dir": true, "agents": true, "bashes": true, "clear": true, "compact": true, "config": true,
+	"context": true, "cost": true, "doctor": true, "effort": true, "exit": true, "export": true,
+	"fast": true, "help": true, "hooks": true, "ide": true, "keybindings": true, "login": true,
+	"logout": true, "mcp": true, "memory": true, "model": true, "output-style": true,
+	"permissions": true, "plugin": true, "privacy-settings": true, "quit": true,
+	"release-notes": true, "rename": true, "resume": true, "rewind": true, "status": true,
+	"statusline": true, "tasks": true, "terminal-setup": true, "theme": true, "todos": true,
+	"upgrade": true, "usage": true, "vim": true,
+}
+
+func (b *builder) person(l line, text string) {
 	e := newEntry(l, KindPerson)
-	e.Text = cut(text, maxText)
+	e.Text = cut(strings.TrimSpace(text), maxText)
 	b.events = append(b.events, e)
 }
 
 func (b *builder) reviewStart(l line, skill string, trigger Trigger, args string) {
-	b.reviewed = true
+	b.markReviewed()
 	b.reviews++
 	e := newEntry(l, KindReviewStart)
 	e.Skill, e.Trigger, e.Args = skill, trigger, strings.TrimSpace(args)
 	b.events = append(b.events, e)
 }
 
-// subagentReports adds the reports in a user line that is not the
-// person's: a subagent's tool result, a hand-back message, or a task
-// notification's result. A report with a findings block is a review that a
-// subagent ran, so it counts from before the first review start too.
-func (b *builder) subagentReports(l line) {
+// What Claude Code writes in the tool result of a question to the person,
+// and of a tool use that the person rejected.
+const (
+	answered        = "User has answered your questions:"
+	answeredEnd     = "You can now continue with the user's answers in mind."
+	rejected        = "The user doesn't want to proceed with this tool use."
+	rejectedBecause = "the user said:"
+)
+
+// toolResults reads a user line that is not the person's: the tool
+// results, a hand-back message, or a task notification. A tool result has
+// the person's answer to a question, the person's words when they rejected
+// a tool use, or a subagent's report.
+func (b *builder) toolResults(l line) {
 	var m message
 	if json.Unmarshal(l.Message, &m) != nil {
 		return
-	}
-	add := func(text string) {
-		found, ok := findings(l, text)
-		if !ok && !b.reviewed {
-			return
-		}
-		b.reviewed = true
-		e := newEntry(l, KindSubagent)
-		e.Text = cut(strings.TrimSpace(text), maxSubagent)
-		b.events = append(b.events, e)
-		if ok {
-			b.events = append(b.events, found)
-		}
 	}
 	var s string
 	if json.Unmarshal(m.Content, &s) != nil {
 		var parts []string
 		for _, bl := range blocksOf(m.Content) {
-			switch {
-			case bl.Type == "tool_result" && b.subagents[bl.ToolUseID]:
-				if text, _ := contentText(bl.Content); !strings.HasPrefix(text, asyncLaunched) {
-					add(text)
-				}
-			case bl.Type == "text":
+			switch bl.Type {
+			case "tool_result":
+				b.toolResult(l, bl)
+			case "text":
 				parts = append(parts, bl.Text)
 			}
 		}
 		s = strings.Join(parts, "\n")
 	}
 	if strings.Contains(s, handBack) {
-		add(s)
-	} else if result, ok := tagText(s, "result"); ok && strings.HasPrefix(strings.TrimSpace(s), "<task-notification>") && len(result) >= minNoticeResult {
-		add(result)
+		b.report(l, s)
+	} else {
+		b.notice(l, s)
 	}
 }
 
-// findings is the findings entry of an assistant text that holds a
-// ```solidtrace-findings block.
-func findings(l line, text string) (Entry, bool) {
-	start := -1
+func (b *builder) toolResult(l line, bl block) {
+	text, _ := contentText(bl.Content)
+	if bl.IsError {
+		// The tool did not change the file.
+		if i, ok := b.edits[bl.ToolUseID]; ok {
+			b.rejected[i] = true
+		}
+		_, words, said := strings.Cut(text, rejectedBecause)
+		if said && strings.TrimSpace(words) != "" {
+			b.person(l, words)
+		}
+		if said || strings.HasPrefix(strings.TrimSpace(text), rejected) {
+			return
+		}
+	}
+	if answers, ok := strings.CutPrefix(strings.TrimSpace(text), answered); ok && b.asks[bl.ToolUseID] {
+		b.person(l, strings.TrimSuffix(strings.TrimSpace(answers), answeredEnd))
+		return
+	}
+	if b.subagents[bl.ToolUseID] && !strings.HasPrefix(text, asyncLaunched) {
+		b.report(l, text)
+	}
+}
+
+// notice adds the result of a task notification as a subagent's report,
+// when it is long or holds a findings block. A short result with no block
+// is only a note that a task ended.
+func (b *builder) notice(l line, s string) {
+	if !strings.HasPrefix(strings.TrimSpace(s), "<task-notification>") {
+		return
+	}
+	if result, ok := noticeResult(s); ok && (len(result) >= minNoticeResult || len(findings(l, result)) > 0) {
+		b.report(l, result)
+	}
+}
+
+// noticeResult is the text of a task notification's <result>: up to the
+// last </result> before </task-notification>, because a report can quote
+// </result>.
+func noticeResult(s string) (string, bool) {
+	_, after, ok := strings.Cut(s, "<result>")
+	if !ok {
+		return "", false
+	}
+	if i := strings.LastIndex(after, "</task-notification>"); i >= 0 {
+		after = after[:i]
+	}
+	i := strings.LastIndex(after, "</result>")
+	if i < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(after[:i]), true
+}
+
+// report adds a subagent's report. A report with a findings block is a
+// review that a subagent ran, so it counts from before the first review
+// start too.
+func (b *builder) report(l line, text string) {
+	found := findings(l, text)
+	if len(found) > 0 {
+		b.markReviewed()
+	}
+	e := newEntry(l, KindSubagent)
+	e.Text = cut(strings.TrimSpace(text), maxSubagent)
+	b.addGated(e)
+	b.events = append(b.events, found...)
+}
+
+// findings are the findings entries of a text, one for each
+// ```solidtrace-findings block in it, in order.
+func findings(l line, text string) []Entry {
+	var out []Entry
 	lines := strings.Split(text, "\n")
-	for i, s := range lines {
-		if strings.TrimSpace(s) == findingsFence {
-			start = i + 1
-			break
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != findingsFence {
+			continue
 		}
-	}
-	if start < 0 {
-		return Entry{}, false
-	}
-	e := newEntry(l, KindFindings)
-	e.Findings = json.RawMessage("null")
-	end := -1
-	for i := start; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "```" {
-			end = i
-			break
+		e := newEntry(l, KindFindings)
+		e.Findings = json.RawMessage("null")
+		start, end := i+1, -1
+		for j := start; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == "```" {
+				end = j
+				break
+			}
 		}
+		if end < 0 {
+			e.Error = "the solidtrace-findings block has no closing ```"
+			return append(out, e)
+		}
+		i = end
+		body := []byte(strings.Join(lines[start:end], "\n"))
+		var v any
+		if err := json.Unmarshal(body, &v); err != nil {
+			e.Error = err.Error()
+			out = append(out, e)
+			continue
+		}
+		// json.Compact keeps the block's own key order and its <, > and &.
+		var compact bytes.Buffer
+		_ = json.Compact(&compact, body)
+		e.Findings = compact.Bytes()
+		out = append(out, e)
 	}
-	if end < 0 {
-		e.Error = "the solidtrace-findings block has no closing ```"
-		return e, true
-	}
-	body := []byte(strings.Join(lines[start:end], "\n"))
-	var v any
-	if err := json.Unmarshal(body, &v); err != nil {
-		e.Error = err.Error()
-		return e, true
-	}
-	// json.Compact keeps the block's own key order and its <, > and &.
-	var compact bytes.Buffer
-	_ = json.Compact(&compact, body)
-	e.Findings = compact.Bytes()
-	return e, true
+	return out
 }
 
 // personText is the text of a user line that a person wrote. Hook
@@ -531,6 +685,16 @@ func queuedPersonText(l line) (string, bool) {
 	}
 	text, ok := contentText(a.Prompt)
 	return text, ok && fromThePerson(text)
+}
+
+// queuedNotice is the text of a background task's notice that Claude Code
+// queued while the agent worked.
+func queuedNotice(l line) (string, bool) {
+	var a queuedCommand
+	if json.Unmarshal(l.Attachment, &a) != nil || a.Type != "queued_command" || a.CommandMode != "task-notification" {
+		return "", false
+	}
+	return contentText(a.Prompt)
 }
 
 func fromThePerson(text string) bool {
@@ -592,6 +756,72 @@ func cut(text string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
+// paths makes the paths of a transcript's edits relative to their git
+// top level.
+type paths struct {
+	tops topLevels
+	// start is the first cwd of the transcript.
+	start string
+}
+
+func (p *paths) see(cwd string) {
+	if p.start == "" {
+		p.start = cwd
+	}
+}
+
+// relative is path relative to the git top level of cwd. A worktree is
+// often removed when its work ends, so for a cwd that is not there now the
+// top level is the .claude/worktrees/<name> folder that holds cwd. Else,
+// when no folder above cwd holds .git, it is the transcript's first cwd
+// when that holds cwd: the top level of a worktree outside the
+// repository, where the agent started.
+func (p *paths) relative(cwd, path string) string {
+	if cwd != "" && filepath.IsAbs(path) {
+		if _, err := os.Stat(cwd); err != nil {
+			tops := []string{claudeWorktree(cwd)}
+			if p.tops.top(cwd) == "" {
+				tops = append(tops, p.start)
+			}
+			for _, top := range tops {
+				if top == "" || !inside(cwd, []string{top}) {
+					continue
+				}
+				if rel, ok := within(top, path); ok {
+					return rel
+				}
+			}
+		}
+	}
+	return p.tops.relative(cwd, path)
+}
+
+// claudeWorktree is the folder of the Claude Code worktree that holds dir,
+// <repository>/.claude/worktrees/<name>, or "" for none.
+func claudeWorktree(dir string) string {
+	sep := string(filepath.Separator)
+	marker := sep + ".claude" + sep + "worktrees" + sep
+	dir = filepath.Clean(dir)
+	i := strings.LastIndex(dir+sep, marker)
+	if i < 0 {
+		return ""
+	}
+	name, _, _ := strings.Cut(dir[i+len(marker):], sep)
+	if name == "" {
+		return ""
+	}
+	return dir[:i+len(marker)+len(name)]
+}
+
+// within is path relative to top, when path is in top.
+func within(top, path string) (string, bool) {
+	rel, err := filepath.Rel(top, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
 // topLevels keeps the git top level of each cwd that relative looked up.
 type topLevels map[string]string
 
@@ -601,19 +831,21 @@ func (tops topLevels) relative(cwd, path string) string {
 	if cwd == "" || !filepath.IsAbs(path) {
 		return path
 	}
+	if top := tops.top(cwd); top != "" {
+		if rel, ok := within(top, path); ok {
+			return rel
+		}
+	}
+	return path
+}
+
+func (tops topLevels) top(cwd string) string {
 	top, ok := tops[cwd]
 	if !ok {
 		top = gitTopLevel(cwd)
 		tops[cwd] = top
 	}
-	if top == "" {
-		return path
-	}
-	rel, err := filepath.Rel(top, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return path
-	}
-	return rel
+	return top
 }
 
 // gitTopLevel is the nearest folder at or above dir that holds .git (a

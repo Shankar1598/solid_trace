@@ -483,3 +483,282 @@ func TestReviewDigestOfTwoSessionsPutsTheirEventsInTimeOrder(t *testing.T) {
 		t.Fatalf("events: %v\nwant %v", got, want)
 	}
 }
+
+// withID sets the id of a tool use.
+func withID(block map[string]any, id string) map[string]any {
+	block["id"] = id
+	return block
+}
+
+func toolResult(id string, content any, isError bool) map[string]any {
+	return map[string]any{"type": "tool_result", "tool_use_id": id, "content": content, "is_error": isError}
+}
+
+const (
+	runBlock    = "```solidtrace-findings\n{\"version\": 2, \"run\": 1, \"findings\": [{\"id\": \"F1\"}]}\n```"
+	updateBlock = "```solidtrace-findings\n{\"version\": 2, \"update\": 1, \"findings\": [{\"id\": \"F1\", \"events\": [{\"type\": \"fix\", \"commit\": \"abc\"}]}]}\n```"
+)
+
+func TestReviewDigestTakesEachFindingsBlockOfATextAndOfAReport(t *testing.T) {
+	both := "Part 1 is reviewed.\n" + runBlock + "\nI fixed F1.\n" + updateBlock
+	path := transcript(t,
+		userLine("u-task", "Build the parser in parts."),
+		assistantLine("a-part", withID(toolUse("Agent", map[string]any{"description": "Build part 1", "prompt": "Build it."}), "t-part")),
+		userLine("u-report", []map[string]any{toolResult("t-part", []map[string]any{text(both)}, false)}),
+		assistantLine("a-both", text(both)),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	want := []string{"task", "delegate", "subagent_report", "findings", "findings", "agent_text", "findings", "findings"}
+	if !reflect.DeepEqual(kinds(d), want) {
+		t.Fatalf("kinds: %v, want %v\n%s", kinds(d), want, stdout)
+	}
+	for _, i := range []int{4, 7} {
+		if f := d.Events[i]["findings"].(map[string]any); f["update"] != 1.0 {
+			t.Errorf("event %d is not the update block: %v", i, f)
+		}
+	}
+}
+
+func TestReviewDigestKeepsANoticeResultThatHoldsAFindingsBlock(t *testing.T) {
+	notice := func(result string) string {
+		return "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<result>" + result + "</result>\n</task-notification>"
+	}
+	quotes := strings.Repeat("The digest reads the text between <result> and </result> of a notice. ", 5) + "\n" + runBlock
+	path := transcript(t,
+		userLine("u-task", "Build the parser."),
+		userLine("u-short", notice("Fixed F1.\n"+updateBlock)),
+		userLine("u-quotes", notice(quotes)),
+		userLine("u-ended", notice("Done.")),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if want := []string{"task", "subagent_report", "findings", "subagent_report", "findings"}; !reflect.DeepEqual(kinds(d), want) {
+		t.Fatalf("kinds: %v, want %v\n%s", kinds(d), want, stdout)
+	}
+	if d.Events[3]["uuid"] != "u-quotes" || d.Events[4]["error"] != nil {
+		t.Errorf("the result that quotes </result>: %v %v", d.Events[3], d.Events[4])
+	}
+}
+
+func TestReviewDigestTakesAQueuedTaskNotificationAsASubagentsReport(t *testing.T) {
+	queued := func(uuid, prompt string) map[string]any {
+		return map[string]any{"type": "attachment", "uuid": uuid, "timestamp": "2026-11-03T08:00:02Z", "sessionId": "s-made", "cwd": "/work",
+			"attachment": map[string]any{"type": "queued_command", "commandMode": "task-notification", "prompt": prompt}}
+	}
+	path := transcript(t,
+		userLine("u-task", "Build the parser."),
+		queued("q-result", "<task-notification>\n<task-id>a1</task-id>\n<result>Part 1 is reviewed.\n"+runBlock+"</result>\n</task-notification>"),
+		queued("q-ended", "<task-notification>done</task-notification>"),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if want := []string{"task", "subagent_report", "findings"}; !reflect.DeepEqual(kinds(d), want) || d.Events[1]["uuid"] != "q-result" {
+		t.Fatalf("kinds: %v, want %v\n%s", kinds(d), want, stdout)
+	}
+}
+
+func TestReviewDigestFindsOnlyTheGitCommandsThatMakeACommit(t *testing.T) {
+	commands := []struct {
+		command  string
+		commit   bool
+		findings []any
+	}{
+		{"git merge-base main HEAD", false, nil},
+		{"git fetch -q && git merge-tree --write-tree origin/main HEAD", false, nil},
+		{"cat > docs/release.md <<'EOF'\n# Release\n\ngit commit -m \"Add the changelog\" -- CHANGELOG.md\nEOF", false, nil},
+		{"git merge --abort", false, nil},
+		{"echo 'git commit -m x'", false, nil},
+		{"git -c commit.gpgsign=false commit -m 'Fix F2' -- a.go", true, nil},
+		{"git --no-pager commit -m 'Fix F2' -- a.go", true, nil},
+		{"GIT_EDITOR=true git commit --amend --no-edit -- a.go", true, nil},
+		{"if go test ./...; then git commit -q -m 'Fix F2' -- a.go; fi", true, nil},
+		{"(cd cli && git -C .. commit -m 'Fix F2' -- a.go)", true, nil},
+		{"git merge --no-ff -m 'Merge part 1' worktree-agent-1", true, nil},
+		{"git commit -m \"Fix the cap\n\nReview-Findings: run 1: F2\" -- a.go", true, []any{"run 1: F2"}},
+		{"git commit -m \"Fix the cap\" -m \"Review-Findings: run 1: F3\" -- a.go", true, []any{"run 1: F3"}},
+		{"git commit -F - -- a.go <<'EOF'\nFix the cap\n\nReview-Findings: run 1: F4\nEOF", true, []any{"run 1: F4"}},
+		{"git commit -m \"$(cat <<'EOF'\nFix the cap\n\nReview-Findings: run 1: F5\nEOF\n)\" -- a.go", true, []any{"run 1: F5"}},
+		{"git commit -m 'Fix the cap' -- 'Review-Findings: run 1: F6'", true, nil},
+	}
+	lines := []map[string]any{userLine("u-task", "Build the parser.")}
+	for i, c := range commands {
+		lines = append(lines, assistantLine(fmt.Sprint("a-", i), withID(toolUse("Bash", map[string]any{"command": c.command}), fmt.Sprint("t-", i))))
+	}
+	path := transcript(t, lines...)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	commits := map[string]map[string]any{}
+	for _, e := range decodeDigest(t, stdout).Events {
+		if e["kind"] == "commit" {
+			commits[e["uuid"].(string)] = e
+		}
+	}
+	for i, c := range commands {
+		e, ok := commits[fmt.Sprint("a-", i)]
+		if ok != c.commit {
+			t.Errorf("%q: commit %v, want %v", c.command, ok, c.commit)
+			continue
+		}
+		if got, _ := e["review_findings"].([]any); ok && !reflect.DeepEqual(got, c.findings) {
+			t.Errorf("%q: review_findings %v, want %v", c.command, got, c.findings)
+		}
+	}
+}
+
+func TestReviewDigestGivesAnEditInARemovedWorktreeAPathInTheWorktree(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(repo, ".claude", "worktrees", "agent-gone")
+	edit := assistantLine("a-edit", toolUse("Edit", map[string]any{"file_path": filepath.Join(gone, "cli", "review", "digest.go")}))
+	edit["cwd"] = filepath.Join(gone, "cli")
+	path := transcript(t,
+		userLine("u-task", "Fix the parser."),
+		assistantLine("a-skill", toolUse("Skill", map[string]any{"skill": "code-review"})),
+		edit,
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if len(d.Events) != 3 || d.Events[2]["file"] != filepath.Join("cli", "review", "digest.go") {
+		t.Fatalf("digest:\n%s", stdout)
+	}
+}
+
+func TestReviewDigestTakesASkillCommandInTheFirstMessageAsTheTask(t *testing.T) {
+	skill := userLine("u-skill", []map[string]any{text("# TDD skill text")})
+	skill["isMeta"] = true
+	path := transcript(t,
+		userLine("u-clear", "<command-name>/clear</command-name>"),
+		userLine("u-tdd", "<command-message>tdd</command-message>\n<command-name>/tdd</command-name>\n<command-args>add a retry</command-args>"),
+		skill,
+		userLine("u-more", "Also log each try."),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if !reflect.DeepEqual(kinds(d), []string{"task", "person"}) || d.Events[0]["text"] != "/tdd add a retry" ||
+		d.Events[1]["text"] != "Also log each try." {
+		t.Fatalf("digest:\n%s", stdout)
+	}
+}
+
+func TestReviewDigestStartsAReviewByDefaultOnlyForAReviewSkillName(t *testing.T) {
+	skills := map[string]bool{
+		"code-review": true, "deep-review": true, "security-review": true, "acme-review": true, "review": true,
+		"pstack:interrogate": true, "solidtrace-skills:code-review": true,
+		"preview-deploy": false, "review-notes": false, "pstack:preview": false, "interrogate-logs": false,
+	}
+	lines := []map[string]any{userLine("u-task", "Ship the docs.")}
+	for name := range skills {
+		lines = append(lines, assistantLine("a-"+name, withID(toolUse("Skill", map[string]any{"skill": name}), "t-"+name)))
+	}
+	path := transcript(t, lines...)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	started := map[string]bool{}
+	for _, e := range decodeDigest(t, stdout).Events {
+		if e["kind"] == "review_start" {
+			started[e["skill"].(string)] = true
+		}
+	}
+	for name, want := range skills {
+		if started[name] != want {
+			t.Errorf("%s: review start %v, want %v", name, started[name], want)
+		}
+	}
+}
+
+func TestReviewDigestKeepsThePersonsWordsInToolResults(t *testing.T) {
+	ask := withID(toolUse("AskUserQuestion", map[string]any{"questions": []map[string]any{{"question": "F1: fix the cap now?"}}}), "t-ask")
+	path := transcript(t,
+		userLine("u-task", "Fix the parser."),
+		assistantLine("a-skill", toolUse("Skill", map[string]any{"skill": "code-review"})),
+		assistantLine("a-ask", ask),
+		userLine("u-answer", []map[string]any{toolResult("t-ask",
+			"User has answered your questions: \"F1: fix the cap now?\"=\"Ignore\". You can now continue with the user's answers in mind.", false)}),
+		assistantLine("a-edit", withID(toolUse("Edit", map[string]any{"file_path": "/work/a.go"}), "t-rejected")),
+		userLine("u-reject", []map[string]any{toolResult("t-rejected",
+			"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). "+
+				"To tell you how to proceed, the user said:\nDo not touch a.go, the cap is in b.go", true)}),
+		assistantLine("a-edit-b", withID(toolUse("Edit", map[string]any{"file_path": "/work/b.go"}), "t-done")),
+		userLine("u-done", []map[string]any{toolResult("t-done", "The file /work/b.go has been updated.", false)}),
+		assistantLine("a-edit-c", withID(toolUse("Edit", map[string]any{"file_path": "/work/c.go"}), "t-open")),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if want := []string{"task", "review_start", "person", "person", "edit", "edit"}; !reflect.DeepEqual(kinds(d), want) {
+		t.Fatalf("kinds: %v, want %v\n%s", kinds(d), want, stdout)
+	}
+	if d.Events[2]["text"] != "\"F1: fix the cap now?\"=\"Ignore\"." || d.Events[3]["text"] != "Do not touch a.go, the cap is in b.go" ||
+		d.Events[4]["uuid"] != "a-edit-b" || d.Events[5]["uuid"] != "a-edit-c" {
+		t.Errorf("digest:\n%s", stdout)
+	}
+}
+
+func TestReviewDigestKeepsAllEventsOfASessionThatStartsAfterAReview(t *testing.T) {
+	review := transcript(t,
+		in(userLine("a1", "Build the parser."), "s-a", "2026-11-03T08:00:00Z"),
+		in(assistantLine("a2", toolUse("Skill", map[string]any{"skill": "code-review"})), "s-a", "2026-11-03T08:01:00Z"),
+	)
+	before := transcript(t,
+		in(userLine("p1", "Plan the docs."), "s-p", "2026-11-03T07:00:00Z"),
+		in(assistantLine("p2", text("A plan.")), "s-p", "2026-11-03T08:05:00Z"),
+	)
+	after := transcript(t,
+		in(userLine("b1", "Go on with the parser: fix F1."), "s-b", "2026-11-03T09:00:00Z"),
+		in(assistantLine("b2", text("I fix F1."), toolUse("Edit", map[string]any{"file_path": "/work/parser.go"})), "s-b", "2026-11-03T09:01:00Z"),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", review, "--file", before, "--file", after)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	var got []string
+	for _, e := range decodeDigest(t, stdout).Events {
+		got = append(got, e["uuid"].(string)+" "+e["kind"].(string))
+	}
+	want := []string{"p1 task", "a1 task", "a2 review_start", "b1 task", "b2 agent_text", "b2 edit"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: %v\nwant %v", got, want)
+	}
+}

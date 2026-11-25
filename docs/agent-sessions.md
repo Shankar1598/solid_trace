@@ -134,17 +134,17 @@ An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agen
 
 ## Record what each review found: the skills plugin
 
-The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is not on by default. It reviews a change in two stages, opens its PR, and records every finding with every decision on it:
+The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is not on by default. It reviews a change in two stages, opens its PR, works on the PR's feedback, and records every finding with every decision on it:
 
 - **`/solidtrace-skills:code-review`** reviews one step of a feature. The agent can also start it after each step of a build. Three reviewers run at the same time: bugs and spec, and tests, on the session's model, and code quality on Sonnet. They read the repository's `REVIEW.md` sections and its coding standards file, when these exist. The agent decides each finding: `fix`, `dispute`, `trivial`, `defer` or `ask`. A verifier checks each finding that the agent disputes or calls trivial. The reply ends with a `solidtrace-findings` block. The block has the model and effort of each reviewer. Each finding has an id (`F1`, `F2`) and its events (`found`, `triage`, `verify`). A later review keeps the id for the same root cause. After the fixes, the agent commits them with a `Review-Findings: run 1: F2, F5` trailer, and ends the reply with an update block. The update block gives each fixed finding its commit, and each changed decision. So a fix can be found from the commit too, with `git log --format='%H %(trailers:key=Review-Findings,valueonly)'`.
-- **`/solidtrace-skills:deep-review`** tries to break the whole branch with several models, and keeps only the findings that a run proves. With pstack installed, it follows pstack's `interrogate` skill.
+- **`/solidtrace-skills:deep-review`** tries to break the whole branch with several adversaries, each in its own worktree, and keeps only the findings that a run proves again.
 - **`/solidtrace-skills:open-pr`** runs the final stage, then pushes the branch and opens its PR (Bitbucket, GitHub, or `solidtrace pr` in a Run). The final stage reviews the whole branch diff, in this order:
   1. the deep review;
   2. the high availability and infrastructure reviewer;
   3. the person's decisions, and the fixes;
   4. security, last, because a fix can add a fault.
 
-  `/solidtrace-skills:open-pr local` does all of this, but does not push. It writes the PR to `solidtrace-pr/<branch>.md` in the repository's Git folder, and the record gets `"pr": "local:<path>"`. Use it to test the skills, or to read the PR before it goes out.
+  When the branch already has an open PR, `open-pr` stops and points to `update-pr`. `/solidtrace-skills:open-pr local` does all of this, but does not push. It writes the PR to `solidtrace-pr/<branch>.md` in the repository's Git folder, and the record gets `"pr": "local:<path>"`. Use it to test the skills, or to read the PR before it goes out.
 
   While the branch pushes, a Sonnet subagent writes the record. Each finding keeps its events in time order:
   - what the reviewer found;
@@ -153,6 +153,19 @@ The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is no
   - the fix.
 
   A problem that the person, a later agent or a test run found is a finding too, with `found_by`. So the record also shows what the reviews missed. The record tells the `story` of the feature, and gives the outcome of each finding: `fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`. The PR body shows the record for the human reviewer. The reply ends with it in a `solidtrace-pr-record` block.
+
+- **`/solidtrace-skills:update-pr`** works on the feedback on the open PR: its comments, its reviews (also from a review bot) and its failed checks. Each change request becomes a finding with `found_by` (the comment's author, the bot or the check). The agent decides and fixes each one, runs security on the fix diff, and replies to each comment. Then it writes the next round of the record, and updates the PR body. A record replaces the earlier rounds of the same PR. `update-pr local` reads the feedback from `<branch>.comments.md` next to the local PR file.
+
+The repository can set the model and effort of each role in `.solidtrace/review.toml`:
+
+```toml
+[models]
+code-quality = "sonnet high"
+deep-review = ["opus xhigh", "opus xhigh"]
+record = "sonnet"
+```
+
+The roles are `bugs-and-spec`, `tests`, `code-quality`, `verifier`, `ha-and-infrastructure`, `security`, `deep-review`, `record` and `sessions`. `inherit` is the session's model. A role with no line keeps its default. The defaults are the values above, `haiku` for `sessions`, and `inherit` for the other roles. Each block records the model and effort that ran, so a team can compare them.
 
 A feature often spans several Agent sessions. Before the record, `open-pr` runs `solidtrace review sessions`, which lists the sessions on this machine that made one of the PR's commits (`strong`), checked out its branch, or changed one of its files. The person confirms the list. When no other session has a link, a Haiku subagent reads the titles of the recent sessions in the repository, and the person confirms only the ones it names.
 

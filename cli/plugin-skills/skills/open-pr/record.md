@@ -19,9 +19,9 @@ A JSON file with `sessions` (each with `id` and `title`), `reviews` (the count o
 ## Steps
 
 1. **Find each review run.** Each `findings` event with no `update` is one run: copy its `skill`, `trigger`, `stage`, `step`, `reviewers`, `verifier` and `skipped`. A block's `run` and ids count only in the transcript that wrote it, so another session or a subagent can reuse them. Number the record's runs 1, 2, 3 in time order across all sessions, keep the block's own number as `block_run`, and give each block finding the record id `<run>.<block id>`, for example `3.F2`. A `review_start` or a review in subagent reports with no `findings` event is also a run: give its findings the ids `T<run>-1`, `T<run>-2` and so on, take them from the `subagent_report` and `agent_text` events that report that review, and write their `found` event with `"source": "record"`. One run is one review of one part of the work: the reviewers that review the same part at the same time are one run. A subagent that only verifies or tests the work is not a review.
-2. **Copy each block finding with its events.** Keep every event of the block in its order, each with `"source": "block"` and the `uuid` of the `findings` event as its evidence. Keep the block's id as `block_id`. A finding with a `refound` event gets one entry: find the earlier finding with the same `block_id` from the same writer (the same session, and the same subagent or the main session), and add the `refound` event, with its run, to that entry. Copy each event of an update block in the same way, with `"source": "block"` and the update block's `uuid`, to the finding with that `block_id` from the run with `block_run` equal to `update`, from the same writer. Keep `commit` and `files` of each `fix` event.
+2. **Copy each block finding with its events.** Copy `also` when it is there. A block finding's `found_by` is `{"kind": "reviewer", "name": <its reviewer>}`, unless the block finding has its own `found_by` (an `update-pr` block), which you copy. Keep every event of the block in its order, each with `"source": "block"` and the `uuid` of the `findings` event as its evidence. Keep the block's id as `block_id`. A finding with a `refound` event gets one entry: find the earlier finding with the same `block_id` from the same writer (the same session, and the same subagent or the main session), and add the `refound` event, with its run, to that entry. Copy each event of an update block in the same way, with `"source": "block"` and the update block's `uuid`, to the finding with that `block_id` from the run with `block_run` equal to `update`, from the same writer. Keep `commit` and `files` of each `fix` event.
 3. **Add what happened later.** Read the events after each run's report, up to the PR, and add these events to the finding they are about, each with `"source": "record"`, its evidence and its place in time:
-   - `person`: the person spoke about the finding. `said` is their own words, at most 200 characters, cut with `…`. `asks` is `fix`, `ignore`, `defer`, `dig` (they read deeper or asked for more) or `question`.
+   - `person`: the person spoke about the finding. For an `update-pr` finding, the person's go-ahead or refusal is this event. `said` is their own words, at most 200 characters, cut with `…`. `asks` is `fix`, `ignore`, `defer`, `dig` (they read deeper or asked for more) or `question`.
    - `agent`: what the agent found and changed after the person's words: `found` (one line) and `changed` (the files).
    - `fix`: a `commit` whose `review_findings` names the finding (its run and block id) when no update block gave this fix, an `edit` that changes the finding's file after the report, or a `delegate` that gives the fix to a subagent and its `subagent_report` or a `commit` that says it is done. `files`, and `commit` when one shows it.
    - `triage`: a decision that the agent wrote later in text and not in an update block, such as "I leave F4 for later".
@@ -49,13 +49,14 @@ Every `evidence` value is a `uuid` from the digest. Write no claim that no event
 
 ## The record
 
-Write this JSON to the output path:
+Write this JSON to the output path. `round` is the round that the prompt gives: 1 for `open-pr`, and one more for each `update-pr`. A record replaces the records of the same `pr` with a lower `round`, so the analysis counts each finding once.
 
 ```json
 {
   "version": 2,
   "sessions": [{"id": "<from the digest>", "title": "<from the digest>"}],
   "pr": null,
+  "round": 1,
   "story": {"started_from": "...", "changes": ["..."], "reviews": ["Run 3 (otlp-03, code-review): 5 findings, 3 fixed, 1 trivial upheld by the verifier, 1 pushed back and fixed."],
             "after_review": ["..."], "sessions": ["<id>: ..."]},
   "reviews": [

@@ -33,11 +33,13 @@ Done when you hold the spec's text (or know there is none) and each rule section
 
 Spawn these in one message, so they run at the same time:
 
-| Reviewer | `model` | Runs when |
-|---|---|---|
-| `bugs-and-spec` | none (this session's model) | always |
-| `tests` | none (this session's model) | the step changes code or tests |
-| `code-quality` | `sonnet` | the step changes code |
+| Reviewer | Runs when |
+|---|---|
+| `bugs-and-spec` | always |
+| `tests` | the step changes code or tests |
+| `code-quality` | the step changes code |
+
+Take each reviewer's `model` and `effort` from [models.md](models.md).
 
 Each prompt gives the diff command, the commit list, the changed files, the rule sections mapped to that reviewer, and this line: "Read `${CLAUDE_SKILL_DIR}/reviewers.md`, follow its contract and the section for `<reviewer>`." Add the spec's full text for `bugs-and-spec`.
 
@@ -59,7 +61,7 @@ Done when every finding has one decision. A decision that changes later goes in 
 
 ## 5. Verify what you reject
 
-Send every `dispute` and `trivial` finding to a verifier. Verifiers run on this session's model, so give no `model`. Spawn one verifier for up to 10 findings, and one more for each 10 above that, all in one message. Each prompt gives the diff command, the findings as the reviewers wrote them, your decision and `why` for each, the spec's text, and this line: "Read `${CLAUDE_SKILL_DIR}/reviewers.md` and follow the section for the verifier."
+Send every `dispute` and `trivial` finding to a verifier. Verifiers run on the `verifier` role of [models.md](models.md). Spawn one verifier for up to 10 findings, and one more for each 10 above that, all in one message. Each prompt gives the diff command, the findings as the reviewers wrote them, your decision and `why` for each, the spec's text, and this line: "Read `${CLAUDE_SKILL_DIR}/reviewers.md` and follow the section for the verifier."
 
 When the verifier pushes back, decide again: `fix` or `ask`. Do not dispute a finding that the verifier pushed back on.
 

@@ -278,3 +278,77 @@ func TestReviewSessionsRefusesWrongArguments(t *testing.T) {
 		t.Errorf("outside a repository: exit %d, want 1", code)
 	}
 }
+
+func TestReviewSessionsLinksACommitOnlyByTheSameSubject(t *testing.T) {
+	repo, _ := prRepository(t)
+	projects := tempDir(t)
+	folder := filepath.Join(projects, "-repo")
+	const (
+		sLonger = "77777777-7777-4777-8777-777777777771"
+		sDashC  = "77777777-7777-4777-8777-777777777772"
+	)
+	writeTranscript(t, filepath.Join(folder, sLonger+".jsonl"),
+		at(userLine("l1", "Write tests."), "2026-11-03T08:00:00Z", repo, "main"),
+		at(assistantLine("l2", toolUse("Bash", map[string]any{"command": "git commit -m \"Add the parser tests\" -- parser/a_test.go"})), "2026-11-03T08:01:00Z", repo, "main"),
+	)
+	writeTranscript(t, filepath.Join(folder, sDashC+".jsonl"),
+		at(userLine("c1", "Build the parser."), "2026-11-03T09:00:00Z", repo, "main"),
+		at(assistantLine("c2", toolUse("Bash", map[string]any{"command": "cd parser && go test ./... && git -C .. commit -q -m 'Add the parser' -- parser/a.go"})), "2026-11-03T09:01:00Z", repo, "main"),
+	)
+
+	list := runSessions(t, command.Env{Dir: repo, ClaudeProjectsDir: projects}, "--all")
+
+	strong := map[string]bool{}
+	for _, s := range list.Sessions {
+		strong[s.ID] = s.Strong
+	}
+	if !reflect.DeepEqual(strong, map[string]bool{sLonger: false, sDashC: true}) {
+		t.Fatalf("strong: %v", strong)
+	}
+}
+
+func TestReviewSessionsListsASessionOfARemovedWorktreeOutsideTheRepository(t *testing.T) {
+	repo, _ := prRepository(t)
+	gone := filepath.Join(tempDir(t), "wt-gone")
+	git(t, repo, "worktree", "add", "-q", "--detach", gone, "feature/x")
+	projects := tempDir(t)
+	const sRemoved = "77777777-7777-4777-8777-777777777773"
+	writeTranscript(t, filepath.Join(projects, "-wt-gone", sRemoved+".jsonl"),
+		at(userLine("r1", "Fix the parser's errors."), "2026-11-03T08:00:00Z", gone, "HEAD"),
+		at(assistantLine("r2", toolUse("Edit", map[string]any{"file_path": filepath.Join(gone, "parser", "b.go")})), "2026-11-03T08:01:00Z", gone, "HEAD"),
+		at(assistantLine("r3", toolUse("Bash", map[string]any{"command": "git commit -q -m \"Fix the parser's errors\" -- parser/b.go"})), "2026-11-03T08:02:00Z", gone, "HEAD"),
+	)
+	git(t, repo, "worktree", "remove", "--force", gone)
+
+	list := runSessions(t, command.Env{Dir: repo, ClaudeProjectsDir: projects})
+
+	if len(list.Sessions) != 1 || list.Sessions[0].ID != sRemoved || !list.Sessions[0].Strong || list.Sessions[0].Links.Files != 1 {
+		t.Fatalf("sessions: %+v", list.Sessions)
+	}
+}
+
+func TestReviewSessionsSkipsASessionWhoseTranscriptCannotBeRead(t *testing.T) {
+	env, _ := sessionsFixture(t)
+	// A folder in the place of a subagent's transcript cannot be read.
+	broken := filepath.Join(env.ClaudeProjectsDir, "-repo", sBranch, "subagents", "agent-x.jsonl")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	env.Stdout, env.Stderr = &stdout, &stderr
+
+	if code := command.Run(context.Background(), []string{"review", "sessions"}, env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	var list sessionList
+	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(list); !reflect.DeepEqual(got, []string{sCommit, sWorktree}) || !strings.Contains(stderr.String(), sBranch) {
+		t.Fatalf("sessions: %v\n%s", got, stderr.String())
+	}
+	env.Stderr = &bytes.Buffer{}
+	if code := command.Run(context.Background(), []string{"review", "sessions", "--session", sBranch}, env); code != 1 {
+		t.Errorf("the current session's transcript cannot be read: exit %d, want 1", code)
+	}
+}

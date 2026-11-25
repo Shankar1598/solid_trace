@@ -66,7 +66,13 @@ func reviewSessions(ctx context.Context, args []string, env Env) int {
 		subagents, _ := filepath.Glob(filepath.Join(filepath.Dir(f.TranscriptPath), f.ID, "subagents", "*.jsonl"))
 		s, inRepo, err := review.Link(f.ID, f.TranscriptPath, subagents, change)
 		if err != nil {
-			return fail(err)
+			// A transcript can be removed or be not readable: only the
+			// current session's transcript is necessary.
+			if isCurrent {
+				return fail(err)
+			}
+			fmt.Fprintf(env.Stderr, "solidtrace review sessions: skip the Agent session %s: %v\n", f.ID, err)
+			continue
 		}
 		s.Current = isCurrent
 		currentFound = currentFound || isCurrent
