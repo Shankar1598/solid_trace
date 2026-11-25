@@ -204,7 +204,7 @@ SolidTrace reads the record from the final reply of the Agent session: the last 
 
 ### Over MCP
 
-An agent reads the Review records with two MCP tools ([MCP](mcp.md)): `list_review_records` lists the newest record of each PR, as the page does, and `get_review_record` reads one record all of it, byte for byte, with the rounds of its PR. A token with `mcp:read` can call both. To compare the reviews of many PRs, an agent lists the records, then reads each one.
+An agent reads the Review records with two MCP tools ([MCP](mcp.md)): `list_review_records` lists the newest record of each PR, as the page does, and `get_review_record` reads one record with the rounds of its PR. It gives the findings in pages of 30, and `findings_from` and `findings_limit` select a page. A token with `mcp:read` can call both. To compare the reviews of many PRs, an agent lists the records, then reads each one, page by page, until `next_findings_from` is `null`.
 
 ## Send Claude Code's telemetry to SolidTrace
 
