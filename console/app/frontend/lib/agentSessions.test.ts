@@ -79,6 +79,10 @@ describe('the numbers of an Agent session', () => {
     expect(modelText('claude-opus-5-5', undefined)).toBe('claude-opus-5-5')
     expect(modelText('', '')).toBe('')
   })
+
+  it('gives no model text for a synthetic reply', () => {
+    expect(modelText('<synthetic>', undefined)).toBe('')
+  })
 })
 
 describe('who an Agent session is of', () => {

@@ -221,6 +221,7 @@ function SearchResults({ base, search, order }: { base: string; search: string; 
 }
 
 function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; costLabel: string; parentPath: string | null }) {
+  const model = modelText(session.model, undefined)
   const facts: [string, React.ReactNode][] = [
     [session.run ? 'Run' : 'Person', whoText(session)],
     ['Repository', <span className="font-mono text-xs">{session.repository}</span>],
@@ -228,7 +229,7 @@ function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; 
     ['Parent Agent session', parentPath
       ? <Link href={parentPath} className="font-mono text-xs underline underline-offset-2">{session.parent_session_id}</Link>
       : <None />],
-    ['Model', session.model ? <span className="font-mono text-xs">{session.model}</span> : <None text="Not known" />],
+    ['Model', model ? <span className="font-mono text-xs">{model}</span> : <None text="Not known" />],
     ['Effort', session.effort ? <span className="font-mono text-xs">{session.effort}</span> : <None text="Not known" />],
     ['First', timeText(session.first)],
     ['Last', timeText(session.last)],
@@ -502,6 +503,7 @@ function CompactionSummary({ step }: { step: TimelineStep }) {
 }
 
 function StepTitle({ step, label, icon, subagentBadge = true }: { step: TimelineStep; label: string; icon: React.ReactNode; subagentBadge?: boolean }) {
+  const model = modelText(step.model, step.effort)
   return (
     <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-xs">
       {icon}
@@ -509,7 +511,8 @@ function StepTitle({ step, label, icon, subagentBadge = true }: { step: Timeline
       {isThinking(step) && <Badge>thinking</Badge>}
       {subagentBadge && step.path.includes('subagents/') && <Badge>subagent {step.path.split('/').pop()?.replace(/^agent-|\.jsonl$/g, '')}</Badge>}
       <span className="font-mono text-muted-foreground">{clock(step.time)}</span>
-      {step.model && <span className="font-mono text-muted-foreground max-md:hidden" data-model>{modelText(step.model, step.effort)}</span>}
+      {model && <span className="font-mono text-muted-foreground max-md:hidden" data-model>{model}</span>}
+      {model && step.tokens && <span className="text-muted-foreground max-md:hidden" aria-hidden>·</span>}
       {step.tokens && (
         <span className="font-mono text-muted-foreground" title={`${step.tokens.input} input, ${step.tokens.output} output, ${step.tokens.cache_read} cache read, ${step.tokens.cache_write} cache write`}>
           {stepTokensText(step)}

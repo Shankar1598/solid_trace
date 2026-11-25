@@ -149,8 +149,12 @@ export function tokensText(tokens: number): string {
   return shortNumber.format(tokens)
 }
 
-/** A model with the effort of its reply, as "claude-opus-5-5 · high"; the model alone when there is no effort. */
+/**
+ * A model with the effort of its reply, as "claude-opus-5-5 · high"; the model alone when there is no effort.
+ * A `<synthetic>` reply is Claude Code's own, as an API error, so it has no model text.
+ */
 export function modelText(model: string | undefined, effort: string | undefined): string {
+  if (model === '<synthetic>') return ''
   return [model, effort].filter(Boolean).join(' · ')
 }
 
