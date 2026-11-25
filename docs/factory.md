@@ -4,6 +4,8 @@ The **Factory** gives work to coding agents on your own machines. A person, a tr
 
 This guide goes from an empty server VM to a first Run. Read [Agent sessions](agent-sessions.md) for what people do with Runs.
 
+On Google Cloud, the wizard `factory/setup/gcp-wizard` does these steps with you, from an empty project to a first Run that opens a PR on a Bitbucket test repository. It asks where the server runs (on the SolidTrace VM, or on a VM of its own), makes one agent VM and adds one Claude account. For each command, you choose: the wizard runs it, you run it yourself, or you skip it. It keeps its values in `~/.config/solidtrace-factory/gcp/values.env`, and it does not set up webhooks, autoscaling or take-over.
+
 ## What you install
 
 | Part | Where | What it is |
@@ -27,7 +29,7 @@ The reference configuration is in [`factory/reference/`](../factory/reference/RE
 
 ## Rules
 
-- **Never install the Dispatcher on the SolidTrace VM.** Agents use much CPU and memory. They must not slow the ingest of Logs. The factory has its own server VM, beside the Nomad server.
+- **No agent runs on the SolidTrace VM.** Agents use much CPU and memory. They must not slow the ingest of Logs. Never run a Nomad client there. The Dispatcher, the Nomad server and Squid go on a server VM of their own: an e2-small is enough. You can put them on the SolidTrace VM, beside Console, but then each download of an agent goes through that VM ([ADR 0019](adr/0019-agents-run-on-nomad-and-the-factory-is-a-separable-module.md)). They use about 1 GB of memory there. That VM then holds the agents' secrets, and its Nomad server can run code on each agent VM.
 - **The factory is off unless you turn it on.** The files of a SolidTrace install (`deploy/`) have no part of the factory. A SolidTrace install with no Dispatcher URL (Settings → Instance) shows no part of the factory in Console: no Factory section, no Stop button and no Factory Integration provider. The Dispatcher itself refuses to start with no configuration.
 - **The Dispatcher's API is never public.** It listens only on the private address that you give. Only the webhook listener is public, and it serves only `POST /webhooks/<kind>/<id>`.
 - **One Run works on one VM.** The job of an Execution takes all the memory of the VM.
