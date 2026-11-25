@@ -52,6 +52,7 @@ var clickHouseMigrations = []clickHouseMigration{
 	agentSessionTitlesMigration,
 	agentSessionEffortMigration,
 	filteredIngestCountsMigration,
+	reviewRecordsMigration,
 }
 
 // clickHousePingTimeout bounds a health check of ClickHouse.

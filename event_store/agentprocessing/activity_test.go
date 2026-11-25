@@ -43,7 +43,7 @@ func daysOf(ranges ...[]storage.AgentFileUnit) []storage.AgentSessionDay {
 	var all []storage.AgentSessionDay
 	for _, units := range ranges {
 		var days []storage.AgentSessionDay
-		_, days, state = parseUnits(units, 180, state)
+		_, days, _, state = parseUnits(units, 180, state)
 		all = append(all, days...)
 	}
 	return all
@@ -90,7 +90,7 @@ func TestALineWithNoTimestampIsNotActivity(t *testing.T) {
 	})
 
 	t.Run("an untimed line's Log still has a time", func(t *testing.T) {
-		logs, _, _ := parseUnits([]storage.AgentFileUnit{activityUnit(0, stored, untimed[0], timedPerson("2026-11-23T12:00:00Z", "Go"), untimed[1])}, 180, parseState{})
+		logs, _, _, _ := parseUnits([]storage.AgentFileUnit{activityUnit(0, stored, untimed[0], timedPerson("2026-11-23T12:00:00Z", "Go"), untimed[1])}, 180, parseState{})
 		if len(logs[0]) != 3 {
 			t.Fatalf("Expected 3 Logs, got %d", len(logs[0]))
 		}
