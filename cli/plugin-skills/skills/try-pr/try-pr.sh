@@ -4,21 +4,23 @@
 #
 #   try-pr.sh fetch <PR>          make or update the worktree; print what it holds
 #   try-pr.sh copy <PR> <folder>  copy a folder of this checkout, such as a launch skill, into the worktree
+#   try-pr.sh started <PR>        keep the stack note from stdin: the stack's URLs, status and stop
+#   try-pr.sh stopped <PR>        delete the stack note, after the stack stopped
 #   try-pr.sh list                each try-pr worktree, with its copies and its stack note
-#   try-pr.sh done <PR>           remove the copies and the worktree; refused while the stack note is there
+#   try-pr.sh done <PR>           remove the copies and the worktree
 #
 # <PR> is a GitHub or Bitbucket Cloud PR link, a PR number of origin, or a
 # branch: origin's, else this clone's. Run it in the person's clone or in a
 # worktree of it. It needs bash 3.2 or later and git, gh for GitHub, curl and
-# jq for Bitbucket Cloud. The agent writes the stack note when it starts a
-# stack from the worktree, and deletes it when it stops that stack. fetch and
-# done delete the copies, so a new head starts with only its own files.
+# jq for Bitbucket Cloud. While a stack note is there, fetch and done refuse
+# the worktree. fetch and done delete the copies, so a new head starts with
+# only its own files.
 set -euo pipefail
 
 BITBUCKET_API=${TRY_PR_BITBUCKET_API:-https://api.bitbucket.org/2.0}
 
 # The PR that parse and the read_ functions fill in: bash 3.2 has no records.
-KIND="" FORGE="" REPO="" NUM="" BRANCH="" NAME="" TITLE="" AUTHOR="" TARGET="" URL="" REF="" LOCAL=0
+KIND="" FORGE="" REPO="" NUM="" BRANCH="" NAME="" TITLE="" AUTHOR="" TARGET="" URL="" REF="" LOCAL=0 WT=""
 
 die() { echo "try-pr: $*" >&2; exit 1; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
@@ -144,6 +146,14 @@ copies_of() { echo "$(git -C "$1" rev-parse --git-dir)/try-pr-copies"; }
 
 is_worktree() { [[ -d $1 && $(cd "$1" && git rev-parse --show-toplevel 2>/dev/null) == "$1" ]]; }
 
+existing_worktree() {
+  parse "$1"
+  WT=$(main_checkout)/.worktrees/$NAME
+  is_worktree "$WT" || die "no try-pr worktree at $WT: run fetch first"
+}
+
+running() { die "a stack runs from $1: stop it with the stop line of try-pr.sh list, then run try-pr.sh stopped"; }
+
 remove_copies() {
   local list folder
   list=$(copies_of "$1")
@@ -181,7 +191,7 @@ cmd_fetch() {
   fi
   wt=$clone/.worktrees/$NAME
   if is_worktree "$wt"; then
-    [[ ! -f $(note_of "$wt") ]] || die "a stack runs from $wt ($(note_of "$wt")): stop it first"
+    [[ ! -f $(note_of "$wt") ]] || running "$wt"
     remove_copies "$wt"
     [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has changes: git -C $wt status"
     git -C "$wt" checkout -q --detach "$head"
@@ -204,23 +214,35 @@ cmd_fetch() {
   fi
   echo "head     $head $subject"
   echo "behind   $behind commits behind $remote/$TARGET"
-  echo "note     $(note_of "$wt")"
 }
 
 cmd_copy() {
-  parse "$1"
-  local folder=${2%/} wt from
+  local folder=${2%/} from
   [[ -n $folder && $folder != /* && /$folder/ != */../* ]] ||
     die "copy takes a folder by its path in this checkout, such as .claude/skills/<name>"
-  wt=$(main_checkout)/.worktrees/$NAME
-  is_worktree "$wt" || die "no try-pr worktree at $wt: run fetch first"
+  existing_worktree "$1"
   from=$(git rev-parse --show-toplevel)/$folder
   [[ -d $from ]] || die "this checkout has no folder $folder"
-  [[ ! -e $wt/$folder ]] || die "the worktree has $folder already"
-  mkdir -p "$(dirname "$wt/$folder")"
-  cp -R "$from" "$wt/$folder"
-  echo "$folder" >>"$(copies_of "$wt")"
-  echo "copied   $from to $wt/$folder"
+  [[ ! -e $WT/$folder ]] || die "the worktree has $folder already"
+  mkdir -p "$(dirname "$WT/$folder")"
+  cp -R "$from" "$WT/$folder"
+  echo "$folder" >>"$(copies_of "$WT")"
+  echo "copied   $from to $WT/$folder"
+}
+
+cmd_started() {
+  local note
+  existing_worktree "$1"
+  note=$(cat)
+  [[ -n $note ]] || die "started takes the stack note on stdin"
+  printf '%s\n' "$note" >"$(note_of "$WT")"
+  echo "started  the stack of $WT is in its note now"
+}
+
+cmd_stopped() {
+  existing_worktree "$1"
+  rm -f "$(note_of "$WT")"
+  echo "stopped  the stack note of $WT is gone"
 }
 
 cmd_list() {
@@ -239,21 +261,18 @@ cmd_list() {
 }
 
 cmd_done() {
-  parse "$1"
-  local wt
-  wt=$(main_checkout)/.worktrees/$NAME
-  is_worktree "$wt" || die "no try-pr worktree at $wt"
-  [[ ! -f $(note_of "$wt") ]] ||
-    die "a stack runs from $wt: stop it as $(note_of "$wt") says, delete that file, then run done again"
-  remove_copies "$wt"
-  git worktree remove "$wt" || die "$wt was not removed; see git's reason above"
-  rmdir "$(dirname "$wt")" 2>/dev/null || true
-  echo "removed  $wt"
+  existing_worktree "$1"
+  [[ ! -f $(note_of "$WT") ]] || running "$WT"
+  remove_copies "$WT"
+  git worktree remove "$WT" || die "$WT was not removed; see git's reason above"
+  rmdir "$(dirname "$WT")" 2>/dev/null || true
+  echo "removed  $WT"
 }
 
 case ${1:-} in
   fetch) [[ $# -eq 2 ]] || die "fetch takes one PR link, PR number or branch"; cmd_fetch "$2" ;;
   copy) [[ $# -eq 3 ]] || die "copy takes a PR link, PR number or branch, then a folder"; cmd_copy "$2" "$3" ;;
+  started | stopped) [[ $# -eq 2 ]] || die "$1 takes one PR link, PR number or branch"; "cmd_$1" "$2" ;;
   list) cmd_list ;;
   done) [[ $# -eq 2 ]] || die "done takes one PR link, PR number or branch"; cmd_done "$2" ;;
   *) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; exit 2 ;;

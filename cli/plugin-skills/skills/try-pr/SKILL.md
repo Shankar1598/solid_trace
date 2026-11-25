@@ -20,7 +20,7 @@ The script `${CLAUDE_SKILL_DIR}/try-pr.sh` does the git and forge work. It is `S
 
 Run `"$S" fetch <PR>`. It makes the worktree `<clone>/.worktrees/try-pr-<n>`, detached at the PR's head, or it moves the same worktree to the newest head. The person's own checkout and branches do not change. When the clone does not ignore `.worktrees/`, the script adds `/.worktrees/` to `.git/info/exclude` and prints an `ignored` line.
 
-It prints the lines `worktree`, `pr`, `title`, `author`, `branch`, `head`, `behind` and `note`. Keep them for steps 3 and 4.
+It prints the lines `worktree`, `pr`, `title`, `author`, `branch`, `head` and `behind`. Keep them for steps 3 and 4.
 
 When it refuses with "a stack runs from", the stack that this skill started from the old head is up. Stop it as Done says in its step 2, then run fetch again.
 
@@ -46,18 +46,18 @@ Done when: you can name the command that starts the stack, the command that stop
 
 1. Do the setup that the recipe gives for a new checkout, such as the package install. A new worktree has no packages and no build output.
 2. Start the stack so that it continues after this session ends, as the recipe does it. Wait for the recipe's ready signal, or until each URL answers.
-3. Write the note file, at the path of the `note` line. It records that this skill started this stack. fetch, Done and List read it.
+3. Record the stack: give the stack note on stdin to `"$S" started <PR>`. The note records that this skill started this stack. fetch and done refuse the worktree while it is there, and List shows it.
 
    ```text
    recipe: <the skill or the doc that you followed, and "copied from the clone" for kind 2>
    urls: <each URL, with its port>
-   status: <the command that tells if the stack runs>
+   status: <a command that exits 0 only while the stack runs>
    stop: <the command that stops the stack>
    ```
 
-When a step fails, stop what started with the recipe's own stop, and do not write the note. Tell the person which step failed, with the last lines of its output, and the `behind` line: an old PR can need an old setup, and a copied recipe (kind 2) is newer than the PR's code. Run the PR's head as it is. The person decides about a merge or a rebase.
+When a step fails, stop what started with the recipe's own stop, and record no note. Tell the person which step failed, with the last lines of its output, and the `behind` line: an old PR can need an old setup, and a copied recipe (kind 2) is newer than the PR's code. Run the PR's head as it is. The person decides about a merge or a rebase.
 
-Done when: each URL answers and the note file is there, or the person has the failure.
+Done when: each URL answers and `"$S" list` shows the note, or the person has the failure.
 
 ## 4. Tell the person
 
@@ -73,7 +73,7 @@ Give these, in this order:
 ## Done
 
 1. Run `"$S" list`, and find the PR's worktree. With no note, this skill started no stack there: go to step 3.
-2. Stop the stack with the `stop` line of the note. Stop only the stack of the note: another stack on this machine is not this skill's to stop. Run the `status` line. When it says that the stack does not run, delete the note.
+2. Stop the stack with the `stop` line of the note. Stop only the stack of the note: another stack on this machine is not this skill's to stop. Run the `status` line. When it says that the stack does not run, run `"$S" stopped <PR>`, which deletes the note.
 3. Run `"$S" done <PR>`. It deletes the copies of step 2, then removes the worktree. When git refuses because the worktree has changes, show the person the changes (`git -C <worktree> status`) and ask whether to delete them. On a yes, run `git worktree remove --force <worktree>`.
 
 Done when: `git worktree list` does not show the worktree, and no stack of the note runs.

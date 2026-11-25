@@ -99,15 +99,19 @@ check "an access token (x-token-auth) goes as Bearer" \
   '[[ $(cat "$tmp/curl-x-token-auth.stdin") == "Authorization: Bearer $secret" ]]'
 git config --global --unset credential.helper
 
-note=$(git -C "$wt" rev-parse --git-dir)/try-pr-stack
-printf 'stop: true\nurls: http://localhost:1\n' >"$note"
+try "$clone" started 7 </dev/null
+check "started takes a note only" '((code == 1)) && has "started takes the stack note on stdin"'
+printf 'stop: true\nurls: http://localhost:1\n' >"$tmp/note"
+try "$clone" started 7 <"$tmp/note"
 try "$clone" list
-check "list shows the worktree and its stack note" 'has "worktree $wt" && has "  stack  stop: true"'
+check "list shows the worktree and its stack note" 'has "worktree $wt" && has "  stack  stop: true" && has "  stack  urls: http://localhost:1"'
 try "$clone" fetch 7
 check "fetch leaves a worktree alone while its stack note is there" '((code == 1)) && has "a stack runs from $wt"'
 try "$clone" "done" 7
 check "done is refused while the stack note is there" '((code == 1)) && [[ -d $wt ]]'
-rm "$note"
+try "$clone" stopped 7
+try "$clone" list
+check "stopped deletes the note" '((code == 0)) && has "  stack  none started by try-pr"'
 
 touch "$wt/scratch.txt"
 try "$clone" fetch 7
