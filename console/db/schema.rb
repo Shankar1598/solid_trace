@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_25_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_25_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -129,6 +129,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_100000) do
     t.datetime "updated_at", null: false
     t.index ["created_by_id"], name: "index_dashboards_on_created_by_id"
     t.index ["organization_id"], name: "index_dashboards_on_organization_id"
+  end
+
+  create_table "evidence_files", id: :string, force: :cascade do |t|
+    t.integer "organization_id", null: false
+    t.string "agent_session_id", null: false
+    t.string "sha256", null: false
+    t.string "caption"
+    t.string "content_type", null: false
+    t.integer "byte_size", null: false
+    t.string "storage_key", null: false
+    t.integer "uploaded_by_user_id"
+    t.datetime "created_at", null: false
+    t.datetime "deleted_at"
+    t.index ["organization_id", "agent_session_id", "sha256"], name: "index_evidence_files_on_session_and_sha256", unique: true
+    t.index ["organization_id", "created_at"], name: "index_evidence_files_on_organization_id_and_created_at"
   end
 
   create_table "instance_settings", force: :cascade do |t|
@@ -521,6 +536,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_100000) do
   add_foreign_key "dashboard_sections", "dashboards"
   add_foreign_key "dashboards", "organizations"
   add_foreign_key "dashboards", "users", column: "created_by_id", on_delete: :nullify
+  add_foreign_key "evidence_files", "organizations"
+  add_foreign_key "evidence_files", "users", column: "uploaded_by_user_id", on_delete: :nullify
   add_foreign_key "instance_settings", "organizations", column: "meta_organization_id", on_delete: :nullify
   add_foreign_key "integrations", "organizations"
   add_foreign_key "issue_fingerprints", "issues"

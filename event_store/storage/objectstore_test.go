@@ -288,3 +288,37 @@ func TestAnObjectStoresRequestsSignNoHeaderGCSRewrites(t *testing.T) {
 		t.Errorf("Expected the GET to keep its prefix, got the query %q", got)
 	}
 }
+
+func TestAnObjectStoreOnMinIOReadsARangeOfAnObject(t *testing.T) {
+	store := minIOStore(t, minIOConfig(t))
+	ctx := context.Background()
+	data := make([]byte, 1000)
+	for i := range data {
+		data[i] = byte(i * 7)
+	}
+	path := filepath.Join(t.TempDir(), "video.webm")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	key := "evidence/org=1/" + uuid.NewString() + ".webm"
+	if err := store.Put(ctx, key, path); err != nil {
+		t.Fatalf("Put %s: %v", key, err)
+	}
+	for _, r := range []struct{ offset, length int64 }{{0, 1000}, {100, 100}, {990, 10}, {0, 1}} {
+		body, err := store.Get(ctx, key, r.offset, r.length)
+		if err != nil {
+			t.Fatalf("Get %d bytes at %d: %v", r.length, r.offset, err)
+		}
+		got, err := io.ReadAll(body)
+		body.Close()
+		if err != nil || string(got) != string(data[r.offset:r.offset+r.length]) {
+			t.Errorf("Expected bytes %d to %d, got %d bytes (%v)", r.offset, r.offset+r.length-1, len(got), err)
+		}
+	}
+	if _, err := store.Get(ctx, key, 1000, 10); err == nil {
+		t.Error("Expected a range after the end of the object to fail")
+	}
+	if _, err := store.Get(ctx, "evidence/org=1/missing.webm", 0, 10); err == nil {
+		t.Error("Expected a read of a missing object to fail")
+	}
+}

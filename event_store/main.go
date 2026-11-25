@@ -70,6 +70,13 @@ func main() {
 	}
 	defer sqliteWriter.Close()
 
+	// Evidence files' rows are in Console's SQLite, and their bytes in the
+	// bucket, or in the evidence folder without one.
+	evidenceFiles, err := storage.NewEvidenceFiles(sqliteWriter, storage.NewObjectStore(cfg.ObjectStore), cfg.EvidencePath)
+	if err != nil {
+		logger.L.Fatal("Failed to open the Evidence files", "error", err)
+	}
+
 	// Initialize Message Queue Writer (for Event Store -> Rails)
 	messageQueueWriter, err := storage.NewMessageQueueWriter(cfg.MessageQueuePath)
 	if err != nil {
@@ -194,7 +201,8 @@ func main() {
 	defer agentTokens.Close()
 	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter, NotifyFiles: agentFileProcessor.Notify,
-		Downloads: clickHouse, RunEvents: ingestService, Totals: clickHouseLogs, Clock: clock.System{}, Version: serverVersion(),
+		Downloads: clickHouse, RunEvents: ingestService, Totals: clickHouseLogs, Evidence: evidenceFiles,
+		ConsoleURL: os.Getenv("CONSOLE_URL"), Clock: clock.System{}, Version: serverVersion(),
 	}))
 
 	queryApp := fiber.New(fiber.Config{
@@ -207,6 +215,7 @@ func main() {
 	handler.RegisterReviewRecordRoutes(queryApp, handler.NewReviewRecordsHandler(clickHouseLogs))
 	handler.RegisterRunsQueryRoutes(queryApp, handler.NewRunsHandler(clickHouseLogs, clock.System{}))
 	handler.RegisterAgentEvidenceRoute(queryApp, handler.NewAgentEvidenceHandler(clickHouse))
+	handler.RegisterEvidenceQueryRoutes(queryApp, handler.NewEvidenceFilesHandler(evidenceFiles))
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort

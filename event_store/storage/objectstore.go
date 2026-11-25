@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"slices"
@@ -28,6 +29,9 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 	// List returns the objects whose keys begin with prefix, by key.
 	List(ctx context.Context, prefix string) ([]StoredObject, error)
+	// Get reads length bytes of key's object from offset. The caller closes
+	// the reader. length must be more than 0.
+	Get(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error)
 }
 
 // StoredObject is one object of an ObjectStore.
@@ -183,6 +187,25 @@ func (s *s3Store) List(ctx context.Context, prefix string) ([]StoredObject, erro
 	}
 	slices.SortFunc(objects, func(a, b StoredObject) int { return strings.Compare(a.Key, b.Key) })
 	return objects, nil
+}
+
+// Get asks for the range in one GET, and streams the answer's body.
+func (s *s3Store) Get(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
+	if err := checkObjectKey(key); err != nil {
+		return nil, err
+	}
+	if offset < 0 || length <= 0 {
+		return nil, fmt.Errorf("read %d bytes at %d of %s: the range is empty", length, offset, s.location(key))
+	}
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.prefix + key),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read %d bytes at %d of %s: %w", length, offset, s.location(key), err)
+	}
+	return out.Body, nil
 }
 
 // location names key's object in errors, as s3://<bucket>/<prefix><key>.

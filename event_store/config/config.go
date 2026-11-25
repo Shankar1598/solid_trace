@@ -41,6 +41,9 @@ type Config struct {
 	LogsHeavyReadSlots int
 	SQLitePath         string // Rails SQLite for project key auth and issues
 	MessageQueuePath   string // Separate SQLite for event_store_messages
+	// EvidencePath is the folder that keeps the bytes of Evidence files when
+	// there is no ObjectStore, and the temporary files of their uploads.
+	EvidencePath string
 
 	// IngestMaxWaiting caps the requests waiting to store their Event.
 	// Past it, ingest answers 503.
@@ -172,6 +175,7 @@ type fileConfig struct {
 	LogsHeavyReadSlots        *int           `yaml:"logs_heavy_read_slots"`
 	SQLitePath                *string        `yaml:"sqlite_path"`
 	MessageQueuePath          *string        `yaml:"message_queue_path"`
+	EvidencePath              *string        `yaml:"evidence_path"`
 	IngestMaxWaiting          *int           `yaml:"ingest_max_waiting"`
 	IngestIdleTimeoutSeconds  *int           `yaml:"ingest_idle_timeout_seconds"`
 	IngestRefuseForwardedHTTP *bool          `yaml:"ingest_refuse_forwarded_http"`
@@ -238,6 +242,7 @@ func Defaults() *Config {
 		LogsParquetPath:  duckDBDir + "/logs_parquet",
 		SQLitePath:       "../storage/sqlite/development/solid_trace.sqlite3",
 		MessageQueuePath: "../storage/sqlite/development/message_queue.sqlite3",
+		EvidencePath:     "../storage/evidence/development",
 
 		IngestMaxWaiting:   10000,
 		IngestIdleTimeout:  DefaultIngestIdleTimeoutSeconds * time.Second,
@@ -310,6 +315,9 @@ func applyFileConfig(cfg *Config, path string) error {
 	}
 	if config.MessageQueuePath != nil && *config.MessageQueuePath != "" {
 		cfg.MessageQueuePath = *config.MessageQueuePath
+	}
+	if config.EvidencePath != nil && *config.EvidencePath != "" {
+		cfg.EvidencePath = *config.EvidencePath
 	}
 	if config.IngestMaxWaiting != nil {
 		if *config.IngestMaxWaiting <= 0 {

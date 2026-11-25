@@ -83,6 +83,9 @@ type TestEnv struct {
 	AgentParser *agentprocessing.Parser
 	// ConsoleSettings reads Console's settings, as Retention.
 	ConsoleSettings *storage.ConsoleSettings
+	// EvidenceFiles keeps Evidence files: rows in Console's test database,
+	// bytes in the test's own folder.
+	EvidenceFiles *storage.EvidenceFiles
 	// LogCleanup cleans up every family of day tables, Spans' too.
 	LogCleanup  *logprocessing.Cleanup
 	LogsHandler *handler.LogsHandler
@@ -552,6 +555,10 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Span processing Prepare failed: %v", err)
 	}
 	env.ConsoleSettings = consoleSettings
+	env.EvidenceFiles, err = storage.NewEvidenceFiles(sqliteWriter, nil, filepath.Join(env.dir, "evidence"))
+	if err != nil {
+		t.Fatalf("Failed to open the Evidence files: %v", err)
+	}
 	env.startAgentProcessing(t)
 
 	// Setup Handler
@@ -583,7 +590,8 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterAgentRoutes(env.App, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter,
 		NotifyFiles: func(projectID uint32) { env.AgentFileProcessor.Notify(projectID) },
-		Downloads:   clickHouse, RunEvents: ingestService, Totals: env.ClickHouseLogs, Clock: env.Clock, Version: env.ServerVersion,
+		Downloads:   clickHouse, RunEvents: ingestService, Totals: env.ClickHouseLogs, Evidence: env.EvidenceFiles,
+		Clock: env.Clock, Version: env.ServerVersion,
 	}))
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
@@ -597,6 +605,7 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterReviewRecordRoutes(env.QueryApp, handler.NewReviewRecordsHandler(env.ClickHouseLogs))
 	handler.RegisterRunsQueryRoutes(env.QueryApp, handler.NewRunsHandler(env.ClickHouseLogs, env.Clock))
 	handler.RegisterAgentEvidenceRoute(env.QueryApp, handler.NewAgentEvidenceHandler(clickHouse))
+	handler.RegisterEvidenceQueryRoutes(env.QueryApp, handler.NewEvidenceFilesHandler(env.EvidenceFiles))
 
 	env.close = func() {
 		pebbleWriter.StopWrites()

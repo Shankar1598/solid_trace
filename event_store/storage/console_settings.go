@@ -212,6 +212,18 @@ func (s *ConsoleSettings) ProjectSlug(projectID uint32) (string, error) {
 	return slug.String, err
 }
 
+// ConsoleURL returns the Console URL instance setting, as Console saved it
+// (PublicUrls.clean): no slash at the end. It is "" when an Instance admin
+// has set none.
+func (s *ConsoleSettings) ConsoleURL() (string, error) {
+	var url sql.NullString
+	err := s.db.QueryRow("SELECT console_url FROM instance_settings WHERE id = ?", instanceSettingsID).Scan(&url)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return url.String, err
+}
+
 // CapturedRepositories returns the captured repositories of an
 // Organization's Agent Project (projects.agent), as Console saved them
 // (Project.normalise_captured_repository). It is an empty list when the
