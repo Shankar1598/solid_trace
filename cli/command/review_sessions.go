@@ -97,15 +97,7 @@ func reviewSessions(ctx context.Context, args []string, env Env) int {
 // empty base is the merge base of the branch with origin/HEAD, else with
 // main.
 func readChange(ctx context.Context, dir, branch, base string) (review.Change, review.SessionList, error) {
-	git := func(args ...string) (string, error) {
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-		out, err := cmd.Output()
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			err = fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exit.Stderr)))
-		}
-		return strings.TrimRight(string(out), "\n"), err
-	}
+	git := func(args ...string) (string, error) { return gitOutput(ctx, dir, args...) }
 	top, err := git("rev-parse", "--show-toplevel")
 	if err != nil {
 		return review.Change{}, review.SessionList{}, err
@@ -148,6 +140,18 @@ func readChange(ctx context.Context, dir, branch, base string) (review.Change, r
 		}
 	}
 	return c, review.SessionList{Branch: branch, Base: base, Commits: len(c.Subjects), Files: len(c.Files)}, nil
+}
+
+// gitOutput runs git with args in the repository of dir, and gives its
+// output with no new line at the end.
+func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		err = fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exit.Stderr)))
+	}
+	return strings.TrimRight(string(out), "\n"), err
 }
 
 func lines(s string) []string {

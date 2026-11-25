@@ -10,7 +10,7 @@ code-quality = "sonnet high"
 verifier = "inherit"
 ha-and-infrastructure = "inherit"
 security = "inherit"
-deep-review = ["opus xhigh", "opus xhigh"]
+deep-review = ["opus xhigh", "opus xhigh", "opus xhigh"]
 record = "sonnet"
 sessions = "haiku"
 ```
@@ -25,7 +25,7 @@ Each value is a model alias (`opus`, `sonnet`, `haiku` or `fable`) and an option
 | `verifier` | `inherit` | code-review, update-pr |
 | `ha-and-infrastructure` | `inherit` | open-pr |
 | `security` | `inherit` | open-pr, update-pr |
-| `deep-review` | `["opus xhigh", "opus xhigh"]` | deep-review |
+| `deep-review` | `["opus xhigh", "opus xhigh", "opus xhigh"]` | deep-review |
 | `record` | `sonnet` | open-pr, update-pr |
 | `sessions` | `haiku` | open-pr, update-pr |
 

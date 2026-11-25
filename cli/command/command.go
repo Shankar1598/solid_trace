@@ -237,6 +237,25 @@ Usage:
       interrogate, or ends in -review), that a person or the agent starts,
       or a solidtrace-findings block in the agent's text or a subagent's
       report.
+  solidtrace review check --digest PATH --record PATH
+      Check a review record (open-pr's record.md, version 2) against the
+      digest that it was made from: each outcome, event type, decision
+      and found_by kind is known; each event has the source block or
+      record and evidence that is in the digest; the story is filled in;
+      the record has the digest's sessions, and reviews when the digest
+      has runs; each finding of each solidtrace-findings block (update
+      blocks too) is in the record with its block events; each outcome
+      agrees with its events; each finding that a commit's
+      Review-Findings trailer names has a fix event; each confirmation's
+      given is true or false; and round, when it is there, is 1 or more.
+      Print the counts and the problems as JSON. Exit 1 when there is a
+      problem, 2 when a file cannot be read.
+  solidtrace review fixed [COMMIT]
+      Print one solidtrace-findings update block for each run that the
+      Review-Findings trailers of COMMIT (default HEAD) name, with a fix
+      event for each finding: the commit's full hash and the files that
+      it changes (all of them: git cannot say which file fixed which
+      finding). Exit 1 when the commit has no Review-Findings trailer.
   solidtrace version
       Print the version of this solidtrace.
 `

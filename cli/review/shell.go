@@ -37,16 +37,34 @@ func subject(message string) string {
 // reviewTrailers are the values of the Review-Findings trailers in commit
 // messages, such as "run 1: F2, F5".
 func reviewTrailers(messages []string) []string {
+	// As git does, the trailers are the last paragraph of the message, and
+	// only when each of its lines is a trailer or a folded line of one.
+	var paragraphs []string
+	for _, p := range strings.Split(strings.Join(messages, "\n\n"), "\n\n") {
+		if strings.TrimSpace(p) != "" {
+			paragraphs = append(paragraphs, p)
+		}
+	}
+	if len(paragraphs) == 0 {
+		return nil
+	}
 	var out []string
-	for _, message := range messages {
-		for _, s := range strings.Split(message, "\n") {
-			if v, ok := strings.CutPrefix(strings.TrimSpace(s), reviewTrailer); ok {
-				out = append(out, strings.TrimSpace(v))
-			}
+	for _, s := range strings.Split(strings.Trim(paragraphs[len(paragraphs)-1], "\n"), "\n") {
+		if s != "" && (s[0] == ' ' || s[0] == '\t') {
+			continue
+		}
+		if !trailerLine.MatchString(s) {
+			return nil
+		}
+		if v, ok := strings.CutPrefix(s, reviewTrailer); ok {
+			out = append(out, strings.TrimSpace(v))
 		}
 	}
 	return out
 }
+
+// trailerLine is a "Token: value" line of git's trailers.
+var trailerLine = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*: `)
 
 // shellCommand is a simple command of a Bash command: its words with the
 // quotes taken out, and the bodies of its heredocs and here-strings.

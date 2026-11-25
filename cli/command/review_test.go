@@ -416,6 +416,21 @@ func TestReviewDigestTakesOnlyACommandThatRunsGitCommitAsACommit(t *testing.T) {
 	}
 }
 
+func TestReviewDigestTakesReviewFindingsOnlyFromTheTrailersOfTheMessage(t *testing.T) {
+	msg := "git commit -F - -- a.go <<'EOF'\nFix the cap\n\nEach fix commit ends with a\nReview-Findings: run <n>: <ids> trailer, which the digest keeps.\n\nReview-Findings: run 1: F2\nCo-Authored-By: x\nEOF"
+	path := transcript(t, userLine("u-task", "Fix the cap."), assistantLine("a-commit", toolUse("Bash", map[string]any{"command": msg})))
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if !reflect.DeepEqual(kinds(d), []string{"task", "commit"}) || !reflect.DeepEqual(d.Events[1]["review_findings"], []any{"run 1: F2"}) {
+		t.Fatalf("digest:\n%s", stdout)
+	}
+}
+
 func TestReviewDigestSkipsACompactSummary(t *testing.T) {
 	summary := userLine("u-summary", "This session is being continued from a previous conversation.\n"+
 		"The hand-back is an <agent-message line. The block looks like this:\n```solidtrace-findings\n{\"version\": 1, \"findings\": [{\"id\": \"F1\"}]}\n```")

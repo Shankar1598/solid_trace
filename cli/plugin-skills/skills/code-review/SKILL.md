@@ -79,6 +79,6 @@ Commit the fixes with explicit paths. End the commit message with one trailer li
 Review-Findings: run 1: F2, F5, F12
 ```
 
-`run` and the ids are those of the block. Then end the reply with an update block that gives each fixed finding a `fix` event with the commit's hash.
+`run` and the ids are those of the block. Then run `solidtrace review fixed`, which prints the update block of HEAD from its trailers, and end the reply with that block. Add a `triage` event to it by hand only for a decision that changed.
 
 Done when each finding with decision `fix` has a `fix` event in an update block.

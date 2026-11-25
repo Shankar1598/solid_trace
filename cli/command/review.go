@@ -24,9 +24,13 @@ func reviewCommand(ctx context.Context, args []string, env Env) int {
 			return reviewDigest(args[1:], env)
 		case "sessions":
 			return reviewSessions(ctx, args[1:], env)
+		case "check":
+			return reviewCheck(args[1:], env)
+		case "fixed":
+			return reviewFixed(ctx, args[1:], env)
 		}
 	}
-	fmt.Fprintln(env.Stderr, "solidtrace review: give digest or sessions")
+	fmt.Fprintln(env.Stderr, "solidtrace review: give digest, sessions, check or fixed")
 	return 2
 }
 

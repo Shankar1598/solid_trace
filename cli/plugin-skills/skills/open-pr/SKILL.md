@@ -8,12 +8,12 @@ disable-model-invocation: true
 
 The person typed this command, so push the branch and open the PR without asking again, except where a step says to ask. The PR body is for the human reviewer. The record is data for the team that improves its reviews.
 
-**Local mode.** When the arguments include `local` (`$ARGUMENTS`), do every step but do not push and do not open a PR. Step 7 writes the PR to a file instead. Use it to test this skill, or to read the PR before it goes out. To test `update-pr local` after it, write feedback in `<branch>.comments.md` next to the PR file, in the form that `update-pr` gives.
+**Local mode.** When the arguments include `local` (`$ARGUMENTS`), do every step but do not push and do not open a PR. Step 7 writes the PR to a file instead. Use it to test this skill, or to read the PR before it goes out. To test `update-pr local` after it, write feedback in the feedback file ([platforms.md](platforms.md), The local PR file).
 
 ## 1. Check the branch
 
 - The branch is not the base branch. The base branch is the one the person names, else the remote's default branch (`git remote show origin`). Run `git fetch origin <base>`, and use `origin/<base>` as `<base>` in every later step, so that the diff holds only this branch's work. In local mode, use the local base branch: the person may not have pushed it.
-- The branch has no open PR. On github.com, run `gh pr list --head <branch> --state open`. On bitbucket.org, send `GET https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests?q=source.branch.name="<branch>" AND state="OPEN"`. In local mode, look for the file of step 7. When a PR exists, stop and tell the person to run `/solidtrace-skills:update-pr`, which works on the PR's feedback.
+- The branch has no open PR ([platforms.md](platforms.md), Find the open PR of the branch). When a PR exists, stop and tell the person to run `/solidtrace-skills:update-pr`, which works on the PR's feedback.
 - The working tree is clean. If it is not, list the changed files and ask the person whether to commit them. Continue when the tree is clean.
 
 Make a folder for this PR's files: `dir=$(mktemp -d)`.
@@ -33,9 +33,9 @@ You read two other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not re
 
 1. **Deep review.** Skip it when the diff changes only docs, tests or test data, when the person said to skip it, or when a `deep-review` block in the confirmed sessions has `head` equal to `git rev-parse HEAD`. To find such a block, run `solidtrace review digest` with one `--session ID` for each confirmed session, and read its `findings` events. When you skip it, end a reply with a `deep-review` block that has `"findings": []` and `skipped` (see `${CLAUDE_SKILL_DIR}/../code-review/findings.md`). Else read `${CLAUDE_SKILL_DIR}/../deep-review/SKILL.md` and follow it on the diff.
 2. **High availability and infrastructure.** Run the `ha-and-infrastructure` reviewer as `code-review` runs a reviewer. Follow `${CLAUDE_SKILL_DIR}/../code-review/SKILL.md` from "Find the spec and the rules" to "Report, then fix", with the `ha-and-infrastructure` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`, the `REVIEW.md` sections High availability and Infrastructure, and the diff. Its block has `"trigger": "open-pr"`, `"stage": "final"` and `"step": "ha-and-infrastructure"`. Report and decide, and do not fix yet.
-3. **Ask the person.** In one message, list each `high` finding and each `ask` finding of 1 and 2, with your decision, and ask what to do with each. Wait for the answer. When the answer changes a decision, put the new decision in an update block (`${CLAUDE_SKILL_DIR}/../code-review/findings.md`, The update block).
+3. **Ask the person.** In one message, list each `ask` finding of 1 and 2, and each `high` finding with the decision `dispute`, `trivial` or `defer`, with your decision, and ask what to do with each. Wait for the answer. List the `high` findings that you fix in the same message, for the person to know, but do not wait for them. With nothing to ask, go on. When the answer changes a decision, put the new decision in an update block (`${CLAUDE_SKILL_DIR}/../code-review/findings.md`, The update block).
 4. **Fix.** Fix the findings with decision `fix` and the ones the person said to fix. Run the tests that cover them. Commit the fixes with explicit paths and the `Review-Findings` trailers, then end the reply with an update block, as in `code-review/SKILL.md` › Report, then fix.
-5. **Security, last.** Run the `security` reviewer in the same way, with the `security` role, on the diff after step 4, with the `REVIEW.md` section Security. Its block has `"trigger": "open-pr"`, `"stage": "final"` and `"step": "security"`. Ask the person about each `high` and `ask` finding, then fix and commit as in step 4. When a fix changed code, run the security reviewer once more on the fix diff only (`git diff <the head before the fix>`). Stop after this second round, and list what is still open in the PR.
+5. **Security, last.** Run the `security` reviewer in the same way, with the `security` role, on the diff after step 4, with the `REVIEW.md` section Security. Its block has `"trigger": "open-pr"`, `"stage": "final"` and `"step": "security"`. Ask the person as in step 3, then fix and commit as in step 4. When a fix changed code, run the security reviewer once more on the fix diff only (`git diff <the head before the fix>`). Stop after this second round, and list what is still open in the PR.
 
 ## 4. Start the record and the push at the same time
 
@@ -44,14 +44,9 @@ You read two other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not re
 
 ## 5. Check the record
 
-Read `$dir/record.json`. It is complete when:
+Run `solidtrace review check --digest "$dir/digest.json" --record "$dir/record.json"`. It prints the problems it finds, and exits 1 when there are any.
 
-- It is valid JSON with the fields of record.md.
-- Each finding of each `findings` event in the digest has one entry in `findings`, with every event of its block and an `outcome`.
-- Each `evidence` value is a `uuid` of an event in the digest.
-- `story` has `started_from`, `changes`, `reviews` and `sessions`, and `sessions` are the digest's sessions.
-
-When a check fails, send the sub-agent the failed checks and wait for a new record. After two failed rounds, continue with the record as it is, and say so in the final reply.
+When it finds problems, send the sub-agent the problems and wait for a new record. After two failed rounds, continue with the record as it is, and say so in the final reply.
 
 ## 6. Write the PR
 
@@ -65,12 +60,7 @@ End the body with the line `<!-- solidtrace-record round 1 -->`, which `update-p
 
 ## 7. Open the PR
 
-Choose by where the PR goes:
-
-- **Local mode**: write the file `$(git rev-parse --git-common-dir)/solidtrace-pr/<branch>.md`, with each `/` of the branch name changed to `-`. It holds a `# <title>` line, the base and the head (`git rev-parse HEAD`), then the body. Git does not track this folder, and the next local run of the same branch writes over the file.
-- **Inside a Run** (`$SOLIDTRACE_AGENT_SOCKET` is set): `solidtrace pr --title "<title>" --description "$(cat "$dir/body.md")"`.
-- **github.com**: `gh pr create --base <base> --title "<title>" --body-file "$dir/body.md"`.
-- **bitbucket.org**: with `$BITBUCKET_TOKEN` set, send `POST https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests` with `Authorization: Bearer $BITBUCKET_TOKEN` and the JSON `{"title": ..., "description": <body>, "source": {"branch": {"name": <branch>}}, "destination": {"branch": {"name": <base>}}}`. Build the JSON with a tool that escapes text, not by hand. The PR's URL is `links.html.href` in the answer. With no token, give the person `https://bitbucket.org/<workspace>/<repo>/pull-requests/new?source=<branch>&dest=<base>` and the path of `body.md`.
+Open the PR as [platforms.md](platforms.md) says, in Open a PR.
 
 ## 8. Final reply
 
