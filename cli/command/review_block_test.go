@@ -66,7 +66,7 @@ func TestReviewBlockPrintsAValidBlockAsOneFencedLine(t *testing.T) {
 }
 
 func TestReviewBlockTakesASkippedDeepReview(t *testing.T) {
-	for _, skipped := range []string{"covered by " + hashA, "person", "docs only"} {
+	for _, skipped := range []string{"covered by " + hashA, "person", "no code"} {
 		block := `{"version": 2, "run": 1, "skill": "deep-review", "trigger": "open-pr", "stage": "final", "step": null,
 		 "base": "a", "head": "b", "reviewers": [], "verifier": null, "findings": [], "confirmations": [], "dropped": {},
 		 "skipped": "` + skipped + `"}`
@@ -134,7 +134,7 @@ func TestReviewBlockNamesEachProblem(t *testing.T) {
 		{"a verifier with a name", validRunBlock, func(b map[string]any) { b["verifier"].(map[string]any)["name"] = "v" },
 			`verifier: the field "name" is not known`},
 		{"a wrong skipped", validRunBlock, func(b map[string]any) { b["skipped"] = "no time" },
-			`skipped: "no time" is not "docs only", "person" or "covered by <head>"`},
+			`skipped: "no time" is not "no code", "person" or "covered by <head>"`},
 		{"a dropped count below 0", validRunBlock, func(b map[string]any) { b["dropped"] = map[string]any{"tests": -1} },
 			"dropped.tests: -1 is not an integer of 0 or more"},
 		{"a finding id that is not F<n>", validRunBlock, func(b map[string]any) { blockFinding(b, 0)["id"] = "7" },
