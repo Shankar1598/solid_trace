@@ -582,8 +582,8 @@ test('the final reply of an open-pr Agent session gives its Review record, on th
   await expect(page.locator('[data-section="review-record-header"]')).toContainText('6 (4 fixed, 2 missed by the reviews)')
   await expect(page.getByRole('table', { name: 'Findings' }).locator('tr[data-finding]')).toHaveCount(6)
 
-  // Over MCP, with a token that only reads: the same row, and the record
-  // byte for byte as the agent wrote it.
+  // Over MCP, with a token that only reads: the same row, and the record as
+  // the agent wrote it, with its findings in pages.
   const secret = rails(`
     org = Organization.find_by!(slug: ${JSON.stringify(ORG)})
     admin = User.find_by!(email: ${JSON.stringify(ADMIN.email)})
@@ -606,9 +606,22 @@ test('the final reply of an open-pr Agent session gives its Review record, on th
   expect(listed).toMatchObject({ pr, round: 2, earlier: 1, findings: 240, fixed: 238, missed: 2, confirmations_not_given: 2, session_id: second.id })
   expect(listLink).toBe(`${origin}/${ORG}/review_records`)
   const [got, gotLink] = await tool('get_review_record', { pr })
-  expect(got.includes(`"record":${round2},"rounds":`), 'the record byte for byte').toBe(true)
-  expect(JSON.parse(got).rounds.map((r: { round: number }) => r.round)).toEqual([2, 1])
+  const whole = JSON.parse(round2)
+  const answer = JSON.parse(got)
+  expect(answer.record, 'the record with its first 30 findings').toEqual({ ...whole, findings: whole.findings.slice(0, 30) })
+  expect(answer).toMatchObject({ findings_total: 240, next_findings_from: 30 })
+  expect(got.length).toBeLessThan(100_000)
+  expect(answer.rounds.map((r: { round: number }) => r.round)).toEqual([2, 1])
   expect(gotLink).toBe(`${origin}/${ORG}/review_records/record?key=${encodeURIComponent(pr)}`)
+  const findings = [...answer.record.findings]
+  let from: number | null = answer.next_findings_from
+  while (from !== null) {
+    const [next] = await tool('get_review_record', { pr, findings_from: from, findings_limit: 100 })
+    const nextPage = JSON.parse(next)
+    findings.push(...nextPage.record.findings)
+    from = nextPage.next_findings_from
+  }
+  expect(findings, 'all the findings, page by page').toEqual(whole.findings)
 
   expect(errors).toEqual([])
 })

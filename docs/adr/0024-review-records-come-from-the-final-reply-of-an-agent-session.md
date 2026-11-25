@@ -23,6 +23,6 @@ We chose this because the record already uploads with its Agent session. The par
 - No backfill. A record whose line SolidTrace parsed before this change has no Review record, because the parse does not read a line again. Only the Agent sessions that upload after the change give records.
 - A record exists only when its Agent session uploads: in a **Captured repository**, or in a **Run**.
 - A record that an agent writes wrongly (not valid JSON, or not version 2) gives no row, and nothing tells the person. The skills check the record with `solidtrace review check` before the reply.
-- An MCP client can cut a large answer. Claude Code cuts a tool's answer past 25,000 tokens unless `MAX_MCP_OUTPUT_TOKENS` is higher, and a record of 145 KB is over that limit.
+- An MCP client can cut a large answer. Claude Code cuts a tool's answer past 25,000 tokens unless `MAX_MCP_OUTPUT_TOKENS` is higher, and a record of 145 KB is over that limit. Most of a record is its findings, so `get_review_record` gives them in pages: 30 findings when the agent gives no `findings_limit`. The first page of a record of 145 KB is about 36,000 characters, so the limit does not cut it. To get the next page, the agent gives `findings_from`. The answer is no longer the record byte for byte: Console parses the record and makes its JSON again with one page of findings. The Review record page still shows all the findings.
 
 Source: [.scratch/review-records/plan.md](../../.scratch/review-records/plan.md)

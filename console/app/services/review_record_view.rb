@@ -40,18 +40,19 @@ class ReviewRecordView
   end
 
   def to_h
-    { event_store: event_store, review_record: answer&.dig("review_record"), record: record, rounds: rounds }
+    { event_store: event_store, review_record: review_record, record: record, rounds: rounds }
   end
 
-  # The record's JSON as its block has it, nil when EventStore did not
-  # answer.
-  def record_json
-    answer&.dig("record")
+  # The record's row, with the place of its line; nil when EventStore did
+  # not answer.
+  def review_record
+    answer&.dig("review_record")
   end
 
   # The record, parsed; nil when EventStore did not answer.
   def record
-    record_json && JSON.parse(record_json)
+    json = answer&.dig("record")
+    json && JSON.parse(json)
   end
 
   # The records of the PR, newest first, the one shown too.

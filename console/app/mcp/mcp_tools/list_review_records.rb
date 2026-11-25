@@ -17,7 +17,8 @@ module McpTools
       the Agent session id of a record with no PR), id, pr ("" when no PR opened, local:<path> in local mode), round,
       stored_at, title (of the record's first session), findings, fixed, missed (found by a person, an agent or a test
       run, not by a reviewer), confirmations_not_given, earlier (how many older records the PR has), session_id, and a
-      link to its page. more is true when the limit left some PRs out. get_review_record reads one record whole.
+      link to its page. more is true when the limit left some PRs out. get_review_record reads one record, with its
+      findings in pages.
     TEXT
     read_only!
     takes_organization
