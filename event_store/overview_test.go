@@ -50,6 +50,7 @@ type overviewAnswer struct {
 	Band              struct {
 		Received           overviewReceived `json:"received"`
 		UnreadableLogs     int64            `json:"unreadable_logs"`
+		FilteredLogs       int64            `json:"filtered_logs"`
 		OverloadedRequests int64            `json:"overloaded_requests"`
 		Stored             overviewStored   `json:"stored"`
 	} `json:"band"`
@@ -87,7 +88,8 @@ type overviewProject struct {
 		Bytes     int64   `json:"bytes"`
 		OldestDay *string `json:"oldest_day"`
 	} `json:"all_days"`
-	LastLogAt *time.Time `json:"last_log_at"`
+	LastLogAt    *time.Time `json:"last_log_at"`
+	FilteredLogs int64      `json:"filtered_logs"`
 }
 
 // overview asks the query app for the Overview of projects over the UTC

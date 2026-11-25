@@ -2,12 +2,14 @@ package ingest
 
 import (
 	"errors"
+	"slices"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 
+	"github.com/solidtrace/event_store/captured"
 	"github.com/solidtrace/event_store/ingest/normalise"
 	"github.com/solidtrace/event_store/models"
 )
@@ -38,10 +40,21 @@ type otlpRecord struct {
 	record   plog.LogRecord
 }
 
+// Attributes are the log record's own attributes.
+func (r otlpRecord) Attributes() pcommon.Map {
+	return r.record.Attributes()
+}
+
+// ownAttributed is an OTLP log record or metric data point, whose
+// Attributes are its own: none of the resource or the scope.
+type ownAttributed interface {
+	Attributes() pcommon.Map
+}
+
 // IngestOTLPLogs ingests the body of the OTLP Log route: one OTLP logs export
 // request in encoding. Each log record is one Log, as ingestOTLP says. A
 // body that doesn't decode is ErrInvalidOTLP.
-func (s *Service) IngestOTLPLogs(projectID uint32, body Body, encoding OTLPEncoding) (LogCounts, error) {
+func (s *Service) IngestOTLPLogs(projectID uint32, body Body, encoding OTLPEncoding, filter *captured.Filter) (LogCounts, error) {
 	request := plogotlp.NewExportRequest()
 	records := func() []otlpRecord {
 		records := make([]otlpRecord, 0, request.Logs().LogRecordCount())
@@ -54,17 +67,17 @@ func (s *Service) IngestOTLPLogs(projectID uint32, body Body, encoding OTLPEncod
 		}
 		return records
 	}
-	return s.ingestOTLP(projectID, body, encoding, request, ErrInvalidOTLP, records, normaliseOTLP)
+	return s.ingestOTLP(projectID, body, encoding, filter, request, ErrInvalidOTLP, records, normaliseOTLP)
 }
 
 // IngestOTLPMetrics ingests the body of the OTLP metrics route: one OTLP
 // metrics export request in encoding. Each metric data point is one Log
 // (normalise.OTLPMetric), as ingestOTLP says, and counts as one Log. A body
 // that doesn't decode is ErrInvalidOTLPMetrics.
-func (s *Service) IngestOTLPMetrics(projectID uint32, body Body, encoding OTLPEncoding) (LogCounts, error) {
+func (s *Service) IngestOTLPMetrics(projectID uint32, body Body, encoding OTLPEncoding, filter *captured.Filter) (LogCounts, error) {
 	request := pmetricotlp.NewExportRequest()
 	points := func() []normalise.MetricPoint { return metricPoints(request) }
-	return s.ingestOTLP(projectID, body, encoding, request, ErrInvalidOTLPMetrics, points, normalise.OTLPMetric)
+	return s.ingestOTLP(projectID, body, encoding, filter, request, ErrInvalidOTLPMetrics, points, normalise.OTLPMetric)
 }
 
 // metricPoints lists each metric data point of an OTLP metrics export
@@ -95,13 +108,21 @@ type otlpRequest interface {
 // IngestLogs does. A body that doesn't decode is the error invalid, and
 // nothing in it is stored.
 //
+// With a filter, the Agent Project's, a record is stored only when the
+// filter keeps its own vcs.repository.url.full. The others are filtered
+// out before they are normalised: they count as received and filtered, not
+// as dropped, so the sender gets no rejection for them. Each Log kept is in
+// the file otelFile, so the server, not the sender, puts it in its range,
+// as IngestRunEvents does.
+//
 // Every request whose body is read adds to its Project's Ingest counts of
 // its second of arrival, and so does one turned away as overloaded. A body
 // that doesn't decode counts as one request with its bytes and no Logs.
-func (s *Service) ingestOTLP[R any](
+func (s *Service) ingestOTLP[R ownAttributed](
 	projectID uint32,
 	body Body,
 	encoding OTLPEncoding,
+	filter *captured.Filter,
 	request otlpRequest,
 	invalid error,
 	records func() []R,
@@ -127,7 +148,36 @@ func (s *Service) ingestOTLP[R any](
 		s.counts.count(projectID, s.clock.Now(), counted)
 		return LogCounts{}, invalid
 	}
-	return s.storeLogs(projectID, records(), 0, counted, normaliseLog)
+	sent := records()
+	if filter != nil {
+		received := len(sent)
+		sent = slices.DeleteFunc(sent, func(r R) bool { return !filter.Keeps(repositoryURL(r.Attributes())) })
+		counted.LogsFiltered = int64(received - len(sent))
+		normaliseRecord := normaliseLog
+		normaliseLog = func(record R, receipt normalise.Receipt) (models.Log, normalise.Outcome) {
+			receipt.File = otelFile
+			return normaliseRecord(record, receipt)
+		}
+	}
+	return s.storeLogs(projectID, sent, 0, counted, normaliseLog)
+}
+
+// otelFile is the file of each Log that the Agent Project's key sends.
+// No read of the Agent Project uses it: a Run's events are in runs/<run
+// id>, the Dispatcher's Logs in dispatcher, and an Agent session's Logs
+// in the paths of its .jsonl files.
+const otelFile = "otel"
+
+// repositoryURL is the vcs.repository.url.full of a record's own
+// attributes, which Claude Code sets with OTEL_METRICS_INCLUDE_REPOSITORY,
+// or "". A sender can also set it on the resource, for every record, so the
+// resource's is not read.
+func repositoryURL(own pcommon.Map) string {
+	value, ok := own.Get("vcs.repository.url.full")
+	if !ok || value.Type() != pcommon.ValueTypeStr {
+		return ""
+	}
+	return value.Str()
 }
 
 func normaliseOTLP(r otlpRecord, receipt normalise.Receipt) (models.Log, normalise.Outcome) {

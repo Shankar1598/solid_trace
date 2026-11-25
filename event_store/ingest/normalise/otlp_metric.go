@@ -22,6 +22,11 @@ type MetricPoint struct {
 	point    dataPoint
 }
 
+// Attributes are the data point's own attributes.
+func (p MetricPoint) Attributes() pcommon.Map {
+	return p.point.Attributes()
+}
+
 // dataPoint is what the data points of each metric type have.
 type dataPoint interface {
 	Attributes() pcommon.Map

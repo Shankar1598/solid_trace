@@ -94,8 +94,9 @@ class Overview
   # processing kept of the range's days (Source counts) and what ClickHouse
   # holds of them, with the compression ratio, kept bytes over the stored
   # bytes of only the days that have Source counts;
-  # the Logs dropped between Received and Kept, unreadable or by the Log
-  # transform, and the requests turned away beside it.
+  # the Logs dropped between Received and Kept: unreadable, filtered out by
+  # the Agent Project's key as not of a Captured repository, or dropped by
+  # the Log transform; and the requests turned away beside it.
   def band
     return unless answer
 
@@ -107,6 +108,7 @@ class Overview
       stored: stored.slice("logs", "bytes", "local_bytes", "bucket_bytes"),
       ratio: ratio(kept["bytes"], band["stored_counted_bytes"]),
       unreadable_logs: band["unreadable_logs"],
+      filtered_logs: band["filtered_logs"].to_i,
       dropped_by_transform: band["dropped_by_transform"].to_i,
       overloaded_requests: band["overloaded_requests"],
     }
@@ -154,7 +156,8 @@ class Overview
   # One row per Project, in creation order: what it received, kept and
   # stored of the range, the ratio (kept bytes over the stored bytes of its
   # days with Source counts), the Logs the
-  # Log transform dropped, its share of the bytes received, its Logs a second, its Retention (the instance's when it
+  # Log transform dropped, the Logs filtered out as not of a Captured
+  # repository, its share of the bytes received, its Logs a second, its Retention (the instance's when it
   # has none) and the Logs it keeps of every day, and when its last Log
   # arrived, stale when over an hour ago.
   def projects
@@ -170,6 +173,7 @@ class Overview
         **self.class.project_ref(project), color: color_of(project.id),
         logs: got.dig("received", "logs").to_i, received_bytes: received, kept_bytes: kept, stored_bytes: stored,
         ratio: ratio(kept, got["stored_counted_bytes"]), dropped_by_transform: got["dropped_by_transform"].to_i,
+        filtered_logs: got["filtered_logs"].to_i,
         share: total.positive? ? (received.to_f / total).round(4) : nil,
         logs_per_second: rate_of(got["logs_per_second"]),
         retention_days: retention_of(project),

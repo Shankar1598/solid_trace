@@ -1,7 +1,6 @@
 package handler_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -370,14 +369,7 @@ func newIngestApp(t *testing.T, withKeysTable bool) *fiber.App {
 	sqlitePath := filepath.Join(t.TempDir(), "console.sqlite3")
 
 	if withKeysTable {
-		db, err := sql.Open("sqlite3", sqlitePath)
-		if err != nil {
-			t.Fatalf("Failed to open SQLite: %v", err)
-		}
-		if _, err := db.Exec("CREATE TABLE project_keys (project_id INTEGER, public_key TEXT)"); err != nil {
-			t.Fatalf("Failed to create project_keys: %v", err)
-		}
-		db.Close()
+		writeProjectKeys(t, sqlitePath)
 	}
 
 	projectAuth, err := auth.NewProjectAuth(sqlitePath)

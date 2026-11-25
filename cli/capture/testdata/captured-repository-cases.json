@@ -1,0 +1,142 @@
+{
+  "about": "The cases of the Captured repositories match. They run in the solidtrace CLI (cli/capture/repository_cases_test.go) and in EventStore (event_store/captured/captured_test.go), so that the two copies of the rule cannot drift. matches: the result of Matches(entry, repository) in both modules. clones: one git clone each. Claude Code 2.1.323 sent the url from it in cco-01, unless measured is false. remote is the clone's origin remote, and repository is the CLI's name for it (Normalise). url is the vcs.repository.url.full that Claude Code sends from the clone, and url_names are EventStore's names for it (URLNames). For each entry, sessions says if the entry captures the clone's Agent sessions (Matches with repository), and telemetry says if it keeps the clone's telemetry (Matches with one of url_names).",
+  "matches": [
+    {"entry": "bitbucket.org/acme/shop", "repository": "bitbucket.org/acme/shop", "match": true},
+    {"entry": "bitbucket.org/acme/*", "repository": "bitbucket.org/acme/shop", "match": true},
+    {"entry": "bitbucket.org/acme/*", "repository": "bitbucket.org/acme-tools/shop", "match": false},
+    {"entry": "bitbucket.org/acme/*", "repository": "bitbucket.org/acme", "match": false},
+    {"entry": "Bitbucket.org/acme/shop.git", "repository": "bitbucket.org/acme/shop", "match": true},
+    {"entry": "  bitbucket.org/acme/shop  ", "repository": "bitbucket.org/acme/shop", "match": true},
+    {"entry": "bitbucket.org/acme/shop", "repository": "BitBucket.org/acme/shop.git", "match": true},
+    {"entry": "github.com/SomeOwner/Some-Repo", "repository": "github.com/someowner/some-repo", "match": true},
+    {"entry": "github.com/someowner/some-repo", "repository": "github.com/SomeOwner/Some-Repo", "match": true},
+    {"entry": "github.com/SomeOwner/*", "repository": "github.com/someowner/some-repo", "match": true},
+    {"entry": "github.com/acme/shop", "repository": "github.com/acme/shop-api", "match": false},
+    {"entry": "gitlab.com/acme/shop", "repository": "github.com/acme/shop", "match": false},
+    {"entry": "gitlab.com/group/*", "repository": "gitlab.com/group/sub/example-repo", "match": true},
+    {"entry": "gitlab.com/group/sub", "repository": "gitlab.com/group/sub/example-repo", "match": false}
+  ],
+  "clones": [
+    {
+      "name": "cco-01 a: HTTPS with a user and a password",
+      "remote": "https://someuser:not-a-secret@bitbucket.org/example-ws/example-repo.git",
+      "repository": "bitbucket.org/example-ws/example-repo",
+      "url": "https://bitbucket.org/example-ws/example-repo",
+      "url_names": ["bitbucket.org/example-ws/example-repo"],
+      "entries": [
+        {"entry": "bitbucket.org/example-ws/example-repo", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.org/example-ws/*", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.org/Example-WS/Example-Repo", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.org/example-ws/other-repo", "sessions": false, "telemetry": false}
+      ]
+    },
+    {
+      "name": "a guard: a url with a user and a password, which Claude Code does not send",
+      "measured": false,
+      "remote": "https://someuser:not-a-secret@bitbucket.org/example-ws/example-repo.git",
+      "repository": "bitbucket.org/example-ws/example-repo",
+      "url": "https://someuser:not-a-secret@bitbucket.org/example-ws/example-repo",
+      "url_names": ["bitbucket.org/example-ws/example-repo"],
+      "entries": [
+        {"entry": "bitbucket.org/example-ws/example-repo", "sessions": true, "telemetry": true}
+      ]
+    },
+    {
+      "name": "cco-01 b: scp",
+      "remote": "git@bitbucket.org:example-ws/example-repo.git",
+      "repository": "bitbucket.org/example-ws/example-repo",
+      "url": "https://bitbucket.org/example-ws/example-repo",
+      "url_names": ["bitbucket.org/example-ws/example-repo"],
+      "entries": [
+        {"entry": "bitbucket.org/example-ws/example-repo", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.org/example-ws/*", "sessions": true, "telemetry": true}
+      ]
+    },
+    {
+      "name": "cco-01 c: GitHub HTTPS with no .git",
+      "remote": "https://github.com/example-owner/example-repo",
+      "repository": "github.com/example-owner/example-repo",
+      "url": "https://github.com/example-owner/example-repo",
+      "url_names": ["github.com/example-owner/example-repo"],
+      "entries": [
+        {"entry": "github.com/example-owner/example-repo", "sessions": true, "telemetry": true},
+        {"entry": "github.com/Example-Owner/Example-Repo", "sessions": true, "telemetry": true},
+        {"entry": "github.com/example/*", "sessions": false, "telemetry": false}
+      ]
+    },
+    {
+      "name": "cco-01 d: Bitbucket Server, ssh on port 7999 with /scm/",
+      "remote": "ssh://git@bitbucket.example.com:7999/scm/proj/example-repo.git",
+      "repository": "bitbucket.example.com/scm/proj/example-repo",
+      "url": "https://bitbucket.example.com/projects/proj/repos/example-repo",
+      "url_names": ["bitbucket.example.com/scm/proj/example-repo", "bitbucket.example.com/proj/example-repo"],
+      "entries": [
+        {"entry": "bitbucket.example.com/scm/proj/example-repo", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.example.com/scm/*", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.example.com/proj/example-repo", "sessions": false, "telemetry": true},
+        {"entry": "bitbucket.example.com/PROJ/*", "sessions": false, "telemetry": true},
+        {"entry": "bitbucket.example.com/proj/other-repo", "sessions": false, "telemetry": false},
+        {"entry": "bitbucket.example.com/projects/*", "sessions": false, "telemetry": false}
+      ]
+    },
+    {
+      "name": "cco-01 d2: Bitbucket Server, HTTPS with a user and /scm/",
+      "remote": "https://someuser@bitbucket.example.com/scm/proj/example-repo.git",
+      "repository": "bitbucket.example.com/scm/proj/example-repo",
+      "url": "https://bitbucket.example.com/projects/proj/repos/example-repo",
+      "url_names": ["bitbucket.example.com/scm/proj/example-repo", "bitbucket.example.com/proj/example-repo"],
+      "entries": [
+        {"entry": "bitbucket.example.com/scm/*", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.example.com/proj/example-repo", "sessions": false, "telemetry": true}
+      ]
+    },
+    {
+      "name": "cco-01 d3: a host of another name with /scm/",
+      "remote": "ssh://git@git.example.com:7999/scm/proj/example-repo.git",
+      "repository": "git.example.com/scm/proj/example-repo",
+      "url": "https://git.example.com/projects/proj/repos/example-repo",
+      "url_names": ["git.example.com/scm/proj/example-repo", "git.example.com/proj/example-repo"],
+      "entries": [
+        {"entry": "git.example.com/scm/*", "sessions": true, "telemetry": true},
+        {"entry": "git.example.com/proj/example-repo", "sessions": false, "telemetry": true},
+        {"entry": "bitbucket.example.com/scm/*", "sessions": false, "telemetry": false}
+      ]
+    },
+    {
+      "name": "cco-01 d4: Bitbucket Server, ssh on port 7999 with no /scm/ and in upper case",
+      "remote": "ssh://git@bitbucket.example.com:7999/PROJ/Example-Repo.git",
+      "repository": "bitbucket.example.com/PROJ/Example-Repo",
+      "url": "https://bitbucket.example.com/projects/proj/repos/example-repo",
+      "url_names": ["bitbucket.example.com/scm/proj/example-repo", "bitbucket.example.com/proj/example-repo"],
+      "entries": [
+        {"entry": "bitbucket.example.com/PROJ/Example-Repo", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.example.com/proj/example-repo", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.example.com/proj/*", "sessions": true, "telemetry": true},
+        {"entry": "bitbucket.example.com/scm/*", "sessions": false, "telemetry": true}
+      ]
+    },
+    {
+      "name": "cco-01 e1: the origin of two remotes",
+      "remote": "https://github.com/origin-owner/origin-repo.git",
+      "repository": "github.com/origin-owner/origin-repo",
+      "url": "https://github.com/origin-owner/origin-repo",
+      "url_names": ["github.com/origin-owner/origin-repo"],
+      "entries": [
+        {"entry": "github.com/origin-owner/origin-repo", "sessions": true, "telemetry": true}
+      ]
+    },
+    {
+      "name": "cco-01 g: a GitLab subgroup",
+      "remote": "git@gitlab.com:group/sub/example-repo.git",
+      "repository": "gitlab.com/group/sub/example-repo",
+      "url": "https://gitlab.com/group/sub/example-repo",
+      "url_names": ["gitlab.com/group/sub/example-repo"],
+      "entries": [
+        {"entry": "gitlab.com/group/*", "sessions": true, "telemetry": true},
+        {"entry": "gitlab.com/Group/*", "sessions": true, "telemetry": true},
+        {"entry": "gitlab.com/group/sub", "sessions": false, "telemetry": false},
+        {"entry": "gitlab.com/group/example-repo", "sessions": false, "telemetry": false}
+      ]
+    }
+  ]
+}
