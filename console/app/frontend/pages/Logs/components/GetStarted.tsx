@@ -14,6 +14,34 @@ type Sending =
   | { status: 'late' }
   | { status: 'error'; message: string }
 
+export function TelemetryGetStarted({ captureSetupPath }: { captureSetupPath: string }) {
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6 text-sm">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-base font-medium">Send this Project Claude Code's telemetry</h2>
+        <p className="text-muted-foreground">
+          No Logs in this Project's Retention yet. This is the Agent Project: its key sends only Claude Code's OpenTelemetry
+          events and metrics, not JSON Logs or a Sentry SDK's. Ingest keeps only the records of a captured repository.
+        </p>
+      </div>
+      <ol className="list-decimal space-y-1 pl-5">
+        <li>
+          Copy the settings from <Link href={captureSetupPath} className="underline">Capture setup, step 5</Link>. They have
+          the Ingest URL and the key filled in.
+        </li>
+        <li>
+          Put them in <code className="font-mono text-xs">~/.claude/settings.json</code>, or in your team's managed settings, then start
+          Claude Code in a captured repository.
+        </li>
+        <li>
+          Its events and metrics show here as Logs in the file <code className="font-mono text-xs">otel</code>:{' '}
+          <code className="font-mono text-xs">where file == "otel"</code>.
+        </li>
+      </ol>
+    </div>
+  )
+}
+
 /**
  * An empty Project's first steps, in place of the stream: snippets that send
  * its Logs, with its ingest URL and key filled in, and Send a test Log, which

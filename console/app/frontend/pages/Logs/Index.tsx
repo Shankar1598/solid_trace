@@ -61,7 +61,7 @@ import { BuilderBar, type BuilderView } from './components/BuilderBar'
 import { BuilderPanel, type ProjectOption } from './components/BuilderPanel'
 import { AddToDashboard } from './components/AddToDashboard'
 import { CreateMonitor } from './components/CreateMonitor'
-import { GetStarted } from './components/GetStarted'
+import { GetStarted, TelemetryGetStarted } from './components/GetStarted'
 import { CopyLink } from './components/CopyLink'
 import { HistogramStrip, type HistogramView } from './components/HistogramStrip'
 import { LogInspector } from './components/LogInspector'
@@ -77,8 +77,7 @@ interface LogsIndexProps {
   project: ProjectOption
   projects: ProjectOption[]
   sql_queries_enabled: boolean
-  /** Where the Project's Logs go, for an empty Project's snippets. */
-  ingest: { url: string; key: string | null }
+  get_started: { kind: 'snippets'; url: string; key: string | null } | { kind: 'telemetry'; capture_setup_path: string }
   /** Whether any Log is in the Project's Retention: loaded after the page; null when EventStore couldn't say. */
   has_logs?: boolean | null
 }
@@ -103,7 +102,7 @@ interface Run {
   force: boolean
 }
 
-export default function LogsIndex({ project, projects, sql_queries_enabled, ingest, has_logs }: LogsIndexProps) {
+export default function LogsIndex({ project, projects, sql_queries_enabled, get_started, has_logs }: LogsIndexProps) {
   const { current_org: currentOrg, current_user: currentUser } = usePage<SharedProps>().props
   const orgSlug = currentOrg?.slug ?? ''
   const viewer = currentUser?.id ?? null
@@ -628,13 +627,17 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, inge
     run(allLogsNow(latest.current, projectQuery))
   }
   const getStarted = has_logs === false && seen.current.logs.length === 0 ? (
-    <GetStarted
-      target={{ url: ingest.url, projectId: project.id, key: ingest.key }}
-      orgSlug={orgSlug}
-      projectSlug={project.slug}
-      projectQuery={projectQuery}
-      onSent={showTestLog}
-    />
+    get_started.kind === 'telemetry' ? (
+      <TelemetryGetStarted captureSetupPath={get_started.capture_setup_path} />
+    ) : (
+      <GetStarted
+        target={{ url: get_started.url, projectId: project.id, key: get_started.key }}
+        orgSlug={orgSlug}
+        projectSlug={project.slug}
+        projectQuery={projectQuery}
+        onSent={showTestLog}
+      />
+    )
   ) : null
 
   return (
