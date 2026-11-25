@@ -26,7 +26,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
       from: "2026-10-02", to: "2026-10-02", has_logs: true, ingest_counts_since: since, source_counts_since: source_counts_since,
       band: {
         received: { logs: 40, bytes: received_bytes, bytes_on_wire: 1500, requests: 4 },
-        unreadable_logs: 2, overloaded_requests: 1,
+        unreadable_logs: 2, filtered_logs: 4, overloaded_requests: 1,
         kept: { logs: 35, bytes: kept_bytes }, dropped_by_transform: 3,
         stored: { logs: 38, bytes: stored_bytes, local_bytes: stored_bytes, bucket_bytes: 0, raw_bytes: 3500 },
         stored_counted_bytes: stored_counted_bytes,
@@ -66,7 +66,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "logs" => 35, "bytes" => 3000 }, band["kept"])
     assert_equal 38, band["stored"]["logs"]
     assert_equal 3.0, band["ratio"], "kept bytes over stored"
-    assert_equal [ 2, 3, 1 ], band.values_at("unreadable_logs", "dropped_by_transform", "overloaded_requests")
+    assert_equal [ 2, 4, 3, 1 ], band.values_at("unreadable_logs", "filtered_logs", "dropped_by_transform", "overloaded_requests")
     assert_equal({ "average" => 0.001, "peak" => 12, "peak_at" => "2026-10-02T10:00:05Z" }, overview["rates"]["logs"])
     assert_equal({ "logs_per_second" => 0.5 }, overview["rates"]["last_five_minutes"])
     assert_equal({ "since" => "2026-10-02T09:00:00Z", "starts_after_range" => true }, overview["ingest_counts"])
@@ -159,7 +159,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
       logs_per_second: { average: logs / 86_400.0, peak: logs, peak_at: logs.positive? ? "2026-10-02T10:00:00Z" : nil },
       all_days: { logs: all_logs, bytes: stored_bytes * 3, oldest_day: oldest_day },
       last_log_at: last_log_at,
-      kept: { logs: logs, bytes: kept_bytes }, dropped_by_transform: 1, stored_counted_bytes: stored_counted_bytes,
+      kept: { logs: logs, bytes: kept_bytes }, dropped_by_transform: 1, filtered_logs: 2, stored_counted_bytes: stored_counted_bytes,
     }
   end
 
@@ -238,7 +238,7 @@ class OverviewControllerTest < ActionDispatch::IntegrationTest
 
     assert_equal({ "id" => @web.id, "name" => "Web", "slug" => "web", "color" => 1 }, web.slice("id", "name", "slug", "color"))
     assert_equal [ 30, 3000, 2400, 600, 4.0, 0.75 ], web.values_at("logs", "received_bytes", "kept_bytes", "stored_bytes", "ratio", "share")
-    assert_equal 1, web["dropped_by_transform"]
+    assert_equal [ 1, 2 ], web.values_at("dropped_by_transform", "filtered_logs")
     assert_equal({ "average" => 30 / 86_400.0, "peak" => 30, "peak_at" => "2026-10-02T10:00:00Z" }, web["logs_per_second"])
     assert_equal [ 7, false ], web.values_at("retention_days", "retention_is_default")
     assert_equal [ "2026-09-26", { "logs" => 90, "bytes" => 1800 } ], web.values_at("oldest_day", "all_days")

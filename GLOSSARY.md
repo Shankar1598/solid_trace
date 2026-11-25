@@ -65,7 +65,7 @@ The EventStore module that authenticates incoming Logs, normalises them, stores 
 _Avoid_: shipper endpoint, collector
 
 **Ingest counts**:
-Log ingest's per-second counts of what arrived per Project: Logs received, bytes received (decoded and as sent), requests, unreadable Logs and requests turned away as overloaded, by second of arrival. Kept in memory and written to ClickHouse about once a second; deleted with the Project's days by Retention, Project deletion and the disk limit.
+Log ingest's per-second counts of what arrived per Project: Logs received, bytes received (decoded and as sent), requests, unreadable Logs, Logs filtered out as not of a **Captured repository** and requests turned away as overloaded, by second of arrival. Kept in memory and written to ClickHouse about once a second; deleted with the Project's days by Retention, Project deletion and the disk limit.
 _Avoid_: ingest metrics, ingest stats, throughput log
 
 **Source**:
