@@ -376,6 +376,9 @@ type IngestedLogs struct {
 	// (PebbleWriter.LogIngestCursor): the scan read the batches after After
 	// up to it, and the next scan starts after it. It is the nil UUID while
 	// neither Log processing nor the parse has stored Logs for the Project.
+	// It is never behind After: a cursor behind it went back, as when a
+	// power loss lost its NoSync write, and the batches between go again
+	// with Logs the scan's caller has read.
 	Cursor uuid.UUID
 }
 
