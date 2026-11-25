@@ -1,8 +1,6 @@
 // Package captured matches repositories with the Captured repositories of
 // an Organization's Agent Project: the repository of an Agent session
-// upload, and the vcs.repository.url.full of Claude Code's telemetry. The
-// solidtrace CLI matches with the same rule (cli/capture), and both modules
-// run the cases in cli/capture/testdata/captured-repository-cases.json.
+// upload, and the vcs.repository.url.full of Claude Code's telemetry.
 package captured
 
 import (

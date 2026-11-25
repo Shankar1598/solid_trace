@@ -179,8 +179,6 @@ func Normalise(remote string) (string, bool) {
 // repository of the workspace. Case is ignored on both sides, because the
 // hosts' names do not depend on it and Claude Code's telemetry gives them
 // in lower case. Spaces around the entry and a .git ending are ignored too.
-// EventStore matches with the same rule (event_store/captured), and both
-// run the cases in testdata/captured-repository-cases.json.
 func Matches(entry, repository string) bool {
 	entry = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(entry)), ".git")
 	repository = strings.TrimSuffix(strings.ToLower(repository), ".git")

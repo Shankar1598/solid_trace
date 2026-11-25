@@ -94,9 +94,9 @@ class Overview
   # processing kept of the range's days (Source counts) and what ClickHouse
   # holds of them, with the compression ratio, kept bytes over the stored
   # bytes of only the days that have Source counts;
-  # the Logs dropped between Received and Kept, unreadable, filtered out by
-  # the Agent Project's key as not of a Captured repository, or by the Log
-  # transform, and the requests turned away beside it.
+  # the Logs dropped between Received and Kept: unreadable, filtered out by
+  # the Agent Project's key as not of a Captured repository, or dropped by
+  # the Log transform; and the requests turned away beside it.
   def band
     return unless answer
 

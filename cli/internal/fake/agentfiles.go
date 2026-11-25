@@ -198,8 +198,7 @@ func (f *AgentAPI) upload(w http.ResponseWriter, r *http.Request) {
 	answer(true)
 }
 
-// captured is the server's match of a repository with the list, by the
-// rule that the CLI and EventStore share.
+// captured is the server's match of a repository with the list.
 func captured(entries []string, repository string) bool {
 	return slices.ContainsFunc(entries, func(entry string) bool { return capture.Matches(entry, repository) })
 }

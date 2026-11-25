@@ -151,7 +151,6 @@ func (s *Service) ingestOTLP[R ownAttributed](
 		received := len(sent)
 		sent = slices.DeleteFunc(sent, func(r R) bool { return !filter.Keeps(repositoryURL(r.Attributes())) })
 		counted.LogsFiltered = int64(received - len(sent))
-		counted.LogsReceived = counted.LogsFiltered
 	}
 	return s.storeLogs(projectID, sent, 0, counted, normaliseLog)
 }

@@ -12,7 +12,6 @@ import (
 // (event_store/captured/captured_test.go): the two copies of Matches
 // cannot drift.
 
-// repositoryCasesFile is shared with EventStore's tests.
 const repositoryCasesFile = "testdata/captured-repository-cases.json"
 
 type repositoryCases struct {

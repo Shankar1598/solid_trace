@@ -99,7 +99,6 @@ func TestAValueThatIsNotARepositoryURLHasNoName(t *testing.T) {
 	}
 }
 
-// The port, a query and a fragment are not part of a name.
 func TestAURLNameHasNoPortQueryOrFragment(t *testing.T) {
 	want := []string{"git.example.com/team/app"}
 	for _, value := range []string{
