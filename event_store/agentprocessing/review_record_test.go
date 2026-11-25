@@ -179,7 +179,11 @@ func TestOnlyOneCallOfReviewFinalWithAHeredocIsARecord(t *testing.T) {
 	}{
 		{"the call of the skills", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord))}, 2},
 		{"a path to solidtrace", "session.jsonl", []string{bashCalls(nil, "/home/ann/.local/bin/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF\n")}, 2},
-		{"a plain heredoc word", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<REC\n"+reviewRecord+"\nREC")}, 2},
+		{"a plain heredoc word, whose body the shell changes", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<REC\n"+reviewRecord+"\nREC")}, 0},
+		{"a word in single quotes on one side only", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF\n"+reviewRecord+"\nEOF")}, 0},
+		{"a comment line and a blank line before the call", "session.jsonl", []string{bashCalls(nil, "# Send the Review record\n\n"+finalCall(reviewRecord))}, 2},
+		{"blank lines after the end word", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord)+"\n \n\n")}, 2},
+		{"only comment lines", "session.jsonl", []string{bashCalls(nil, "# solidtrace review final <<'EOF'")}, 0},
 		{"a heredoc word in double quotes", "session.jsonl", []string{bashCalls(nil, "solidtrace  review final << \"EOF\"\n"+reviewRecord+"\nEOF")}, 2},
 		{"cat with a heredoc", "session.jsonl", []string{bashCalls(nil, "cat <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
 		{"another review command", "session.jsonl", []string{bashCalls(nil, "solidtrace review block <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},

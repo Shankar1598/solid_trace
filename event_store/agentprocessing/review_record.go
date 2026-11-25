@@ -15,8 +15,9 @@ const reviewRecordFence = "```solidtrace-pr-record"
 
 // reviewFinalCall is the first line of a Bash command that runs only
 // solidtrace review final, by its name or by a path, with its stdin from a
-// heredoc (cli/plugin-skills/skills/open-pr/SKILL.md).
-var reviewFinalCall = regexp.MustCompile(`^[ \t]*(?:[\w.~/-]*/)?solidtrace[ \t]+review[ \t]+final[ \t]*<<[ \t]*(['"]?)(\w+)(['"]?)[ \t]*$`)
+// heredoc whose word is in quotes, so that the shell does not change the
+// body (cli/plugin-skills/skills/open-pr/SKILL.md).
+var reviewFinalCall = regexp.MustCompile(`^[ \t]*(?:[\w.~/-]*/)?solidtrace[ \t]+review[ \t]+final[ \t]*<<[ \t]*(['"])(\w+)(['"])[ \t]*$`)
 
 // reviewRecordVersion is the version of the record (cli/review.Record) that
 // the parse reads.
@@ -102,8 +103,8 @@ func lastReviewRecordBlock(text string) (string, bool) {
 
 // reviewFinalBody is the heredoc of input, the input of a Bash tool use,
 // when its command is one call of solidtrace review final and nothing
-// more: the first line of reviewFinalCall, the body, and the line with
-// only the heredoc's word as the last line.
+// more: blank or comment lines, the line of reviewFinalCall, the body, the
+// line with only the heredoc's word, and blank lines.
 func reviewFinalBody(input json.RawMessage) (string, bool) {
 	var bash struct {
 		Command string `json:"command"`
@@ -111,8 +112,14 @@ func reviewFinalBody(input json.RawMessage) (string, bool) {
 	if json.Unmarshal(input, &bash) != nil {
 		return "", false
 	}
-	first, rest, _ := strings.Cut(bash.Command, "\n")
-	m := reviewFinalCall.FindStringSubmatch(first)
+	lines := strings.Split(bash.Command, "\n")
+	for len(lines) > 0 && blankOrComment(lines[0]) {
+		lines = lines[1:]
+	}
+	if len(lines) == 0 {
+		return "", false
+	}
+	m := reviewFinalCall.FindStringSubmatch(lines[0])
 	if m == nil {
 		return "", false
 	}
@@ -120,14 +127,22 @@ func reviewFinalBody(input json.RawMessage) (string, bool) {
 	if openQuote != closeQuote {
 		return "", false
 	}
-	lines := strings.Split(strings.TrimRight(rest, "\n"), "\n")
-	for i, l := range lines {
+	body := lines[1:]
+	for i, l := range body {
 		if l == word {
-			if i != len(lines)-1 {
-				return "", false
+			for _, after := range body[i+1:] {
+				if strings.TrimSpace(after) != "" {
+					return "", false
+				}
 			}
-			return strings.TrimSpace(strings.Join(lines[:i], "\n")), true
+			return strings.TrimSpace(strings.Join(body[:i], "\n")), true
 		}
 	}
 	return "", false
+}
+
+// blankOrComment is true for a line that bash runs as nothing.
+func blankOrComment(line string) bool {
+	line = strings.TrimSpace(line)
+	return line == "" || strings.HasPrefix(line, "#")
 }

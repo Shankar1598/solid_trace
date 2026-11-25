@@ -202,11 +202,12 @@ Click the PR to open its record. The page shows:
 
 The record is what the agent wrote, with the words of PR commenters in it, so the pages show all of it as text, never as HTML or Markdown.
 
-SolidTrace reads the record from the `solidtrace review final` call of the Agent session: the heredoc of a Bash call in the main transcript that is only that command, when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). An Agent session from before that command gives its record in a `solidtrace-pr-record` block of its final reply, and SolidTrace reads that block too. When one agent message has more than one record, the last one counts. So:
+SolidTrace reads the record from the `solidtrace review final` call of the Agent session: the heredoc of a Bash call in the main transcript that is only that command, with the heredoc's word in quotes (`<<'EOF'`), when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). An Agent session from before that command gives its record in a `solidtrace-pr-record` block of its final reply, and SolidTrace reads that block too. When one agent message has more than one record, the last one counts. So:
 
 - A record shows when its Agent session uploads: in a captured repository, or in a Run.
 - An Agent session that SolidTrace parsed before Review records came has no Review record. SolidTrace does not read the old lines again.
-- A record that is not valid JSON, or not version 2, does not show. A record in a person's message, a subagent or a tool output does not show. A `review final` call with other shell text in its command (a pipe, `&&`, `;`, a redirect or a second command) does not show.
+- A record that is not valid JSON, or not version 2, does not show. A record in a person's message, a subagent or a tool output does not show. A `review final` call with other shell text in its command (a pipe, `&&`, `;`, a redirect or a second command), or with `<<EOF` and no quotes, does not show.
+- When `review final` refuses a record and the agent sends it again, the two calls are one round: of one Agent session's records with the same PR and round, only the last one shows.
 - The records follow the Agent Project's Retention, as the Agent sessions do.
 
 ### Over MCP
