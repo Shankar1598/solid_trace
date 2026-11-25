@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -156,12 +156,17 @@ const msToUtcMidnight = () => {
 }
 const ofThisRun = `flow.run == "${RUN}"`
 
+async function exactLogs(number: Locator) {
+  if (await number.count() === 0) return 0
+  return Number((await number.getAttribute('title'))!.replace(/\D/g, ''))
+}
+
 async function agentOverview(page: Page): Promise<{ received: number; filtered: number }> {
   await page.goto(`/${ORG}/overview?range=7d`)
-  const data = await page.locator('#app').getAttribute('data-page')
-  const projects: { id: number; logs: number; filtered_logs: number }[] = JSON.parse(data!).props.overview.projects ?? []
-  const agent = projects.find(p => p.id === setup.id)
-  return { received: agent?.logs ?? 0, filtered: agent?.filtered_logs ?? 0 }
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+  const received = page.locator(`[data-section="projects"] tr[data-project="${setup.slug}"] td:not([data-empty])`).nth(1)
+  const filtered = page.locator('[data-section="band"] dt:has-text("Filtered out as not of a Captured repository") + dd')
+  return { received: await exactLogs(received), filtered: await exactLogs(filtered) }
 }
 
 test("Claude Code's OpenTelemetry with the Agent Project's key keeps only the Captured repository's records, in the file otel", async ({ page, request }) => {
