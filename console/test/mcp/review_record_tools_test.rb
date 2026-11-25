@@ -70,8 +70,8 @@ class McpReviewRecordToolsTest < ActiveSupport::TestCase
 
   # get_review_record
 
-  test "get_review_record answers the record byte for byte, with its row, the rounds of its PR and a link" do
-    record = record_json
+  test "get_review_record answers the record with its first 30 findings, the number of findings, its row, the rounds of its PR and a link" do
+    record = record_json(findings: 75)
     asked = stub_record(body: { key: PR }, record: record)
 
     got = call_tool(:get_review_record, user: @member, pr: PR)
@@ -80,9 +80,58 @@ class McpReviewRecordToolsTest < ActiveSupport::TestCase
     assert_requested asked
     assert_equal [ RECORD, SESSION, "#{SESSION}.jsonl", 4096 ], got.json["review_record"].values_at("id", "session_id", "path", "offset")
     assert_equal [ 2, 1 ], got.json["rounds"].pluck("round")
-    assert_equal record, got.body[/"record":(.*),"rounds":/m, 1], "the record as the agent wrote it, not made again"
-    assert_equal "Add a <b>cart</b> page…", got.json.dig("record", "story", "started_from")
+    whole = JSON.parse(record)
+    assert_equal whole.merge("findings" => whole["findings"].first(30)), got.json["record"], "all of the record but the findings after the page"
+    assert_equal({ "findings_total" => 75, "next_findings_from" => 30 }, got.json.slice("findings_total", "next_findings_from"))
     assert_equal "http://console.test/acme/review_records/record?key=https%3A%2F%2Fgithub.com%2Facme%2Fshop%2Fpull%2F7", got.link
+  end
+
+  test "get_review_record answers the page of findings that findings_from and findings_limit give" do
+    stub_record(body: { key: PR }, record: record_json(findings: 75))
+
+    got = call_tool(:get_review_record, user: @member, pr: PR, findings_from: 30)
+
+    assert_equal (31..60).map { |n| "F#{n}" }, got.json.dig("record", "findings").pluck("id")
+    assert_equal({ "findings_total" => 75, "next_findings_from" => 60 }, got.json.slice("findings_total", "next_findings_from"))
+    got = call_tool(:get_review_record, user: @member, pr: PR, findings_from: 10, findings_limit: 5)
+    assert_equal %w[F11 F12 F13 F14 F15], got.json.dig("record", "findings").pluck("id")
+    assert_equal 15, got.json["next_findings_from"]
+  end
+
+  test "the last page of findings has a next_findings_from of null, and a page after it has no findings" do
+    stub_record(body: { key: PR }, record: record_json(findings: 75))
+
+    [ [ { findings_from: 60 }, (61..75) ], [ { findings_limit: 100 }, (1..75) ], [ { findings_from: 70, findings_limit: 5 }, (71..75) ],
+      [ { findings_from: 75 }, [] ], [ { findings_from: 500 }, [] ] ].each do |arguments, numbers|
+      got = call_tool(:get_review_record, user: @member, pr: PR, **arguments)
+
+      assert_equal numbers.map { |n| "F#{n}" }, got.json.dig("record", "findings").pluck("id"), arguments.inspect
+      assert_equal({ "findings_total" => 75, "next_findings_from" => nil }, got.json.slice("findings_total", "next_findings_from"), arguments.inspect)
+    end
+  end
+
+  test "get_review_record refuses a findings_from or a findings_limit out of its range, and EventStore is not asked" do
+    [ { findings_from: -1 }, { findings_limit: 0 }, { findings_limit: 101 }, { findings_from: "30" }, { findings_limit: 2.5 } ].each do |arguments|
+      got = call_tool(:get_review_record, user: @member, pr: PR, **arguments)
+
+      assert got.error?, arguments.inspect
+      assert_match arguments.keys.sole.to_s, got.text
+    end
+    assert_not_requested :post, %r{/review-records}
+  end
+
+  # Claude Code cuts a tool's answer past 25,000 tokens, which is 100,000
+  # characters at 4 characters a token.
+  test "the first page of a record of 200 large findings is less than 100,000 characters" do
+    record = JSON.generate(JSON.parse(record_json).merge("findings" => Array.new(200) { |i| large_finding(i + 1) }))
+    assert_operator record.size, :>, 400_000
+    stub_record(body: { key: PR }, record: record)
+
+    got = call_tool(:get_review_record, user: @member, pr: PR)
+
+    assert_not got.error?
+    assert_equal 30, got.json.dig("record", "findings").size
+    assert_operator got.text.size, :<, 100_000
   end
 
   test "get_review_record reads one record by its id" do
@@ -153,10 +202,26 @@ class McpReviewRecordToolsTest < ActiveSupport::TestCase
       pr: pr, round: round, title: "Cart page", findings: 4, fixed: 2, missed: 3, confirmations_not_given: 1 }
   end
 
-  # A record as an agent writes it: spaces and an order that JSON.generate
-  # would not keep, a character it would not escape the same way, and HTML.
-  def record_json
-    %({ "version": 2, "round": 2, "pr": "#{PR}",\n  "story": {"started_from": "Add a <b>cart</b> page\\u2026"}, "findings": [] })
+  # A record as an agent writes it, with HTML in its text, and findings F1,
+  # F2 and on.
+  def record_json(findings: 0)
+    JSON.pretty_generate({
+      version: 2, sessions: [ { id: SESSION, title: "Cart page" } ], pr: PR, round: 2, story: { started_from: "Add a <b>cart</b> page…" },
+      reviews: [ { run: 1, skill: "code-review", stage: "step", step: "cart page" } ],
+      findings: Array.new(findings) { |i| { id: "F#{i + 1}", found_by: { kind: "reviewer", name: "tests" }, title: "Finding #{i + 1}", outcome: "fixed" } },
+      confirmations: [ { id: "C1", run: 1, ask: "Confirm the deploy order.", given: true } ],
+    })
+  end
+
+  # A large finding: about 2,000 characters of JSON, about twice the mean
+  # of the findings of a 145 KB record.
+  def large_finding(number)
+    why = "The cart page adds the line totals before it applies the discount, so a cart with a coupon shows a total that is too high. "
+    { id: "F#{number}", block_id: "B#{number}", run: 1, found_by: { kind: "reviewer", name: "bugs-and-spec" }, kind: "bug", severity: "high",
+      category: "correctness", file: "app/cart/total.rb", line: 42, title: "The total skips the discount on a cart with a coupon",
+      scenario: why * 10, events: [ { type: "found" }, { type: "triage", decision: "fix", why: why * 3 }, { type: "verify", verdict: "CONFIRMED" },
+                                    { type: "fix", files: [ "app/cart/total.rb" ] } ],
+      outcome: "fixed", confidence: "high" }
   end
 
   def stub_list(body:, rows:, more: false)
