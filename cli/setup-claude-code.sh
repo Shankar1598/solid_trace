@@ -229,7 +229,44 @@ install_plugin() {
   fi
 }
 
-TOTAL_STAGES=7
+# confirm_yes "question" is a Y/n gate: Enter is yes.
+confirm_yes() {
+  local reply=""
+  printf '  %s? %s [Y/n]%s ' "$YELLOW" "$1" "$RESET"
+  read -r reply || true
+  [[ ! "$reply" =~ ^[Nn] ]]
+}
+
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+
+# settings_env_has KEY is true when Claude Code's user settings set KEY in env.
+settings_env_has() {
+  [[ -f "$CLAUDE_SETTINGS" ]] && command -v python3 >/dev/null 2>&1 || return 1
+  KEY="$1" FILE="$CLAUDE_SETTINGS" python3 -c '
+import json, os, sys
+d = json.load(open(os.environ["FILE"]))
+sys.exit(0 if (d.get("env") or {}).get(os.environ["KEY"]) else 1)'
+}
+
+# write_settings_env KEY VALUE sets KEY in env of Claude Code's user settings,
+# and keeps the other settings. The file then has mode 600, as it holds a
+# token. The value goes through the environment, not the command line.
+write_settings_env() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+  KEY="$1" VALUE="$2" FILE="$CLAUDE_SETTINGS" python3 -c '
+import json, os
+f = os.environ["FILE"]
+d = json.load(open(f)) if os.path.exists(f) and os.path.getsize(f) else {}
+d.setdefault("env", {})[os.environ["KEY"]] = os.environ["VALUE"]
+tmp = f + ".tmp"
+with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as out:
+    json.dump(d, out, indent=2)
+    out.write("\n")
+os.replace(tmp, f)'
+}
+
+TOTAL_STAGES=8
 
 banner "SolidTrace for Claude Code"
 
@@ -291,13 +328,48 @@ pause
 stage "Install the review plugin"
 say "solidtrace-skills@solidtrace gives /solidtrace-skills:code-review, deep-review,"
 say "open-pr, update-pr and try-pr. They record each finding of a review."
-if confirm "Install the review plugin?"; then
+REVIEW_PLUGIN=no
+if confirm_yes "Install the review plugin?"; then
   install_plugin solidtrace-skills@solidtrace
-  if [[ -z "${BITBUCKET_TOKEN:-}" ]]; then
-    SKIPPED+=("on bitbucket.org, open-pr and update-pr need BITBUCKET_TOKEN in Claude Code's environment; without it, open-pr gives a link to a new PR")
-  fi
+  REVIEW_PLUGIN=yes
 else
   SKIPPED+=("the review plugin: claude plugin install solidtrace-skills@solidtrace")
+fi
+pause
+
+stage "Bitbucket token"
+BITBUCKET_SKIPPED="on bitbucket.org, open-pr and update-pr need BITBUCKET_TOKEN in env of $CLAUDE_SETTINGS; without it, open-pr gives a link to a new PR"
+if [[ "$REVIEW_PLUGIN" != yes ]]; then
+  say "The review plugin is not installed, so it needs no token."
+elif [[ -n "${BITBUCKET_TOKEN:-}" ]] || settings_env_has BITBUCKET_TOKEN; then
+  say "BITBUCKET_TOKEN is set already. The wizard does not change it."
+else
+  say "On bitbucket.org, open-pr and update-pr use BITBUCKET_TOKEN to open the PR,"
+  say "read its comments and build statuses, and reply to the comments."
+  note "GitHub repositories need no token: the skills use gh."
+  step "In Bitbucket, open the workspace settings → Access tokens, or a repository's"
+  step "Repository settings → Access tokens. A repository's token works for that repository only."
+  step "Create a token that can write pull requests and read the repositories, and copy it."
+  ask_secret BB_TOKEN "Paste the token (Enter skips):"
+  if [[ -z "$BB_TOKEN" ]]; then
+    SKIPPED+=("$BITBUCKET_SKIPPED")
+  else
+    code="$(printf 'Authorization: Bearer %s\n' "$BB_TOKEN" \
+      | curl -s -o /dev/null -w '%{http_code}' -H @- https://api.bitbucket.org/2.0/user || true)"
+    save=yes
+    if [[ "$code" != 200 ]]; then
+      warn "Bitbucket answered $code to the token, not 200."
+      confirm "Save it anyway?" || save=no
+    fi
+    if [[ "$save" == no ]]; then
+      SKIPPED+=("$BITBUCKET_SKIPPED")
+    elif write_settings_env BITBUCKET_TOKEN "$BB_TOKEN"; then
+      printf '  %s✓ wrote%s BITBUCKET_TOKEN → env of %s\n' "$GREEN" "$RESET" "$CLAUDE_SETTINGS"
+    else
+      SKIPPED+=("python3 is necessary to write $CLAUDE_SETTINGS: add BITBUCKET_TOKEN to its env by hand")
+    fi
+  fi
+  unset BB_TOKEN
 fi
 pause
 
