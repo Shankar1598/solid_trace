@@ -54,11 +54,20 @@ When it finds problems, send the sub-agent the problems, wait for new notes, and
 
 ## 6. Write the PR
 
-The title is one line that says what the change does. The body has these sections, in this order, and each is short:
+Write the title and the body with the `technical-writing` skill of the pstack plugin, when it is installed. Find its file with `ls -d ~/.claude/plugins/cache/*/pstack/*/skills/technical-writing/SKILL.md 2>/dev/null | sort -V | tail -1`. Read the file and follow it, because the Skill tool does not run that skill. When the command prints nothing, write short sentences with one thought each, in the words of the repository's glossary.
 
-- **Summary**: what changes for the user, and why, from the record's `story`.
-- **Evidence**: the tests and checks that ran, and their result.
-- **Review**: one row per finding found by a reviewer: id, stage and step, reviewer, severity, title, the decisions in order (for example "trivial, verifier pushed back, fixed"), outcome, and what the person decided, in your own short words. Then one line per finding found outside the reviews, as "Missed by the review, found by the person" (or "by an agent", "by a test run"). Then the confirmations that were not given.
+The title is one line that says what the change does. The body is a briefing that a reviewer reads in about one minute, in at most 60 lines. It has these sections, in this order:
+
+- **What changes**: one `##` section for each change that a user or an operator sees, from the record's `story`, with no parent heading. The heading says the point, for example "Review records moves into Agent sessions". Say what changes and why. Name the routes, the limits and the fallbacks as the code names them.
+- **Where to look**: the two to four files or functions that a reviewer reads first, and why each one.
+- **Evidence**: the tests and checks that ran, what each one covers, and their result. Name the suites that did not run.
+- **Review**, in short sentences:
+  - the count of reviews and of their findings, and how many of those findings are fixed, disputed, deferred or open;
+  - for each review, what it found that changed the code, or that it found nothing;
+  - for each finding found outside the reviews, what it was, who found it (the person, an agent or a test run), and its outcome;
+  - the confirmations that were not given.
+
+  Do not list each finding of the reviews. End the section with one line that says the Review record has each finding and its decisions.
 
 In every section, do not quote the person's messages from the sessions: they are private, and can hold host names or secrets. Say what they asked for or decided in your own short words.
 
