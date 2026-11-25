@@ -456,14 +456,16 @@ if begin "Your SolidTrace, and where the server runs"; then
 
   printf '\n'
   say "Where do the Nomad server, the Dispatcher and Squid run? No agent runs there."
-  step "1  On the SolidTrace VM (a pilot, no new VM). That VM then holds the agents' secrets,"
-  note "   and its Nomad server can run code on each agent VM (ADR 0019). They take about 1 GB of memory."
-  step "2  On a server VM of its own (e2-small, about USD 13 a month), as docs/factory.md shows."
-  current_mode=1; [[ "${SERVER_MODE:-}" == own ]] && current_mode=2
+  step "1  On a server VM of its own (e2-small, about USD 13 a month), as docs/factory.md shows."
+  note "   The agents' traffic and their access stay off the SolidTrace VM. Use this one."
+  step "2  On the SolidTrace VM (no new VM). Each download of an agent then goes through that VM,"
+  note "   which also takes in your Logs. That VM holds the agents' secrets, the agent VMs reach it on"
+  note "   three ports, and its Nomad server can run code on each agent VM (ADR 0019)."
+  current_mode=1; [[ "${SERVER_MODE:-}" == solidtrace ]] && current_mode=2
   ask_default MODE_CHOICE "1 or 2:" "$current_mode"
   case "$MODE_CHOICE" in
-    1) SERVER_MODE=solidtrace ;;
-    2) SERVER_MODE=own ;;
+    1) SERVER_MODE=own ;;
+    2) SERVER_MODE=solidtrace ;;
     *) warn "Type 1 or 2."; exit 1 ;;
   esac
   remember SERVER_MODE
@@ -672,7 +674,7 @@ if begin "Squid: the agent VMs' only way out"; then
     squid_conf="$(printf '%s\n' "$squid_conf" | sed -e "s|^acl solidtrace_host .*|acl solidtrace_host $host_acl|" \
       -e "s|^acl solidtrace_port .*|acl solidtrace_port port $ingest_port|")"
   fi
-  new_script server-squid INGEST_URL <<'EOF'
+  new_script server-squid INGEST_URL SOLIDTRACE_URL <<'EOF'
 export DEBIAN_FRONTEND=noninteractive
 apt-get install -y -q squid </dev/null
 install -d -o 10001 -g 10001 -m 755 /etc/squid/factory
@@ -697,8 +699,10 @@ systemctl daemon-reload
 systemctl enable --now squid-allowlist.path
 systemctl restart squid
 systemctl is-active squid
-echo "== Can this VM reach the ingest URL? (any HTTP status is good; 000 is not)"
-curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 "$INGEST_URL/" || true
+echo "== Can this VM reach Console and the ingest URL? (any HTTP status is good; 000 is not)"
+echo "   If not, open the SolidTrace VM's firewall (and ufw) to this VM's address."
+printf 'Console: '; curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 "$SOLIDTRACE_URL/" || true
+printf 'Ingest:  '; curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 "$INGEST_URL/" || true
 EOF
   } >> "$SCRIPT"
   show_script "$SCRIPT"
