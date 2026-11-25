@@ -34,6 +34,17 @@ func TestReviewFinalPrintsTheRoundAndTheCountsOfARecord(t *testing.T) {
 	}
 }
 
+func TestReviewFinalTakesARecordOfRound1WithNoFindings(t *testing.T) {
+	record := `{"version":2,"sessions":[],"pr":null,"round":1,"story":{"started_from":"s","changes":[],"reviews":[],"after_review":[],"sessions":[]},` +
+		`"reviews":[],"findings":[],"confirmations":[]}`
+
+	code, out, stderr := runFinal(t, record)
+
+	if code != 0 || stderr != "" || out != "record: round 1, 0 findings, 0 fixed\n" {
+		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
+	}
+}
+
 func TestReviewFinalTakesTheRecordThatReviewRecordPrints(t *testing.T) {
 	var record bytes.Buffer
 	digest := writeText(t, "digest.json", recordDigest)

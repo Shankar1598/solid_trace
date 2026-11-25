@@ -7,8 +7,8 @@ import (
 )
 
 func reviewFinal(args []string, env Env) int {
-	data, code, ok := readStdin(args, env, "review final", "record")
-	if !ok {
+	data, code := readStdin(args, env, "review final", "record")
+	if code != 0 {
 		return code
 	}
 	record, err := review.ReadFinal(data)
