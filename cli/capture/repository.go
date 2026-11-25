@@ -176,11 +176,14 @@ func Normalise(remote string) (string, bool) {
 
 // Matches reports whether a normalised repository matches a captured
 // repositories entry: host/workspace/name, or host/workspace/* for each
-// repository of the workspace. The entry's host case and a .git ending
-// are ignored too.
+// repository of the workspace. Case is ignored on both sides, because the
+// hosts' names do not depend on it and Claude Code's telemetry gives them
+// in lower case. Spaces around the entry and a .git ending are ignored too.
+// EventStore matches with the same rule (event_store/captured), and both
+// run the cases in testdata/captured-repository-cases.json.
 func Matches(entry, repository string) bool {
-	host, rest, _ := strings.Cut(strings.TrimSuffix(strings.TrimSpace(entry), ".git"), "/")
-	entry = strings.ToLower(host) + "/" + rest
+	entry = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(entry)), ".git")
+	repository = strings.TrimSuffix(strings.ToLower(repository), ".git")
 	if workspace, ok := strings.CutSuffix(entry, "/*"); ok {
 		return strings.HasPrefix(repository, workspace+"/")
 	}
