@@ -21,7 +21,7 @@ var (
 	severities      = []string{"high", "medium", "low"}
 	categories      = []string{"correctness", "spec", "security", "availability", "performance", "data-loss", "test-gap", "design", "other"}
 	verdicts        = []string{"CONFIRMED", "PLAUSIBLE", "REFUTED"}
-	blockFoundBy    = []string{"person", "reviewer", "test"}
+	blockFoundBy    = []string{"person", "reviewer", "test"} // not agent: only the record's writer finds an agent finding
 	runEventTypes   = []string{"found", "refound", "triage", "verify", "fix"}
 	updateEventKind = []string{"triage", "fix"}
 )
@@ -67,18 +67,34 @@ func FenceBlock(compact []byte) string {
 
 // blockCommand is true when a Bash command runs solidtrace review block or
 // solidtrace review fixed, which print checked blocks. The binary can be
-// called by its path.
-func blockCommand(command string) bool {
+// called by its path. bodies are the blocks that the command gives to
+// review block on stdin, when each review block of the command reads a
+// heredoc or a here-string and no review fixed is in it: Claude Code keeps
+// only the start of a long output.
+func blockCommand(command string) (bodies []string, ok bool) {
+	fromStdin := true
 	for _, c := range shellCommands(command) {
-		w := c.words
-		for len(w) > 0 && (commandPrefixes[w[0]] || assignment.MatchString(w[0])) {
-			w = w[1:]
+		w := commandWords(c)
+		if len(w) < 3 || filepath.Base(w[0]) != "solidtrace" || w[1] != "review" {
+			continue
 		}
-		if len(w) >= 3 && filepath.Base(w[0]) == "solidtrace" && w[1] == "review" && (w[2] == "block" || w[2] == "fixed") {
-			return true
+		switch w[2] {
+		case "block":
+			ok = true
+			if len(c.stdin) == 0 {
+				fromStdin = false
+			} else {
+				// As in Bash, the last of more redirections is the stdin.
+				bodies = append(bodies, c.stdin[len(c.stdin)-1])
+			}
+		case "fixed":
+			ok, fromStdin = true, false
 		}
 	}
-	return false
+	if !fromStdin {
+		bodies = nil
+	}
+	return bodies, ok
 }
 
 type blockChecker struct {
@@ -153,6 +169,14 @@ func (c *blockChecker) integer(m map[string]any, path, key string, least int64, 
 	i, err := n.Int64()
 	if !isNumber || err != nil || i < least {
 		c.problem(path+key, "%s is not an integer of %d or more", show(v), least)
+	}
+}
+
+func (c *blockChecker) boolean(m map[string]any, path, key string) {
+	if v, ok := m[key]; ok {
+		if _, isBool := v.(bool); !isBool {
+			c.problem(path+key, "is not true or false")
+		}
 	}
 }
 
@@ -315,11 +339,7 @@ func (c *blockChecker) finding(path string, v any, seen map[string]bool) {
 		for _, k := range []string{"name", "access", "ref"} {
 			c.text(r, path+"found_by.", k, false)
 		}
-		if self, ok := r["self"]; ok {
-			if _, isBool := self.(bool); !isBool {
-				c.problem(path+"found_by.self", "is not true or false")
-			}
-		}
+		c.boolean(r, path+"found_by.", "self")
 	}
 	events := c.events(m, path, runEventTypes)
 	if len(events) > 0 {
@@ -369,11 +389,7 @@ func (c *blockChecker) event(path string, v any, types []string) {
 	case "verify":
 		c.object(path, m, []string{"type", "verdict", "pushed_back", "why"}, nil)
 		c.oneOf(m, in, "verdict", verdicts)
-		if pb, ok := m["pushed_back"]; ok {
-			if _, isBool := pb.(bool); !isBool {
-				c.problem(in+"pushed_back", "is not true or false")
-			}
-		}
+		c.boolean(m, in, "pushed_back")
 		c.text(m, in, "why", false)
 	case "fix":
 		c.object(path, m, []string{"type", "commit", "files"}, nil)

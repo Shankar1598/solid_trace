@@ -62,7 +62,7 @@ When the answer changes a decision, put the new decision in an update block. Don
 
 ## 6. Fix
 
-Fix only the findings that the person said to fix, and the ones with `"approved_by": "author"`. Run the tests that cover them. Commit as `code-review/SKILL.md` › Report, then fix says, with the `Review-Findings` trailers, and end the reply with an update block.
+Fix only the findings that the person said to fix, and the ones with `"approved_by": "author"`. Run the tests that cover them. Commit as `code-review/SKILL.md` › Report, then fix says, with the `Review-Findings` trailers, then run `solidtrace review fixed`.
 
 When the fixes changed code, run the `security` reviewer on the fix diff only (`git diff <the head before the fixes>..HEAD`), as `open-pr/SKILL.md` › Final review step 5 says, with `"trigger": "update-pr"`, `"stage": "pr"` and `"step": "security"`. Run one round only, and list what is still open in the replies.
 

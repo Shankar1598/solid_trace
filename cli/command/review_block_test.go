@@ -66,12 +66,26 @@ func TestReviewBlockPrintsAValidBlockAsOneFencedLine(t *testing.T) {
 }
 
 func TestReviewBlockTakesASkippedDeepReview(t *testing.T) {
-	block := `{"version": 2, "run": 1, "skill": "deep-review", "trigger": "open-pr", "stage": "final", "step": null,
-	 "base": "a", "head": "b", "reviewers": [], "verifier": null, "findings": [], "confirmations": [], "dropped": {},
-	 "skipped": "covered by ` + hashA + `"}`
+	for _, skipped := range []string{"covered by " + hashA, "person", "docs only"} {
+		block := `{"version": 2, "run": 1, "skill": "deep-review", "trigger": "open-pr", "stage": "final", "step": null,
+		 "base": "a", "head": "b", "reviewers": [], "verifier": null, "findings": [], "confirmations": [], "dropped": {},
+		 "skipped": "` + skipped + `"}`
 
-	if code, _, stderr := runBlockCommand(t, block); code != 0 {
-		t.Fatalf("exit %d: %s", code, stderr)
+		if code, _, stderr := runBlockCommand(t, block); code != 0 {
+			t.Errorf("skipped %q: exit %d: %s", skipped, code, stderr)
+		}
+	}
+}
+
+func TestReviewBlockReadsAtMostOneMiBOfStdin(t *testing.T) {
+	pad := func(n int) string { return validUpdateBlock + strings.Repeat(" ", n-len(validUpdateBlock)) }
+
+	if code, _, stderr := runBlockCommand(t, pad(1<<20)); code != 0 {
+		t.Fatalf("1 MiB: exit %d: %s", code, stderr)
+	}
+	code, out, stderr := runBlockCommand(t, pad(1<<20+1))
+	if code != 1 || out != "" || stderr != "solidtrace review block: the block is more than 1048576 bytes\n" {
+		t.Fatalf("1 MiB and 1 byte: exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
 	}
 }
 
@@ -174,6 +188,13 @@ func TestReviewBlockNamesEachProblem(t *testing.T) {
 			`findings[0].events[1]: no "files"`},
 		{"an update block with no findings", validUpdateBlock, func(b map[string]any) { b["findings"] = []any{} },
 			"findings: is empty: an update block adds events to one or more findings"},
+		{"an empty file", validUpdateBlock, func(b map[string]any) { blockEvent(b, 0, 1)["files"] = []any{""} },
+			"findings[0].events[1].files[0]: is empty"},
+		{"a file that is a number", validUpdateBlock, func(b map[string]any) { blockEvent(b, 0, 1)["files"] = []any{1} },
+			"findings[0].events[1].files[0]: is not a string"},
+		{"a dropped that is a list", validRunBlock, func(b map[string]any) { b["dropped"] = []any{} }, "dropped: is not an object"},
+		{"a found_by self that is text", validRunBlock, func(b map[string]any) { blockFinding(b, 1)["found_by"].(map[string]any)["self"] = "yes" },
+			"findings[1].found_by.self: is not true or false"},
 		{"update 0", validUpdateBlock, func(b map[string]any) { b["update"] = 0 }, "update: 0 is not an integer of 1 or more"},
 	}
 	for _, c := range cases {

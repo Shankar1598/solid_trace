@@ -34,7 +34,7 @@ You read two other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not re
 1. **Deep review.** Skip it when the diff changes only docs, tests or test data, when the person said to skip it, or when a `deep-review` block in the confirmed sessions has `head` equal to `git rev-parse HEAD`. To find such a block, run `solidtrace review digest` with one `--session ID` for each confirmed session, and read its `findings` events. When you skip it, record a `deep-review` block with `solidtrace review block` that has `"findings": []` and `skipped` (see `${CLAUDE_SKILL_DIR}/../code-review/findings.md`). Else read `${CLAUDE_SKILL_DIR}/../deep-review/SKILL.md` and follow it on the diff.
 2. **High availability and infrastructure.** Run the `ha-and-infrastructure` reviewer as `code-review` runs a reviewer. Follow `${CLAUDE_SKILL_DIR}/../code-review/SKILL.md` from "Find the spec and the rules" to "Report, then fix", with the `ha-and-infrastructure` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`, the `REVIEW.md` sections High availability and Infrastructure, and the diff. Its block has `"trigger": "open-pr"`, `"stage": "final"` and `"step": "ha-and-infrastructure"`. Report and decide, and do not fix yet.
 3. **Ask the person.** In one message, list each `ask` finding of 1 and 2, and each `high` finding with the decision `dispute`, `trivial` or `defer`, with your decision, and ask what to do with each. Wait for the answer. List the `high` findings that you fix in the same message, for the person to know, but do not wait for them. With nothing to ask, go on. When the answer changes a decision, put the new decision in an update block (`${CLAUDE_SKILL_DIR}/../code-review/findings.md`, The update block).
-4. **Fix.** Fix the findings with decision `fix` and the ones the person said to fix. Run the tests that cover them. Commit the fixes with explicit paths and the `Review-Findings` trailers, then end the reply with an update block, as in `code-review/SKILL.md` › Report, then fix.
+4. **Fix.** Fix the findings with decision `fix` and the ones the person said to fix. Run the tests that cover them. Commit the fixes with explicit paths and the `Review-Findings` trailers, then run `solidtrace review fixed`, as in `code-review/SKILL.md` › Report, then fix.
 5. **Security, last.** Run the `security` reviewer in the same way, with the `security` role, on the diff after step 4, with the `REVIEW.md` section Security. Its block has `"trigger": "open-pr"`, `"stage": "final"` and `"step": "security"`. Ask the person as in step 3, then fix and commit as in step 4. When a fix changed code, run the security reviewer once more on the fix diff only (`git diff <the head before the fix>`). Stop after this second round. Decide its findings, fix the ones you decide to fix, and commit as in step 4. In the PR, list them as fixed after the last review, and list what is still open.
 
 ## 4. Start the record and the push at the same time
@@ -43,7 +43,7 @@ You read two other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not re
   1. Run `solidtrace review digest` with one `--session ID` for each confirmed session, `> "$dir/digest.json"`.
   2. Run `solidtrace review record --digest "$dir/digest.json" > "$dir/record0.json"`. This is the mechanical part of the record.
   3. Spawn one sub-agent with `subagent_type: "solidtrace-skills:record-writer"`, which can only read files, on the `record` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`. Its prompt is the text of [record.md](record.md), then the two paths to read: `$dir/digest.json` and `$dir/record0.json`. It replies with the notes. Write them to `$dir/notes.json`.
-  4. Run `solidtrace review record --digest "$dir/digest.json" --notes "$dir/notes.json" --round 1 > "$dir/record.json"`. When it refuses a note, send the sub-agent the error, and wait for new notes.
+  4. Run `solidtrace review record --digest "$dir/digest.json" --notes "$dir/notes.json" --round 1 > "$dir/record.json"`. When it refuses a note (exit 1), send the sub-agent the error, and wait for new notes. After two refusals, use `$dir/record0.json` with `--pr` and `--round` as the record, and say in the final reply which notes were refused.
 - **The push.** Run `git push -u origin HEAD`, and wait for its result. When it fails, stop before step 7: tell the person why, and do not open a PR on an older remote head. In local mode, skip it.
 
 ## 5. Check the record
@@ -70,7 +70,7 @@ Open the PR as [platforms.md](platforms.md) says, in Open a PR.
 
 ## 8. Final reply
 
-Give the PR's URL, or in local mode the file's path. Then run `solidtrace review record` of step 4 again with `--pr` set to that URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened), and end the reply with the record in one `solidtrace-pr-record` block, as one line of JSON:
+Give the PR's URL, or in local mode the file's path. Then run the command of step 4.4 again, with the same `--round`, and with `--pr` set to that URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened), and end the reply with the record in one `solidtrace-pr-record` block, as one line of JSON:
 
 ````
 ```solidtrace-pr-record

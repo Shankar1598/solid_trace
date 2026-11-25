@@ -161,6 +161,18 @@ func TestReviewFixedFailsWhenTheCommitHasNoUsableTrailer(t *testing.T) {
 	}
 }
 
+func TestReviewFixedFailsWhenATrailerNamesAnIDThatIsNotOfABlock(t *testing.T) {
+	repo := fixRepository(t)
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "Lower case", "-m", "Review-Findings: run 1: f1")
+
+	code, out, stderr := runFixed(t, repo)
+
+	want := `solidtrace review fixed: the update block of run 1 is not valid: findings[0].id: "f1" is not of the form F<n>` + "\n"
+	if code != 1 || out != "" || stderr != want {
+		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
+	}
+}
+
 func TestReviewFixedFailsOutsideARepository(t *testing.T) {
 	code, out, stderr := runFixed(t, tempDir(t))
 

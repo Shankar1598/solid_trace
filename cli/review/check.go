@@ -1,6 +1,7 @@
 package review
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -29,9 +30,13 @@ type CheckResult struct {
 	FoundBy    map[string]int `json:"found_by"`
 	PushedBack int            `json:"pushed_back"`
 	Problems   []string       `json:"problems"`
+	// Warnings are what the record cannot hold, such as a block of the
+	// digest that cannot be read.
+	Warnings []string `json:"warnings"`
 }
 
-type record struct {
+// checkedRecord is the part of a record that Check reads.
+type checkedRecord struct {
 	Sessions []SessionTitle `json:"sessions"`
 	// Round is raw, so that a round of null or 1.5 is a problem and not 0.
 	Round   json.RawMessage `json:"round"`
@@ -41,26 +46,27 @@ type record struct {
 		BlockRun int    `json:"block_run"`
 		Session  string `json:"session"`
 		Writer   string `json:"writer"`
+		Start    string `json:"start"`
 	} `json:"reviews"`
-	Findings      []recordFinding `json:"findings"`
+	Findings      []checkedFinding `json:"findings"`
 	Confirmations []struct {
 		ID    string `json:"id"`
 		Given any    `json:"given"`
 	} `json:"confirmations"`
 }
 
-type recordFinding struct {
+type checkedFinding struct {
 	ID      string `json:"id"`
 	BlockID string `json:"block_id"`
 	Run     *int   `json:"run"`
 	FoundBy *struct {
 		Kind string `json:"kind"`
 	} `json:"found_by"`
-	Outcome string        `json:"outcome"`
-	Events  []recordEvent `json:"events"`
+	Outcome string         `json:"outcome"`
+	Events  []checkedEvent `json:"events"`
 }
 
-type recordEvent struct {
+type checkedEvent struct {
 	Type string `json:"type"`
 	// Run is the run of a refound event.
 	Run        *int     `json:"run"`
@@ -71,18 +77,46 @@ type recordEvent struct {
 	Evidence   []string `json:"evidence"`
 }
 
-func (f recordFinding) has(eventType string) bool {
-	return slices.ContainsFunc(f.Events, func(e recordEvent) bool { return e.Type == eventType })
+func (f checkedFinding) has(eventType string) bool {
+	return slices.ContainsFunc(f.Events, func(e checkedEvent) bool { return e.Type == eventType })
 }
 
 // fixStands is true when a fix event comes after the last refound event:
 // record.md counts a fix only when no later run reports the finding again.
-func (f recordFinding) fixStands() bool {
+func (f checkedFinding) fixStands() bool {
 	types := make([]string, len(f.Events))
 	for i, e := range f.Events {
 		types[i] = e.Type
 	}
 	return fixAfterRefound(types)
+}
+
+// placedEvent is the type of an event and its place: the seq of its first
+// evidence in the digest.
+type placedEvent struct {
+	kind  string
+	place int
+}
+
+// fixCovers is true when a fix event and the commit at the place commit
+// have no refound event between them. Then a Review-Findings trailer of the
+// commit needs no fix of its own; a fix before a later run found the
+// finding again does not cover a commit after that run.
+func fixCovers(events []placedEvent, commit int) bool {
+	events = slices.Clone(events)
+	slices.SortStableFunc(events, func(a, b placedEvent) int { return cmp.Compare(a.place, b.place) })
+	covered := false
+	for _, e := range events {
+		switch {
+		case e.kind == "refound" && e.place > commit:
+			return covered
+		case e.kind == "refound":
+			covered = false
+		case e.kind == "fix":
+			covered = true
+		}
+	}
+	return covered
 }
 
 func fixAfterRefound(types []string) bool {
@@ -100,15 +134,15 @@ func fixAfterRefound(types []string) bool {
 
 // inRun is true when f is a finding of run: its own run, or a run that
 // found it again.
-func (f recordFinding) inRun(run int) bool {
+func (f checkedFinding) inRun(run int) bool {
 	if f.Run != nil && *f.Run == run {
 		return true
 	}
-	return slices.ContainsFunc(f.Events, func(e recordEvent) bool { return e.Type == "refound" && e.Run != nil && *e.Run == run })
+	return slices.ContainsFunc(f.Events, func(e checkedEvent) bool { return e.Type == "refound" && e.Run != nil && *e.Run == run })
 }
 
-// findingsBlock is the part of a solidtrace-findings block that Check reads.
-type findingsBlock struct {
+// checkedBlock is the part of a solidtrace-findings block that Check reads.
+type checkedBlock struct {
 	Update   any `json:"update"`
 	Findings []struct {
 		ID     string            `json:"id"`
@@ -128,16 +162,17 @@ func Check(digestJSON, recordJSON []byte) (CheckResult, error) {
 	if err := json.Unmarshal(digestJSON, &d); err != nil {
 		return CheckResult{}, fmt.Errorf("digest: %w", err)
 	}
-	var r record
+	var r checkedRecord
 	if err := json.Unmarshal(recordJSON, &r); err != nil {
 		return CheckResult{}, fmt.Errorf("record: %w", err)
 	}
-	c := checker{d: d, r: r, res: CheckResult{
-		Runs: len(r.Reviews), Outcomes: map[string]int{}, FoundBy: map[string]int{}, Problems: []string{},
+	c := checker{d: d, r: r, seq: map[string]int{}, res: CheckResult{
+		Runs: len(r.Reviews), Outcomes: map[string]int{}, FoundBy: map[string]int{}, Problems: []string{}, Warnings: []string{},
 	}}
-	c.uuids = map[string]bool{}
-	for _, e := range d.Events {
-		c.uuids[e.UUID] = true
+	for i, e := range d.Events {
+		if _, ok := c.seq[e.UUID]; !ok {
+			c.seq[e.UUID] = i
+		}
 	}
 	c.top()
 	for _, f := range r.Findings {
@@ -154,14 +189,19 @@ func Check(digestJSON, recordJSON []byte) (CheckResult, error) {
 }
 
 type checker struct {
-	d     Digest
-	r     record
-	uuids map[string]bool
-	res   CheckResult
+	d Digest
+	r checkedRecord
+	// seq is the place of each uuid in the digest.
+	seq map[string]int
+	res CheckResult
 }
 
 func (c *checker) problem(format string, args ...any) {
 	c.res.Problems = append(c.res.Problems, fmt.Sprintf(format, args...))
+}
+
+func (c *checker) warn(format string, args ...any) {
+	c.res.Warnings = append(c.res.Warnings, fmt.Sprintf(format, args...))
 }
 
 func (c *checker) top() {
@@ -185,7 +225,7 @@ func (c *checker) top() {
 		if e.Kind == KindFindings {
 			// A block that is not valid JSON is null in the digest, and is
 			// still a run.
-			var b findingsBlock
+			var b checkedBlock
 			_ = json.Unmarshal(e.Findings, &b)
 			if empty(b.Update) {
 				runs++
@@ -197,7 +237,7 @@ func (c *checker) top() {
 	}
 }
 
-func (c *checker) finding(f recordFinding) {
+func (c *checker) finding(f checkedFinding) {
 	id := f.ID
 	c.res.Outcomes[f.Outcome]++
 	if !slices.Contains(outcomes, f.Outcome) {
@@ -231,7 +271,7 @@ func (c *checker) finding(f recordFinding) {
 		// record.md: a finding is also deferred when the person said to do
 		// it later.
 		personDefers := f.Outcome == "deferred" &&
-			slices.ContainsFunc(f.Events, func(e recordEvent) bool { return e.Type == "person" && e.Asks == "defer" })
+			slices.ContainsFunc(f.Events, func(e checkedEvent) bool { return e.Type == "person" && e.Asks == "defer" })
 		switch {
 		case fixed:
 			c.problem("%s: the outcome is %s, and an event is a fix", id, f.Outcome)
@@ -256,7 +296,7 @@ func (c *checker) finding(f recordFinding) {
 			c.problem("%s: the %s event has no evidence", id, e.Type)
 		}
 		for _, u := range e.Evidence {
-			if !c.uuids[u] {
+			if _, ok := c.seq[u]; !ok {
 				c.problem("%s: the evidence %s is not an event of the digest", id, u)
 			}
 		}
@@ -270,10 +310,13 @@ func (c *checker) finding(f recordFinding) {
 func (c *checker) blocks() {
 	runs := c.runs()
 	for _, e := range c.d.Events {
+		if e.Kind == KindFindings && e.Error != "" {
+			c.warn("the block %s cannot be read (%s): the record has none of its findings", e.UUID, e.Error)
+		}
 		if e.Kind != KindFindings || len(e.Findings) == 0 || string(e.Findings) == "null" {
 			continue
 		}
-		var b findingsBlock
+		var b checkedBlock
 		if err := json.Unmarshal(e.Findings, &b); err != nil {
 			c.problem("the block %s cannot be read: %v", e.UUID, err)
 			continue
@@ -332,10 +375,10 @@ func (c *checker) runs() map[runKey][]int {
 }
 
 // commits checks that each finding that a commit's Review-Findings trailer
-// names has a fix event in the record. The trailer's run is the block's
-// run in the commit's session and writer: the main transcript's.
+// names has a fix event that covers the commit (see fixCovers). The
+// trailer's run is the latest block of that run before the commit, in the
+// commit's session and writer: the main transcript's.
 func (c *checker) commits() {
-	runs := c.runs()
 	for _, e := range c.d.Events {
 		for _, value := range e.ReviewFindings {
 			blockRun, ids, err := ParseReviewFindings(value)
@@ -343,17 +386,44 @@ func (c *checker) commits() {
 				c.problem("the commit %s: %v", e.UUID, err)
 				continue
 			}
-			runsOf := runs[runKey{e.Session, e.Writer, blockRun}]
+			at := c.seq[e.UUID]
+			run := c.runAt(runKey{e.Session, e.Writer, blockRun}, at)
 			for _, id := range ids {
-				i := slices.IndexFunc(c.r.Findings, func(f recordFinding) bool {
-					return f.BlockID == id && slices.ContainsFunc(runsOf, f.inRun)
+				i := slices.IndexFunc(c.r.Findings, func(f checkedFinding) bool {
+					return run > 0 && f.BlockID == id && f.inRun(run)
 				})
-				if i < 0 || !c.r.Findings[i].has("fix") {
+				if i < 0 || !fixCovers(c.placed(c.r.Findings[i]), at) {
 					c.problem("the commit %s: %q names %s, which has no fix event in the record", e.UUID, value, id)
 				}
 			}
 		}
 	}
+}
+
+// runAt is the record's run of the latest block of the block run k before
+// the place at, or 0 for none. A writer can give a block run again, as an
+// older subagent with no writer of its own or a count that started again.
+func (c *checker) runAt(k runKey, at int) int {
+	run := 0
+	for _, rv := range c.r.Reviews {
+		if start, ok := c.seq[rv.Start]; ok && start < at && (runKey{rv.Session, rv.Writer, rv.BlockRun}) == k {
+			run = rv.Run
+		}
+	}
+	return run
+}
+
+func (c *checker) placed(f checkedFinding) []placedEvent {
+	events := make([]placedEvent, len(f.Events))
+	for i, e := range f.Events {
+		events[i] = placedEvent{e.Type, len(c.d.Events)}
+		if len(e.Evidence) > 0 {
+			if s, ok := c.seq[e.Evidence[0]]; ok {
+				events[i].place = s
+			}
+		}
+	}
+	return events
 }
 
 // ParseReviewFindings reads the value of a Review-Findings trailer, such as

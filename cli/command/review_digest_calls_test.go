@@ -156,3 +156,121 @@ func TestReviewDigestOfASessionTakesTheBlocksOfItsSubagents(t *testing.T) {
 		t.Fatalf("--file: %v", got)
 	}
 }
+
+// persisted is the tool result of an output that is too long for Claude
+// Code: only its start is in the transcript.
+func persisted(start string) string {
+	return "<persisted-output>\nOutput too large (31.2KB). Full output saved to: /home/x/tool-results/b1.txt\n\nPreview (first 2KB):\n" +
+		start + "\n...\n</persisted-output>"
+}
+
+func TestReviewDigestTakesTheBlockOfAReviewBlockCallFromItsStdin(t *testing.T) {
+	big := `{"version":2,"run":2,"skill":"code-review","findings":[{"id":"F1","title":"` + strings.Repeat("x", 40) + `"}]}`
+	path := transcript(t,
+		userLine("u-task", "Build the parser."),
+		assistantLine("a-big", bash("t-big", "solidtrace review block <<'EOF'\n"+big+"\nEOF")),
+		userLine("u-big", []map[string]any{toolResult("t-big", persisted("```solidtrace-findings\n"+big[:30]), false)}),
+		assistantLine("a-string", bash("t-string", "FOO=1 solidtrace review block <<< '"+callUpdateBlock+"'")),
+		userLine("u-string", []map[string]any{toolResult("t-string", "", false)}),
+		assistantLine("a-file", bash("t-file", "solidtrace review block < block.json")),
+		userLine("u-file", []map[string]any{toolResult("t-file", persisted("```solidtrace-findings\n{\"version\":2"), false)}),
+		assistantLine("a-none", bash("t-none", "solidtrace review block < block.json")),
+		userLine("u-none", []map[string]any{toolResult("t-none", "", false)}),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{}, "--file", path)
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	want := []step{{"u-task", "task", ""}, {"u-big", "findings", ""}, {"u-string", "findings", ""}, {"u-file", "findings", ""}, {"u-none", "findings", ""}}
+	if got := steps(d); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: %v\nwant %v\n%s", got, want, stdout)
+	}
+	for i, block := range map[int]string{1: big, 2: callUpdateBlock} {
+		var v any
+		json.Unmarshal([]byte(block), &v)
+		if !reflect.DeepEqual(d.Events[i]["findings"], v) || d.Events[i]["error"] != nil {
+			t.Errorf("event %d: %v", i, d.Events[i])
+		}
+	}
+	// With no stdin, the block is in the output, and a cut or missing block
+	// is an error that the record and the check report.
+	for i, want := range map[int]string{
+		3: "the solidtrace-findings block has no closing ```",
+		4: "the output of the solidtrace review command has no solidtrace-findings block",
+	} {
+		if e := d.Events[i]; e["findings"] != nil || e["error"] != want {
+			t.Errorf("event %d: %v", i, e)
+		}
+	}
+}
+
+func TestReviewDigestTakesOnlyTheBlockCallsOfASubagentThatDidNotFail(t *testing.T) {
+	projects := t.TempDir()
+	folder := filepath.Join(projects, "-work")
+	big := `{"version":2,"run":1,"skill":"code-review","findings":[{"id":"F3"}]}`
+	writeLines(t, filepath.Join(folder, "s-1.jsonl"),
+		in(userLine("m-task", "Build the parser."), "s-1", "2026-11-03T08:00:00Z"),
+	)
+	writeLines(t, filepath.Join(folder, "s-1", "subagents", "agent-a1.jsonl"),
+		subagentLine(assistantLine("x-cat", bash("t-cat", "cat notes.md")), "a1", "2026-11-03T08:01:00Z"),
+		subagentLine(userLine("x-cat-out", []map[string]any{toolResult("t-cat", fenced(callRunBlock), false)}), "a1", "2026-11-03T08:01:10Z"),
+		subagentLine(assistantLine("x-fail", bash("t-fail", "solidtrace review block <<'EOF'\n"+callRunBlock+"\nEOF")), "a1", "2026-11-03T08:02:00Z"),
+		subagentLine(userLine("x-fail-out", []map[string]any{toolResult("t-fail", "Exit code 1\n"+fenced(callRunBlock), true)}), "a1", "2026-11-03T08:02:10Z"),
+		subagentLine(assistantLine("x-big", bash("t-big", "solidtrace review block <<'EOF'\n"+big+"\nEOF")), "a1", "2026-11-03T08:03:00Z"),
+		subagentLine(userLine("x-big-out", []map[string]any{toolResult("t-big", persisted("```solidtrace-findings\n{\"ver"), false)}), "a1", "2026-11-03T08:03:10Z"),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{ClaudeProjectsDir: projects}, "--session", "s-1")
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	d := decodeDigest(t, stdout)
+	if got, want := steps(d), []step{{"m-task", "task", ""}, {"x-big-out", "findings", "a1"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: %v\nwant %v\n%s", got, want, stdout)
+	}
+	var v any
+	json.Unmarshal([]byte(big), &v)
+	if !reflect.DeepEqual(d.Events[1]["findings"], v) {
+		t.Errorf("block: %v", d.Events[1])
+	}
+}
+
+func TestReviewDigestStartsTheReviewAtTheEarliestFirstBlockOfASubagent(t *testing.T) {
+	projects := t.TempDir()
+	folder := filepath.Join(projects, "-work")
+	writeLines(t, filepath.Join(folder, "s-1.jsonl"),
+		in(userLine("m-task", "Build the parser in parts."), "s-1", "2026-11-03T08:00:00Z"),
+		in(assistantLine("m-before", text("I start the parts.")), "s-1", "2026-11-03T08:01:00Z"),
+		in(assistantLine("m-between", text("Part 2 is in review.")), "s-1", "2026-11-03T08:04:00Z"),
+		in(assistantLine("m-review", toolUse("Skill", map[string]any{"skill": "code-review"})), "s-1", "2026-11-03T08:06:00Z"),
+	)
+	// The files are read in name order: a1's first block is the later one.
+	writeLines(t, filepath.Join(folder, "s-1", "subagents", "agent-a1.jsonl"),
+		subagentLine(assistantLine("x-call", bash("t-x", "solidtrace review block <<'EOF'\n"+callRunBlock+"\nEOF")), "a1", "2026-11-03T08:05:00Z"),
+		subagentLine(userLine("x-out", []map[string]any{toolResult("t-x", fenced(callRunBlock), false)}), "a1", "2026-11-03T08:05:00Z"),
+	)
+	writeLines(t, filepath.Join(folder, "s-1", "subagents", "agent-b2.jsonl"),
+		subagentLine(assistantLine("y-call", bash("t-y", "solidtrace review block <<'EOF'\n"+callUpdateBlock+"\nEOF")), "b2", "2026-11-03T08:03:00Z"),
+		subagentLine(userLine("y-out", []map[string]any{toolResult("t-y", fenced(callUpdateBlock), false)}), "b2", "2026-11-03T08:03:00Z"),
+	)
+
+	code, stdout, stderr := runDigest(t, command.Env{ClaudeProjectsDir: projects}, "--session", "s-1")
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	want := []step{
+		{"m-task", "task", ""},
+		{"y-out", "findings", "b2"},
+		{"m-between", "agent_text", ""},
+		{"x-out", "findings", "a1"},
+		{"m-review", "review_start", ""},
+	}
+	if got := steps(decodeDigest(t, stdout)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: %v\nwant %v\n%s", got, want, stdout)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -283,6 +284,13 @@ func TestReviewRecordCutsThePersonsWords(t *testing.T) {
 	}
 }
 
+const personEvent = `{"type": "person", "said": "x", "asks": "fix", "source": "record", "evidence": ["u-person"]}`
+
+// personFinding is a note finding of the person, with more fields.
+func personFinding(id, fields string) string {
+	return `{"id": "` + id + `", ` + fields + `"found_by": {"kind": "person"}, "events": [` + personEvent + `]}`
+}
+
 func TestReviewRecordRefusesNotesThatNameWhatIsNotThere(t *testing.T) {
 	event := func(fields string) string {
 		return `{"events": [{"finding": "1.F6", "source": "record", "evidence": ["u-person"], ` + fields + `}]}`
@@ -312,6 +320,20 @@ func TestReviewRecordRefusesNotesThatNameWhatIsNotThere(t *testing.T) {
 			`findings[0]: the id "1.F1" is not P<n>, A<n>, X<n> or T<run>-<n>`},
 		{"a new finding with a field that it does not have", `{"findings": [{"id": "P1", "outcome": "fixed"}]}`,
 			`findings[0]: json: unknown field "outcome"`},
+		{"a finding id twice", `{"findings": [` + personFinding("P1", "") + `, ` + personFinding("P1", "") + `]}`,
+			"findings[1]: the id P1 is in the record already"},
+		{"a block_id", `{"findings": [` + personFinding("P1", `"block_id": "F1", `) + `]}`,
+			"findings[0]: block_id is not null: only a block gives a finding a block_id"},
+		{"a found_by with no kind", `{"findings": [{"id": "P1", "found_by": {}, "events": [` + personEvent + `]}]}`,
+			"findings[0]: found_by has no kind of reviewer, person, agent, test"},
+		{"an after_run that is not a run", `{"findings": [` + personFinding("P1", `"after_run": 6, `) + `]}`,
+			"findings[0]: after_run 6 is not a run of the record"},
+		{"a run on a P finding", `{"findings": [` + personFinding("P1", `"run": 4, `) + `]}`,
+			"findings[0]: run is not null: a finding from outside the reviews has after_run"},
+		{"a finding with no events", `{"findings": [{"id": "P1", "found_by": {"kind": "person"}, "events": []}]}`,
+			"findings[0]: no events"},
+		{"a T finding with the run of another id", `{"findings": [{"id": "T4-1", "run": 3, "found_by": {"kind": "reviewer"}, "events": [{"type": "found", "source": "record", "evidence": ["u-report"]}]}]}`,
+			"findings[0]: a T<run>-<n> finding has the run of a review start with no block, and T4-1 names run 4"},
 		{"a confirmation that is not in the record", `{"confirmations": [{"id": "1.C9", "given": true, "evidence": []}]}`,
 			`confirmations[0]: the confirmation "1.C9" is not in the record`},
 		{"a confirmation with no given", `{"confirmations": [{"id": "1.C1", "evidence": []}]}`,
@@ -368,5 +390,199 @@ func TestReviewRecordRefusesWrongArguments(t *testing.T) {
 	}
 	if code, _, stderr := runRecord(t, "--digest", digest, "--notes", notJSON); code != 1 || !strings.Contains(stderr, "the notes: ") {
 		t.Fatalf("notes not JSON: exit %d\n%s", code, stderr)
+	}
+}
+
+// The parts of a small digest for the record's tests.
+const (
+	evFound     = `{"type": "found"}`
+	evRefound   = `{"type": "refound"}`
+	evTriageFix = `{"type": "triage", "decision": "fix"}`
+	// storyNotes fill in the story, so that review check passes.
+	storyNotes = `{"story": {"started_from": "x", "changes": ["c"], "reviews": ["r"], "after_review": [], "sessions": ["s"]}}`
+)
+
+func recDigest(events ...string) string {
+	return `{"sessions": [{"id": "s1", "title": "t"}], "events": [` + strings.Join(events, ",\n") + `]}`
+}
+
+func recFinding(id string, events ...string) string {
+	return fmt.Sprintf(`{"id": %q, "reviewer": "bugs", "events": [%s]}`, id, strings.Join(events, ", "))
+}
+
+// recBlock is a findings event of session with a run block of findings.
+func recBlock(session, uuid, writer, skill string, run int, findings ...string) string {
+	return fmt.Sprintf(`{"session": %q, "uuid": %q, "kind": "findings", "writer": %q, "findings": {"version": 2, "run": %d, "skill": %q, "findings": [%s]}}`,
+		session, uuid, writer, run, skill, strings.Join(findings, ", "))
+}
+
+func recUpdate(uuid string, update int, id string) string {
+	return fmt.Sprintf(`{"session": "s1", "uuid": %q, "kind": "findings", "findings": {"version": 2, "update": %d, "findings": [{"id": %q, "events": [{"type": "fix", "commit": %q, "files": ["a.go"]}]}]}}`,
+		uuid, update, id, hashA)
+}
+
+func recCommit(uuid, trailer string) string {
+	return fmt.Sprintf(`{"session": "s1", "uuid": %q, "kind": "commit", "command": "git commit", "review_findings": [%q]}`, uuid, trailer)
+}
+
+// recordAndCheck builds the record of digest with the story notes, and
+// checks it.
+func recordAndCheck(t *testing.T, digest string) (map[string]any, string) {
+	t.Helper()
+	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
+	if code != 0 {
+		t.Fatalf("review record: exit %d\n%s", code, stderr)
+	}
+	if code, out, stderr := runCheck(t, decodeJSON(t, digest), record); code != 0 {
+		t.Fatalf("review check: exit %d\n%s\n%s", code, strings.Join(out.Problems, "\n"), stderr)
+	}
+	return record, stderr
+}
+
+func TestReviewRecordAddsTheFixOfATrailerAfterALaterRunFoundTheFindingAgain(t *testing.T) {
+	digest := recDigest(
+		recBlock("s1", "u-b1", "", "code-review", 1, recFinding("F1", evFound, evTriageFix)),
+		recCommit("u-c1", "run 1: F1"),
+		recBlock("s1", "u-b2", "", "code-review", 2, recFinding("F1", evRefound, evTriageFix)),
+		recCommit("u-c2", "run 2: F1"),
+	)
+
+	record, _ := recordAndCheck(t, digest)
+
+	f := recordFinding(t, record, "1.F1")
+	want := []string{"found/block/u-b1", "triage/block/u-b1", "fix/record/u-c1", "refound/block/u-b2", "triage/block/u-b2", "fix/record/u-c2"}
+	if f["outcome"] != "fixed" || !reflect.DeepEqual(eventSteps(f), want) {
+		t.Fatalf("1.F1: %v %v, want fixed %v", f["outcome"], eventSteps(f), want)
+	}
+
+	// review check wants a fix after the run that found it again.
+	f["events"] = f["events"].([]any)[:5]
+	f["outcome"] = "open"
+	code, out, _ := runCheck(t, decodeJSON(t, digest), record)
+	if want := `the commit u-c2: "run 2: F1" names F1, which has no fix event in the record`; code != 1 || !slices.Contains(out.Problems, want) {
+		t.Fatalf("exit %d, problems %v, want %q", code, out.Problems, want)
+	}
+}
+
+func TestReviewRecordGivesATrailerTheLatestRunBeforeTheCommit(t *testing.T) {
+	// The count of the main writer's runs started again.
+	digest := recDigest(
+		recBlock("s1", "u-b1", "", "code-review", 1, recFinding("F1", evFound, evTriageFix)),
+		recCommit("u-c1", "run 1: F1"),
+		recBlock("s1", "u-b2", "", "code-review", 1, recFinding("F1", evFound, evTriageFix)),
+	)
+
+	record, stderr := recordAndCheck(t, digest)
+
+	if want := "warning: the block u-b2 has the run 1 of an earlier block of its writer"; !strings.Contains(stderr, want) {
+		t.Errorf("stderr: %s", stderr)
+	}
+	if got := eventSteps(recordFinding(t, record, "1.F1")); !reflect.DeepEqual(got, []string{"found/block/u-b1", "triage/block/u-b1", "fix/record/u-c1"}) {
+		t.Errorf("1.F1: %v", got)
+	}
+	if f := recordFinding(t, record, "2.F1"); f["outcome"] != "open" || len(f["events"].([]any)) != 2 {
+		t.Errorf("2.F1: %v", f)
+	}
+}
+
+func TestReviewRecordGivesOneFixForATrailerAndItsUpdateBlock(t *testing.T) {
+	digest := recDigest(
+		recBlock("s1", "u-b1", "", "code-review", 1, recFinding("F1", evFound, evTriageFix)),
+		recCommit("u-c1", "run 1: F1"),
+		recUpdate("u-upd", 1, "F1"),
+	)
+
+	record, _ := recordAndCheck(t, digest)
+
+	if got := eventSteps(recordFinding(t, record, "1.F1")); !reflect.DeepEqual(got, []string{"found/block/u-b1", "triage/block/u-b1", "fix/block/u-upd"}) {
+		t.Fatalf("1.F1: %v", got)
+	}
+}
+
+func TestReviewRecordGivesAReviewStartARunOfItsOwnWhenNoBlockOfItsSkillAndSessionFollows(t *testing.T) {
+	digest := `{"sessions": [{"id": "s1", "title": "t"}, {"id": "s2", "title": "t"}], "events": [
+	 {"session": "s1", "uuid": "u-i", "kind": "review_start", "skill": "pstack:interrogate", "trigger": "person"},
+	 ` + recBlock("s1", "u-b1", "", "code-review", 1, recFinding("F1", evFound)) + `,
+	 {"session": "s1", "uuid": "u-c", "kind": "review_start", "skill": "solidtrace-skills:code-review", "trigger": "person"},
+	 ` + recBlock("s2", "u-b2", "", "code-review", 1, recFinding("F1", evFound)) + `]}`
+
+	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest))
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	var got []string
+	for _, rv := range record["reviews"].([]any) {
+		rv := rv.(map[string]any)
+		got = append(got, fmt.Sprintf("%v %v %v", rv["run"], rv["session"], rv["start"]))
+	}
+	if want := []string{"1 s1 u-i", "2 s1 u-b1", "3 s1 u-c", "4 s2 u-b2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("reviews: %v, want %v", got, want)
+	}
+}
+
+func TestReviewRecordPutsARefoundFindingOnlyOnTheFindingOfItsWriterAndSession(t *testing.T) {
+	digest := recDigest(
+		recBlock("s1", "u-m1", "", "code-review", 1, recFinding("F2", evFound)),
+		recBlock("s1", "u-a1", "a1", "code-review", 1, recFinding("F2", evFound)),
+		recBlock("s2", "u-o1", "", "code-review", 1, recFinding("F2", evFound)),
+		recBlock("s1", "u-m2", "", "code-review", 2, recFinding("F2", evRefound)),
+	)
+
+	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest))
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	want := map[string][]string{
+		"1.F2": {"found/block/u-m1", "refound/block/u-m2"},
+		"2.F2": {"found/block/u-a1"},
+		"3.F2": {"found/block/u-o1"},
+	}
+	if n := len(record["findings"].([]any)); n != len(want) {
+		t.Errorf("%d findings, want %d", n, len(want))
+	}
+	for id, w := range want {
+		if got := eventSteps(recordFinding(t, record, id)); !reflect.DeepEqual(got, w) {
+			t.Errorf("%s: %v, want %v", id, got, w)
+		}
+	}
+}
+
+func TestReviewRecordAndReviewCheckWarnOfABlockThatCannotBeRead(t *testing.T) {
+	digest := recDigest(`{"session": "s1", "uuid": "u-bad", "kind": "findings", "findings": null, "error": "the solidtrace-findings block has no closing ` + "```" + `"}`)
+
+	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
+
+	want := "solidtrace review record: warning: the block u-bad cannot be read (the solidtrace-findings block has no closing ```): its run has no findings\n"
+	if code != 0 || stderr != want {
+		t.Fatalf("exit %d\nstderr: %s", code, stderr)
+	}
+	if n := len(record["reviews"].([]any)); n != 1 {
+		t.Errorf("%d reviews, want 1", n)
+	}
+	code, out, _ := runCheck(t, decodeJSON(t, digest), record)
+	wantWarnings := []string{"the block u-bad cannot be read (the solidtrace-findings block has no closing ```): the record has none of its findings"}
+	if code != 0 || !reflect.DeepEqual(out.Warnings, wantWarnings) {
+		t.Fatalf("review check: exit %d, %+v", code, out)
+	}
+}
+
+func TestReviewRecordTakesWhatTheNotesGive(t *testing.T) {
+	notes := `{"story": {"started_from": "x", "changes": ["c"]},
+	 "events": [{"finding": "1.F6", "type": "fix", "files": ["a.go"], "commit": "` + hashA + `", "source": "record", "evidence": ["u-person"]}]}`
+
+	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", recordDigest), "--notes", writeText(t, "notes.json", notes))
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	story := map[string]any{"started_from": "x", "changes": []any{"c"}, "reviews": []any{}, "after_review": []any{}, "sessions": []any{}}
+	if !reflect.DeepEqual(record["story"], story) {
+		t.Errorf("story: %v", record["story"])
+	}
+	events := recordFinding(t, record, "1.F6")["events"].([]any)
+	if fix := events[len(events)-1].(map[string]any); fix["type"] != "fix" || fix["commit"] != hashA || !reflect.DeepEqual(fix["files"], []any{"a.go"}) {
+		t.Errorf("fix: %v", fix)
 	}
 }

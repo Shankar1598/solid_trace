@@ -27,7 +27,7 @@ solidtrace review block <<'EOF'
 EOF
 ````
 
-When the command refuses the block, fix what it names and run it again.
+Give the JSON in a heredoc, as here, so the transcript keeps the whole block even when the output is cut. When the command refuses the block, fix what it names and run it again.
 
 - `run`: 1 for the first block in this transcript, then 2, 3 and so on. `run` and the ids count only in this transcript. Another session or a subagent starts again at 1, and the record makes them unique.
 - `skill`: `code-review`, `deep-review` or `update-pr`. `trigger`: `person` when the person asked for this review, `agent` when you started it, `open-pr` in the final stage, `update-pr` for the security review of PR feedback fixes.

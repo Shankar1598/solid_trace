@@ -56,6 +56,7 @@ type checkOutput struct {
 	FoundBy    map[string]int `json:"found_by"`
 	PushedBack int            `json:"pushed_back"`
 	Problems   []string       `json:"problems"`
+	Warnings   []string       `json:"warnings"`
 }
 
 func decodeJSON(t *testing.T, s string) map[string]any {
@@ -116,7 +117,7 @@ func TestReviewCheckPassesARecordThatAgreesWithItsDigest(t *testing.T) {
 		t.Fatalf("exit %d, problems %v, stderr %s", code, out.Problems, stderr)
 	}
 	want := checkOutput{Runs: 1, Outcomes: map[string]int{"fixed": 1, "ignored_trivial": 1, "deferred": 1},
-		FoundBy: map[string]int{"reviewer": 2, "person": 1}, PushedBack: 1, Problems: []string{}}
+		FoundBy: map[string]int{"reviewer": 2, "person": 1}, PushedBack: 1, Problems: []string{}, Warnings: []string{}}
 	if !reflect.DeepEqual(out, want) {
 		t.Fatalf("output %+v, want %+v", out, want)
 	}
@@ -191,6 +192,13 @@ func TestReviewCheckNamesEachProblemOfARecord(t *testing.T) {
 			digestEvent(d, 3)["writer"] = "a1"
 			r["reviews"] = append(r["reviews"].([]any), map[string]any{"run": 2, "block_run": 1, "session": "s1", "writer": "a1", "start": "u-update"})
 		}, "F1 of the update block u-update is not on a finding of run [2]"},
+		{"an update block on one of two findings of its block id, of another run", func(d, r map[string]any) {
+			digestEvent(d, 3)["writer"] = "a1"
+			r["reviews"] = append(r["reviews"].([]any), map[string]any{"run": 2, "block_run": 1, "session": "s1", "writer": "a1", "start": "u-update"})
+			r["findings"] = append(r["findings"].([]any), map[string]any{"id": "2.F1", "block_id": "F1", "run": 2,
+				"found_by": map[string]any{"kind": "reviewer"}, "outcome": "open", "events": []any{
+					map[string]any{"type": "found", "source": "record", "evidence": []any{"u-person"}}}})
+		}, "F1 of the update block u-update is not on a finding of run [2]"},
 		{"a trailer of another writer's run", func(_, r map[string]any) {
 			r["reviews"].([]any)[0].(map[string]any)["writer"] = "a1"
 		}, `the commit u-commit: "run 1: F1" names F1, which has no fix event in the record`},
@@ -232,10 +240,10 @@ func TestReviewCheckNamesEachProblemOfARecord(t *testing.T) {
 func TestReviewCheckTakesATrailerOfARunThatFoundAFindingAgain(t *testing.T) {
 	digest, record := decodeJSON(t, checkDigest), decodeJSON(t, checkRecord)
 	digestEvent(digest, 2)["review_findings"] = []any{"run 2: F1"}
-	record["reviews"] = append(record["reviews"].([]any), map[string]any{"run": 2, "block_run": 2, "session": "s1", "writer": "", "start": "u-person"})
+	record["reviews"] = append(record["reviews"].([]any), map[string]any{"run": 2, "block_run": 2, "session": "s1", "writer": "", "start": "u-block"})
 	f := findingAt(record, 0)
 	events := f["events"].([]any)
-	refound := map[string]any{"type": "refound", "run": 2, "source": "record", "evidence": []any{"u-person"}}
+	refound := map[string]any{"type": "refound", "run": 2, "source": "record", "evidence": []any{"u-block"}}
 	f["events"] = append(append(append([]any{}, events[:4]...), refound), events[4])
 
 	code, out, _ := runCheck(t, digest, record)

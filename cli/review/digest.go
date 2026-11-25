@@ -161,7 +161,7 @@ func Read(r io.Reader, id string, skills *regexp.Regexp, subagents ...Subagent) 
 		skills:     skills,
 		subagents:  map[string]bool{},
 		asks:       map[string]bool{},
-		blockCalls: map[string]bool{},
+		blockCalls: map[string]blockCall{},
 		edits:      map[string]int{},
 		rejected:   map[int]bool{},
 		paths:      paths{tops: topLevels{}},
@@ -223,7 +223,7 @@ func Read(r io.Reader, id string, skills *regexp.Regexp, subagents ...Subagent) 
 // and solidtrace review fixed commands in a subagent's transcript, with
 // the subagent's agent id as their writer.
 func subagentBlocks(r io.Reader, id string) ([]Entry, error) {
-	calls := map[string]bool{}
+	calls := map[string]blockCall{}
 	var out []Entry
 	err := eachLine(r, func(l line) {
 		var m message
@@ -235,11 +235,13 @@ func subagentBlocks(r io.Reader, id string) ([]Entry, error) {
 			writer = l.AgentID
 		}
 		for _, bl := range blocksOf(m.Content) {
-			switch {
-			case l.Type == "assistant" && bl.Type == "tool_use" && isBlockCall(bl):
-				calls[bl.ID] = true
-			case l.Type == "user" && bl.Type == "tool_result" && calls[bl.ToolUseID] && !bl.IsError:
-				for _, e := range callBlocks(l, bl) {
+			if l.Type == "assistant" && bl.Type == "tool_use" {
+				if call, ok := blockCallOf(bl); ok {
+					calls[bl.ID] = call
+				}
+			}
+			if call, ok := calls[bl.ToolUseID]; ok && l.Type == "user" && bl.Type == "tool_result" && !bl.IsError {
+				for _, e := range call.entries(l, bl) {
 					e.Writer = writer
 					out = append(out, e)
 				}
@@ -249,23 +251,43 @@ func subagentBlocks(r io.Reader, id string) ([]Entry, error) {
 	return out, err
 }
 
-// isBlockCall is true for a Bash tool use that runs solidtrace review
-// block or solidtrace review fixed.
-func isBlockCall(bl block) bool {
+// blockCall is a Bash tool use that runs solidtrace review block or
+// solidtrace review fixed, with the blocks that it gives on stdin (see
+// blockCommand).
+type blockCall struct {
+	bodies []string
+}
+
+func blockCallOf(bl block) (blockCall, bool) {
 	if bl.Name != "Bash" {
-		return false
+		return blockCall{}, false
 	}
 	var input struct {
 		Command string `json:"command"`
 	}
 	_ = json.Unmarshal(bl.Input, &input)
-	return blockCommand(input.Command)
+	bodies, ok := blockCommand(input.Command)
+	return blockCall{bodies: bodies}, ok
 }
 
-// callBlocks are the findings entries of the output of a block call.
-func callBlocks(l line, bl block) []Entry {
-	text, _ := contentText(bl.Content)
-	found := findings(l, text)
+// entries are the findings entries of a block call that did not fail, at
+// the line of its result: the blocks of its stdin, else those of its
+// output. A call that gives no block is an entry with an error, so that
+// the record does not lose its run with no word.
+func (c blockCall) entries(l line, result block) []Entry {
+	var found []Entry
+	for _, body := range c.bodies {
+		found = append(found, blockEntry(l, []byte(body)))
+	}
+	if len(c.bodies) == 0 {
+		text, _ := contentText(result.Content)
+		found = findings(l, text)
+	}
+	if len(found) == 0 {
+		e := newEntry(l, KindFindings)
+		e.Findings, e.Error = json.RawMessage("null"), "the output of the solidtrace review command has no solidtrace-findings block"
+		found = []Entry{e}
+	}
 	for i := range found {
 		found[i].fromCall = true
 	}
@@ -278,11 +300,11 @@ func callBlocks(l line, bl block) []Entry {
 func withoutCopies(events []Entry) []Entry {
 	called := map[string]bool{}
 	for _, e := range events {
-		if e.Kind == KindFindings && e.fromCall {
+		if e.Kind == KindFindings && e.fromCall && e.Error == "" {
 			called[string(e.Findings)] = true
 		}
 	}
-	out := events[:0:0]
+	out := make([]Entry, 0, len(events))
 	for _, e := range events {
 		if e.Kind == KindFindings && !e.fromCall && e.Error == "" && called[string(e.Findings)] {
 			continue
@@ -463,7 +485,7 @@ type builder struct {
 	// block and solidtrace review fixed.
 	subagents  map[string]bool
 	asks       map[string]bool
-	blockCalls map[string]bool
+	blockCalls map[string]blockCall
 	// edits has the index in events of each edit, by its tool use id, and
 	// rejected the edits whose tool result is an error.
 	edits    map[string]int
@@ -564,8 +586,8 @@ func (b *builder) assistantBlock(l line, bl block) {
 		if bl.Name == "AskUserQuestion" {
 			b.asks[bl.ID] = true
 		}
-		if isBlockCall(bl) {
-			b.blockCalls[bl.ID] = true
+		if call, ok := blockCallOf(bl); ok {
+			b.blockCalls[bl.ID] = call
 		}
 		if agentTools[bl.Name] {
 			b.subagents[bl.ID] = true
@@ -702,11 +724,11 @@ func (b *builder) toolResult(l line, bl block) {
 			return
 		}
 	}
-	if b.blockCalls[bl.ToolUseID] {
+	if call, ok := b.blockCalls[bl.ToolUseID]; ok {
 		// A call that failed printed no block.
-		if found := callBlocks(l, bl); !bl.IsError && len(found) > 0 {
+		if !bl.IsError {
 			b.markReviewed()
-			b.events = append(b.events, found...)
+			b.events = append(b.events, call.entries(l, bl)...)
 		}
 		return
 	}
@@ -772,8 +794,6 @@ func findings(l line, text string) []Entry {
 		if strings.TrimSpace(lines[i]) != findingsFence {
 			continue
 		}
-		e := newEntry(l, KindFindings)
-		e.Findings = json.RawMessage("null")
 		start, end := i+1, -1
 		for j := start; j < len(lines); j++ {
 			if strings.TrimSpace(lines[j]) == "```" {
@@ -782,24 +802,30 @@ func findings(l line, text string) []Entry {
 			}
 		}
 		if end < 0 {
-			e.Error = "the solidtrace-findings block has no closing ```"
+			e := newEntry(l, KindFindings)
+			e.Findings, e.Error = json.RawMessage("null"), "the solidtrace-findings block has no closing ```"
 			return append(out, e)
 		}
 		i = end
-		body := []byte(strings.Join(lines[start:end], "\n"))
-		var v any
-		if err := json.Unmarshal(body, &v); err != nil {
-			e.Error = err.Error()
-			out = append(out, e)
-			continue
-		}
-		// json.Compact keeps the block's own key order and its <, > and &.
-		var compact bytes.Buffer
-		_ = json.Compact(&compact, body)
-		e.Findings = compact.Bytes()
-		out = append(out, e)
+		out = append(out, blockEntry(l, []byte(strings.Join(lines[start:end], "\n"))))
 	}
 	return out
+}
+
+// blockEntry is the findings entry of the JSON of one block.
+func blockEntry(l line, body []byte) Entry {
+	e := newEntry(l, KindFindings)
+	e.Findings = json.RawMessage("null")
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		e.Error = err.Error()
+		return e
+	}
+	// json.Compact keeps the block's own key order and its <, > and &.
+	var compact bytes.Buffer
+	_ = json.Compact(&compact, body)
+	e.Findings = compact.Bytes()
+	return e
 }
 
 // personText is the text of a user line that a person wrote. Hook

@@ -88,11 +88,17 @@ var gitOptionsWithValue = map[string]bool{
 	"--config-env": true, "--super-prefix": true,
 }
 
-func commitMessage(c *shellCommand) (string, bool) {
+// commandWords are the words of c from the word that names the command.
+func commandWords(c *shellCommand) []string {
 	w := c.words
 	for len(w) > 0 && (commandPrefixes[w[0]] || assignment.MatchString(w[0])) {
 		w = w[1:]
 	}
+	return w
+}
+
+func commitMessage(c *shellCommand) (string, bool) {
+	w := commandWords(c)
 	if len(w) == 0 || filepath.Base(w[0]) != "git" {
 		return "", false
 	}
