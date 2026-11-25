@@ -1,8 +1,11 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"strings"
@@ -18,6 +21,29 @@ type Record struct {
 	Reviews       []RecordReview       `json:"reviews"`
 	Findings      []RecordFinding      `json:"findings"`
 	Confirmations []RecordConfirmation `json:"confirmations"`
+}
+
+// ReadFinal decodes data as one review record of version 2, the record
+// that open-pr and update-pr give to review final. A field that the record
+// does not have is an error, so that a record that is not one fails at
+// once.
+func ReadFinal(data []byte) (Record, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var r Record
+	if err := dec.Decode(&r); err != nil {
+		if err == io.EOF {
+			return Record{}, errors.New("no JSON")
+		}
+		return Record{}, fmt.Errorf("not a review record: %w", err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return Record{}, errors.New("text after the record")
+	}
+	if r.Version != 2 {
+		return Record{}, fmt.Errorf("version %d is not 2", r.Version)
+	}
+	return r, nil
 }
 
 // Story is what the record tells in words. Only the notes give it.
