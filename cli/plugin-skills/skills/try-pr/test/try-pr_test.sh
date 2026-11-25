@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# Tests try-pr.sh on local repositories and on a saved Bitbucket Cloud
-# answer, scrubbed to placeholder names (bitbucket-pr.json). It needs no
-# network and no forge account. GitHub is proven on a live PR instead.
-#
-#   bash cli/plugin-skills/skills/try-pr/test/try-pr_test.sh
-#
-# Each check's condition is a string that check evals, so the names in it
-# expand there, and the variables it reads look unused.
 # shellcheck disable=SC2016,SC2034,SC2317
 set -euo pipefail
 
@@ -21,8 +13,6 @@ git config --global user.name Test
 git config --global user.email test@example.com
 git config --global init.defaultBranch main
 
-# The remote: main, and feature/cart-total from main's first commit. main
-# then gets 3 more commits, so the branch is 3 behind.
 git init -q --bare "$tmp/remote.git"
 git init -q "$tmp/seed"
 commit() { git -C "$tmp/seed" commit -q --allow-empty -m "$1"; }
@@ -31,11 +21,13 @@ git -C "$tmp/seed" switch -q -c feature/cart-total
 commit "Add the cart total"
 commit "Show the total under the cart lines"
 git -C "$tmp/seed" switch -q main
-commit "main 2" && commit "main 3" && commit "main 4"
+mkdir -p "$tmp/seed/.claude/skills/launch"
+echo "Starts the app." >"$tmp/seed/.claude/skills/launch/SKILL.md"
+git -C "$tmp/seed" add .claude
+commit "Add the launch skill" && commit "main 3" && commit "main 4"
 git -C "$tmp/seed" push -q "$tmp/remote.git" main feature/cart-total
 feature_head=$(git -C "$tmp/seed" rev-parse feature/cart-total)
 
-# The clone's origin is Bitbucket by name; git fetches the local remote.
 git config --global url."$tmp/remote.git".insteadOf git@bitbucket.org:example-team/example-app.git
 git clone -q git@bitbucket.org:example-team/example-app.git "$tmp/clone"
 clone=$tmp/clone
@@ -48,10 +40,10 @@ jq '.id = 8 | .state = "MERGED"' "$here/bitbucket-pr.json" >"$pulls/8"
 jq '.id = 9 | .source.repository.full_name = "alex-example/example-app"' "$here/bitbucket-pr.json" >"$pulls/9"
 
 failed=0
-check() { # name, then a condition for eval
+check() {
   if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; printf '      | %s\n' "$out"; failed=1; fi
 }
-try() { # dir, then try-pr.sh's arguments; sets out and code
+try() {
   code=0
   out=$(cd "$1" && "$S" "${@:2}" 2>&1) || code=$?
 }
@@ -84,7 +76,6 @@ check "a GitHub link is matched against the remotes too" '((code == 1)) && has "
 try "$clone" fetch https://gitlab.com/example-team/example-app/-/merge_requests/3
 check "another forge's link is refused" '((code == 1)) && has "not a GitHub or Bitbucket Cloud PR link"'
 
-# A curl that records its arguments and its stdin, then serves the file.
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF2'
 #!/usr/bin/env bash
@@ -124,13 +115,33 @@ check "fetch leaves a worktree with changes alone" '((code == 1)) && has "has ch
 try "$clone" "done" 7
 check "done leaves a worktree with changes alone" '((code == 1)) && [[ -f $wt/scratch.txt ]]'
 rm "$wt/scratch.txt"
+
+try "$clone" copy 7 .claude/skills/launch/
+check "copy puts a folder of this checkout into the worktree" '((code == 0)) && [[ -f $wt/.claude/skills/launch/SKILL.md ]]'
+try "$clone" list
+check "list shows the copy" 'has "  copied .claude/skills/launch"'
+try "$clone" copy 7 .claude/skills/launch
+check "copy leaves a folder that the worktree has alone" '((code == 1)) && has "the worktree has .claude/skills/launch already"'
+try "$clone" copy 7 .claude/../../outside
+check "copy takes only a folder inside this checkout" '((code == 1)) && has "copy takes a folder by its path"'
+try "$clone" fetch 7
+check "fetch removes the copy, so the head has only its own files" \
+  '((code == 0)) && [[ ! -e $wt/.claude/skills/launch && -z $(git -C "$wt" status --porcelain) ]]'
+try "$clone" copy 7 .claude/skills/launch
 try "$clone" "done" https://bitbucket.org/example-team/example-app/pull-requests/7
-check "done removes the worktree" '((code == 0)) && [[ ! -e $wt ]] && [[ $(git -C "$clone" worktree list) != *try-pr-7* ]]'
+check "done removes the copy, then the worktree" '((code == 0)) && [[ ! -e $wt ]] && [[ $(git -C "$clone" worktree list) != *try-pr-7* ]]'
 
 try "$clone" fetch feature/cart-total
 check "a branch gets a worktree of its own, behind origin's default branch" \
   '((code == 0)) && has "worktree $clone/.worktrees/try-pr-feature-cart-total" && has "behind   3 commits behind origin/main"'
 try "$clone" "done" feature/cart-total
+git -C "$clone" branch -q local-only origin/main~1
+try "$clone" fetch local-only
+check "a branch that only this clone has is used as it is" \
+  '((code == 0)) && has "branch   local-only (this clone" && [[ $(git -C "$clone/.worktrees/try-pr-local-only" rev-parse HEAD) == $(git -C "$clone" rev-parse local-only) ]]'
+try "$clone" "done" local-only
+try "$clone" fetch no-such-branch
+check "a branch that neither has is refused" '((code == 1)) && has "neither origin nor this clone has the branch no-such-branch"'
 try "$clone" list
 check "with none left, list says so, and .worktrees/ is gone" 'has "no try-pr worktrees" && [[ ! -e $clone/.worktrees ]]'
 

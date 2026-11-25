@@ -2,22 +2,27 @@
 # The mechanical half of the try-pr skill (see SKILL.md): a PR's or a
 # branch's code in a worktree of its own, under <clone>/.worktrees/.
 #
-#   try-pr.sh fetch <PR link | PR number | branch>   make or update the worktree; print what it holds
-#   try-pr.sh list                                   each try-pr worktree, and its stack note
-#   try-pr.sh done <PR link | PR number | branch>    remove the worktree; refused while its stack note is there
+#   try-pr.sh fetch <PR>          make or update the worktree; print what it holds
+#   try-pr.sh copy <PR> <folder>  copy a folder of this checkout, such as a launch skill, into the worktree
+#   try-pr.sh list                each try-pr worktree, with its copies and its stack note
+#   try-pr.sh done <PR>           remove the copies and the worktree; refused while the stack note is there
 #
-# Run it in the person's clone or in a worktree of it. A number is a PR of
-# origin. It needs bash 3.2 or later and git, gh for GitHub, curl and jq for
-# Bitbucket Cloud. The stack note is a file that the agent writes when it
-# starts a stack from the worktree, and deletes when it stops that stack.
+# <PR> is a GitHub or Bitbucket Cloud PR link, a PR number of origin, or a
+# branch: origin's, else this clone's. Run it in the person's clone or in a
+# worktree of it. It needs bash 3.2 or later and git, gh for GitHub, curl and
+# jq for Bitbucket Cloud. The agent writes the stack note when it starts a
+# stack from the worktree, and deletes it when it stops that stack. fetch and
+# done delete the copies, so a new head starts with only its own files.
 set -euo pipefail
 
 BITBUCKET_API=${TRY_PR_BITBUCKET_API:-https://api.bitbucket.org/2.0}
 
+# The PR that parse and the read_ functions fill in: bash 3.2 has no records.
+KIND="" FORGE="" REPO="" NUM="" BRANCH="" NAME="" TITLE="" AUTHOR="" TARGET="" URL="" REF="" LOCAL=0
+
 die() { echo "try-pr: $*" >&2; exit 1; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
-# host/owner/name of a remote URL, in the scp, ssh:// or https:// form.
 repo_of_url() {
   local u=${1%/} host rest
   u=${u%.git}
@@ -31,18 +36,16 @@ repo_of_url() {
   lower "$u"
 }
 
-# The person's clone: the main worktree, also when this runs in a linked one.
-clone_root() {
+main_checkout() {
   local common
   common=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)
   if [[ $(basename "$common") == .git ]]; then dirname "$common"; else git rev-parse --show-toplevel; fi
 }
 
-# Sets KIND (pr or branch), FORGE, REPO (host/owner/name), NUM, BRANCH and NAME.
 parse() {
   local a=$1 github='^https?://(www\.)?github\.com/([^/]+)/([^/]+)/pull/([0-9]+)([/?#].*)?$'
   local bitbucket='^https?://bitbucket\.org/([^/]+)/([^/]+)/pull-requests/([0-9]+)([/?#].*)?$'
-  KIND=pr FORGE="" REPO="" NUM="" BRANCH=""
+  KIND="pr"
   if [[ $a =~ $github ]]; then
     FORGE=github REPO=$(lower "github.com/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}") NUM=${BASH_REMATCH[4]}
   elif [[ $a =~ $bitbucket ]]; then
@@ -67,7 +70,6 @@ parse() {
   if [[ $KIND == pr ]]; then NAME=try-pr-$NUM; else NAME=try-pr-$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-'); fi
 }
 
-# The remote whose URL is the repository $1 (host/owner/name).
 remote_of() {
   local r
   for r in $(git remote); do
@@ -76,7 +78,6 @@ remote_of() {
   return 1
 }
 
-# Sets TITLE, AUTHOR, BRANCH, TARGET, URL and REF (the ref to fetch) from GitHub.
 read_github() {
   command -v gh >/dev/null || die "GitHub PRs need gh (https://cli.github.com)"
   local state info
@@ -108,8 +109,6 @@ bitbucket_get() {
   printf 'Authorization: Bearer %s\n' "$pass" | curl -fsS -H @- "$url"
 }
 
-# As read_github, from the Bitbucket Cloud API. Only a PR whose source
-# branch is in the same repository: a fork's PR is refused.
 read_bitbucket() {
   command -v jq >/dev/null || die "Bitbucket PRs need jq"
   local answer fields state source target_repo
@@ -126,33 +125,53 @@ read_bitbucket() {
   REF=refs/heads/$BRANCH
 }
 
-# The stack note of worktree $1.
-note_of() { echo "$(git -C "$1" rev-parse --git-dir)/try-pr-stack"; }
+read_branch() {
+  local found=0
+  TARGET=$(git ls-remote --symref origin HEAD | awk '$1 == "ref:" { sub("refs/heads/", "", $2); print $2 }')
+  [[ -n $TARGET ]] || die "origin names no default branch"
+  git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null || found=$?
+  case $found in
+    0) REF=refs/heads/$BRANCH ;;
+    2) git rev-parse -q --verify "refs/heads/$BRANCH^{commit}" >/dev/null ||
+      die "neither origin nor this clone has the branch $BRANCH"
+      LOCAL=1 ;;
+    *) die "could not read the branches of origin" ;;
+  esac
+}
 
-# The path of try-pr worktree $1 when it is one, else nothing.
-worktree_at() {
-  [[ -d $1 && $(cd "$1" && git rev-parse --show-toplevel 2>/dev/null) == "$1" ]] && echo "$1"
-  return 0
+note_of() { echo "$(git -C "$1" rev-parse --git-dir)/try-pr-stack"; }
+copies_of() { echo "$(git -C "$1" rev-parse --git-dir)/try-pr-copies"; }
+
+is_worktree() { [[ -d $1 && $(cd "$1" && git rev-parse --show-toplevel 2>/dev/null) == "$1" ]]; }
+
+remove_copies() {
+  local list folder
+  list=$(copies_of "$1")
+  [[ -f $list ]] || return 0
+  while IFS= read -r folder; do rm -rf "${1:?}/${folder:?}"; done <"$list"
+  rm "$list"
 }
 
 cmd_fetch() {
   parse "$1"
-  local remote clone wt head subject behind
-  if [[ $KIND == pr ]]; then
+  local remote=origin clone wt head subject behind
+  if [[ $KIND == branch ]]; then
+    read_branch
+  else
     remote=$(remote_of "$REPO") || die "no remote of this clone is $REPO: run try-pr in a clone of it"
     if [[ $FORGE == github ]]; then read_github; else read_bitbucket; fi
-  else
-    remote=origin REF=refs/heads/$BRANCH
-    TARGET=$(git ls-remote --symref origin HEAD | awk '$1 == "ref:" { sub("refs/heads/", "", $2); print $2 }')
-    [[ -n $TARGET ]] || die "origin names no default branch"
   fi
-  git fetch -q "$remote" "$REF" || die "could not fetch $REF from $remote"
-  head=$(git rev-parse FETCH_HEAD)
+  if ((LOCAL)); then
+    head=$(git rev-parse "refs/heads/$BRANCH")
+  else
+    git fetch -q "$remote" "$REF" || die "could not fetch $REF from $remote"
+    head=$(git rev-parse FETCH_HEAD)
+  fi
   git fetch -q "$remote" "+refs/heads/$TARGET:refs/remotes/$remote/$TARGET" || die "could not fetch $TARGET from $remote"
   behind=$(git rev-list --count "$head..refs/remotes/$remote/$TARGET")
   subject=$(git log -1 --format=%s "$head")
 
-  clone=$(clone_root)
+  clone=$(main_checkout)
   if ! git -C "$clone" check-ignore -q .worktrees/try-pr; then
     local exclude
     exclude=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)/info/exclude
@@ -161,8 +180,9 @@ cmd_fetch() {
     echo "ignored  /.worktrees/ is in $exclude now"
   fi
   wt=$clone/.worktrees/$NAME
-  if [[ -n $(worktree_at "$wt") ]]; then
+  if is_worktree "$wt"; then
     [[ ! -f $(note_of "$wt") ]] || die "a stack runs from $wt ($(note_of "$wt")): stop it first"
+    remove_copies "$wt"
     [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has changes: git -C $wt status"
     git -C "$wt" checkout -q --detach "$head"
   elif [[ -e $wt ]]; then
@@ -177,20 +197,41 @@ cmd_fetch() {
     echo "title    $TITLE"
     echo "author   $AUTHOR"
   fi
-  [[ -z $BRANCH ]] || echo "branch   $BRANCH"
+  if ((LOCAL)); then
+    echo "branch   $BRANCH (this clone's only: origin does not have it)"
+  elif [[ -n $BRANCH ]]; then
+    echo "branch   $BRANCH"
+  fi
   echo "head     $head $subject"
   echo "behind   $behind commits behind $remote/$TARGET"
   echo "note     $(note_of "$wt")"
 }
 
+cmd_copy() {
+  parse "$1"
+  local folder=${2%/} wt from
+  [[ -n $folder && $folder != /* && /$folder/ != */../* ]] ||
+    die "copy takes a folder by its path in this checkout, such as .claude/skills/<name>"
+  wt=$(main_checkout)/.worktrees/$NAME
+  is_worktree "$wt" || die "no try-pr worktree at $wt: run fetch first"
+  from=$(git rev-parse --show-toplevel)/$folder
+  [[ -d $from ]] || die "this checkout has no folder $folder"
+  [[ ! -e $wt/$folder ]] || die "the worktree has $folder already"
+  mkdir -p "$(dirname "$wt/$folder")"
+  cp -R "$from" "$wt/$folder"
+  echo "$folder" >>"$(copies_of "$wt")"
+  echo "copied   $from to $wt/$folder"
+}
+
 cmd_list() {
   local prefix path note found=0
-  prefix=$(clone_root)/.worktrees/try-pr-
+  prefix=$(main_checkout)/.worktrees/try-pr-
   while IFS= read -r path; do
     [[ $path == "$prefix"* ]] || continue
     found=1
     [[ -d $path ]] || { echo "worktree $path is gone: git worktree prune"; continue; }
     echo "worktree $path $(git -C "$path" log -1 --format='%h %s')"
+    [[ ! -f $(copies_of "$path") ]] || sed 's/^/  copied /' "$(copies_of "$path")"
     note=$(note_of "$path")
     if [[ -f $note ]]; then sed 's/^/  stack  /' "$note"; else echo "  stack  none started by try-pr"; fi
   done < <(git worktree list --porcelain | sed -n 's/^worktree //p')
@@ -200,10 +241,11 @@ cmd_list() {
 cmd_done() {
   parse "$1"
   local wt
-  wt=$(clone_root)/.worktrees/$NAME
-  [[ -n $(worktree_at "$wt") ]] || die "no try-pr worktree at $wt"
+  wt=$(main_checkout)/.worktrees/$NAME
+  is_worktree "$wt" || die "no try-pr worktree at $wt"
   [[ ! -f $(note_of "$wt") ]] ||
     die "a stack runs from $wt: stop it as $(note_of "$wt") says, delete that file, then run done again"
+  remove_copies "$wt"
   git worktree remove "$wt" || die "$wt was not removed; see git's reason above"
   rmdir "$(dirname "$wt")" 2>/dev/null || true
   echo "removed  $wt"
@@ -211,7 +253,8 @@ cmd_done() {
 
 case ${1:-} in
   fetch) [[ $# -eq 2 ]] || die "fetch takes one PR link, PR number or branch"; cmd_fetch "$2" ;;
+  copy) [[ $# -eq 3 ]] || die "copy takes a PR link, PR number or branch, then a folder"; cmd_copy "$2" "$3" ;;
   list) cmd_list ;;
   done) [[ $# -eq 2 ]] || die "done takes one PR link, PR number or branch"; cmd_done "$2" ;;
-  *) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac
