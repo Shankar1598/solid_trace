@@ -41,11 +41,12 @@ func dashboardCharts(t *testing.T) map[string]string {
 	return queries
 }
 
-// closedRunEvent is the closed event of a Run, as the Dispatcher sends it.
-func closedRunEvent(t *testing.T, runID, project, reason string, tokens, toPR, toOutcome, interventions int) string {
+// closedRunEvent is the closed event of a Run in the file given, as
+// EventStore stores it.
+func closedRunEvent(t *testing.T, file, runID, project, reason string, tokens, toPR, toOutcome, interventions int) string {
 	t.Helper()
 	return logJSON(t, "Run "+runID+": closed", languageAt(10, 10), map[string]any{
-		"event.kind": "closed", "event.id": runID + "-9", "run.id": runID, "run.seq": 9, "run.close_reason": reason,
+		"file": file, "event.kind": "closed", "event.id": runID + "-9", "run.id": runID, "run.seq": 9, "run.close_reason": reason,
 		"factory.project": project, "totals.tokens.input": tokens / 2, "totals.tokens.output": tokens / 2,
 		"totals.tokens.cache_read": 0, "totals.tokens.cache_write": 0, "totals.seconds_to_pr_opened": toPR,
 		"totals.seconds_from_pr_opened_to_outcome": toOutcome, "totals.interventions.total": interventions,
@@ -105,10 +106,13 @@ func TestTheFactoryDashboardChartsRunAndCountEachRunOnce(t *testing.T) {
 	// Run a: merged, 100 tokens, 2 h, 3 interventions. Its closed event comes
 	// twice, as the Dispatcher's sender can send it. Run b: merged, 300 tokens,
 	// 1 h, 4 interventions. Run c: declined, 7 interventions, of the other Project.
-	a := closedRunEvent(t, "run_a", "shop", "pr_merged", 100, 3600, 3600, 3)
-	b := closedRunEvent(t, "run_b", "shop", "pr_merged", 300, 3600, 0, 4)
-	c := closedRunEvent(t, "run_c", "api", "pr_declined", 50, 600, 600, 7)
-	postAndProcess(t, env, a, a, b, c)
+	// A closed event that the Agent Project's key sent is in the file otel,
+	// and no Chart counts it.
+	a := closedRunEvent(t, "runs/run_a", "run_a", "shop", "pr_merged", 100, 3600, 3600, 3)
+	b := closedRunEvent(t, "runs/run_b", "run_b", "shop", "pr_merged", 300, 3600, 0, 4)
+	c := closedRunEvent(t, "runs/run_c", "run_c", "api", "pr_declined", 50, 600, 600, 7)
+	forged := closedRunEvent(t, "otel", "run_f", "shop", "pr_declined", 1000000, 1, 1, 100)
+	postAndProcess(t, env, a, a, b, c, forged)
 
 	assertChartValue(t, "tokens", chartValues(t, env, charts["Tokens for each merged PR"]), 200)
 	assertChartValue(t, "cycle time", chartValues(t, env, charts["Cycle time of merged PRs"]), 1.5)

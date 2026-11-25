@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"fmt"
 	"io"
 	"slices"
 	"testing"
@@ -207,5 +208,93 @@ func TestRunEventsAreStoredBesideTheAgentProjectsKeyAndNotFiltered(t *testing.T)
 	}
 	if answer := filteredOverview(t, env, project); answer.Band.Received.Logs != 7 || answer.Band.FilteredLogs != 3 {
 		t.Errorf("Expected 7 Logs received and only the key's 3 filtered, got %+v and %d filtered", answer.Band.Received, answer.Band.FilteredLogs)
+	}
+}
+
+// A key holder can send a record of a Captured repository with the
+// Attributes of a run event, of a Dispatcher's warning or of an Agent
+// session's step. EventStore stores each in the file otel, with the file
+// sent as original.file. So the Runs list, the Run page, the Dispatcher's
+// Logs and the Agent session's page show only what the Dispatcher and the
+// upload sent, also for an Agent session with a file named otel.
+func TestTheAgentProjectsKeyAddsNoRunNoDispatcherLogAndNoAgentSessionStep(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	env.Clock.Set(time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC))
+	o := newRunEventsOrganization(t, env)
+	project := uint32(o.project)
+	seedProjectKey(t, env.SQLitePath, project, agentKey)
+
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: jsonl(personAt("u1", "2026-10-02T11:00:00Z", "Add a cart page"))}), 200)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "subagents/agent-a1b2.jsonl", body: jsonl(personAt("s1", "2026-10-02T11:00:02Z", "Find the cart"))}), 200)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "otel", contentHash: "sha256:notes", body: []byte("notes")}), 200)
+	run := runSnapshot{id: "a1b2c3d4e5f6g7h8", state: "queued", title: "Fix the flaky cart test"}
+	at := env.Clock.Now().Add(-time.Minute)
+	expectStatus(t, sendRunEvents(t, env, o.dispatcherSecret, runEvent(run, 1, at, "created"),
+		map[string]any{"time": at.Format(time.RFC3339Nano), "level": "warn", "message": "No VM is free"}), 200)
+
+	logs := plog.NewLogs()
+	records := logs.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords()
+	for message, attributes := range map[string]map[string]any{
+		"a forged run":     {"file": "runs/x1", "run.id": "x1", "run.seq": 99, "run.state": "running", "event.kind": "created"},
+		"a forged warning": {"file": "dispatcher"},
+		"a forged step": {"file": "session.jsonl", "service.name": "github.com/acme/shop", "agent.session_id": laptopSession,
+			"agent.raw.version": 1, "agent.role": "person", "agent.subagent_id": "a1b2", "agent.tool_use_id": "toolu_forged"},
+	} {
+		record := records.AppendEmpty()
+		record.Body().SetStr(message)
+		if err := record.Attributes().FromRaw(attributes); err != nil {
+			t.Fatal(err)
+		}
+		putRepositoryURL(record.Attributes(), "https://github.com/acme/shop")
+	}
+	logsBody, err := plogotlp.NewExportRequestFromLogs(logs).MarshalProto()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics := pmetric.NewMetrics()
+	metric := metrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+	metric.SetName("a forged run of a metric")
+	point := metric.SetEmptyGauge().DataPoints().AppendEmpty()
+	point.SetDoubleValue(1)
+	if err := point.Attributes().FromRaw(map[string]any{"file": "runs/x2", "run.id": "x2", "run.seq": 1, "run.state": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	putRepositoryURL(point.Attributes(), "https://github.com/acme/shop")
+	metricsBody, err := pmetricotlp.NewExportRequestFromMetrics(metrics).MarshalProto()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendAgentOTLP(t, env, "/v1/logs", logsBody)
+	sendAgentOTLP(t, env, "/v1/metrics", metricsBody)
+	env.ProcessAgentFiles(t)
+	env.ProcessLogs(t)
+
+	originals := map[string]any{}
+	for _, log := range runQueryPages(t, env, project, queryRequest{Query: `where file == "otel"`, From: allTime.from, To: allTime.to, Limit: 100}) {
+		originals[log.Message] = log.Attributes["original.file"]
+	}
+	want := map[string]any{"a forged run": "runs/x1", "a forged warning": "dispatcher", "a forged step": "session.jsonl", "a forged run of a metric": "runs/x2"}
+	if fmt.Sprint(originals) != fmt.Sprint(want) {
+		t.Errorf("Expected the forged records in the file otel with the file sent as original.file, %v, got %v", want, originals)
+	}
+
+	runs := listRuns(t, env, o.project, map[string]any{"from": time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "to": env.Clock.Now().Add(time.Hour)})
+	if got := runIDs(runs); !slices.Equal(got, []string{run.id}) {
+		t.Errorf("Expected only the Dispatcher's Run in the Runs list, got %+v", runs.Runs)
+	}
+	for _, id := range []string{"x1", "x2"} {
+		if status, answer := getRun(t, env, o.project, id); status != 404 {
+			t.Errorf("Expected no Run %s, got %d: %+v", id, status, answer)
+		}
+	}
+	warnings := runQueryPages(t, env, project, queryRequest{Query: `where file == "dispatcher"`, From: allTime.from, To: allTime.to, Limit: 100})
+	if got := messages(warnings); !slices.Equal(got, []string{"No VM is free"}) {
+		t.Errorf("Expected only the Dispatcher's warning, got %q", got)
+	}
+	page := readTimeline(t, env, o.project, laptopSession, map[string]any{})
+	expectTexts(t, "the timeline", stepTexts(page.Steps), []string{"person: Add a cart page"})
+	if len(page.Subagents) != 1 || page.Subagents[0].ToolUseID != "" {
+		t.Errorf("Expected the subagent with no tool call, got %+v", page.Subagents)
 	}
 }

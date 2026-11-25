@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -148,5 +149,137 @@ func TestTheAgentProjectsKeyStoresOnlyTheOTLPRecordsOfACapturedRepository(t *tes
 				}
 			})
 		}
+	}
+}
+
+const capturedURL = "https://github.com/acme/shop"
+
+// storedAttributes are the Attributes of the stored Log with the message
+// given.
+func storedAttributes(t *testing.T, stored, message string) map[string]any {
+	t.Helper()
+	for _, line := range strings.Split(stored, "\n") {
+		var log struct {
+			Message    string         `json:"message"`
+			Attributes map[string]any `json:"attributes"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &log) == nil && log.Message == message {
+			return log.Attributes
+		}
+	}
+	t.Fatalf("Expected a stored Log %q, got\n%s", message, stored)
+	return nil
+}
+
+// The JSON encoding of OTLP is filtered as protobuf is. A record whose vcs
+// is in the nested form only has no vcs.repository.url.full of its own,
+// so it is filtered out.
+func TestTheAgentProjectsKeyFiltersAJSONExportAndKeepsNoNestedRepository(t *testing.T) {
+	logs := plog.NewLogs()
+	logRecords := logs.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords()
+	metrics := pmetric.NewMetrics()
+	metricList := metrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics()
+	for _, r := range []struct {
+		name string
+		put  func(pcommon.Map)
+	}{
+		{"captured", func(a pcommon.Map) { putRepository(a, capturedURL) }},
+		{"nested", func(a pcommon.Map) {
+			a.PutEmptyMap("vcs").PutEmptyMap("repository").PutEmptyMap("url").PutStr("full", capturedURL)
+		}},
+	} {
+		record := logRecords.AppendEmpty()
+		record.Body().SetStr(r.name)
+		r.put(record.Attributes())
+		metric := metricList.AppendEmpty()
+		metric.SetName(r.name)
+		point := metric.SetEmptyGauge().DataPoints().AppendEmpty()
+		point.SetDoubleValue(1)
+		r.put(point.Attributes())
+	}
+	logsJSON, err := plogotlp.NewExportRequestFromLogs(logs).MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricsJSON, err := pmetricotlp.NewExportRequestFromMetrics(metrics).MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string][]byte{"/v1/logs": logsJSON, "/v1/metrics": metricsJSON} {
+		t.Run(path, func(t *testing.T) {
+			resp, answer, writer := sendToIngestApp(t, logRouteCase{
+				path: path, header: with(asJSON, "Authorization", "Bearer key-agent"), body: func() []byte { return body },
+			})
+			if resp.StatusCode != 200 || strings.Contains(string(answer), "rejected") {
+				t.Fatalf("Expected 200 with no rejected record, got %d: %s", resp.StatusCode, answer)
+			}
+			stored := writer.stored()
+			if !strings.HasPrefix(stored, "  Log batch for Project 3, Logs: 1\n") || storedAttributes(t, stored, "captured")["file"] != "otel" {
+				t.Errorf("Expected only the captured record, in the file otel, got\n%s", stored)
+			}
+		})
+	}
+}
+
+// The server, not the sender, puts each Log of the Agent Project's key in
+// its range: the file otel, which no read of Runs, of the Dispatcher's
+// Logs or of Agent sessions uses. A sender's file, from any layer, is
+// kept as original.file, and wins over the sender's own original.file. An
+// ordinary Project's key keeps the file as sent.
+func TestTheAgentProjectsKeyStoresEachRecordInTheFileOTel(t *testing.T) {
+	logs := plog.NewLogs()
+	onResource := logs.ResourceLogs().AppendEmpty()
+	onResource.Resource().Attributes().PutStr("file", "dispatcher")
+	warning := onResource.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+	warning.Body().SetStr("a warning")
+	putRepository(warning.Attributes(), capturedURL)
+	records := logs.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords()
+	run := records.AppendEmpty()
+	run.Body().SetStr("a run event")
+	run.Attributes().FromRaw(map[string]any{"file": "runs/x1", "original.file": "the sender's own", "run.id": "x1", "run.seq": 99})
+	putRepository(run.Attributes(), capturedURL)
+	none := records.AppendEmpty()
+	none.Body().SetStr("no file")
+	putRepository(none.Attributes(), capturedURL)
+	logsBody, err := plogotlp.NewExportRequestFromLogs(logs).MarshalProto()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	metrics := pmetric.NewMetrics()
+	metric := metrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
+	metric.SetName("a metric")
+	point := metric.SetEmptyGauge().DataPoints().AppendEmpty()
+	point.SetDoubleValue(1)
+	point.Attributes().PutStr("file", "runs/x2")
+	putRepository(point.Attributes(), capturedURL)
+	metricsBody, err := pmetricotlp.NewExportRequestFromMetrics(metrics).MarshalProto()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bodies := map[string][]byte{"/v1/logs": logsBody, "/v1/metrics": metricsBody}
+	for _, c := range []struct{ path, key, message, file, original string }{
+		{"/v1/logs", "key-agent", "a run event", "otel", "runs/x1"},
+		{"/v1/logs", "key-agent", "a warning", "otel", "dispatcher"},
+		{"/v1/logs", "key-agent", "no file", "otel", ""},
+		{"/v1/metrics", "key-agent", "a metric", "otel", "runs/x2"},
+		{"/v1/logs", "key-one", "a run event", "runs/x1", "the sender's own"},
+	} {
+		t.Run(c.key+" "+c.message, func(t *testing.T) {
+			resp, answer, writer := sendToIngestApp(t, logRouteCase{
+				path:   c.path,
+				header: with(map[string]string{"Content-Type": "application/x-protobuf"}, "Authorization", "Bearer "+c.key),
+				body:   func() []byte { return bodies[c.path] },
+			})
+			if resp.StatusCode != 200 {
+				t.Fatalf("Expected 200, got %d: %s", resp.StatusCode, answer)
+			}
+			attributes := storedAttributes(t, writer.stored(), c.message)
+			original, hasOriginal := attributes["original.file"]
+			if attributes["file"] != c.file || hasOriginal != (c.original != "") || (hasOriginal && original != c.original) {
+				t.Errorf("Expected file %q and original.file %q, got %v", c.file, c.original, attributes)
+			}
+		})
 	}
 }
