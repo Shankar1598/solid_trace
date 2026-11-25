@@ -19,6 +19,12 @@ interface CaptureSetupProps {
   managed_settings: string
   login_command: string
   status_command: string
+  telemetry: {
+    user_settings: string
+    managed_settings: string
+    has_key: boolean
+    project_slug: string
+  } | null
 }
 
 const DOCS = 'https://github.com/Shankar1598/solid_trace/blob/main/docs/agent-sessions.md'
@@ -108,6 +114,45 @@ export default function SettingsCaptureSetup(props: CaptureSetupProps) {
         <p className="text-sm text-muted-foreground">
           More in the <a href={DOCS} className="underline underline-offset-4" target="_blank" rel="noreferrer">Agent sessions docs</a>.
         </p>
+      </FormSection>
+
+      <FormSection
+        id="telemetry"
+        className="mt-6"
+        title="5. Send telemetry (optional)"
+        description="Claude Code then sends its OpenTelemetry events and metrics to the Agent Project, as Logs. Ingest keeps only the records of a captured repository."
+      >
+        {!props.telemetry ? (
+          <p className="text-sm text-muted-foreground">Agent sessions are off, so there is no Agent Project to send telemetry to.</p>
+        ) : (
+          <>
+            {!props.telemetry.has_key && (
+              <p className="text-sm text-muted-foreground">
+                The Agent Project has no key yet, so the blocks show &lt;key&gt;. An Admin makes the key on the{' '}
+                <Link href={`/${current_org!.slug}/projects/${props.telemetry.project_slug}`} className="underline underline-offset-4">Agent Project's page</Link>.
+              </p>
+            )}
+            <p className="text-sm text-muted-foreground">
+              Add this to <code className="font-mono text-xs">~/.claude/settings.json</code> on the machine. Claude Code reads it when it starts.
+            </p>
+            <Snippet code={props.telemetry.user_settings} what="User settings" />
+            <p className="text-sm text-muted-foreground">
+              Or, if your team uses Claude Code's managed settings, use this in place of the block of step 2. It pushes the plugin and the telemetry to each machine.
+            </p>
+            <Snippet code={props.telemetry.managed_settings} what="Managed settings with telemetry" />
+            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              <li>
+                The block does not set <code className="font-mono text-xs">OTEL_LOG_USER_PROMPTS</code> or <code className="font-mono text-xs">OTEL_LOG_TOOL_DETAILS</code>,
+                because they send prompt text and Bash commands. So the records hold counts, durations, tool names and the estimated cost.
+              </li>
+              <li>
+                Claude Code reads only the <code className="font-mono text-xs">origin</code> remote. So the records of a captured repository arrive
+                only from a clone whose <code className="font-mono text-xs">origin</code> is that repository.
+              </li>
+              <li>A change to the captured repositories applies to the next request.</li>
+            </ul>
+          </>
+        )}
       </FormSection>
     </SettingsLayout>
   )
