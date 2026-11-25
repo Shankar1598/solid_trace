@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -303,7 +304,45 @@ func TestThePluginsHoldNoInstanceURLAndNoSecret(t *testing.T) {
 	}
 }
 
-var publicURLs = []string{"https://github.com/", "https://bitbucket.org/", "https://api.bitbucket.org/"}
+// publicHosts are the public forges, with their subdomains. A host that
+// cannot be an instance (localhost, or a name of the reserved example and
+// test domains) and a file URL are allowed too.
+var publicHosts = []string{"github.com", "bitbucket.org", "bytebucket.org", "gitlab.com"}
+
+func publicURL(u string) bool {
+	parsed, err := neturl.Parse(strings.TrimRight(u, ").,;'`\\"))
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme == "file" {
+		return true
+	}
+	host := parsed.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || strings.HasSuffix(host, ".example") ||
+		host == "example.com" || strings.HasSuffix(host, ".example.com") || strings.HasSuffix(host, ".test") {
+		return true
+	}
+	return slices.ContainsFunc(publicHosts, func(h string) bool { return host == h || strings.HasSuffix(host, "."+h) })
+}
+
+func TestAPublicURLIsAForgeOrCannotBeAnInstance(t *testing.T) {
+	for u, want := range map[string]bool{
+		"https://api.bitbucket.org/2.0/repositories":    true,
+		"https://cli.github.com)":                       true,
+		"https://gitlab.com/example-team/app":           true,
+		"https://avatar.example/a.png":                  true,
+		"http://localhost:1":                            true,
+		"file://$tmp/api":                               true,
+		"https://solidtrace.acme.dev/":                  false,
+		"https://github.com.acme.dev/":                  false,
+		"http://10.0.0.3:4000/":                         false,
+		"https://console.solidtrace.internal/projects/": false,
+	} {
+		if got := publicURL(u); got != want {
+			t.Errorf("publicURL(%q) = %v, want %v", u, got, want)
+		}
+	}
+}
 
 func checkNoInstanceURLAndNoSecret(t *testing.T, dir string, url, secret *regexp.Regexp) {
 	t.Helper()
@@ -316,7 +355,7 @@ func checkNoInstanceURLAndNoSecret(t *testing.T, dir string, url, secret *regexp
 			return err
 		}
 		for _, u := range url.FindAllString(string(data), -1) {
-			if !slices.ContainsFunc(publicURLs, func(p string) bool { return strings.HasPrefix(u, p) }) {
+			if !publicURL(u) {
 				t.Errorf("%s holds the URL %s", path, u)
 			}
 		}
