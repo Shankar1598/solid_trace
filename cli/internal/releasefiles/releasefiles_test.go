@@ -312,12 +312,12 @@ var publicHosts = []string{"github.com", "bitbucket.org", "bytebucket.org", "git
 func publicURL(u string) bool {
 	// A URL in a shell string can run into an escape, such as \n.
 	u, _, _ = strings.Cut(u, `\`)
+	if strings.HasPrefix(u, "file:") {
+		return true
+	}
 	parsed, err := neturl.Parse(strings.TrimRight(u, ").,;'`\\"))
 	if err != nil {
 		return false
-	}
-	if parsed.Scheme == "file" {
-		return true
 	}
 	host := parsed.Hostname()
 	if host == "localhost" || host == "127.0.0.1" || strings.HasSuffix(host, ".example") ||
@@ -336,6 +336,7 @@ func TestAPublicURLIsAForgeOrCannotBeAnInstance(t *testing.T) {
 		"http://localhost:1":                            true,
 		`http://localhost:1\n'`:                         true,
 		"file://$tmp/api":                               true,
+		"file://}":                                      true,
 		"https://solidtrace.acme.dev/":                  false,
 		"https://github.com.acme.dev/":                  false,
 		"http://10.0.0.3:4000/":                         false,
