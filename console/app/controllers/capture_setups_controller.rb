@@ -13,7 +13,7 @@ class CaptureSetupsController < ApplicationController
       organization: @current_org,
       version: Rails.application.config.x.solidtrace_version,
       console_url: PublicUrls.console_url(request.base_url),
-      ingest_url: PublicUrls.ingest_url(request.base_url)
+      ingest_url: PublicUrls.cli_ingest_url(request.base_url)
     )
   end
 end

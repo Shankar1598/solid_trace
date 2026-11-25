@@ -25,6 +25,22 @@ class PublicUrlsTest < ActiveSupport::TestCase
     assert_equal "https://ingest.example.com:4443", PublicUrls.ingest_url(REQUEST, env: env)
   end
 
+  test "the CLI gets ingest's HTTPS address when the Ingest URL is http:// and Console is https://" do
+    env = { "CONSOLE_URL" => "https://solidtrace.example.com", "PUBLIC_INGEST_URL" => "http://solidtrace.example.com:4000" }
+
+    assert_equal "http://solidtrace.example.com:4000", PublicUrls.ingest_url(REQUEST, env: env)
+    assert_equal "https://solidtrace.example.com:4443", PublicUrls.cli_ingest_url(REQUEST, env: env)
+  end
+
+  test "the CLI gets the Ingest URL when it is https://, on a loopback host, or Console is http:// too" do
+    https = { "CONSOLE_URL" => "https://solidtrace.example.com", "PUBLIC_INGEST_URL" => "https://ingest.example.com:8443" }
+    loopback = { "CONSOLE_URL" => "https://solidtrace.example.com", "PUBLIC_INGEST_URL" => "http://127.0.0.1:4000" }
+
+    assert_equal "https://ingest.example.com:8443", PublicUrls.cli_ingest_url(REQUEST, env: https)
+    assert_equal "http://127.0.0.1:4000", PublicUrls.cli_ingest_url(REQUEST, env: loopback)
+    assert_equal "http://10.0.0.5:4000", PublicUrls.cli_ingest_url(REQUEST, env: {})
+  end
+
   test "a blank env var is unset" do
     env = { "CONSOLE_URL" => " ", "PUBLIC_INGEST_URL" => "" }
 

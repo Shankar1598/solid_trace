@@ -36,7 +36,7 @@ Step 5 of the Capture setup page gives a managed-settings block that also sends 
 
 ## For engineers: turn on capture
 
-**Settings → Agent sessions → Capture setup** in Console gives each command with your instance's version and addresses filled in. Each member of the Organization can open it.
+**Settings → Agent sessions → Capture setup** in Console gives each command with your instance's version and addresses filled in. Each member of the Organization can open it. The CLI sends tokens only over HTTPS, or to a loopback address. So when the Ingest URL is `http://` and Console is on `https://`, the page gives ingest's HTTPS address, `https://<ingest host>:4443`, where Caddy serves ingest.
 
 Or run the setup wizard. It does steps 1 to 3, and it can also install the review plugin ([the skills plugin](#record-what-each-review-found-the-skills-plugin)). It asks for the release, and it uses the newest release when you do not give one:
 

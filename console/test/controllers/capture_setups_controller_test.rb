@@ -79,6 +79,16 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
     assert page["version_note"].present?
   end
 
+  test "with an http:// Ingest URL and an https:// Console, the login command and step 5 use ingest's HTTPS address" do
+    InstanceSetting.current.update!(console_url: "https://solidtrace.example.com", ingest_url: "http://solidtrace.example.com:4000")
+    create(:project_key, project: turn_on([ "github.com/acme/shop" ]).project)
+    sign_in_as(@member)
+
+    page = setup_page
+    assert_equal "solidtrace login --ingest-url https://solidtrace.example.com:4443 https://solidtrace.example.com", page["login_command"]
+    assert_includes page["telemetry"].to_json, "https://solidtrace.example.com:4443"
+  end
+
   test "with no Console URL saved or set, the login command uses the address the request reached Console at" do
     InstanceSetting.current.update!(console_url: nil, ingest_url: nil)
     sign_in_as(@member)

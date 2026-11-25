@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "ipaddr"
+
 # Console's URL and ingest's URL as people, links and SDKs reach them
 # (ADR 0017). Each has one resolver, which every email, invite link, MCP link,
 # DSN and Logs snippet Console builds goes through:
@@ -20,6 +22,8 @@
 module PublicUrls
   # EventStore's ingest port, where ingest is on Console's host by default.
   INGEST_PORT = 4000
+  # Caddy's port for ingest with HTTPS on (deploy/caddy/Caddyfile).
+  HTTPS_INGEST_PORT = 4443
 
   module_function
 
@@ -33,6 +37,32 @@ module PublicUrls
   # URL to take its host from.
   def ingest_url(request_url = nil, settings: InstanceSetting.current, env: ENV)
     settings.ingest_url || ingest_url_fallback(request_url, settings: settings, env: env)&.fetch(:url)
+  end
+
+  # Ingest's URL for the solidtrace CLI and Claude Code's telemetry, which send
+  # tokens: the CLI refuses http:// to a host that is not loopback. So when
+  # ingest_url is such an http:// URL and Console is on https://, it is
+  # ingest's host at HTTPS_INGEST_PORT, where Caddy serves ingest with HTTPS
+  # on (ADR 0010). Otherwise it is ingest_url.
+  def cli_ingest_url(request_url = nil, settings: InstanceSetting.current, env: ENV)
+    url = ingest_url(request_url, settings: settings, env: env)
+    return url unless url
+
+    uri = URI(url)
+    return url if uri.scheme == "https" || loopback?(uri.host)
+    return url unless console_url(request_url, settings: settings, env: env).to_s.start_with?("https://")
+
+    "https://#{uri.host}:#{HTTPS_INGEST_PORT}"
+  end
+
+  # localhost or a loopback IP address, as the CLI's signin.Loopback decides.
+  def loopback?(host)
+    host = host.to_s.delete_prefix("[").delete_suffix("]")
+    return true if host.casecmp?("localhost")
+
+    IPAddr.new(host).loopback?
+  rescue IPAddr::InvalidAddressError
+    false
   end
 
   # What a blank Console URL setting uses, { url:, source: }, source being
