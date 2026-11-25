@@ -168,16 +168,52 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_equal "http://console.test/acme/projects/shop", answer.link
   end
 
-  test "create_key makes no key on the Agent Project, and its setup says why" do
-    create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true)
+  test "an admin's create_key makes the Agent Project's one key; a second and a member's are refused" do
+    agent_project = create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true)
 
-    refused = call_tool(:create_key, user: @admin, project: "agent-sessions")
-    assert refused.error?
-    assert_equal ProjectKeyPolicy::AGENT_PROJECT, refused.text
-    assert_equal 1, ProjectKey.count
+    refused = call_tool(:create_key, user: @member, project: "agent-sessions")
+    assert_equal "Only an Organization admin can make a Project's keys.", refused.text
 
-    setup = call_tool(:get_project_setup, user: @admin, project: "agent-sessions").json
-    assert_equal ProjectKeyPolicy::AGENT_PROJECT, setup["note"]
+    made = call_tool(:create_key, user: @admin, project: "agent-sessions")
+    assert_not made.error?, made.text
+    assert_equal agent_project.project_keys.sole.id, made.json.dig("key", "id")
+    assert_nil made.json.dig("key", "dsn"), "the key sends no Events, so it has no DSN"
+
+    second = call_tool(:create_key, user: @admin, project: "agent-sessions")
+    assert second.error?
+    assert_equal "Not saved: #{ProjectKey::ONE_AGENT_KEY}.", second.text
+    assert_equal 1, agent_project.project_keys.count
+  end
+
+  test "an admin's rotate_key and delete_key work on the Agent Project's key; a member's are refused" do
+    key = create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true).project_keys.create!
+    old = key.public_key
+
+    assert_equal "Only an Organization admin can rotate a Project's keys.",
+      call_tool(:rotate_key, user: @member, project: "agent-sessions", key: key.id).text
+    assert_equal "Only an Organization admin can delete a Project's keys.",
+      call_tool(:delete_key, user: @member, project: "agent-sessions", key: key.id).text
+
+    assert_not call_tool(:rotate_key, user: @admin, project: "agent-sessions", key: key.id).error?
+    assert_not_equal old, key.reload.public_key
+    assert_equal "Deleted key #{key.id} of agent-sessions.", call_tool(:delete_key, user: @admin, project: "agent-sessions", key: key.id).body
+  end
+
+  test "get_project_setup gives the Agent Project's key with what it is for, and no DSN or JSON Log route it would be refused on" do
+    agent_project = create(:project, organization: @acme, name: "Agent sessions", slug: "agent-sessions", agent: true)
+
+    setup = call_tool(:get_project_setup, user: @member, project: "agent-sessions").json
+    assert_equal [], setup["keys"]
+    assert_equal "#{ProjectKey::AGENT_PROJECT} This Project has no key. create_key makes one.", setup["note"]
+
+    key = agent_project.project_keys.create!
+    setup = call_tool(:get_project_setup, user: @member, project: "agent-sessions").json
+    assert_equal({ "id" => key.id, "public_key" => key.public_key, "dsn" => nil, "created_at" => key.created_at.iso8601 },
+      setup["keys"].sole)
+    assert_nil setup["dsn"]
+    assert_nil setup["logs"]
+    assert_nil setup["curl"]
+    assert_equal ProjectKey::AGENT_PROJECT, setup["note"]
   end
 
   test "an admin's rotate_key gives the key new values; a member's is refused" do

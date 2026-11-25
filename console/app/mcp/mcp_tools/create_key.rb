@@ -7,13 +7,12 @@ module McpTools
     include ProjectKeyTool
 
     description "Gives a Project another key, with its own DSN, so a sender can move to it before the old one is " \
-                "rotated or deleted. Only an Organization admin can."
+                "rotated or deleted. The Agent Project can have only one key, for Claude Code's OpenTelemetry, " \
+                "with no DSN. Only an Organization admin can."
     writes!
     takes_project
 
     def run
-      raise ToolError, ProjectKeyPolicy::AGENT_PROJECT if project.agent?
-
       made = project.project_keys.build
       authorize!(made, :create?, "make a Project's keys")
       made.save!

@@ -26,19 +26,61 @@ class ProjectKeysControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to project_url(@project, org_slug: @organization.slug)
   end
 
-  test "the Agent Project gets no key, and its page offers none" do
+  test "an admin makes the Agent Project's one key, which its page shows with what it is for; a second is refused" do
     agent_project = create(:project, organization: @organization, name: "Agent sessions", agent: true)
     sign_in_as(@admin)
+    assert_equal true, page_of(agent_project)["can_manage_keys"]
+    assert_equal ProjectKey::AGENT_PROJECT, page_of(agent_project)["agent_key_text"]
+
+    post project_keys_url(agent_project, org_slug: @organization.slug)
+    assert_equal "Key created successfully", flash[:notice]
+    key = agent_project.project_keys.sole
 
     assert_no_difference -> { ProjectKey.count } do
       post project_keys_url(agent_project, org_slug: @organization.slug)
     end
+    assert_redirected_to project_url(agent_project, org_slug: @organization.slug)
+    assert_equal "#{ProjectKey::ONE_AGENT_KEY}.", flash[:alert]
 
-    get project_url(agent_project, org_slug: @organization.slug),
-      headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
-    props = JSON.parse(response.body)["props"]
-    assert_equal false, props["can_manage_keys"]
-    assert_equal ProjectKeyPolicy::AGENT_PROJECT, props["no_keys_text"]
+    props = page_of(agent_project)
+    shown = props["project"]["keys"].sole
+    assert_equal key.public_key, shown["public_key"]
+    assert_nil shown["dsn"], "the key sends no Events, so it has no DSN"
+    assert_equal ProjectKey::AGENT_PROJECT, props["agent_key_text"]
+  end
+
+  test "an admin rotates and deletes the Agent Project's key, and then makes a new one" do
+    agent_project = create(:project, organization: @organization, name: "Agent sessions", agent: true)
+    key = agent_project.project_keys.create!
+    old_public = key.public_key
+    sign_in_as(@admin)
+
+    patch rotate_project_key_url(agent_project, key, org_slug: @organization.slug)
+    assert_not_equal old_public, key.reload.public_key
+
+    delete project_key_url(agent_project, key, org_slug: @organization.slug)
+    assert_not ProjectKey.exists?(key.id)
+
+    assert_difference -> { agent_project.project_keys.count }, 1 do
+      post project_keys_url(agent_project, org_slug: @organization.slug)
+    end
+  end
+
+  test "a member can't make the Agent Project's key" do
+    agent_project = create(:project, organization: @organization, name: "Agent sessions", agent: true)
+    sign_in_as(@member)
+
+    assert_no_difference -> { ProjectKey.count } do
+      post project_keys_url(agent_project, org_slug: @organization.slug)
+    end
+    assert_equal "You are not authorized to perform this action.", flash[:alert]
+    assert_equal false, page_of(agent_project)["can_manage_keys"]
+  end
+
+  test "an ordinary Project's page says nothing of the Agent Project's key" do
+    sign_in_as(@admin)
+
+    assert_nil page_of(@project)["agent_key_text"]
   end
 
   test "an admin rotates a key: new values, so the old ones no longer send" do
@@ -88,5 +130,13 @@ class ProjectKeysControllerTest < ActionDispatch::IntegrationTest
     patch rotate_project_key_url(theirs, key, org_slug: @organization.slug)
 
     assert_response :not_found
+  end
+
+  private
+
+  def page_of(project)
+    get project_url(project, org_slug: @organization.slug),
+      headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    JSON.parse(response.body)["props"]
   end
 end

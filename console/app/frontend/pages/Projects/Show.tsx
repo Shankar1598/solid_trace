@@ -22,15 +22,14 @@ interface ProjectsShowProps {
   default_trace_retention_days: number
   can_manage_project: boolean
   can_manage_keys: boolean
-  // Why the Project has no keys and offers none (the Agent Project).
-  no_keys_text: string | null
+  agent_key_text: string | null
   can_delete_project: boolean
   // Only with a Dispatcher URL: the Factory section's paths.
   factory_section?: FactorySectionPaths
 }
 
 export default function ProjectsShow({
-  project, default_log_retention_days, default_trace_retention_days, can_manage_project, can_manage_keys, no_keys_text, can_delete_project, factory_section,
+  project, default_log_retention_days, default_trace_retention_days, can_manage_project, can_manage_keys, agent_key_text, can_delete_project, factory_section,
 }: ProjectsShowProps) {
   const { current_org } = usePage<SharedProps>().props
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -80,9 +79,10 @@ export default function ProjectsShow({
     })
   }
 
-  // Find the active DSN (usually the first one created usually, or we'd have a flag)
-  // For now just taking the first one
   const activeKey = project.keys && project.keys.length > 0 ? project.keys[0] : null
+  const shown = activeKey?.dsn
+    ? { label: 'DSN', name: 'the DSN', value: activeKey.dsn }
+    : { label: 'Key', name: 'the key', value: activeKey?.public_key ?? '' }
 
   return (
     <DashboardLayout>
@@ -93,28 +93,27 @@ export default function ProjectsShow({
           <CardHeader>
             <CardTitle>Client keys</CardTitle>
             <CardDescription>
-              Use this DSN to configure your SDK.
+              {agent_key_text ?? 'Use this DSN to configure your SDK.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {activeKey ? (
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label>DSN</Label>
+                  <Label>{shown.label}</Label>
                   <div className="flex gap-2">
-                    <Input value={activeKey.dsn} readOnly className="font-mono text-xs" />
+                    <Input value={shown.value} readOnly className="font-mono text-xs" />
                     <Button
                       variant="outline"
                       size="icon"
-                      aria-label={copiedKey === 'dsn' ? 'Copied the DSN' : 'Copy the DSN'}
-                      title={copiedKey === 'dsn' ? 'Copied' : 'Copy'}
-                      onClick={() => copyToClipboard(activeKey.dsn, 'dsn')}
+                      aria-label={copiedKey === shown.label ? `Copied ${shown.name}` : `Copy ${shown.name}`}
+                      title={copiedKey === shown.label ? 'Copied' : 'Copy'}
+                      onClick={() => copyToClipboard(shown.value, shown.label)}
                     >
-                      {copiedKey === 'dsn' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      {copiedKey === shown.label ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                     </Button>
                   </div>
                 </div>
-                {/* Could show Public Key separately if needed, but DSN usually contains it */}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center p-6 text-center border border-dashed">
@@ -123,9 +122,7 @@ export default function ProjectsShow({
                 <p className="text-sm text-muted-foreground mb-4">
                   This project doesn't have any client keys generated yet.
                 </p>
-                {no_keys_text ? (
-                  <p className="text-xs text-muted-foreground">{no_keys_text}</p>
-                ) : can_manage_keys ? (
+                {can_manage_keys ? (
                   <Button variant="outline" onClick={() => router.post(`/${current_org.slug}/projects/${project.slug}/keys`)}>
                     <RefreshCw className="h-4 w-4" />
                     Generate a key
