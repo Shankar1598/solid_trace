@@ -310,6 +310,8 @@ func TestThePluginsHoldNoInstanceURLAndNoSecret(t *testing.T) {
 var publicHosts = []string{"github.com", "bitbucket.org", "bytebucket.org", "gitlab.com"}
 
 func publicURL(u string) bool {
+	// A URL in a shell string can run into an escape, such as \n.
+	u, _, _ = strings.Cut(u, `\`)
 	parsed, err := neturl.Parse(strings.TrimRight(u, ").,;'`\\"))
 	if err != nil {
 		return false
@@ -332,6 +334,7 @@ func TestAPublicURLIsAForgeOrCannotBeAnInstance(t *testing.T) {
 		"https://gitlab.com/example-team/app":           true,
 		"https://avatar.example/a.png":                  true,
 		"http://localhost:1":                            true,
+		`http://localhost:1\n'`:                         true,
 		"file://$tmp/api":                               true,
 		"https://solidtrace.acme.dev/":                  false,
 		"https://github.com.acme.dev/":                  false,
