@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { navSection, orgSwitchUrl, sidebarItems, sidebarSection } from './nav'
+import { navSection, orgSwitchUrl, sidebarItems, type SidebarGroup } from './nav'
 
 describe('the sidebar entry of a page', () => {
   it('is Issues for the list and each Issue', () => {
@@ -41,12 +41,10 @@ describe('the sidebar entry of a page', () => {
     expect(orgSwitchUrl('/acme/review_records/record?id=x', 'meta')).toBe('/meta/review_records')
   })
 
-  it('lights the Agent sessions entry on the Review records pages, a tab of Agent sessions', () => {
-    expect(sidebarSection('/acme/review_records')).toBe('agent_sessions')
-    expect(sidebarSection('/acme/review_records/record?id=x')).toBe('agent_sessions')
-    expect(sidebarSection('/acme/agent_sessions/abc')).toBe('agent_sessions')
-    expect(sidebarSection('/acme/runs')).toBe('runs')
-    expect(sidebarSection('/acme/mentions')).toBeNull()
+  it('is Agent sessions or Review records alone on their pages, not the other', () => {
+    expect(navSection('/acme/agent_sessions/abc')).toBe('agent_sessions')
+    expect(navSection('/acme/review_records')).toBe('review_records')
+    expect(navSection('/acme/review_records/record?id=x')).toBe('review_records')
   })
 
   it('is Runs for the Runs page with its filters', () => {
@@ -122,15 +120,35 @@ describe('where switching Organization lands', () => {
 })
 
 describe('the sidebar entries', () => {
+  const labels = (factoryOn: boolean) => sidebarItems('acme', factoryOn).map(e => e.label)
+  const codingAgents = () => sidebarItems('acme', false).find((e): e is SidebarGroup => 'children' in e)!
+
   it('have no Runs entry on an install with no Dispatcher URL', () => {
-    const labels = sidebarItems('acme', false).map(i => i.label)
-    expect(labels).not.toContain('Runs')
-    expect(labels).toEqual(['Overview', 'Issues', 'Logs', 'Performance', 'Dashboards', 'Monitors', 'Agent sessions', 'Projects', 'Settings'])
+    expect(labels(false)).toEqual(['Overview', 'Issues', 'Logs', 'Performance', 'Dashboards', 'Monitors', 'Coding agents', 'Projects', 'Settings'])
   })
 
-  it('have the Runs entry after Agent sessions when the Factory is on', () => {
-    const items = sidebarItems('acme', true)
-    expect(items.map(i => i.label).slice(6, 9)).toEqual(['Agent sessions', 'Runs', 'Projects'])
-    expect(items.find(i => i.label === 'Runs')).toEqual({ section: 'runs', label: 'Runs', href: '/acme/runs' })
+  it('have the Runs entry after Coding agents when the Factory is on', () => {
+    expect(labels(true).slice(6, 9)).toEqual(['Coding agents', 'Runs', 'Projects'])
+    expect(sidebarItems('acme', true).find(e => e.label === 'Runs')).toEqual({ section: 'runs', label: 'Runs', href: '/acme/runs' })
+  })
+
+  it('group Agent sessions and Review records under Coding agents, and nowhere else', () => {
+    expect(codingAgents().children).toEqual([
+      { section: 'agent_sessions', label: 'Agent sessions', href: '/acme/agent_sessions' },
+      { section: 'review_records', label: 'Review records', href: '/acme/review_records' },
+    ])
+    expect(labels(true)).not.toContain('Agent sessions')
+    expect(labels(true)).not.toContain('Review records')
+  })
+
+  it('light the group\'s child of each of its pages', () => {
+    const children = codingAgents().children
+    const lit = (url: string) => children.filter(c => c.section === navSection(url)).map(c => c.label)
+    expect(lit('/acme/agent_sessions?range=30d')).toEqual(['Agent sessions'])
+    expect(lit('/acme/agent_sessions/abc')).toEqual(['Agent sessions'])
+    expect(lit('/acme/review_records')).toEqual(['Review records'])
+    expect(lit('/acme/review_records/record?key=https%3A%2F%2Fgithub.com%2Facme%2Fshop%2Fpull%2F7')).toEqual(['Review records'])
+    expect(lit('/acme/issues')).toEqual([])
+    expect(lit('/acme/settings/agent_sessions')).toEqual([])
   })
 })

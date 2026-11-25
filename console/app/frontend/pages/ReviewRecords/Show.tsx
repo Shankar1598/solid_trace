@@ -45,11 +45,10 @@ export default function ReviewRecordShow({ review_record: view }: { review_recor
   const row = view.review_record
   const record = view.record
   const title = row ? row.pr || 'No PR' : 'Review record'
-  const { current_org } = usePage<SharedProps>().props
   return (
     <DashboardLayout>
       <PageHeader
-        breadcrumbs={[{ label: 'Agent sessions', href: `/${current_org?.slug ?? ''}/agent_sessions` }, { label: 'Review records', href: view.list_path }, { label: title }]}
+        breadcrumbs={[{ label: 'Review records', href: view.list_path }, { label: title }]}
         title={<span className="break-all" data-title>{title}</span>}
         tabTitle={`Review record ${title}`}
         badge={row && <Badge variant="count">Round {row.round}</Badge>}

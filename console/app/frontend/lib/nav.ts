@@ -3,24 +3,36 @@
 
 export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'agent_sessions' | 'review_records' | 'runs' | 'projects' | 'settings'
 
-/** The sections that have a sidebar entry: Review records is a tab of Agent sessions. */
-export type SidebarSection = Exclude<NavSection, 'review_records'>
+export type SidebarGroupId = 'coding_agents'
+
+export type SidebarLink = { section: NavSection; label: string; href: string }
+
+export type SidebarGroup = { group: SidebarGroupId; label: string; children: SidebarLink[] }
+
+export type SidebarEntry = SidebarLink | SidebarGroup
 
 /** The sidebar's entries, in order, for the Organization `slug`. Runs is the Factory's: with no Dispatcher URL (factoryOn false) there is no Runs entry. */
-export function sidebarItems(slug: string, factoryOn: boolean): { section: SidebarSection; label: string; href: string }[] {
-  const entries: [SidebarSection, string, string][] = [
-    ['overview', 'Overview', 'overview'],
-    ['issues', 'Issues', 'issues'],
-    ['logs', 'Logs', 'logs'],
-    ['performance', 'Performance', 'performance'],
-    ['dashboards', 'Dashboards', 'dashboards'],
-    ['monitors', 'Monitors', 'monitors'],
-    ['agent_sessions', 'Agent sessions', 'agent_sessions'],
-    ...(factoryOn ? [['runs', 'Runs', 'runs'] as [SidebarSection, string, string]] : []),
-    ['projects', 'Projects', 'projects'],
-    ['settings', 'Settings', 'settings/organization'],
+export function sidebarItems(slug: string, factoryOn: boolean): SidebarEntry[] {
+  const link = (section: NavSection, label: string, path: string = section): SidebarLink => ({ section, label, href: `/${slug}/${path}` })
+  return [
+    link('overview', 'Overview'),
+    link('issues', 'Issues'),
+    link('logs', 'Logs'),
+    link('performance', 'Performance'),
+    link('dashboards', 'Dashboards'),
+    link('monitors', 'Monitors'),
+    {
+      group: 'coding_agents',
+      label: 'Coding agents',
+      children: [
+        link('agent_sessions', 'Agent sessions'),
+        link('review_records', 'Review records'),
+      ],
+    },
+    ...(factoryOn ? [link('runs', 'Runs')] : []),
+    link('projects', 'Projects'),
+    link('settings', 'Settings', 'settings/organization'),
   ]
-  return entries.map(([section, label, path]) => ({ section, label, href: `/${slug}/${path}` }))
 }
 
 // The parts of a Console URL's path after its Organization.
@@ -51,12 +63,6 @@ export function navSection(url: string): NavSection | null {
     default:
       return null
   }
-}
-
-/** The sidebar entry that a Console URL lights: its section, with the Review records under Agent sessions. */
-export function sidebarSection(url: string): SidebarSection | null {
-  const section = navSection(url)
-  return section === 'review_records' ? 'agent_sessions' : section
 }
 
 /**

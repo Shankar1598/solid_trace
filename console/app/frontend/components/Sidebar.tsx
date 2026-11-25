@@ -1,7 +1,10 @@
+import { useId, useState } from 'react'
 import { Link, usePage } from '@inertiajs/react'
-import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Workflow, Check, ChevronsUpDown, Timer } from 'lucide-react'
+import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Workflow, Check, ChevronsUpDown, Timer, ChevronRight, SquareTerminal, ClipboardCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { orgSwitchUrl, sidebarItems, sidebarSection, type SidebarSection } from '@/lib/nav'
+import { navSection, orgSwitchUrl, sidebarItems, type NavSection, type SidebarGroup, type SidebarGroupId, type SidebarLink } from '@/lib/nav'
+import { groupOpen, keepGroupOpen } from '@/lib/sidebarGroups'
+import { browserStorage } from '@/lib/recentQueries'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { SharedProps } from '@/types'
 import { ModeToggle } from './ModeToggle'
@@ -10,9 +13,50 @@ import { onMac } from './useShortcut'
 import { keyLabel } from '@/lib/shortcuts'
 import { buttonVariants } from '@/components/ui/button'
 
-const SECTION_ICONS: Record<SidebarSection, typeof Gauge> = {
+const SECTION_ICONS: Record<NavSection, typeof Gauge> = {
   overview: Gauge, issues: List, logs: ScrollText, performance: Timer, dashboards: LayoutDashboard, monitors: BellRing,
-  agent_sessions: Bot, runs: Workflow, projects: GitMerge, settings: Settings,
+  agent_sessions: SquareTerminal, review_records: ClipboardCheck, runs: Workflow, projects: GitMerge, settings: Settings,
+}
+
+const GROUP_ICONS: Record<SidebarGroupId, typeof Gauge> = { coding_agents: Bot }
+
+const entryClass = (lit: boolean) => cn(
+  "flex w-full items-center gap-3 px-3 py-2 text-sm font-medium transition-colors",
+  lit ? "bg-secondary text-primary" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+)
+
+function NavLink({ link, section }: { link: SidebarLink; section: NavSection | null }) {
+  const Icon = SECTION_ICONS[link.section]
+  const active = link.section === section
+  return (
+    <Link href={link.href} aria-current={active ? 'page' : undefined} className={entryClass(active)}>
+      <Icon className="h-4 w-4" />
+      {link.label}
+    </Link>
+  )
+}
+
+function NavGroup({ group, section }: { group: SidebarGroup; section: NavSection | null }) {
+  const onChildPage = group.children.some(child => child.section === section)
+  const [open, setOpen] = useState(() => groupOpen(browserStorage(), group.group, onChildPage))
+  const listId = useId()
+  const Icon = GROUP_ICONS[group.group]
+  const toggle = () => {
+    keepGroupOpen(browserStorage(), group.group, !open)
+    setOpen(!open)
+  }
+  return (
+    <div data-sidebar-group={group.group}>
+      <button type="button" aria-expanded={open} aria-controls={listId} onClick={toggle} className={entryClass(!open && onChildPage)}>
+        <Icon className="h-4 w-4" />
+        {group.label}
+        <ChevronRight className={cn("ml-auto h-4 w-4 transition-transform", open && "rotate-90")} aria-hidden />
+      </button>
+      <div id={listId} hidden={!open} className="ml-5 mt-0.5 space-y-0.5 border-l pl-2">
+        {group.children.map(child => <NavLink key={child.href} link={child} section={section} />)}
+      </div>
+    </div>
+  )
 }
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
@@ -36,10 +80,8 @@ export function Sidebar({ className }: SidebarProps) {
     </>
   )
 
-  const section = sidebarSection(url)
-  const navItems = sidebarItems(current_org.slug, props.factory_on === true).map(item => ({
-    ...item, icon: SECTION_ICONS[item.section], active: section === item.section,
-  }))
+  const section = navSection(url)
+  const entries = sidebarItems(current_org.slug, props.factory_on === true)
 
   return (
     <div className={cn("min-h-screen border-r bg-card text-card-foreground dark:border-sidebar-border dark:bg-sidebar dark:text-sidebar-foreground md:flex hidden w-[240px] flex-shrink-0 flex-col justify-between z-20", className)}>
@@ -87,22 +129,9 @@ export function Sidebar({ className }: SidebarProps) {
             Search…
             <kbd className="ml-auto font-mono text-[11px]">{keyLabel(['Mod', 'k'], onMac())}</kbd>
           </button>
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={item.active ? 'page' : undefined}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2 text-sm font-medium transition-colors",
-                item.active
-                  ? "bg-secondary text-primary"
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-              )}
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </Link>
-          ))}
+          {entries.map(entry => 'children' in entry
+            ? <NavGroup key={entry.group} group={entry} section={section} />
+            : <NavLink key={entry.href} link={entry} section={section} />)}
         </nav>
       </div>
 

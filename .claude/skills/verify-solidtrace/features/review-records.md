@@ -12,7 +12,7 @@ The `open-pr` and `update-pr` skills end by sending the PR's Review record to `s
 
 ## How to get to it (user POV)
 
-- Sidebar link **Review records**, next to Agent sessions, which opens `/<org>/review_records`.
+- Sidebar group **Coding agents**, link **Review records**, under Agent sessions, which opens `/<org>/review_records`.
 - The palette's page **Review records**.
 - MCP: `list_review_records` and `get_review_record`, each answer ending with its Console link.
 - The data comes from an Agent session's upload: `solidtrace capture` in a captured repository, or a Run.

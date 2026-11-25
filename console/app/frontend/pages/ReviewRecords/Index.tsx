@@ -1,7 +1,6 @@
 import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle, ClipboardCheck } from 'lucide-react'
-import { AgentSessionsTabs } from '@/components/AgentSessionsTabs'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { buttonVariants } from '@/components/ui/button'
@@ -17,16 +16,14 @@ type ReviewRecordsProps =
 const DESCRIPTION = 'The newest Review record of each PR: what the reviews found, what happened to each finding, and what they missed.'
 
 /**
- * The Review records tab of Agent sessions: one row for each PR whose
+ * The Review records page of Coding agents: one row for each PR whose
  * open-pr or update-pr session uploaded with its Agent session, the PR
  * stored last first.
  */
 export default function ReviewRecordsIndex({ review_records: view }: { review_records: ReviewRecordsProps }) {
-  const { current_org } = usePage<SharedProps>().props
   return (
     <DashboardLayout>
-      <PageHeader title="Agent sessions" tabTitle="Review records" description={DESCRIPTION} />
-      <AgentSessionsTabs slug={current_org?.slug ?? ''} current="review_records" />
+      <PageHeader title="Review records" description={DESCRIPTION} />
       {view.on ? <RecordsList view={view} /> : <TurnOn canTurnOn={view.can_turn_on} settingsPath={view.settings_path} />}
     </DashboardLayout>
   )
