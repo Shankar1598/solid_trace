@@ -159,6 +159,7 @@ export EVENT_STORE_INGEST_URL=http://127.0.0.1:$INGEST_PORT
 export INGEST_URL=http://localhost:$INGEST_PORT
 export E2E_BASE_URL=http://localhost:$CONSOLE_PORT
 export E2E_INGEST_URL=http://localhost:$INGEST_PORT
+export E2E_CLICKHOUSE_DATABASE=$db
 export PORT=$CONSOLE_PORT
 export CHOKIDAR_USEPOLLING=1
 EOF
