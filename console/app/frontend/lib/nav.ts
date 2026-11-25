@@ -3,9 +3,12 @@
 
 export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'agent_sessions' | 'review_records' | 'runs' | 'projects' | 'settings'
 
+/** The sections that have a sidebar entry: Review records is a tab of Agent sessions. */
+export type SidebarSection = Exclude<NavSection, 'review_records'>
+
 /** The sidebar's entries, in order, for the Organization `slug`. Runs is the Factory's: with no Dispatcher URL (factoryOn false) there is no Runs entry. */
-export function sidebarItems(slug: string, factoryOn: boolean): { section: NavSection; label: string; href: string }[] {
-  const entries: [NavSection, string, string][] = [
+export function sidebarItems(slug: string, factoryOn: boolean): { section: SidebarSection; label: string; href: string }[] {
+  const entries: [SidebarSection, string, string][] = [
     ['overview', 'Overview', 'overview'],
     ['issues', 'Issues', 'issues'],
     ['logs', 'Logs', 'logs'],
@@ -13,8 +16,7 @@ export function sidebarItems(slug: string, factoryOn: boolean): { section: NavSe
     ['dashboards', 'Dashboards', 'dashboards'],
     ['monitors', 'Monitors', 'monitors'],
     ['agent_sessions', 'Agent sessions', 'agent_sessions'],
-    ['review_records', 'Review records', 'review_records'],
-    ...(factoryOn ? [['runs', 'Runs', 'runs'] as [NavSection, string, string]] : []),
+    ...(factoryOn ? [['runs', 'Runs', 'runs'] as [SidebarSection, string, string]] : []),
     ['projects', 'Projects', 'projects'],
     ['settings', 'Settings', 'settings/organization'],
   ]
@@ -49,6 +51,12 @@ export function navSection(url: string): NavSection | null {
     default:
       return null
   }
+}
+
+/** The sidebar entry that a Console URL lights: its section, with the Review records under Agent sessions. */
+export function sidebarSection(url: string): SidebarSection | null {
+  const section = navSection(url)
+  return section === 'review_records' ? 'agent_sessions' : section
 }
 
 /**

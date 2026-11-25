@@ -162,6 +162,26 @@ func ReviewRecordsByPR(records []ReviewRecord) []ReviewRecordPR {
 	return prs
 }
 
+// SessionReviewRecords gives the Review record of each Agent session of
+// ids that has one: the record that the server stored last of its own
+// records, from the records of each path's highest version, as
+// ReviewRecordsByPR counts them.
+func SessionReviewRecords(prs []ReviewRecordPR, ids []uuid.UUID) map[uuid.UUID]ReviewRecord {
+	wanted := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	of := map[uuid.UUID]ReviewRecord{}
+	for _, pr := range prs {
+		for _, r := range pr.Records {
+			if last, ok := of[r.SessionID]; wanted[r.SessionID] && (!ok || compareStores(r, last) > 0) {
+				of[r.SessionID] = r
+			}
+		}
+	}
+	return of
+}
+
 // insertReviewRecords inserts the records of one range of the parse, with
 // the range's dedup token in ctx.
 func (s *ClickHouseLogs) insertReviewRecords(ctx context.Context, projectID uint32, records []ReviewRecord) error {

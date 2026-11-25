@@ -22,6 +22,9 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     create(:organization_user, organization: @organization, user: @member, role: :member)
     @shop = create(:project, organization: @organization, name: "Shop", slug: "shop")
     travel_to Time.utc(2026, 10, 3, 12, 0, 0)
+    # No Agent session has a Review record unless a test says so.
+    stub_request(:post, %r{/api/\d+/review-records/sessions\z})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: {} }.to_json)
   end
 
   def turn_on
@@ -84,6 +87,25 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
                    "cache_write_tokens" => 200, "cost_usd" => 0.00174, "no_cost" => 1 }, view["totals"])
     assert_equal "estimate at list prices", view["cost_label"]
     assert view.dig("event_store", "available")
+  end
+
+  test "a listed Agent session that made a Review record has it, for its link; an EventStore that cannot answer gives no links" do
+    project = turn_on
+    stub_agent_sessions(project, {})
+    record = { id: "5a7c9e1b-3d5f-4a6c-8e0a-2b4d6f8a0c1e", key: "https://github.com/acme/shop/pull/7", pr: "https://github.com/acme/shop/pull/7", round: 2 }
+    asked = stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/sessions")
+      .with(body: { session_ids: [ RUN, CART ] }.to_json)
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: { CART => record } }.to_json)
+    sign_in_as(@member)
+
+    assert_equal({ CART => record.stringify_keys }, page["review_records"])
+    assert_requested asked
+
+    # An EventStore older than this read answers 404: the list shows, with no links.
+    stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/sessions").to_return(status: 404, body: "Cannot POST")
+    view = page
+    assert_equal({}, view["review_records"])
+    assert_equal 2, view["rows"].size
   end
 
   test "the filters in the URL go to EventStore and come back on the page, with the choices of each" do

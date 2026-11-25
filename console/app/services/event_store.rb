@@ -215,6 +215,15 @@ class EventStore
       post!("#{base_url}/api/#{project_id}/review-records/record", body, read_timeout: read_timeout, open_timeout: 3)
     end
 
+    # The Review record of each Agent session of session_ids (at most 500)
+    # that has one, as EventStore's POST /review-records/sessions answers
+    # it: {"sessions" => {session id => {"id", "key", "pr", "round"}}}, the
+    # record that the server stored last of the session's own. Raises
+    # Unavailable as transactions! does.
+    def session_review_records!(project_id:, session_ids:, read_timeout: 10)
+      post!("#{base_url}/api/#{project_id}/review-records/sessions", { session_ids: session_ids }, read_timeout: read_timeout, open_timeout: 3)
+    end
+
     # The Runs of an Agent Project with a run event in [from, to], as
     # EventStore's POST /runs answers them: {"runs" => [...], "more"}, each
     # Run as its last event shows it, Active Runs first. project (a Project

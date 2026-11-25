@@ -1,4 +1,4 @@
-import { Link } from '@inertiajs/react'
+import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle, Bot, ChevronDown, ChevronRight, Wrench } from 'lucide-react'
 import { createContext, useContext, useEffect, useState } from 'react'
@@ -42,6 +42,8 @@ import {
   type TimelineStep,
   type TimelineSubagent,
 } from '@/lib/agentSessionTimeline'
+import { recordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
+import type { SharedProps } from '@/types'
 
 interface AgentSessionProps {
   event_store: { available: boolean; error?: string }
@@ -55,6 +57,8 @@ interface AgentSessionProps {
   timeline_path: string
   line_path: string
   parent_path: string | null
+  /** The Review record of this Agent session, null for none. */
+  review_record: SessionReviewRecord | null
 }
 
 /** The URL of the raw lines of this Agent session, for 'Show full'. */
@@ -144,7 +148,7 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
               {view.resume_warning}
             </div>
           )}
-          <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} />
+          <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} record={view.review_record} />
           <AgentSessionSearch
             label="Search this Agent session"
             placeholder="Search the steps of this Agent session…"
@@ -220,8 +224,14 @@ function SearchResults({ base, search, order }: { base: string; search: string; 
   )
 }
 
-function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; costLabel: string; parentPath: string | null }) {
+function Header({ session, costLabel, parentPath, record }: {
+  session: AgentSessionRow
+  costLabel: string
+  parentPath: string | null
+  record: SessionReviewRecord | null
+}) {
   const model = modelText(session.model, undefined)
+  const recordsPath = `/${usePage<SharedProps>().props.current_org?.slug ?? ''}/review_records`
   const facts: [string, React.ReactNode][] = [
     [session.run ? 'Run' : 'Person', whoText(session)],
     ['Repository', <span className="font-mono text-xs">{session.repository}</span>],
@@ -241,6 +251,14 @@ function Header({ session, costLabel, parentPath }: { session: AgentSessionRow; 
     )],
     ['Estimated cost', <span>{session.cost_usd === null ? <span className="text-muted-foreground">{costText(null)}</span> : <span className="font-mono text-xs">{costText(session.cost_usd)}</span>} <span className="text-xs text-muted-foreground">({costLabel})</span></span>],
     ['Flags', session.flags.length ? session.flags.join(', ') : <None />],
+    ['Review record', record
+      ? (
+        <span data-review-record-link>
+          <Link href={recordPath(recordsPath, { id: record.id })} className="underline underline-offset-2">Round {record.round}</Link>
+          {' '}<span className="font-mono text-xs text-muted-foreground">{record.pr || 'No PR'}</span>
+        </span>
+      )
+      : <None />],
   ]
   return (
     <Card data-section="agent-session-header">

@@ -536,16 +536,23 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   capture(reviewer, first, shopDir)
   capture(reviewer, second, shopDir)
 
-  // The Review records page, from the navigation, once EventStore has
-  // parsed the uploads: one row for the PR, its newest round.
+  // The Review records tab of Agent sessions, once EventStore has parsed
+  // the uploads: one row for the PR, its newest round. The sidebar has no
+  // entry of its own for it: Agent sessions stays lit.
   const table = page.getByRole('table', { name: 'Review records' })
   const row = table.locator(`tr[data-review-record="${pr}"]`)
+  const sidebar = page.getByRole('navigation', { name: 'Main' })
+  const tabs = page.getByRole('navigation', { name: 'Agent sessions tabs' })
   await expect(async () => {
     await page.goto(`/${ORG}/agent_sessions`)
-    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Review records' }).click()
+    await expect(tabs.getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page', { timeout: 1_000 })
+    await tabs.getByRole('link', { name: 'Review records' }).click()
     await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records$`))
     await expect(row.locator('[data-cell="round"]')).toHaveText('2(1 earlier)', { timeout: 1_000 })
   }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] })
+  await expect(tabs.getByRole('link', { name: 'Review records' })).toHaveAttribute('aria-current', 'page')
+  await expect(sidebar.getByRole('link', { name: 'Review records' })).toHaveCount(0)
+  await expect(sidebar.getByRole('link', { name: 'Agent sessions' })).toHaveAttribute('aria-current', 'page')
   await expect(row.locator('[data-cell="findings"]')).toHaveText('240')
   await expect(row.locator('[data-cell="fixed"]')).toHaveText('238')
   await expect(row.locator('[data-cell="missed"]')).toHaveText('2')
@@ -611,6 +618,24 @@ test('the review final call of an open-pr Agent session, or the final reply of a
     const text: string = body.result.content.map((c: { text: string }) => c.text).join('\n')
     return text.split('\nConsole: ')
   }
+  // Each Agent session links its own round: the list's rows and the
+  // session's page. Round 1's session links round 1, though its PR has a
+  // newer round.
+  await page.goto(`/${ORG}/agent_sessions`)
+  await expect(sidebar.getByRole('link', { name: 'Agent sessions' })).toHaveAttribute('aria-current', 'page')
+  const sessionRecord = (id: string) => page.locator(`tr[data-session="${id}"] [data-review-record-link]`)
+  await expect(sessionRecord(second.id)).toHaveText('Review record, round 2')
+  await expect(sessionRecord(first.id)).toHaveText('Review record, round 1')
+  await shoot(page, 'agent-sessions-review-record-links')
+  await sessionRecord(first.id).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records/record\\?id=`))
+  await expect(page.locator('[data-section="review-record-header"]')).toContainText('6 (4 fixed, 2 missed by the reviews)')
+  await page.goto(`/${ORG}/agent_sessions/${second.id}`)
+  const header = page.locator('[data-section="agent-session-header"] [data-review-record-link]')
+  await expect(header).toContainText(`Round 2 ${pr}`)
+  await header.getByRole('link', { name: 'Round 2' }).click()
+  await expect(page.locator('[data-section="review-record-header"]')).toContainText('240 (238 fixed, 2 missed by the reviews)')
+
   const [list, listLink] = await tool('list_review_records', {})
   const listed = JSON.parse(list).review_records.find((r: { key: string }) => r.key === pr)
   expect(listed).toMatchObject({ pr, round: 2, earlier: 1, findings: 240, fixed: 238, missed: 2, confirmations_not_given: 2, session_id: second.id })

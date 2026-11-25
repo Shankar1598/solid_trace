@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { navSection, orgSwitchUrl, sidebarItems } from './nav'
+import { navSection, orgSwitchUrl, sidebarItems, sidebarSection } from './nav'
 
 describe('the sidebar entry of a page', () => {
   it('is Issues for the list and each Issue', () => {
@@ -39,6 +39,14 @@ describe('the sidebar entry of a page', () => {
     expect(navSection('/acme/review_records')).toBe('review_records')
     expect(navSection('/acme/review_records/record?key=https%3A%2F%2Fgithub.com%2Facme%2Fshop%2Fpull%2F7')).toBe('review_records')
     expect(orgSwitchUrl('/acme/review_records/record?id=x', 'meta')).toBe('/meta/review_records')
+  })
+
+  it('lights the Agent sessions entry on the Review records pages, a tab of Agent sessions', () => {
+    expect(sidebarSection('/acme/review_records')).toBe('agent_sessions')
+    expect(sidebarSection('/acme/review_records/record?id=x')).toBe('agent_sessions')
+    expect(sidebarSection('/acme/agent_sessions/abc')).toBe('agent_sessions')
+    expect(sidebarSection('/acme/runs')).toBe('runs')
+    expect(sidebarSection('/acme/mentions')).toBeNull()
   })
 
   it('is Runs for the Runs page with its filters', () => {
@@ -117,12 +125,12 @@ describe('the sidebar entries', () => {
   it('have no Runs entry on an install with no Dispatcher URL', () => {
     const labels = sidebarItems('acme', false).map(i => i.label)
     expect(labels).not.toContain('Runs')
-    expect(labels).toEqual(['Overview', 'Issues', 'Logs', 'Performance', 'Dashboards', 'Monitors', 'Agent sessions', 'Review records', 'Projects', 'Settings'])
+    expect(labels).toEqual(['Overview', 'Issues', 'Logs', 'Performance', 'Dashboards', 'Monitors', 'Agent sessions', 'Projects', 'Settings'])
   })
 
-  it('have the Runs entry after Agent sessions and Review records when the Factory is on', () => {
+  it('have the Runs entry after Agent sessions when the Factory is on', () => {
     const items = sidebarItems('acme', true)
-    expect(items.map(i => i.label).slice(6, 10)).toEqual(['Agent sessions', 'Review records', 'Runs', 'Projects'])
+    expect(items.map(i => i.label).slice(6, 9)).toEqual(['Agent sessions', 'Runs', 'Projects'])
     expect(items.find(i => i.label === 'Runs')).toEqual({ section: 'runs', label: 'Runs', href: '/acme/runs' })
   })
 })

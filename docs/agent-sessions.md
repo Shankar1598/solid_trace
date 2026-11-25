@@ -92,7 +92,7 @@ curl -fsSL https://raw.githubusercontent.com/Shankar1598/solid_trace/main/cli/se
 
 ## Read the Agent sessions
 
-Each member opens **Agent sessions** in the Organization's navigation. The page lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first unless you sort by another column: the title, the start, the last activity, the person or the Run, the repository, the model and its effort (as `claude-opus-5-5 · high`), the tokens, the estimated cost, and the counts of messages and tool calls.
+Each member opens **Agent sessions** in the Organization's navigation. Its **Sessions** tab lists each Agent session with activity in the time range (7 days if you set no range), the newest activity first unless you sort by another column: the title, the start, the last activity, the person or the Run, the repository, the model and its effort (as `claude-opus-5-5 · high`), the tokens, the estimated cost, and the counts of messages and tool calls.
 
 The title of an Agent session is the one that Claude Code shows for it:
 
@@ -185,11 +185,13 @@ In a captured repository, the record uploads with the Agent session, and SolidTr
 
 ## Read the Review records
 
-Each member opens **Review records** in the Organization's navigation, next to **Agent sessions**. The page has one row for each PR whose `open-pr` or `update-pr` Agent session uploaded, the PR stored last first: the PR, the round, the time when SolidTrace stored it, the counts of findings, fixed findings, findings that the reviews missed and confirmations not given, and a link to its Agent session. A row shows the newest record of its PR: the highest round. Next to the round, the page says how many earlier records the PR has. A record with no PR (`"pr": null`) has a row of its own for its Agent session, named **No PR**. The page shows the 500 PRs stored last.
+Each member opens **Agent sessions** in the Organization's navigation, then the **Review records** tab, next to the **Sessions** tab. The page has one row for each PR whose `open-pr` or `update-pr` Agent session uploaded, the PR stored last first: the PR, the round, the time when SolidTrace stored it, the counts of findings, fixed findings, findings that the reviews missed and confirmations not given, and a link to its Agent session. A row shows the newest record of its PR: the highest round. Next to the round, the page says how many earlier records the PR has. A record with no PR (`"pr": null`) has a row of its own for its Agent session, named **No PR**. The page shows the 500 PRs stored last.
 
 - A finding that the reviews missed is one that a person, an agent or a test run found (`found_by`), not a reviewer.
 - A confirmation not given is one whose `given` is false or not known.
 - **Open the PR** opens its PR. A local PR (`local:<path>`) has no link.
+
+Each Agent session that made a Review record links it: under its title on the **Sessions** tab, as **Review record, round** and the round, and as **Review record** in the header of its page. The link opens the round that this Agent session made, which can be older than the PR's newest round. When the session made more than one record, the link opens the record that SolidTrace stored last. With an EventStore older than Console, the pages show no such links.
 
 Click the PR to open its record. The page shows:
 

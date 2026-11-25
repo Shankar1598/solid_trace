@@ -27,6 +27,9 @@ export type ReviewRecordRow = {
 /** A row of the list: the newest record of a PR, and how many records of it are older. */
 export type ListedReviewRecord = ReviewRecordRow & { earlier: number }
 
+/** The Review record of an Agent session, for the link to its page: the one the server stored last of the session's own. */
+export type SessionReviewRecord = { id: string; key: string; pr: string; round: number }
+
 export type ReviewRound = { id: string; session_id: string; path: string; version: number; offset: number; round: number; stored_at: string }
 
 export type RecordEvent = {

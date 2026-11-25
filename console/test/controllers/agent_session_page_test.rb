@@ -22,6 +22,9 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     create(:organization_user, organization: @organization, user: @member, role: :member)
     travel_to Time.utc(2026, 10, 3, 12, 0, 0)
     @project = AgentSessionsSettings.turn_on(organization: @organization, user: @admin, entries: [ "github.com/acme/shop" ], confirmed: "1").project
+    # No Agent session has a Review record unless a test says so.
+    stub_request(:post, %r{/api/\d+/review-records/sessions\z})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: {} }.to_json)
   end
 
   def header(user_id:, run_id: "", project: "", flags: [])
@@ -92,6 +95,20 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_equal "/acme/agent_sessions/#{CART}/timeline", view["timeline_path"]
     assert_equal "/acme/agent_sessions/#{CART}/line", view["line_path"]
     assert_equal "/acme/agent_sessions/#{PARENT}", view["parent_path"]
+  end
+
+  test "the page links the Agent session's Review record, and has none for a session that made none" do
+    stub_session(user_id: @admin.id)
+    sign_in_as(@member)
+    page
+    assert_nil props["review_record"]
+
+    record = { id: "5a7c9e1b-3d5f-4a6c-8e0a-2b4d6f8a0c1e", key: CART, pr: "", round: 1 }
+    stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/review-records/sessions")
+      .with(body: { session_ids: [ CART ] }.to_json)
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: { CART => record } }.to_json)
+    page
+    assert_equal record.stringify_keys, props["review_record"]
   end
 
   test "a Run's Agent session names its Run, and its person messages wait for the Run's events" do

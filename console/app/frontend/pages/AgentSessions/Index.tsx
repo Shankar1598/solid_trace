@@ -1,7 +1,8 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { useEffect, useState } from 'react'
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, ClipboardCheck } from 'lucide-react'
+import { AgentSessionsTabs } from '@/components/AgentSessionsTabs'
 import { AgentSessionSearch } from '@/components/AgentSessionSearch'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -33,6 +34,7 @@ import {
   type RunFilter,
 } from '@/lib/agentSessions'
 import { rangeOfAnswer, type AnsweredRange } from '@/lib/performance'
+import { recordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
 import type { TimeRange } from '@/lib/timeRange'
 import { cn } from '@/lib/utils'
 import type { SharedProps } from '@/types'
@@ -54,6 +56,8 @@ type AgentSessionsProps =
       projects: { name: string; slug: string }[]
       repositories: string[]
       search: SearchAcross
+      /** The Review record of each listed Agent session that has one, by its id. */
+      review_records: Record<string, SessionReviewRecord>
     }
 
 const ALL = '__all'
@@ -69,9 +73,11 @@ const DESCRIPTION = 'Each Agent session of this Organization: the engineers\' in
  * before its limit, so that the rows are the first of all in that order.
  */
 export default function AgentSessionsIndex({ agent_sessions: view }: { agent_sessions: AgentSessionsProps }) {
+  const { current_org } = usePage<SharedProps>().props
   return (
     <DashboardLayout>
       <PageHeader title="Agent sessions" description={DESCRIPTION} />
+      <AgentSessionsTabs slug={current_org?.slug ?? ''} current="sessions" />
       {view.on ? <SessionsList view={view} /> : <TurnOn canTurnOn={view.can_turn_on} settingsPath={view.settings_path} />}
     </DashboardLayout>
   )
@@ -182,7 +188,7 @@ function SessionsList({ view }: { view: Extract<AgentSessionsProps, { on: true }
         </Card>
       ) : (
         view.rows.length > 0 && (
-          <SessionsTable rows={view.rows} more={view.more} total={view.totals.agent_sessions} path={path} order={view.order} onSort={sortBy} />
+          <SessionsTable rows={view.rows} records={view.review_records} more={view.more} total={view.totals.agent_sessions} path={path} order={view.order} onSort={sortBy} />
         )
       )}
     </div>
@@ -238,8 +244,9 @@ function Totals({ totals, costLabel }: { totals: AgentSessionTotals; costLabel: 
   )
 }
 
-function SessionsTable({ rows, more, total, path, order, onSort }: {
+function SessionsTable({ rows, records, more, total, path, order, onSort }: {
   rows: AgentSessionRow[]
+  records: Record<string, SessionReviewRecord>
   more: boolean
   total: number
   path: string
@@ -248,6 +255,7 @@ function SessionsTable({ rows, more, total, path, order, onSort }: {
 }) {
   const sortHead = { order, onSort }
   const now = useNow()
+  const recordsPath = `/${usePage<SharedProps>().props.current_org?.slug ?? ''}/review_records`
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto border">
@@ -269,6 +277,7 @@ function SessionsTable({ rows, more, total, path, order, onSort }: {
           <TableBody>
             {rows.map(row => {
               const title = titleOf(row)
+              const record = records[row.id]
               return (
               <TableRow key={row.id} data-session={row.id} className="cursor-pointer" onClick={e => openRow(e, `${path}/${row.id}`)}>
                 <TableCell className="max-w-56 md:max-w-xs xl:max-w-md" data-cell="title">
@@ -276,6 +285,16 @@ function SessionsTable({ rows, more, total, path, order, onSort }: {
                   <Link href={`${path}/${row.id}`} title={title.untitled ? row.id : title.text} className="block truncate font-medium underline-offset-2 hover:underline">
                     {title.untitled ? <span className="font-mono text-xs font-normal text-muted-foreground">{title.text}</span> : title.text}
                   </Link>
+                  {record && (
+                    <Link
+                      href={recordPath(recordsPath, { id: record.id })}
+                      className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      data-review-record-link
+                    >
+                      <ClipboardCheck className="h-3 w-3" aria-hidden />
+                      Review record, round {record.round}
+                    </Link>
+                  )}
                   {/* Below md the Start, Person or Run and Repository columns are hidden, so that the table fits: the title's cell gives them. */}
                   <div className="mt-1 flex min-w-0 gap-2 text-xs text-muted-foreground md:hidden">
                     <span className="truncate">{whoText(row)}</span>

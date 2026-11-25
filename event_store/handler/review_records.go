@@ -33,6 +33,7 @@ func NewReviewRecordsHandler(records ReviewRecordReader) *ReviewRecordsHandler {
 func RegisterReviewRecordRoutes(app *fiber.App, h *ReviewRecordsHandler) {
 	app.Post("/api/:project_id/review-records", h.List)
 	app.Post("/api/:project_id/review-records/record", h.Show)
+	app.Post("/api/:project_id/review-records/sessions", h.OfSessions)
 }
 
 // reviewRecordsLimit is the most PRs that the list gives, and the PRs that
@@ -187,6 +188,60 @@ func (h *ReviewRecordsHandler) Show(c *fiber.Ctx) error {
 			Version: r.Version, Offset: r.Offset, Round: r.Round, StoredAt: r.StoredAt.UTC()})
 	}
 	return c.JSON(answer)
+}
+
+// sessionReviewRecord is the Review record of one Agent session: enough
+// for a link to its page.
+type sessionReviewRecord struct {
+	ID string `json:"id"`
+	// Key is the PR, or the Agent session id of a record with no PR.
+	Key   string `json:"key"`
+	PR    string `json:"pr"`
+	Round uint32 `json:"round"`
+}
+
+// OfSessions answers POST /api/:project_id/review-records/sessions: for
+// each Agent session of session_ids (at most reviewRecordsLimit) that has
+// a Review record, the record that the server stored last of its own, by
+// the session's id. A session with none is not in the answer.
+func (h *ReviewRecordsHandler) OfSessions(c *fiber.Ctx) error {
+	projectID, err := parseProjectID(c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "the Project id must be a number"})
+	}
+	var req struct {
+		SessionIDs []string `json:"session_ids"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "the body must be JSON"})
+	}
+	if len(req.SessionIDs) > reviewRecordsLimit {
+		return c.Status(400).JSON(fiber.Map{"error": "give at most 500 session_ids"})
+	}
+	ids := make([]uuid.UUID, 0, len(req.SessionIDs))
+	for _, s := range req.SessionIDs {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "each session_id must be a UUID"})
+		}
+		ids = append(ids, id)
+	}
+	answer := map[string]sessionReviewRecord{}
+	if len(ids) == 0 {
+		return c.JSON(fiber.Map{"sessions": answer})
+	}
+
+	ctx, cancel := context.WithTimeout(storage.TagRead(c.UserContext(), projectID, storage.ReadReviewRecords), agentSessionsTimeout)
+	defer cancel()
+	records, err := h.records.ReviewRecords(ctx, projectID)
+	if err != nil {
+		logger.L.Error("Reading the Review records failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	for id, r := range storage.SessionReviewRecords(storage.ReviewRecordsByPR(records), ids) {
+		answer[id.String()] = sessionReviewRecord{ID: r.ID.String(), Key: r.Key(), PR: r.PR, Round: r.Round}
+	}
+	return c.JSON(fiber.Map{"sessions": answer})
 }
 
 // findReviewRecord finds the PR of key and its newest record, or with no

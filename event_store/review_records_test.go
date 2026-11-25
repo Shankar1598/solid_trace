@@ -175,6 +175,38 @@ func TestTheReviewRecordsListTheNewestRecordOfEachPRAndGiveEachRecordWhole(t *te
 	if other := listReviewRecords(t, env, o.project+1000); len(other.ReviewRecords) != 0 {
 		t.Errorf("Expected no Review records in another Project, got %+v", other)
 	}
+
+	// The record of each Agent session, for the links of the Agent
+	// sessions pages: round 1 is the record of its session, though its PR
+	// has a newer round; the later line of the other session is its
+	// record; a session with no record is not in the answer.
+	const noRecord = "6f1e3a5c-2b4d-4f6a-8c0e-3d5b7f9a1c4e"
+	status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/review-records/sessions", o.project),
+		map[string]any{"session_ids": []string{laptopSession, reviewSession, noRecord}})
+	var bySession struct {
+		Sessions map[string]struct {
+			ID    string `json:"id"`
+			Key   string `json:"key"`
+			PR    string `json:"pr"`
+			Round uint32 `json:"round"`
+		} `json:"sessions"`
+	}
+	if status != 200 || json.Unmarshal(raw, &bySession) != nil {
+		t.Fatalf("Expected 200 with JSON, got %d: %s", status, raw)
+	}
+	if got := bySession.Sessions[laptopSession]; got.ID != shown.Rounds[1].ID || got.Key != pr || got.PR != pr || got.Round != 1 {
+		t.Errorf("Expected round 1 of %s for the first session, got %+v", pr, got)
+	}
+	if got := bySession.Sessions[reviewSession]; got.ID != none.ID || got.Key != reviewSession || got.PR != "" {
+		t.Errorf("Expected the record with no PR, the later line, for the other session, got %+v", got)
+	}
+	if _, ok := bySession.Sessions[noRecord]; ok || len(bySession.Sessions) != 2 {
+		t.Errorf("Expected no record for a session with none, got %s", raw)
+	}
+	if status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/review-records/sessions", o.project),
+		map[string]any{"session_ids": []string{"not-a-session"}}); status != 400 {
+		t.Errorf("Expected 400 for a session id that is not a UUID, got %d: %s", status, raw)
+	}
 }
 
 func TestAReviewRecordParsedAgainAfterACrashIsListedOnce(t *testing.T) {
