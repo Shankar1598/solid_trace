@@ -14,7 +14,12 @@ type Sending =
   | { status: 'late' }
   | { status: 'error'; message: string }
 
-export function TelemetryGetStarted({ captureSetupPath }: { captureSetupPath: string }) {
+export function TelemetryGetStarted({ captureSetupPath, hasKey, orgSlug, projectSlug }: {
+  captureSetupPath: string
+  hasKey: boolean
+  orgSlug: string
+  projectSlug: string
+}) {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6 text-sm">
       <div className="flex flex-col gap-1">
@@ -25,9 +30,16 @@ export function TelemetryGetStarted({ captureSetupPath }: { captureSetupPath: st
         </p>
       </div>
       <ol className="list-decimal space-y-1 pl-5">
+        {!hasKey && (
+          <li>
+            This Project has no key yet. An Admin makes it on the{' '}
+            <Link href={`/${orgSlug}/projects/${projectSlug}`} className="underline">Agent Project's page</Link>. Until then, the
+            settings show <code className="font-mono text-xs">&lt;key&gt;</code>.
+          </li>
+        )}
         <li>
-          Copy the settings from <Link href={captureSetupPath} className="underline">Capture setup, step 5</Link>. They have
-          the Ingest URL and the key filled in.
+          Copy the settings from <Link href={captureSetupPath} className="underline">Capture setup, step 5</Link>.
+          {hasKey && ' They have the Ingest URL and the key filled in.'}
         </li>
         <li>
           Put them in <code className="font-mono text-xs">~/.claude/settings.json</code>, or in your team's managed settings, then start

@@ -61,10 +61,12 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
 
   test "the empty Agent Project's explorer points to Claude Code's telemetry on the Capture setup page, not to snippets" do
     @project = create(:project, organization: @organization, name: "Agent sessions", agent: true)
-    create(:project_key, project: @project)
-
-    assert_equal({ "kind" => "telemetry", "capture_setup_path" => "/#{@organization.slug}/settings/agent_sessions/setup#telemetry" },
+    assert_equal({ "kind" => "telemetry", "capture_setup_path" => "/#{@organization.slug}/settings/agent_sessions/setup#telemetry",
+                   "has_key" => false },
                  explorer_page["get_started"])
+
+    create(:project_key, project: @project)
+    assert explorer_page["get_started"]["has_key"]
   end
 
   test "the Agent Project sends no test Log, as its key cannot" do

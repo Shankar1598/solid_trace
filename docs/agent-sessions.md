@@ -178,6 +178,7 @@ Claude Code ignores these variables in a repository's `.claude/settings.json`. P
 ### Which records SolidTrace keeps
 
 - Ingest keeps a record only when its `vcs.repository.url.full` matches a captured repository. It drops each other record when it arrives, and does not store it: the records of other repositories, and the records with no repository. Claude Code sends two events (`managed_settings_resolved` and the first `hook_execution_start`) before it reads the repository, so SolidTrace always drops them.
+- When the captured repositories list is empty, Ingest drops every record.
 - Claude Code reads only the `origin` remote, one time, in the folder where the session starts. So the records of a captured repository arrive only from a clone whose `origin` is that repository. SolidTrace drops all the records of a clone with no `origin`.
 - A change to the captured repositories applies to the next request.
 - Claude Code gets a success for a dropped record, so it shows no warning. The Overview shows the dropped records in **Received → Kept → Stored**, as a slice after Kept and as **Filtered out as not of a Captured repository** below it. Look there when no record arrives.

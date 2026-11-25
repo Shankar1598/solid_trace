@@ -77,7 +77,7 @@ interface LogsIndexProps {
   project: ProjectOption
   projects: ProjectOption[]
   sql_queries_enabled: boolean
-  get_started: { kind: 'snippets'; url: string; key: string | null } | { kind: 'telemetry'; capture_setup_path: string }
+  get_started: { kind: 'snippets'; url: string; key: string | null } | { kind: 'telemetry'; capture_setup_path: string; has_key: boolean }
   /** Whether any Log is in the Project's Retention: loaded after the page; null when EventStore couldn't say. */
   has_logs?: boolean | null
 }
@@ -628,7 +628,12 @@ export default function LogsIndex({ project, projects, sql_queries_enabled, get_
   }
   const getStarted = has_logs === false && seen.current.logs.length === 0 ? (
     get_started.kind === 'telemetry' ? (
-      <TelemetryGetStarted captureSetupPath={get_started.capture_setup_path} />
+      <TelemetryGetStarted
+        captureSetupPath={get_started.capture_setup_path}
+        hasKey={get_started.has_key}
+        orgSlug={orgSlug}
+        projectSlug={project.slug}
+      />
     ) : (
       <GetStarted
         target={{ url: get_started.url, projectId: project.id, key: get_started.key }}

@@ -1,5 +1,11 @@
 # frozen_string_literal: true
 
+# What the capture setup page gives an engineer or an Admin: the install
+# command of the `solidtrace` CLI and the plugin for the instance's version,
+# the managed-settings snippet that installs the plugin on each machine, the
+# `login` command for this instance, the captured repositories, and the
+# settings that send Claude Code's telemetry to the Agent Project.
+#
 # The files come from the GitHub release of the instance's version (the
 # release job's `cli` job, cli/internal/releasefiles). An instance that runs
 # no release (a development build) gets the newest release's files.

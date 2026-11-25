@@ -173,7 +173,11 @@ class LogsController < ApplicationController
 
   def get_started
     if @project.agent?
-      { kind: "telemetry", capture_setup_path: capture_setup_path(org_slug: @current_org.slug, anchor: "telemetry") }
+      {
+        kind: "telemetry",
+        capture_setup_path: capture_setup_path(org_slug: @current_org.slug, anchor: "telemetry"),
+        has_key: project_key.present?,
+      }
     else
       { kind: "snippets", url: public_ingest_url, key: project_key&.public_key }
     end

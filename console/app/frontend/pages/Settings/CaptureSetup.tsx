@@ -149,6 +149,7 @@ export default function SettingsCaptureSetup(props: CaptureSetupProps) {
                 Claude Code reads only the <code className="font-mono text-xs">origin</code> remote. So the records of a captured repository arrive
                 only from a clone whose <code className="font-mono text-xs">origin</code> is that repository.
               </li>
+              <li>When the captured repositories list is empty, Ingest drops every record.</li>
               <li>A change to the captured repositories applies to the next request.</li>
             </ul>
           </>
