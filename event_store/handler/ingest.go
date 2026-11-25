@@ -47,7 +47,7 @@ func (h *IngestHandler) Store(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Missing authentication"})
 	}
 
-	projectID, err := h.validateKey(publicKey)
+	key, err := h.validateKey(publicKey, false)
 	if err != nil {
 		return h.renderKeyError(c, err)
 	}
@@ -57,7 +57,7 @@ func (h *IngestHandler) Store(c *fiber.Ctx) error {
 		return renderBodyError(c, err)
 	}
 
-	if err := h.ingest.IngestStore(projectID, body); err != nil {
+	if err := h.ingest.IngestStore(key.ProjectID, body); err != nil {
 		return h.renderIngestError(c, err)
 	}
 
@@ -71,7 +71,7 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Missing authentication"})
 	}
 
-	projectID, err := h.validateKey(publicKey)
+	key, err := h.validateKey(publicKey, false)
 	if err != nil {
 		return h.renderKeyError(c, err)
 	}
@@ -81,7 +81,7 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 		return renderBodyError(c, err)
 	}
 
-	if err := h.ingest.IngestEnvelope(projectID, body); err != nil {
+	if err := h.ingest.IngestEnvelope(key.ProjectID, body); err != nil {
 		return h.renderIngestError(c, err)
 	}
 
@@ -91,7 +91,7 @@ func (h *IngestHandler) Envelope(c *fiber.Ctx) error {
 // POST /api/:project_id/logs
 // The key must belong to the Project in the path.
 func (h *IngestHandler) Logs(c *fiber.Ctx) error {
-	return h.ingestLogs(c, func(projectID uint32) bool {
+	return h.ingestLogs(c, false, func(projectID uint32) bool {
 		pathProjectID, err := parseProjectID(c)
 		return err == nil && pathProjectID == projectID
 	}, h.storeJSONLogs)
@@ -100,7 +100,7 @@ func (h *IngestHandler) Logs(c *fiber.Ctx) error {
 // POST /api/logs
 // The Project is the one the key belongs to.
 func (h *IngestHandler) KeyOnlyLogs(c *fiber.Ctx) error {
-	return h.ingestLogs(c, anyProject, h.storeJSONLogs)
+	return h.ingestLogs(c, false, anyProject, h.storeJSONLogs)
 }
 
 func anyProject(uint32) bool { return true }
@@ -108,10 +108,13 @@ func anyProject(uint32) bool { return true }
 // ingestLogs authenticates the request's project key, refuses it unless
 // projectAllowed accepts its Project, reads the body within the Log route's
 // limits, and gives it to store to ingest as that Project's Logs and answer.
+// otlp is true for the OTLP routes, the only ones for the Agent Project's
+// key.
 func (h *IngestHandler) ingestLogs(
 	c *fiber.Ctx,
+	otlp bool,
 	projectAllowed func(projectID uint32) bool,
-	store func(c *fiber.Ctx, projectID uint32, body ingest.Body) error,
+	store func(c *fiber.Ctx, key auth.ProjectKey, body ingest.Body) error,
 ) error {
 	publicKey := h.extractSentryKey(c)
 	if publicKey == "" {
@@ -121,11 +124,11 @@ func (h *IngestHandler) ingestLogs(
 		return c.Status(401).JSON(fiber.Map{"error": "Missing authentication"})
 	}
 
-	projectID, err := h.validateKey(publicKey)
+	key, err := h.validateKey(publicKey, otlp)
 	if err != nil {
 		return h.renderKeyError(c, err)
 	}
-	if !projectAllowed(projectID) {
+	if !projectAllowed(key.ProjectID) {
 		return c.Status(401).JSON(fiber.Map{"error": "Project key is not for this project"})
 	}
 
@@ -133,13 +136,13 @@ func (h *IngestHandler) ingestLogs(
 	if err != nil {
 		return renderBodyError(c, err)
 	}
-	return store(c, projectID, body)
+	return store(c, key, body)
 }
 
 // storeJSONLogs ingests a body of the JSON Log route, and answers with its
 // counts.
-func (h *IngestHandler) storeJSONLogs(c *fiber.Ctx, projectID uint32, body ingest.Body) error {
-	counts, err := h.ingest.IngestLogs(projectID, body, strings.EqualFold(mediaType(c), "application/x-ndjson"))
+func (h *IngestHandler) storeJSONLogs(c *fiber.Ctx, key auth.ProjectKey, body ingest.Body) error {
+	counts, err := h.ingest.IngestLogs(key.ProjectID, body, strings.EqualFold(mediaType(c), "application/x-ndjson"))
 	if err != nil {
 		return h.renderIngestError(c, err)
 	}
@@ -163,25 +166,38 @@ func mediaType(c *fiber.Ctx) string {
 	return strings.TrimSpace(mediaType)
 }
 
-var errInvalidProjectKey = errors.New("invalid project key")
+var (
+	errInvalidProjectKey = errors.New("invalid project key")
+	errAgentProjectKey   = errors.New("the Agent Project's key on a route that is not OTLP")
+)
 
-func (h *IngestHandler) validateKey(publicKey string) (uint32, error) {
-	projectID, err := h.auth.ValidateKey(publicKey)
+// validateKey returns the Project of a key. The Agent Project's key works
+// on the OTLP routes only (otlp), so that it writes no Event, no Span and no
+// JSON or Sentry Log.
+func (h *IngestHandler) validateKey(publicKey string, otlp bool) (auth.ProjectKey, error) {
+	key, err := h.auth.ValidateKey(publicKey)
 	if err != nil {
-		return 0, err
+		return auth.ProjectKey{}, err
 	}
-	if projectID == 0 {
-		return 0, errInvalidProjectKey
+	if key.ProjectID == 0 {
+		return auth.ProjectKey{}, errInvalidProjectKey
 	}
-	return projectID, nil
+	if key.Agent && !otlp {
+		return auth.ProjectKey{}, errAgentProjectKey
+	}
+	return key, nil
 }
 
-// renderKeyError returns 401 only for an unknown key. A failed lookup is our
-// fault, so it is a 500 and is logged here. Sentry SDKs do not retry on either
-// status: an event that gets any non-2xx response is lost.
+// renderKeyError returns 401 for an unknown key, and 403 for the Agent
+// Project's key on a route that is not OTLP. A failed lookup is our fault,
+// so it is a 500 and is logged here. Sentry SDKs do not retry on these
+// statuses: an event that gets any non-2xx response is lost.
 func (h *IngestHandler) renderKeyError(c *fiber.Ctx, err error) error {
-	if errors.Is(err, errInvalidProjectKey) {
+	switch {
+	case errors.Is(err, errInvalidProjectKey):
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid project key"})
+	case errors.Is(err, errAgentProjectKey):
+		return c.Status(403).JSON(fiber.Map{"error": "The Agent Project's key sends only OpenTelemetry Logs and metrics, to /v1/logs and /v1/metrics"})
 	}
 	logger.L.Error("Project key lookup failed", "error", err)
 	return c.Status(500).JSON(fiber.Map{"error": "Internal error"})

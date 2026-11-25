@@ -53,8 +53,9 @@ func (s *Service) IngestLogs(projectID uint32, body Body, ndjson bool) (LogCount
 // receipt time and the Project's Retention, stores the Logs kept as one Log
 // batch, and wakes Log processing. A record is one Log as sent: a JSON
 // object, or an OTLP log record. dropped counts what the request held that
-// wasn't a Log at all. It adds the request, with its bytes in request, to
-// the Ingest counts of its receipt second. The caller is in the gate.
+// wasn't a Log at all. It adds the request, with its bytes and the records
+// the caller filtered out in request, to the Ingest counts of its receipt
+// second. The caller is in the gate.
 func (s *Service) storeLogs[R any](
 	projectID uint32,
 	records []R,
@@ -89,7 +90,7 @@ func (s *Service) storeLogs[R any](
 
 	counts.Accepted = len(logs)
 	request.Requests = 1
-	request.LogsReceived = int64(len(records) + dropped)
+	request.LogsReceived += int64(len(records) + dropped)
 	request.LogsUnreadable = int64(counts.Dropped)
 	s.counts.count(projectID, receipt.At, request)
 	if len(logs) == 0 {

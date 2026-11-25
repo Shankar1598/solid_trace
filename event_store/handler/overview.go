@@ -186,7 +186,9 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //
 //   - band: received, every Log, element or line that arrived, with the
 //     bytes decoded and as sent and the requests; unreadable_logs, those that
-//     weren't Logs; overloaded_requests, those turned away; kept, the Logs of
+//     weren't Logs; filtered_logs, the OTLP records of the Agent Project's
+//     key that are not of a Captured repository, and so not stored;
+//     overloaded_requests, those turned away; kept, the Logs of
 //     the range's days Log processing stored, and their bytes, each Log's
 //     message and Attributes' JSON; dropped_by_transform, the Logs of those
 //     days the Log transform dropped; and stored, the range's days of Logs as
@@ -204,8 +206,8 @@ func (h *OverviewHandler) overviewParts(q overviewQuery, d *overviewData) []func
 //     received and stored of the range, its Logs a second over the range,
 //     all_days, its stored Logs and bytes of every day it keeps and the
 //     oldest of them (null with none), last_log_at, the second its last
-//     Log arrived, by Ingest counts (null with none), and kept and
-//     dropped_by_transform, as the band's.
+//     Log arrived, by Ingest counts (null with none), and kept,
+//     dropped_by_transform and filtered_logs, as the band's.
 //   - sources: by_logs, the Services and files of the Projects that sent the
 //     most Logs over the range's days, kept and dropped by the Log transform
 //     together, and by_bytes, those that kept the most bytes, at most
@@ -315,6 +317,7 @@ type (
 	overviewBand struct {
 		Received           overviewReceived `json:"received"`
 		UnreadableLogs     int64            `json:"unreadable_logs"`
+		FilteredLogs       int64            `json:"filtered_logs"`
 		OverloadedRequests int64            `json:"overloaded_requests"`
 		Kept               overviewKept     `json:"kept"`
 		DroppedByTransform int64            `json:"dropped_by_transform"`
@@ -377,6 +380,7 @@ type (
 		LastLogAt          *time.Time       `json:"last_log_at"`
 		Kept               overviewKept     `json:"kept"`
 		DroppedByTransform int64            `json:"dropped_by_transform"`
+		FilteredLogs       int64            `json:"filtered_logs"`
 		StoredCountedBytes int64            `json:"stored_counted_bytes"`
 		Spans              overviewSpans    `json:"spans"`
 	}
@@ -445,6 +449,7 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 	i := d.ingest
 	a.Band.Received = overviewReceived{Logs: i.LogsReceived, Bytes: i.BytesReceived, BytesOnWire: i.BytesOnWire, Requests: i.Requests}
 	a.Band.UnreadableLogs = i.LogsUnreadable
+	a.Band.FilteredLogs = i.LogsFiltered
 	a.Band.OverloadedRequests = i.RequestsOverloaded
 	a.Spans.receive(i.IngestCount)
 
@@ -492,6 +497,7 @@ func assembleOverview(q overviewQuery, d overviewData) overviewAnswer {
 		i := byProject[in.ProjectID]
 		a.Days[byDay[in.Day]].Projects[i].ReceivedLogs += in.LogsReceived
 		a.Projects[i].Received.add(in.IngestCount)
+		a.Projects[i].FilteredLogs += in.LogsFiltered
 		a.Projects[i].Spans.receive(in.IngestCount)
 		peaks[i] = busier(peaks[i], in.PeakLogs)
 	}

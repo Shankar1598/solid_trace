@@ -319,28 +319,41 @@ func headerOrNone(resp *http.Response, name string) string {
 	return "(none)"
 }
 
+// writeProjectKeys writes the Console tables that the key lookup reads into
+// the SQLite file at sqlitePath: Project 1 has the key key-one, Project 2
+// key-two, and Project 3, the Agent Project, key-agent, with
+// github.com/acme/shop as its Captured repository.
+func writeProjectKeys(t *testing.T, sqlitePath string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", sqlitePath)
+	if err != nil {
+		t.Fatalf("Failed to open SQLite: %v", err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"CREATE TABLE projects (id INTEGER PRIMARY KEY, agent BOOLEAN NOT NULL DEFAULT 0, captured_repositories JSON NOT NULL DEFAULT '[]')",
+		"CREATE TABLE project_keys (project_id INTEGER, public_key TEXT)",
+		`INSERT INTO projects (id, agent, captured_repositories) VALUES (1, 0, '[]'), (2, 0, '[]'), (3, 1, '["github.com/acme/shop"]')`,
+		"INSERT INTO project_keys (project_id, public_key) VALUES (1, 'key-one'), (2, 'key-two'), (3, 'key-agent')",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+}
+
 // sendToIngestApp sends the case to a new ingest app, built as main builds
 // it: the real handler and the real Log ingest, over a Console SQLite file
-// with the two keys, with a Log writer in memory. It returns the response,
-// its body, and the writer. This uses no ClickHouse, but the package needs
-// the dev ClickHouse to run: its TestMain (clickhousetest.Main) starts with
-// it.
+// with the keys of writeProjectKeys, with a Log writer in memory. It returns
+// the response, its body, and the writer. This uses no ClickHouse, but the
+// package needs the dev ClickHouse to run: its TestMain
+// (clickhousetest.Main) starts with it.
 func sendToIngestApp(t *testing.T, c logRouteCase) (*http.Response, []byte, *memoryLogWriter) {
 	t.Helper()
 	logger.Init()
 	sqlitePath := filepath.Join(t.TempDir(), "console.sqlite3")
 	if !c.noKeysTable {
-		db, err := sql.Open("sqlite3", sqlitePath)
-		if err != nil {
-			t.Fatalf("Failed to open SQLite: %v", err)
-		}
-		if _, err := db.Exec("CREATE TABLE project_keys (project_id INTEGER, public_key TEXT)"); err != nil {
-			t.Fatalf("Failed to create project_keys: %v", err)
-		}
-		if _, err := db.Exec("INSERT INTO project_keys (project_id, public_key) VALUES (1, 'key-one'), (2, 'key-two')"); err != nil {
-			t.Fatalf("Failed to add the keys: %v", err)
-		}
-		db.Close()
+		writeProjectKeys(t, sqlitePath)
 	}
 	projectAuth, err := auth.NewProjectAuth(sqlitePath)
 	if err != nil {

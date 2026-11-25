@@ -11,9 +11,11 @@ type IngestCount struct {
 	Second time.Time
 	// LogsReceived counts every element or line the requests held, Logs or
 	// not; LogsUnreadable those that weren't Logs, and the Logs normalising
-	// dropped.
+	// dropped; and LogsFiltered the OTLP records of the Agent Project's key
+	// that are not of a Captured repository.
 	LogsReceived   int64
 	LogsUnreadable int64
+	LogsFiltered   int64
 	// BytesReceived is the requests' bodies once decoded, and BytesOnWire
 	// as sent.
 	BytesReceived int64
@@ -33,6 +35,7 @@ type IngestCount struct {
 func (c *IngestCount) Add(o IngestCount) {
 	c.LogsReceived += o.LogsReceived
 	c.LogsUnreadable += o.LogsUnreadable
+	c.LogsFiltered += o.LogsFiltered
 	c.BytesReceived += o.BytesReceived
 	c.BytesOnWire += o.BytesOnWire
 	c.Requests += o.Requests
