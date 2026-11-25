@@ -293,7 +293,7 @@ One conversation of one coding agent, kept as its transcript. A resume continues
 _Avoid_: session (alone), conversation, thread, chat
 
 **Review record**:
-The record of a PR's reviews that the `open-pr` and `update-pr` skills write at the end of an **Agent session**'s final reply: each review run, each finding with every decision on it and its outcome, the problems that a person, an agent or a test run found and the reviews missed, and the confirmations. Each `update-pr` writes the next round of the same PR. SolidTrace keeps it from the uploaded Agent session, and the newest round is the PR's record.
+The record of a PR's reviews that the `open-pr` and `update-pr` skills send to `solidtrace review final` at the end of an **Agent session** (in an older Agent session, at the end of its final reply): each review run, each finding with every decision on it and its outcome, the problems that a person, an agent or a test run found and the reviews missed, and the confirmations. Each `update-pr` writes the next round of the same PR. SolidTrace keeps it from the uploaded Agent session, and the newest round is the PR's record.
 _Avoid_: PR record, review report, findings record
 
 **Run**:

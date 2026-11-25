@@ -2,6 +2,7 @@ package agentprocessing
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -233,5 +234,23 @@ func TestACallOfReviewFinalKeepsTheRecordAsItsBody(t *testing.T) {
 	if len(records) != 1 || records[0].Record != reviewRecord || records[0].Title != "Cart page & <checkout>" ||
 		records[0].Summary != (storage.ReviewSummary{Findings: 4, Fixed: 2, Missed: 3, NotGiven: 2}) {
 		t.Fatalf("Expected the record of the call, all of it, got %+v", records)
+	}
+}
+
+func TestTheCallOfTheOpenPRSkillIsACallThatTheParseReads(t *testing.T) {
+	skill, err := os.ReadFile("../../cli/plugin-skills/skills/open-pr/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, found := strings.Cut(string(skill), "## 8. Final reply")
+	_, rest, _ = strings.Cut(rest, "````\n")
+	example, _, _ := strings.Cut(rest, "\n````")
+	if !found || !strings.Contains(example, `{"version": 2, ...}`) {
+		t.Fatalf("Expected the Final reply step of open-pr to give the call with an example record, got %q", example)
+	}
+	call := strings.Replace(example, `{"version": 2, ...}`, reviewRecord, 1)
+	records := recordsOf(unitOf("session.jsonl", 0, bashCalls(nil, call)))
+	if len(records) != 1 || records[0].Record != reviewRecord {
+		t.Fatalf("Expected the skill's call to give its record, got %+v for %q", records, example)
 	}
 }

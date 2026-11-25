@@ -9,7 +9,8 @@ import (
 )
 
 // The Review records of an Agent Project (ADR 0024): the parse finds the
-// record that open-pr or update-pr ends its final reply with, and the read
+// record that open-pr or update-pr sends to solidtrace review final, or
+// that an older session ends its final reply with, and the read
 // API lists the newest record of each PR and gives one record whole, with
 // the rounds of its PR.
 

@@ -78,6 +78,6 @@ solidtrace review final <<'EOF'
 EOF
 ````
 
-This call is how SolidTrace keeps the record: the call uploads with the session. Put the whole JSON in the heredoc, not a path to its file, and keep `'EOF'` in single quotes, so that the shell does not change the text of the record. The command must be only this call: no pipe, `&&`, `;`, redirect or other command, or SolidTrace does not keep the record. It prints the round and the counts on one line. When it refuses the record (exit 1), fix what it names and run it again.
+This call is how SolidTrace keeps the record: the call uploads with the session. Put the whole JSON in the heredoc, not a path to its file, and keep `'EOF'` in single quotes, so that the shell does not change the text of the record. The command must be only this call: no pipe, `&&`, `;`, redirect or other command, or SolidTrace does not keep the record. It prints the round and the counts on one line. When it refuses the record (exit 1), fix what it names and run it again. When the call fails with "Argument list too long" (Linux refuses a command of 128 KiB or more), SolidTrace keeps the record all the same: do not send it again, and say so in the reply.
 
 Then give the PR's URL, or in local mode the file's path, and a short summary of the findings. Do not write the record's JSON in the reply.
