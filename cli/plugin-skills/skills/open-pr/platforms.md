@@ -4,7 +4,7 @@
 
 Never put a comment, a reply, a body or a token on a command line, because the shell runs what a comment holds, such as `$(…)`, and other users can read command lines. Write each one to a file in `$dir`, and give the file. The one exception is the Run calls below: `"$(cat "$dir/body.md")"` in double quotes gives the file's text, which the shell does not run.
 
-On bitbucket.org, send each request to `https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>` (the base below) with curl. Give the token's header on standard input, with a shell builtin, and never in a file: `printf 'Authorization: Bearer %s\n' "$BITBUCKET_TOKEN" | curl -H @- …`. Build each JSON body with a tool that escapes text, write it to a file, and give it as `--data @<file>`. Do not use `-v` or `--trace`, and do not print the token.
+On bitbucket.org, send each request to `https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>` (the base below) with curl. Give the token's header on standard input, with a shell builtin, and never in a file. When `BITBUCKET_EMAIL` is set, `BITBUCKET_TOKEN` is a person's Atlassian API token, which Bitbucket takes only with Basic auth and the account's email: `printf 'Authorization: Basic %s\n' "$(printf '%s:%s' "$BITBUCKET_EMAIL" "$BITBUCKET_TOKEN" | base64 | tr -d '\n')" | curl -H @- …`. Otherwise it is an access token of a repository, a project or a workspace, as a Run gets: `printf 'Authorization: Bearer %s\n' "$BITBUCKET_TOKEN" | curl -H @- …`. Build each JSON body with a tool that escapes text, write it to a file, and give it as `--data @<file>`. Do not use `-v` or `--trace`, and do not print the token.
 
 ## The local PR file
 

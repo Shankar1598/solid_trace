@@ -338,35 +338,48 @@ fi
 pause
 
 stage "Bitbucket token"
-BITBUCKET_SKIPPED="on bitbucket.org, open-pr and update-pr need BITBUCKET_TOKEN in env of $CLAUDE_SETTINGS; without it, open-pr gives a link to a new PR"
+BITBUCKET_SKIPPED="on bitbucket.org, open-pr and update-pr need BITBUCKET_EMAIL and BITBUCKET_TOKEN in env of $CLAUDE_SETTINGS; without them, open-pr gives a link to a new PR"
 if [[ "$REVIEW_PLUGIN" != yes ]]; then
   say "The review plugin is not installed, so it needs no token."
 elif [[ -n "${BITBUCKET_TOKEN:-}" ]] || settings_env_has BITBUCKET_TOKEN; then
   say "BITBUCKET_TOKEN is set already. The wizard does not change it."
 else
-  say "On bitbucket.org, open-pr and update-pr use BITBUCKET_TOKEN to open the PR,"
-  say "read its comments and build statuses, and reply to the comments."
+  say "On bitbucket.org, open-pr and update-pr use your Atlassian API token to open the PR,"
+  say "read its comments and build statuses, and reply to the comments, in each repository you can open."
   note "GitHub repositories need no token: the skills use gh."
-  step "In Bitbucket, open the workspace settings → Access tokens, or a repository's"
-  step "Repository settings → Access tokens. A repository's token works for that repository only."
-  step "Create a token that can write pull requests and read the repositories, and copy it."
+  open_url "https://id.atlassian.com/manage-profile/security/api-tokens"
+  step "Click Create API token with scopes, give it a name and an expiry date, and choose Bitbucket."
+  step "Choose the scopes read:user:bitbucket, read:repository:bitbucket,"
+  step "read:pullrequest:bitbucket and write:pullrequest:bitbucket. Create it, and copy it."
   ask_secret BB_TOKEN "Paste the token (Enter skips):"
   if [[ -z "$BB_TOKEN" ]]; then
     SKIPPED+=("$BITBUCKET_SKIPPED")
   else
-    code="$(printf 'Authorization: Bearer %s\n' "$BB_TOKEN" \
-      | curl -s -o /dev/null -w '%{http_code}' -H @- https://api.bitbucket.org/2.0/user || true)"
+    BB_EMAIL_DEFAULT="$(git config --global user.email 2>/dev/null || true)"
+    say "Bitbucket takes an API token only with the email of your Atlassian account."
+    ask BB_EMAIL "Atlassian account email${BB_EMAIL_DEFAULT:+ [Enter for $BB_EMAIL_DEFAULT]}:"
+    [[ -z "$BB_EMAIL" ]] && BB_EMAIL="$BB_EMAIL_DEFAULT"
+    code=""
+    if [[ -n "$BB_EMAIL" ]]; then
+      code="$(printf 'Authorization: Basic %s\n' "$(printf '%s:%s' "$BB_EMAIL" "$BB_TOKEN" | base64 | tr -d '\n')" \
+        | curl -s -o /dev/null -w '%{http_code}' -H @- https://api.bitbucket.org/2.0/user || true)"
+    fi
     save=yes
-    if [[ "$code" != 200 ]]; then
-      warn "Bitbucket answered $code to the token, not 200."
-      confirm "Save it anyway?" || save=no
+    if [[ -z "$BB_EMAIL" ]]; then
+      warn "No email: the wizard does not save the token."
+      save=no
+    elif [[ "$code" != 200 ]]; then
+      warn "Bitbucket answered $code to the email and the token, not 200."
+      confirm "Save them anyway?" || save=no
+    else
+      printf '  %s✓ Bitbucket accepted the token%s\n' "$GREEN" "$RESET"
     fi
     if [[ "$save" == no ]]; then
       SKIPPED+=("$BITBUCKET_SKIPPED")
-    elif write_settings_env BITBUCKET_TOKEN "$BB_TOKEN"; then
-      printf '  %s✓ wrote%s BITBUCKET_TOKEN → env of %s\n' "$GREEN" "$RESET" "$CLAUDE_SETTINGS"
+    elif write_settings_env BITBUCKET_EMAIL "$BB_EMAIL" && write_settings_env BITBUCKET_TOKEN "$BB_TOKEN"; then
+      printf '  %s✓ wrote%s BITBUCKET_EMAIL and BITBUCKET_TOKEN → env of %s\n' "$GREEN" "$RESET" "$CLAUDE_SETTINGS"
     else
-      SKIPPED+=("python3 is necessary to write $CLAUDE_SETTINGS: add BITBUCKET_TOKEN to its env by hand")
+      SKIPPED+=("python3 is necessary to write $CLAUDE_SETTINGS: add BITBUCKET_EMAIL and BITBUCKET_TOKEN to its env by hand")
     fi
   fi
   unset BB_TOKEN
