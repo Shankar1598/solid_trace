@@ -364,13 +364,24 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   // the model does not show. The summary is one folded line, and its tags
   // show as headings.
   const transcript = page.locator('[data-transcript="main"]')
-  const command = transcript.locator('[data-step="person"][data-command]')
+  const command = transcript.locator('[data-step="person"][data-command]').filter({ hasText: '/compact' })
   await expect(command).toHaveCount(1)
-  await expect(command).toContainText('/compact')
   await expect(command.locator('[data-command-output]')).toHaveText(/^⎿\s*Compacted \(ctrl\+o to see full summary\)$/)
   await expect(transcript.locator('[data-step="person"]').filter({ hasText: '/compact' })).toHaveCount(1)
   await expect(transcript).not.toContainText('[2m')
   await expect(transcript).not.toContainText('Caveat')
+  // A shell command (`! terraform plan`) shows in the same way: as the
+  // person typed it, with its stdout and then its stderr under it, and no
+  // tags or colour codes of the terminal.
+  const shell = transcript.locator('[data-step="person"][data-command]').filter({ hasText: '! terraform plan' })
+  await expect(shell).toHaveCount(1)
+  await expect(shell.locator('pre.font-mono').first()).toHaveText('! terraform plan')
+  await expect(shell.locator('[data-command-output]')).toHaveText(/^⎿\s*google_storage_bucket\.cart: Refreshing state\.\.\.\s*Acquiring state lock\.$/)
+  await expect(transcript.locator('[data-step="person"]').filter({ hasText: 'Refreshing state' })).toHaveCount(1)
+  await expect(transcript).not.toContainText('bash-')
+  await expect(transcript).not.toContainText('[0m')
+  await expect(transcript).not.toContainText('[1m')
+
   const summary = transcript.locator('[data-compaction-summary]')
   await expect(summary).toHaveCount(1)
   await expect(summary).toContainText('Compaction summary')

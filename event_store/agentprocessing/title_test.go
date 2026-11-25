@@ -72,6 +72,10 @@ func TestTheTitleOfAnAgentSession(t *testing.T) {
 		{"a slash command as the page shows it", []string{
 			person("<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>the cart PR</command-args>"),
 		}, "/review the cart PR"},
+		{"a shell command as the page shows it", []string{person("<bash-input>git status</bash-input>")}, "! git status"},
+		{"the output of a shell command is not a person message", []string{
+			person("<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>"), person("Fix the cart"),
+		}, "Fix the cart"},
 		{"the output of a local command is not a person message", []string{
 			person("<local-command-stdout>Kept model as Opus</local-command-stdout>"), person("Fix the cart"),
 		}, "Fix the cart"},

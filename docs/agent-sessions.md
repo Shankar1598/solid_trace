@@ -92,7 +92,7 @@ The title of an Agent session is the one that Claude Code shows for it:
 
 1. The last name that a person gave it with `/rename`. A later `/rename` replaces an earlier one.
 2. Else the last title that Claude Code made for it. Claude Code writes a new title as the Agent session goes on, so the title can change.
-3. Else the start of its first person message, on one line. A slash command shows as the command and its arguments.
+3. Else the start of its first person message, on one line. A slash command shows as the command and its arguments, and a shell command as `!` and the command.
 4. Else the Agent session has no title, and the pages show the start of its id, in grey.
 
 Only the main transcript gives the title: a subagent's title lines do not change it. A long title is cut with "…" in the list; hold the pointer on it to read all of it. On a phone, the title is the main text of the row, with the person or the Run, the start and the repository below it.
@@ -118,6 +118,7 @@ Click a row in the list to open the Agent session page.
 - A message that a person sent while the agent worked shows at the time when the agent got it, not at the time when the person wrote it.
 - Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
 - A slash command, such as `/compact`, shows once, as a person message in mono: the command and its arguments. Claude Code's output of the command shows under it, after a ⎿ mark, with no colour codes of the terminal. The output is "Not from a person": it is not a person message, and not a turn. Claude Code's caveat before a command is for the model, and does not show.
+- A shell command that a person runs with `!`, such as `! terraform plan`, shows in the same way: once, in mono, as `!` and the command, with its output under it after a ⎿ mark. The output is the command's stdout and then its stderr, with no colour codes of the terminal. The output is "Not from a person". Logs that SolidTrace parsed before v0.24.1 keep the role "person" for the output, but the page still shows it under the command.
 - After a `/compact`, or when the context is full, Claude Code writes a summary of the conversation as a message. It shows as one quiet line, **Compaction summary**. Click it to read the summary. Claude Code's tags in it, such as `<tools-used-before-summary>`, show as headings.
 - A subagent shows inside the tool call that started it. Click it to open its steps.
 - A long Agent session loads in pages. In the oldest order it loads from its start: click **Load more steps** at the end of the timeline for the later steps. In the newest order it loads from its end: click **Load earlier steps** at the end for the earlier steps.

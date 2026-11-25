@@ -20,8 +20,18 @@ var compactLines = []struct {
 	{"an output in a text block", `{"type":"user","uuid":"c5","timestamp":"2026-11-11T15:00:56Z","message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Set model to Opus</local-command-stdout>"}]}}`, roleNotPerson},
 }
 
+// The lines that Claude Code writes for a shell command (`! ls`): the
+// person's command, and its output with the terminal's colour codes.
+var shellLines = []struct {
+	name, line, role string
+}{
+	{"the shell command", `{"type":"user","uuid":"b0","timestamp":"2026-11-25T13:55:00Z","message":{"role":"user","content":"<bash-input>terraform apply</bash-input>"}}`, rolePerson},
+	{"the shell output", `{"type":"user","uuid":"b1","timestamp":"2026-11-25T13:55:07Z","message":{"role":"user","content":"<bash-stdout>\u001b[0m\u001b[1mRefreshing state...\u001b[0m</bash-stdout><bash-stderr>Pseudo-terminal will not be allocated.</bash-stderr>"}}`, roleNotPerson},
+	{"an empty shell output", `{"type":"user","uuid":"b2","timestamp":"2026-11-25T13:55:08Z","message":{"role":"user","content":"<bash-stdout></bash-stdout><bash-stderr></bash-stderr>"}}`, roleNotPerson},
+}
+
 func TestTheOutputOfASlashCommandIsNotFromAPerson(t *testing.T) {
-	for _, c := range compactLines {
+	for _, c := range append(compactLines, shellLines...) {
 		t.Run(c.name, func(t *testing.T) {
 			object, _ := lineObject([]byte(c.line), map[string]string{}, false)
 			var role string

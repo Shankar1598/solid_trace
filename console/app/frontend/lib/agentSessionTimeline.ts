@@ -337,10 +337,10 @@ function tagText(text: string, name: string): string | undefined {
 
 /**
  * A message's text as a person reads it: Claude Code's tags for a slash
- * command and its output become the command and the output, with no
- * colour codes of the terminal, and its <system-reminder> wrappers go.
- * Claude Code's caveat before a command is for the model, so it gives ''
- * and does not show.
+ * command, a shell command (`! ls`) and their output become the command
+ * and the output, with no colour codes of the terminal, and its
+ * <system-reminder> wrappers go. Claude Code's caveat before a command is
+ * for the model, so it gives '' and does not show.
  */
 export function messageText(text: string): string {
   const command = tagText(text, 'command-name')
@@ -348,8 +348,10 @@ export function messageText(text: string): string {
     const args = tagText(text, 'command-args')
     return [command, args].filter(Boolean).join(' ')
   }
-  const out = tagText(text, 'local-command-stdout') ?? tagText(text, 'local-command-stderr')
-  if (out !== undefined) return stripAnsi(out).trim()
+  const shell = tagText(text, 'bash-input')
+  if (shell !== undefined) return `! ${shell}`
+  const out = outputText(text)
+  if (out !== null) return out
   if (tagText(text, 'local-command-caveat') !== undefined) return ''
   return text.replace(/<\/?system-reminder>/g, '').trim()
 }
@@ -366,17 +368,35 @@ export function stripAnsi(text: string): string {
     .replace(/\u001b[@-Z\\-_]/g, '')
 }
 
-/** A slash command that a person gave: Claude Code's <command-name> line. */
-export const isCommand = (s: TimelineStep) => s.text.includes('<command-name>')
+/**
+ * A command that a person gave: Claude Code's <command-name> line of a
+ * slash command, or its <bash-input> line of a shell command (`! ls`).
+ */
+export const isCommand = (s: TimelineStep) => s.text.includes('<command-name>') || s.text.includes('<bash-input>')
 
 /**
- * The output of a slash command, as a person reads it, or null for a step
- * that is not one. A parse before v0.23.3 gave the output the person's
- * role, so the text decides.
+ * The output of a slash command or a shell command, as a person reads it,
+ * or null for a step that is not one. A parse before v0.23.3 gave the
+ * output of a slash command the person's role, and a parse before v0.24.1
+ * the output of a shell command, so the text decides.
  */
 export function commandOutput(s: TimelineStep): string | null {
-  const out = tagText(s.text, 'local-command-stdout') ?? tagText(s.text, 'local-command-stderr')
-  return out === undefined ? null : stripAnsi(out).trim()
+  return outputText(s.text)
+}
+
+/**
+ * The output of a command in Claude Code's tags, with no colour codes, or
+ * null for a text with none: a slash command's <local-command-stdout> or
+ * <local-command-stderr>, or a shell command's <bash-stdout> and
+ * <bash-stderr>, which the terminal shows one after the other.
+ */
+function outputText(text: string): string | null {
+  const local = tagText(text, 'local-command-stdout') ?? tagText(text, 'local-command-stderr')
+  if (local !== undefined) return stripAnsi(local).trim()
+  const stdout = tagText(text, 'bash-stdout')
+  const stderr = tagText(text, 'bash-stderr')
+  if (stdout === undefined && stderr === undefined) return null
+  return [stdout, stderr].map(t => stripAnsi(t ?? '').trim()).filter(Boolean).join('\n')
 }
 
 /** How far the input of a slash command can be before its <command-name> line. */

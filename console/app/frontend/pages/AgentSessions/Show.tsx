@@ -413,8 +413,8 @@ function ToolCall({ tool, base, subagents }: { tool: ToolItem; base: string; sub
  * sees the conversation first: the person's messages are the strongest,
  * the agent's replies are cards, its thinking is quiet text, and the text
  * that Claude Code adds (commands, skills, reminders) is quiet and folds.
- * A slash command is the person's: it shows as they typed it, in mono,
- * with Claude Code's output under it.
+ * A slash command or a shell command (`! ls`) is the person's: it shows
+ * as they typed it, in mono, with Claude Code's output under it.
  */
 function Message({ step, output }: { step: TimelineStep; output?: TimelineStep }) {
   const inSubagent = useContext(InSubagent)

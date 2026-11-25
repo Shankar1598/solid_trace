@@ -476,8 +476,9 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 		facts.titleKind, facts.title = storage.AgentTitleCustom, oneLine(line.CustomTitle, maxTitleRunes)
 	}
 	if role == rolePerson && isCommandOutput(text.String()) {
-		// Claude Code writes the output of a slash command as a user line:
-		// the output is Claude Code's, not the person's.
+		// Claude Code writes the output of a slash command or a shell
+		// command as a user line: the output is Claude Code's, not the
+		// person's.
 		role = roleNotPerson
 	}
 	if role == rolePerson {
@@ -509,11 +510,15 @@ const (
 // personTitle is the title that a person message gives: its start, as the
 // Agent session page shows the message, on one line. The tags that Claude
 // Code adds to a slash command go, and the command and its arguments stay.
-// The output of a local command is Claude Code's, so it gives "".
+// A shell command (`! ls`) is "!" and the command. The output of a local
+// command is Claude Code's, so it gives "".
 func personTitle(text string) string {
 	if command, ok := tagText(text, "command-name"); ok {
 		args, _ := tagText(text, "command-args")
 		return oneLine(command+" "+args, maxFirstMessageRunes)
+	}
+	if command, ok := tagText(text, "bash-input"); ok {
+		return oneLine("! "+command, maxFirstMessageRunes)
 	}
 	if isCommandOutput(text) {
 		return ""
@@ -523,11 +528,15 @@ func personTitle(text string) string {
 }
 
 // isCommandOutput is true for the output of a slash command, which Claude
-// Code writes in <local-command-stdout> or <local-command-stderr>.
+// Code writes in <local-command-stdout> or <local-command-stderr>, and of a
+// shell command (`! ls`), in <bash-stdout> and <bash-stderr>.
 func isCommandOutput(text string) bool {
-	_, stdout := tagText(text, "local-command-stdout")
-	_, stderr := tagText(text, "local-command-stderr")
-	return stdout || stderr
+	for _, name := range []string{"local-command-stdout", "local-command-stderr", "bash-stdout", "bash-stderr"} {
+		if _, ok := tagText(text, name); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // tagText is the text in the first <name>…</name> of text, trimmed.

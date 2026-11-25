@@ -98,6 +98,16 @@ class Transcript {
     })
   }
 
+  /**
+   * A shell command (`! terraform plan`) as Claude Code writes it: the
+   * person's command in <bash-input>, then its output in <bash-stdout> and
+   * <bash-stderr>, with the terminal's colour codes.
+   */
+  shell(command: string, stdout: string, stderr: string) {
+    this.person(`<bash-input>${command}</bash-input>`)
+    this.person(`<bash-stdout>${stdout}</bash-stdout><bash-stderr>${stderr}</bash-stderr>`)
+  }
+
   /** A title line as Claude Code writes it: an ai-title, or a person's /rename (custom-title). No uuid, no time. */
   title(kind: 'ai' | 'custom', text: string) {
     this.lines.push(kind === 'ai'
@@ -150,6 +160,7 @@ export function longSession(cwd: string, opts: {
   main.toolResult('toolu_flow_agent', opts.subagentReply, { agentId: opts.subagentId, status: 'completed' })
   main.title('custom', opts.title)
   main.compact(COMPACTION_SUMMARY)
+  main.shell('terraform plan', '\u001b[0m\u001b[1mgoogle_storage_bucket.cart: Refreshing state...\u001b[0m', 'Acquiring state lock.')
   main.reply([{ type: 'tool_use', id: 'toolu_flow_bash', name: 'Bash', input: { command: 'seq 1 20000', description: 'Print many lines' } }], opts.usage[1])
   const lines = Array.from({ length: 12_000 }, (_, i) => `line ${i + 1} of the output`).join('\n')
   main.toolResult('toolu_flow_bash', `${lines}\nkey ${opts.secret}\n${opts.outputEnd}`)

@@ -262,6 +262,27 @@ describe('commandOutput', () => {
     expect(commandOutput(step('not from a person', '<local-command-stderr>No model</local-command-stderr>'))).toBe('No model')
     expect(commandOutput(step('person', 'Compacted'))).toBeNull()
   })
+
+  it('is the output of a shell command: its stdout and then its stderr, with no colour codes', () => {
+    expect(commandOutput(step('person', '<bash-stdout>\u001b[0m\u001b[1mRefreshing state...\u001b[0m</bash-stdout><bash-stderr>Pseudo-terminal will not be allocated.\r\n</bash-stderr>')))
+      .toBe('Refreshing state...\nPseudo-terminal will not be allocated.')
+    expect(commandOutput(step('person', '<bash-stdout></bash-stdout><bash-stderr>Acquiring state lock.</bash-stderr>'))).toBe('Acquiring state lock.')
+    expect(commandOutput(step('person', '<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'))).toBe('')
+  })
+})
+
+describe('a shell command in the timeline', () => {
+  const input = step('person', '<bash-input>terraform apply</bash-input>', { time: '2026-11-25T13:55:00Z' })
+  const output = step('person', '<bash-stdout></bash-stdout><bash-stderr>Acquiring state lock.</bash-stderr>', { time: '2026-11-25T13:55:07Z' })
+
+  it('shows as the person typed it', () => {
+    expect(messageText(input.text)).toBe('! terraform apply')
+  })
+
+  it('is one command step, with its output inside it, in both orders', () => {
+    expect(timelineItems([input, output], [], true)).toEqual([{ kind: 'step', step: input, output }])
+    expect(inOrder(timelineItems([input, output], [], true, 'newest'), 'newest')).toEqual([{ kind: 'step', step: input, output }])
+  })
 })
 
 describe('a slash command in the timeline', () => {
