@@ -15,9 +15,7 @@ const reviewRecordFence = "```solidtrace-pr-record"
 
 // reviewFinalCall is the first line of a Bash command that runs only
 // solidtrace review final, by its name or by a path, with its stdin from a
-// heredoc (cli/plugin-skills/skills/open-pr/SKILL.md). Its groups are the
-// quote that opens the heredoc's word, the word, and the quote that closes
-// it.
+// heredoc (cli/plugin-skills/skills/open-pr/SKILL.md).
 var reviewFinalCall = regexp.MustCompile(`^[ \t]*(?:[\w.~/-]*/)?solidtrace[ \t]+review[ \t]+final[ \t]*<<[ \t]*(['"]?)(\w+)(['"]?)[ \t]*$`)
 
 // reviewRecordVersion is the version of the record (cli/review.Record) that
@@ -115,10 +113,13 @@ func reviewFinalBody(input json.RawMessage) (string, bool) {
 	}
 	first, rest, _ := strings.Cut(bash.Command, "\n")
 	m := reviewFinalCall.FindStringSubmatch(first)
-	if m == nil || m[1] != m[3] {
+	if m == nil {
 		return "", false
 	}
-	word := m[2]
+	openQuote, word, closeQuote := m[1], m[2], m[3]
+	if openQuote != closeQuote {
+		return "", false
+	}
 	lines := strings.Split(strings.TrimRight(rest, "\n"), "\n")
 	for i, l := range lines {
 		if l == word {

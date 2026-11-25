@@ -29,8 +29,7 @@ const recordVersion = 2
 
 // ReadFinal decodes data as one review record of version 2, the record
 // that open-pr and update-pr give to review final. A field that the record
-// does not have, no sessions, no findings or a round below 1 is an error,
-// so that a record that is not one fails at once.
+// does not have, no sessions, no findings or a round below 1 is an error.
 func ReadFinal(data []byte) (Record, error) {
 	var v struct {
 		Version int `json:"version"`

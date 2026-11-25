@@ -37,6 +37,7 @@ const TOKEN_NAME = `e2e review records ${RUN}`
 const INGEST_URL = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
 const ADMIN_NAME = 'Admin User'
 const MEMBER_NAME = 'Member User'
+const LOG_STRING_LIMIT = 64 * 1024
 
 const consoleDir = resolve(__dirname, '../..')
 const work = join(consoleDir, 'tmp', `e2e-agent-sessions-${RUN}`)
@@ -523,17 +524,12 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   await page.goto(`/${ORG}/review_records`)
   await signIn(page, reviewer, origin)
 
-  // Two rounds of one PR, in two Agent sessions. Round 1 is a session from
-  // before solidtrace review final, with the record in its final reply.
-  // Round 2 sends it to solidtrace review final, and is past the Log limit,
-  // so only the parse's own copy keeps all of it. The skill's text is a
-  // user line with an example record, which is not a Review record.
   const shopDir = gitRepository(SHOP)
   const pr = `https://github.example/flowteam/shop-${RUN}/pull/7`
   const examplePr = `https://github.example/flowteam/shop-${RUN}/pull/EXAMPLE`
   const round1 = reviewRecord(pr, 1, 6)
   const round2 = reviewRecord(pr, 2, 240)
-  expect(Buffer.byteLength(round2)).toBeGreaterThan(64 * 1024)
+  expect(Buffer.byteLength(round2)).toBeGreaterThan(LOG_STRING_LIMIT)
   const example = reviewRecord(examplePr, 1, 4)
   const first = openPrSession(shopDir, { exampleRecord: example, record: round1, minutesAgo: 30, inReply: true })
   const second = openPrSession(shopDir, { exampleRecord: example, record: round2, minutesAgo: 10 })

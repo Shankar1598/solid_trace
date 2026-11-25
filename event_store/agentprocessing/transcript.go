@@ -381,9 +381,7 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 			}
 			s, blocks := contentOf(msg.Content)
 			text.WriteString(s)
-			// The bodies of each solidtrace-pr-record block and each
-			// solidtrace review final call, in their order.
-			var records []string
+			var recordBodies []string
 			if role == rolePerson && strings.HasPrefix(s, taskNotification) {
 				role = roleNotPerson
 			}
@@ -395,7 +393,7 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 				case "text":
 					text.WriteString(b.Text)
 					if body, ok := lastReviewRecordBlock(b.Text); ok {
-						records = append(records, body)
+						recordBodies = append(recordBodies, body)
 					}
 				case "thinking":
 					// Claude Code can keep a thinking block with no text.
@@ -412,7 +410,7 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 					toolNames[b.ID] = b.Name
 					if b.Type == "tool_use" && b.Name == "Bash" {
 						if body, ok := reviewFinalBody(b.Input); ok {
-							records = append(records, body)
+							recordBodies = append(recordBodies, body)
 						}
 					}
 				case "tool_result":
@@ -439,9 +437,9 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 					kind = line.Type + "/" + b.Type
 				}
 			}
-			// The skill's own text has an example block, but on a user line.
-			if line.Type == "assistant" && !subagent && !line.IsSidechain && len(records) > 0 {
-				facts.reviewRecord = reviewRecordOf(records[len(records)-1])
+			// The skill's own text has an example block and call, but on a user line.
+			if line.Type == "assistant" && !subagent && !line.IsSidechain && len(recordBodies) > 0 {
+				facts.reviewRecord = reviewRecordOf(recordBodies[len(recordBodies)-1])
 			}
 		}
 	case "attachment":
