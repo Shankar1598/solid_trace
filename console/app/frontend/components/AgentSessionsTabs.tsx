@@ -6,9 +6,9 @@ import { cn } from '@/lib/utils'
  * records that their final replies hold. Each tab is its own page, so the
  * tabs are links, and the open one is the current page.
  */
-export function AgentSessionsTabs({ slug, current }: { slug: string; current: 'sessions' | 'review_records' }) {
+export function AgentSessionsTabs({ slug, current }: { slug: string; current: 'agent_sessions' | 'review_records' }) {
   const tabs = [
-    { id: 'sessions', label: 'Sessions', href: `/${slug}/agent_sessions` },
+    { id: 'agent_sessions', label: 'Agent sessions', href: `/${slug}/agent_sessions` },
     { id: 'review_records', label: 'Review records', href: `/${slug}/review_records` },
   ] as const
   return (

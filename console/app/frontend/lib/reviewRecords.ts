@@ -28,7 +28,7 @@ export type ReviewRecordRow = {
 export type ListedReviewRecord = ReviewRecordRow & { earlier: number }
 
 /** The Review record of an Agent session, for the link to its page: the one the server stored last of the session's own. */
-export type SessionReviewRecord = { id: string; key: string; pr: string; round: number }
+export type SessionReviewRecord = { id: string; pr: string; round: number }
 
 export type ReviewRound = { id: string; session_id: string; path: string; version: number; offset: number; round: number; stored_at: string }
 
@@ -107,6 +107,11 @@ export function prHref(pr: string): string | null {
 export function recordPath(listPath: string, which: { key: string } | { id: string }): string {
   const search = new URLSearchParams('key' in which ? { key: which.key } : { id: which.id })
   return `${listPath}/record?${search}`
+}
+
+/** The page of an Agent session's own Review record, in the Organization `slug`: that round, not the PR's newest. */
+export function sessionRecordPath(slug: string, record: SessionReviewRecord): string {
+  return recordPath(`/${slug}/review_records`, { id: record.id })
 }
 
 /** Who found a finding, as one short text: "reviewer tests", "person", "agent verifier". */

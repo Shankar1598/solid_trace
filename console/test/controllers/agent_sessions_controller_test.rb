@@ -92,7 +92,7 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
   test "a listed Agent session that made a Review record has it, for its link; an EventStore that cannot answer gives no links" do
     project = turn_on
     stub_agent_sessions(project, {})
-    record = { id: "5a7c9e1b-3d5f-4a6c-8e0a-2b4d6f8a0c1e", key: "https://github.com/acme/shop/pull/7", pr: "https://github.com/acme/shop/pull/7", round: 2 }
+    record = { id: "5a7c9e1b-3d5f-4a6c-8e0a-2b4d6f8a0c1e", pr: "https://github.com/acme/shop/pull/7", round: 2 }
     asked = stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/sessions")
       .with(body: { session_ids: [ RUN, CART ] }.to_json)
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: { CART => record } }.to_json)
@@ -101,11 +101,14 @@ class AgentSessionsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ CART => record.stringify_keys }, page["review_records"])
     assert_requested asked
 
-    # An EventStore older than this read answers 404: the list shows, with no links.
-    stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/sessions").to_return(status: 404, body: "Cannot POST")
-    view = page
-    assert_equal({}, view["review_records"])
-    assert_equal 2, view["rows"].size
+    # An EventStore older than this read answers 404, and one that refuses
+    # the read 400: the list shows, with no links.
+    [ [ 404, "Cannot POST" ], [ 400, { error: "give at most 500 session_ids" }.to_json ] ].each do |status, body|
+      stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/sessions").to_return(status: status, body: body)
+      view = page
+      assert_equal({}, view["review_records"], "status #{status}")
+      assert_equal 2, view["rows"].size
+    end
   end
 
   test "the filters in the URL go to EventStore and come back on the page, with the choices of each" do

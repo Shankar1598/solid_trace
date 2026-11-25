@@ -24,7 +24,7 @@ class AgentSessionsController < ApplicationController
     props = view.to_h.merge(settings_path: agent_session_settings_path(org_slug: @current_org.slug))
     props[:can_turn_on] = admin? unless props[:on]
     props[:search] = search_across(@current_org.agent_project)
-    props[:review_records] = ReviewRecordsView.of_sessions(organization: @current_org, session_ids: props[:rows].map { |r| r["id"] }) if props[:on]
+    props[:review_records] = ReviewRecordsView.of_sessions(organization: @current_org, session_ids: props[:rows].map { |r| r["id"] }) || {} if props[:on]
     render inertia: "AgentSessions/Index", props: { agent_sessions: props }
   end
 
@@ -37,12 +37,15 @@ class AgentSessionsController < ApplicationController
 
     slug = @current_org.slug
     parent = view.header&.dig("parent_session_id").presence
+    # Only a session that EventStore gave can show its Review record.
+    records = view.header && ReviewRecordsView.of_sessions(organization: @current_org, session_ids: [ params[:id] ])
     props = view.to_h.merge(
       list_path: agent_sessions_path(org_slug: slug),
       timeline_path: agent_session_timeline_path(org_slug: slug, id: params[:id]),
       line_path: agent_session_line_path(org_slug: slug, id: params[:id]),
       parent_path: parent && agent_session_path(org_slug: slug, id: parent),
-      review_record: ReviewRecordsView.of_sessions(organization: @current_org, session_ids: [ params[:id] ])[params[:id]],
+      review_record: records&.dig(params[:id].downcase),
+      review_record_known: !records.nil?,
     )
     render inertia: "AgentSessions/Show", props: { agent_session: props }
   end

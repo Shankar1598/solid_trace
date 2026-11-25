@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decisionsOf, eventWords, foundByText, givenText, missedByTheReviews, prHref, recordPath, reviewersText } from './reviewRecords'
+import { decisionsOf, eventWords, foundByText, givenText, missedByTheReviews, prHref, recordPath, reviewersText, sessionRecordPath } from './reviewRecords'
 
 describe('the link of a PR', () => {
   it('is the PR\'s web address', () => {
@@ -21,6 +21,11 @@ describe('the page of a record', () => {
     expect(recordPath('/acme/review_records', { key: 'https://github.com/acme/shop/pull/7' }))
       .toBe('/acme/review_records/record?key=https%3A%2F%2Fgithub.com%2Facme%2Fshop%2Fpull%2F7')
     expect(recordPath('/acme/review_records', { id: '6f1e3a5c-2b4d-4f6a-8c0e-3d5b7f9a1c4e' }))
+      .toBe('/acme/review_records/record?id=6f1e3a5c-2b4d-4f6a-8c0e-3d5b7f9a1c4e')
+  })
+
+  it('of an Agent session is the round that the session made, by its id', () => {
+    expect(sessionRecordPath('acme', { id: '6f1e3a5c-2b4d-4f6a-8c0e-3d5b7f9a1c4e', pr: 'https://github.com/acme/shop/pull/7', round: 1 }))
       .toBe('/acme/review_records/record?id=6f1e3a5c-2b4d-4f6a-8c0e-3d5b7f9a1c4e')
   })
 })

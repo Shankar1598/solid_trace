@@ -102,13 +102,37 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     sign_in_as(@member)
     page
     assert_nil props["review_record"]
+    assert props["review_record_known"]
 
-    record = { id: "5a7c9e1b-3d5f-4a6c-8e0a-2b4d6f8a0c1e", key: CART, pr: "", round: 1 }
+    record = { id: "5a7c9e1b-3d5f-4a6c-8e0a-2b4d6f8a0c1e", pr: "", round: 1 }
     stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/review-records/sessions")
       .with(body: { session_ids: [ CART ] }.to_json)
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: { CART => record } }.to_json)
     page
     assert_equal record.stringify_keys, props["review_record"]
+  end
+
+  test "an Agent session opened by its id in capitals still finds its Review record, which EventStore keys in lowercase" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART.upcase}")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: { agent_session: header(user_id: @admin.id), subagents: [], steps: [], next_cursor: nil }.to_json)
+    record = { id: "5a7c9e1b-3d5f-4a6c-8e0a-2b4d6f8a0c1e", pr: "", round: 1 }
+    stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/review-records/sessions")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: { CART => record } }.to_json)
+    sign_in_as(@member)
+    page(CART.upcase)
+
+    assert_equal record.stringify_keys, props["review_record"]
+  end
+
+  test "when EventStore cannot say, the page does not say that the Agent session has no Review record" do
+    stub_session(user_id: @admin.id)
+    stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/review-records/sessions").to_return(status: 500, body: "boom")
+    sign_in_as(@member)
+    page
+
+    assert_nil props["review_record"]
+    assert_equal false, props["review_record_known"]
   end
 
   test "a Run's Agent session names its Run, and its person messages wait for the Run's events" do
@@ -290,7 +314,7 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_not_requested :post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}/line"
   end
 
-  test "EventStore down shows the page with the error" do
+  test "EventStore down shows the page with the error, and does not wait for the Review record" do
     stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART}").to_return(status: 500, body: "boom")
     sign_in_as(@member)
     page
@@ -299,6 +323,7 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_equal false, view.dig("event_store", "available")
     assert_nil view["agent_session"]
     assert_equal [], view["steps"]
+    assert_not_requested :post, "#{EventStore.base_url}/api/#{@project.id}/review-records/sessions"
   end
 
   test "EventStore down gives 503 with the error on the JSON timeline, not an empty last page" do

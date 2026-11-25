@@ -42,7 +42,7 @@ import {
   type TimelineStep,
   type TimelineSubagent,
 } from '@/lib/agentSessionTimeline'
-import { recordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
+import { sessionRecordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
 import type { SharedProps } from '@/types'
 
 interface AgentSessionProps {
@@ -59,6 +59,8 @@ interface AgentSessionProps {
   parent_path: string | null
   /** The Review record of this Agent session, null for none. */
   review_record: SessionReviewRecord | null
+  /** False when EventStore could not say whether it has one. */
+  review_record_known: boolean
 }
 
 /** The URL of the raw lines of this Agent session, for 'Show full'. */
@@ -148,7 +150,7 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
               {view.resume_warning}
             </div>
           )}
-          <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} record={view.review_record} />
+          <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} record={view.review_record_known ? view.review_record : undefined} />
           <AgentSessionSearch
             label="Search this Agent session"
             placeholder="Search the steps of this Agent session…"
@@ -228,10 +230,11 @@ function Header({ session, costLabel, parentPath, record }: {
   session: AgentSessionRow
   costLabel: string
   parentPath: string | null
-  record: SessionReviewRecord | null
+  /** undefined when not known. */
+  record: SessionReviewRecord | null | undefined
 }) {
   const model = modelText(session.model, undefined)
-  const recordsPath = `/${usePage<SharedProps>().props.current_org?.slug ?? ''}/review_records`
+  const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const facts: [string, React.ReactNode][] = [
     [session.run ? 'Run' : 'Person', whoText(session)],
     ['Repository', <span className="font-mono text-xs">{session.repository}</span>],
@@ -251,10 +254,12 @@ function Header({ session, costLabel, parentPath, record }: {
     )],
     ['Estimated cost', <span>{session.cost_usd === null ? <span className="text-muted-foreground">{costText(null)}</span> : <span className="font-mono text-xs">{costText(session.cost_usd)}</span>} <span className="text-xs text-muted-foreground">({costLabel})</span></span>],
     ['Flags', session.flags.length ? session.flags.join(', ') : <None />],
-    ['Review record', record
+    ['Review record', record === undefined ? <None text="Not known" /> : record
       ? (
-        <span data-review-record-link>
-          <Link href={recordPath(recordsPath, { id: record.id })} className="underline underline-offset-2">Round {record.round}</Link>
+        <span>
+          <Link href={sessionRecordPath(slug, record)} aria-label={`Review record, round ${record.round}`} className="underline underline-offset-2" data-review-record-link>
+            Round {record.round}
+          </Link>
           {' '}<span className="font-mono text-xs text-muted-foreground">{record.pr || 'No PR'}</span>
         </span>
       )

@@ -179,34 +179,56 @@ func TestTheReviewRecordsListTheNewestRecordOfEachPRAndGiveEachRecordWhole(t *te
 	// The record of each Agent session, for the links of the Agent
 	// sessions pages: round 1 is the record of its session, though its PR
 	// has a newer round; the later line of the other session is its
-	// record; a session with no record is not in the answer.
+	// record; a session with no record, or one not asked for, is not in
+	// the answer.
 	const noRecord = "6f1e3a5c-2b4d-4f6a-8c0e-3d5b7f9a1c4e"
-	status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/review-records/sessions", o.project),
-		map[string]any{"session_ids": []string{laptopSession, reviewSession, noRecord}})
-	var bySession struct {
-		Sessions map[string]struct {
-			ID    string `json:"id"`
-			Key   string `json:"key"`
-			PR    string `json:"pr"`
-			Round uint32 `json:"round"`
-		} `json:"sessions"`
+	if got := sessionReviewRecords(t, env, o.project, laptopSession, reviewSession, noRecord); len(got) != 2 ||
+		got[laptopSession] != (sessionRecord{ID: shown.Rounds[1].ID, PR: pr, Round: 1}) ||
+		got[reviewSession] != (sessionRecord{ID: none.ID, PR: "", Round: 1}) {
+		t.Errorf("Expected round 1 of %s for the first session and the record with no PR for the other, got %+v", pr, got)
 	}
-	if status != 200 || json.Unmarshal(raw, &bySession) != nil {
-		t.Fatalf("Expected 200 with JSON, got %d: %s", status, raw)
+	if got := sessionReviewRecords(t, env, o.project, laptopSession, noRecord); len(got) != 1 || got[laptopSession].Round != 1 {
+		t.Errorf("Expected only the record of the session asked for, got %+v", got)
 	}
-	if got := bySession.Sessions[laptopSession]; got.ID != shown.Rounds[1].ID || got.Key != pr || got.PR != pr || got.Round != 1 {
-		t.Errorf("Expected round 1 of %s for the first session, got %+v", pr, got)
+	if got := sessionReviewRecords(t, env, o.project); len(got) != 0 {
+		t.Errorf("Expected no records for no sessions, got %+v", got)
 	}
-	if got := bySession.Sessions[reviewSession]; got.ID != none.ID || got.Key != reviewSession || got.PR != "" {
-		t.Errorf("Expected the record with no PR, the later line, for the other session, got %+v", got)
+	if got := sessionReviewRecords(t, env, o.project+1000, laptopSession, reviewSession); len(got) != 0 {
+		t.Errorf("Expected no records of another Project, got %+v", got)
 	}
-	if _, ok := bySession.Sessions[noRecord]; ok || len(bySession.Sessions) != 2 {
-		t.Errorf("Expected no record for a session with none, got %s", raw)
-	}
-	if status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/review-records/sessions", o.project),
-		map[string]any{"session_ids": []string{"not-a-session"}}); status != 400 {
+	path := fmt.Sprintf("/api/%d/review-records/sessions", o.project)
+	if status, raw := postQueryApp(t, env, path, map[string]any{"session_ids": []string{"not-a-session"}}); status != 400 {
 		t.Errorf("Expected 400 for a session id that is not a UUID, got %d: %s", status, raw)
 	}
+	// As many ids as the Agent sessions list gives rows, and no more.
+	ids := make([]string, 501)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	if status, raw := postQueryApp(t, env, path, map[string]any{"session_ids": ids[:500]}); status != 200 {
+		t.Errorf("Expected 200 for 500 session ids, got %d: %s", status, raw)
+	}
+	if status, raw := postQueryApp(t, env, path, map[string]any{"session_ids": ids}); status != 400 {
+		t.Errorf("Expected 400 for 501 session ids, got %d: %s", status, raw)
+	}
+}
+
+type sessionRecord struct {
+	ID    string `json:"id"`
+	PR    string `json:"pr"`
+	Round uint32 `json:"round"`
+}
+
+func sessionReviewRecords(t *testing.T, env *TestEnv, projectID int64, ids ...string) map[string]sessionRecord {
+	t.Helper()
+	status, raw := postQueryApp(t, env, fmt.Sprintf("/api/%d/review-records/sessions", projectID), map[string]any{"session_ids": append([]string{}, ids...)})
+	var answer struct {
+		Sessions map[string]sessionRecord `json:"sessions"`
+	}
+	if status != 200 || json.Unmarshal(raw, &answer) != nil {
+		t.Fatalf("Expected 200 with JSON, got %d: %s", status, raw)
+	}
+	return answer.Sessions
 }
 
 func TestAReviewRecordParsedAgainAfterACrashIsListedOnce(t *testing.T) {

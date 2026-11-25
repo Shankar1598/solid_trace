@@ -34,7 +34,7 @@ import {
   type RunFilter,
 } from '@/lib/agentSessions'
 import { rangeOfAnswer, type AnsweredRange } from '@/lib/performance'
-import { recordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
+import { sessionRecordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
 import type { TimeRange } from '@/lib/timeRange'
 import { cn } from '@/lib/utils'
 import type { SharedProps } from '@/types'
@@ -77,7 +77,7 @@ export default function AgentSessionsIndex({ agent_sessions: view }: { agent_ses
   return (
     <DashboardLayout>
       <PageHeader title="Agent sessions" description={DESCRIPTION} />
-      <AgentSessionsTabs slug={current_org?.slug ?? ''} current="sessions" />
+      <AgentSessionsTabs slug={current_org?.slug ?? ''} current="agent_sessions" />
       {view.on ? <SessionsList view={view} /> : <TurnOn canTurnOn={view.can_turn_on} settingsPath={view.settings_path} />}
     </DashboardLayout>
   )
@@ -255,7 +255,7 @@ function SessionsTable({ rows, records, more, total, path, order, onSort }: {
 }) {
   const sortHead = { order, onSort }
   const now = useNow()
-  const recordsPath = `/${usePage<SharedProps>().props.current_org?.slug ?? ''}/review_records`
+  const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
   return (
     <div className="space-y-2">
       <div className="overflow-x-auto border">
@@ -287,7 +287,7 @@ function SessionsTable({ rows, records, more, total, path, order, onSort }: {
                   </Link>
                   {record && (
                     <Link
-                      href={recordPath(recordsPath, { id: record.id })}
+                      href={sessionRecordPath(slug, record)}
                       className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                       data-review-record-link
                     >

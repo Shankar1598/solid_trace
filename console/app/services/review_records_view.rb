@@ -14,19 +14,25 @@ class ReviewRecordsView
 
   attr_reader :organization, :limit
 
+  # How long the Agent sessions pages wait for the Review records of their
+  # sessions, in seconds: the links are an extra, so a slow EventStore
+  # costs the page little.
+  SESSIONS_TIMEOUT_SECONDS = 3
+
   # The Review record of each Agent session of session_ids that has one,
-  # for the links of the Agent sessions pages: {session id => {"id", "key",
-  # "pr", "round"}}. The links are an extra, so when EventStore cannot
-  # answer (also an EventStore older than this read), the pages show none.
+  # for the links of the Agent sessions pages: {session id => {"id", "pr",
+  # "round"}}, by the lowercase id. nil when EventStore cannot answer (also
+  # an EventStore older than this read): then no one knows which sessions
+  # have one.
   def self.of_sessions(organization:, session_ids:)
     project = organization.agent_project
     return {} if project.nil? || session_ids.empty?
 
-    EventStore.session_review_records!(project_id: project.id, session_ids: session_ids, read_timeout: TIMEOUT_SECONDS)
+    EventStore.session_review_records!(project_id: project.id, session_ids: session_ids, read_timeout: SESSIONS_TIMEOUT_SECONDS)
       .fetch("sessions", {})
   rescue EventStore::Unavailable, EventStore::Rejected => e
     Rails.logger.warn("Review records of Agent sessions: #{e.message}")
-    {}
+    nil
   end
 
   # limit is the most PRs, nil for EventStore's own limit (500), which the

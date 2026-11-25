@@ -162,24 +162,20 @@ func ReviewRecordsByPR(records []ReviewRecord) []ReviewRecordPR {
 	return prs
 }
 
-// SessionReviewRecords gives the Review record of each Agent session of
-// ids that has one: the record that the server stored last of its own
-// records, from the records of each path's highest version, as
-// ReviewRecordsByPR counts them.
-func SessionReviewRecords(prs []ReviewRecordPR, ids []uuid.UUID) map[uuid.UUID]ReviewRecord {
-	wanted := map[uuid.UUID]bool{}
-	for _, id := range ids {
-		wanted[id] = true
-	}
-	of := map[uuid.UUID]ReviewRecord{}
+// LatestBySession gives the Review record of each Agent session that has
+// one in prs: the record that the server stored last of its own records.
+// ReviewRecordsByPR has kept only the records of each path's highest
+// version.
+func LatestBySession(prs []ReviewRecordPR) map[uuid.UUID]ReviewRecord {
+	latest := map[uuid.UUID]ReviewRecord{}
 	for _, pr := range prs {
 		for _, r := range pr.Records {
-			if last, ok := of[r.SessionID]; wanted[r.SessionID] && (!ok || compareStores(r, last) > 0) {
-				of[r.SessionID] = r
+			if last, ok := latest[r.SessionID]; !ok || compareStores(r, last) > 0 {
+				latest[r.SessionID] = r
 			}
 		}
 	}
-	return of
+	return latest
 }
 
 // insertReviewRecords inserts the records of one range of the parse, with
@@ -204,8 +200,19 @@ func (s *ClickHouseLogs) insertReviewRecords(ctx context.Context, projectID uint
 // ReviewRecords reads every Review record of a Project, each once, with no
 // record JSON.
 func (s *ClickHouseLogs) ReviewRecords(ctx context.Context, projectID uint32) ([]ReviewRecord, error) {
+	return s.readReviewRecords(ctx, "", projectID)
+}
+
+// ReviewRecordsOfSessions reads the Review records of a Project's Agent
+// sessions of ids, as ReviewRecords does: all the versions of each of
+// their paths, so that ReviewRecordsByPR keeps the highest.
+func (s *ClickHouseLogs) ReviewRecordsOfSessions(ctx context.Context, projectID uint32, ids []uuid.UUID) ([]ReviewRecord, error) {
+	return s.readReviewRecords(ctx, " AND session_id IN ?", projectID, ids)
+}
+
+func (s *ClickHouseLogs) readReviewRecords(ctx context.Context, and string, args ...any) ([]ReviewRecord, error) {
 	rows, err := s.conn.Query(ctx, `SELECT id, session_id, path, version, offset, stored_at, pr, round, title,
-		findings, fixed, missed, confirmations_not_given FROM review_records FINAL WHERE project_id = ?`, projectID)
+		findings, fixed, missed, confirmations_not_given FROM review_records FINAL WHERE project_id = ?`+and, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read review records: %w", err)
 	}
