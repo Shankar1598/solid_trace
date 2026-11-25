@@ -2,9 +2,9 @@
 
 `open-pr` and `update-pr` do the same few actions on the PR. This file gives the call for each action on each platform. Find the platform from `git remote get-url origin`: github.com or bitbucket.org. A Run is a factory Run (`$SOLIDTRACE_AGENT_SOCKET` is set). Local mode is the `local` argument.
 
-Never put a comment, a reply, a body or a token on a command line, because the shell runs what a comment holds, such as `$(…)`, and other users can read command lines. Write each one to a file in `$dir`, and give the file.
+Never put a comment, a reply, a body or a token on a command line, because the shell runs what a comment holds, such as `$(…)`, and other users can read command lines. Write each one to a file in `$dir`, and give the file. The one exception is the Run calls below: `"$(cat "$dir/body.md")"` in double quotes gives the file's text, which the shell does not run.
 
-On bitbucket.org, send each request to `https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>` (the base below) with curl. Write the token's header to a file once, with a shell builtin: `(umask 077; printf 'Authorization: Bearer %s\n' "$BITBUCKET_TOKEN" > "$dir/auth")`, and give it as `-H @"$dir/auth"`. Build each JSON body with a tool that escapes text, write it to a file, and give it as `--data @<file>`. Do not use `-v` or `--trace`, and do not print the token.
+On bitbucket.org, send each request to `https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>` (the base below) with curl. Give the token's header on standard input, with a shell builtin, and never in a file: `printf 'Authorization: Bearer %s\n' "$BITBUCKET_TOKEN" | curl -H @- …`. Build each JSON body with a tool that escapes text, write it to a file, and give it as `--data @<file>`. Do not use `-v` or `--trace`, and do not print the token.
 
 ## The local PR file
 
