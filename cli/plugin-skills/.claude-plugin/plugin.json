@@ -1,7 +1,7 @@
 {
   "name": "solidtrace-skills",
   "displayName": "SolidTrace skills",
-  "description": "Skills that review a change and open its PR, with a record of what the review found and what happened to each finding. It needs the solidtrace CLI.",
+  "description": "Skills that review a change and open its PR, with a record of what the review found and what happened to each finding, and that run a PR's dev stack in its own worktree. It needs the solidtrace CLI.",
   "author": { "name": "SolidTrace" },
   "homepage": "https://github.com/Shankar1598/solid_trace"
 }
