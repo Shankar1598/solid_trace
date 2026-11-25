@@ -1,0 +1,203 @@
+{
+  "comment_count": 0,
+  "task_count": 0,
+  "type": "pullrequest",
+  "id": 7,
+  "title": "Show the order total on the cart page",
+  "description": "Adds the total under the cart lines.",
+  "rendered": {},
+  "state": "OPEN",
+  "draft": false,
+  "merge_commit": null,
+  "close_source_branch": true,
+  "closed_by": null,
+  "author": {
+    "display_name": "Alex Example",
+    "links": {
+      "self": {
+        "href": "https://api.bitbucket.org/2.0/users/%7B00000000-0000-0000-0000-000000000000%7D"
+      },
+      "avatar": {
+        "href": "https://avatar.example/a.png"
+      },
+      "html": {
+        "href": "https://bitbucket.org/%7B00000000-0000-0000-0000-000000000000%7D/"
+      }
+    },
+    "type": "user",
+    "uuid": "{00000000-0000-0000-0000-000000000000}",
+    "account_id": "557058:00000000-0000-0000-0000-000000000000",
+    "nickname": "alex-example"
+  },
+  "reason": "",
+  "created_on": "2026-02-22T12:28:33.197807+00:00",
+  "updated_on": "2026-02-26T08:28:25.275452+00:00",
+  "destination": {
+    "branch": {
+      "name": "main"
+    },
+    "commit": {
+      "hash": "5f4e3d2c1b0a",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/commit/5f4e3d2c1b0a"
+        },
+        "html": {
+          "href": "https://bitbucket.org/example-team/example-app/commits/5f4e3d2c1b0a"
+        }
+      },
+      "type": "commit"
+    },
+    "repository": {
+      "type": "repository",
+      "full_name": "example-team/example-app",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app"
+        },
+        "html": {
+          "href": "https://bitbucket.org/example-team/example-app"
+        },
+        "avatar": {
+          "href": "https://bytebucket.org/ravatar/%7B00000000-0000-0000-0000-000000000000%7D?ts=default"
+        }
+      },
+      "name": "example-app",
+      "uuid": "{00000000-0000-0000-0000-000000000000}"
+    }
+  },
+  "source": {
+    "branch": {
+      "name": "feature/cart-total",
+      "links": {},
+      "sync_strategies": [
+        "merge_commit",
+        "rebase"
+      ]
+    },
+    "commit": {
+      "hash": "0a1b2c3d4e5f",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/commit/0a1b2c3d4e5f"
+        },
+        "html": {
+          "href": "https://bitbucket.org/example-team/example-app/commits/0a1b2c3d4e5f"
+        }
+      },
+      "type": "commit"
+    },
+    "repository": {
+      "type": "repository",
+      "full_name": "example-team/example-app",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app"
+        },
+        "html": {
+          "href": "https://bitbucket.org/example-team/example-app"
+        },
+        "avatar": {
+          "href": "https://bytebucket.org/ravatar/%7B00000000-0000-0000-0000-000000000000%7D?ts=default"
+        }
+      },
+      "name": "example-app",
+      "uuid": "{00000000-0000-0000-0000-000000000000}"
+    }
+  },
+  "reviewers": [
+    {
+      "display_name": "Sam Example",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/users/%7B00000000-0000-0000-0000-000000000000%7D"
+        },
+        "avatar": {
+          "href": "https://avatar.example/a.png"
+        },
+        "html": {
+          "href": "https://bitbucket.org/%7B00000000-0000-0000-0000-000000000000%7D/"
+        }
+      },
+      "type": "user",
+      "uuid": "{00000000-0000-0000-0000-000000000000}",
+      "account_id": "557058:00000000-0000-0000-0000-000000000000",
+      "nickname": "sam-example"
+    }
+  ],
+  "participants": [
+    {
+      "type": "participant",
+      "user": {
+        "display_name": "Sam Example",
+        "links": {
+          "self": {
+            "href": "https://api.bitbucket.org/2.0/users/%7B00000000-0000-0000-0000-000000000000%7D"
+          },
+          "avatar": {
+            "href": "https://avatar.example/a.png"
+          },
+          "html": {
+            "href": "https://bitbucket.org/%7B00000000-0000-0000-0000-000000000000%7D/"
+          }
+        },
+        "type": "user",
+        "uuid": "{00000000-0000-0000-0000-000000000000}",
+        "account_id": "557058:00000000-0000-0000-0000-000000000000",
+        "nickname": "sam-example"
+      },
+      "role": "REVIEWER",
+      "approved": false,
+      "state": null,
+      "participated_on": null
+    }
+  ],
+  "links": {
+    "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7"
+    },
+    "html": {
+      "href": "https://bitbucket.org/example-team/example-app/pull-requests/7"
+    },
+    "commits": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/commits"
+    },
+    "approve": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/approve"
+    },
+    "request-changes": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/request-changes"
+    },
+    "diff": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/diff/example-team/example-app:0a1b2c3d4e5f%0D5f4e3d2c1b0a?from_pullrequest_id=7&topic=true"
+    },
+    "diffstat": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/diffstat/example-team/example-app:0a1b2c3d4e5f%0D5f4e3d2c1b0a?from_pullrequest_id=7&topic=true"
+    },
+    "comments": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/comments"
+    },
+    "activity": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/activity"
+    },
+    "merge": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/merge"
+    },
+    "decline": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/decline"
+    },
+    "statuses": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/statuses"
+    },
+    "mergeability_checks": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-team/example-app/pullrequests/7/mergeability/checks"
+    }
+  },
+  "summary": {
+    "type": "rendered",
+    "raw": "Adds the total under the cart lines.",
+    "markup": "markdown",
+    "html": "<p>Adds the total under the cart lines.</p>"
+  },
+  "queued": false
+}
