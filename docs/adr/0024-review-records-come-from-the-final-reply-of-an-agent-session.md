@@ -1,0 +1,28 @@
+# Review records come from the final reply of an Agent session
+
+Amends [ADR 0020](0020-agent-transcripts-raw-chunks-in-clickhouse-and-logs-for-reading.md): the parse of the Agent file batches makes a third derived layer, `review_records`, next to the Logs and `agent_sessions`.
+
+The `open-pr` and `update-pr` skills end their final reply with the PR's **Review record**, as JSON in a `solidtrace-pr-record` block. The reply uploads with its **Agent session**, as each transcript line does. SolidTrace reads the record from there:
+
+- **The parse keeps it.** When the parse reads an assistant line of a main transcript, it reads the last `solidtrace-pr-record` block of the line's text. It keeps the record only when it is valid JSON of version 2. A user line, a subagent's file, a sidechain line and a tool result give no record, because the skill's own text has an example record, and a person or a tool can show a record too. The record is stored as the agent wrote it, byte for byte, with its PR (`""` when no PR opened), its round and its counts: findings, fixed, missed (found by a person, an agent or a test run) and confirmations not given.
+- **One insert with the Logs.** The parse inserts the records in the same `LogInsert` as the Logs and the totals, with the same dedup token. So a parse that stops and runs again stores each record once, as it stores each Log once.
+- **Its own table, not only the Log.** A Log cuts a string at 64 KiB. A real record can be 100 KB or more, so the Log of its line does not keep all of it. `review_records` keeps the whole record, compressed.
+- **A table of AgentDays.** `review_records` is partitioned by the Project and the day when the server stored the line, as `agent_sessions` is. It follows the **Agent Project**'s **Retention**, the deletion of the Project and the disk limit with the raw layer.
+- **The newest record of a PR.** A PR's key is its `pr`, else the Agent session id. The newest record of a key has the highest round, then the latest store time. A later round replaces the earlier rounds of the same PR on the list, and the record's page links to the earlier rounds.
+- **The same readers as the Agent sessions.** Each member who can read the Agent sessions can read the Review records, on the Review records page and with the MCP tools `list_review_records` and `get_review_record`. The record is the agent's text, with the words of PR commenters in it, so the pages show it as text only, never as HTML or Markdown, and link a PR only when it is a web address.
+
+We chose this because the record already uploads with its Agent session. The parse reads only what the upload brings: no new ingest route, no new CLI command, and no change to the skills.
+
+## Considered options
+
+- **An ingest route for the record, sent by the skill.** The record would not depend on the parse of a transcript, but each skill and each CLI would need a change, and a record could arrive without its Agent session.
+- **A Query on the Logs.** No new table, but a Log cuts the record at 64 KiB, and a Query must find the block in each message.
+
+## Consequences
+
+- No backfill. A record whose line SolidTrace parsed before this change has no Review record, because the parse does not read a line again. Only the Agent sessions that upload after the change give records.
+- A record exists only when its Agent session uploads: in a **Captured repository**, or in a **Run**.
+- A record that an agent writes wrongly (not valid JSON, or not version 2) gives no row, and nothing tells the person. The skills check the record with `solidtrace review check` before the reply.
+- An MCP client can cut a large answer. Claude Code cuts a tool's answer past 25,000 tokens unless `MAX_MCP_OUTPUT_TOKENS` is higher, and a record of 145 KB is over that limit.
+
+Source: [.scratch/review-records/plan.md](../../.scratch/review-records/plan.md)
