@@ -165,6 +165,21 @@ export function longSession(cwd: string, opts: {
   }
 }
 
+/**
+ * An open-pr Agent session: the person starts the skill, whose text comes
+ * in as a user line with its own example record, and the final reply ends
+ * with the PR's Review record in its block.
+ */
+export function openPrSession(cwd: string, opts: { exampleRecord: string; record: string; minutesAgo: number }): FixtureSession {
+  const id = randomUUID()
+  const main = new Transcript(id, cwd, minutesAgo(opts.minutesAgo))
+  main.person('/solidtrace-skills:open-pr')
+  main.person(`End the reply with the record:\n\n\`\`\`solidtrace-pr-record\n${opts.exampleRecord}\n\`\`\``)
+  main.reply([{ type: 'text', text: `Opened the PR.\n\n\`\`\`solidtrace-pr-record\n${opts.record}\n\`\`\`` }],
+    { input: 3, output: 30, cacheRead: 300, cacheWrite: 30 })
+  return { id, files: { [`${id}.jsonl`]: main.text() } }
+}
+
 /** Writes the session's files under the Claude project folder; answers the main transcript's path. */
 export function writeSession(projectDir: string, session: FixtureSession): string {
   for (const [path, text] of Object.entries(session.files)) {

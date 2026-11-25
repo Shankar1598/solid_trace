@@ -1,9 +1,10 @@
 import { test, expect, type Browser, type Locator, type Page } from '@playwright/test'
 import { execFileSync, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { ADMIN, MEMBER, ORG } from '../support/data'
-import { EFFORT, fakeAnthropicKey, longSession, MODEL, shortSession, SUBAGENT_EFFORT, SUBAGENT_MODEL, writeSession, type FixtureSession } from '../support/agentTranscripts'
+import { EFFORT, fakeAnthropicKey, longSession, MODEL, openPrSession, shortSession, SUBAGENT_EFFORT, SUBAGENT_MODEL, writeSession, type FixtureSession } from '../support/agentTranscripts'
 import { shoot, watchErrors } from '../support/screens'
 import { newContext } from '../support/video'
 
@@ -19,6 +20,9 @@ import { newContext } from '../support/video'
 // Agent session's title: the person's /rename, else the start of the first
 // person message.
 //
+// The second test captures two open-pr Agent sessions of one PR, and checks
+// its Review record on the Review records pages and over MCP.
+//
 // OAuth needs a Console URL: the flow sets this stack's own, and puts the
 // old one back after. The flow stack's ClickHouse keeps the rows of earlier
 // runs, so each run uses its own repositories under one captured entry.
@@ -28,6 +32,8 @@ const ENTRY = 'flows.example/flowteam/*'
 const APP = `flows.example/flowteam/app-${RUN}`
 const TOOLS = `flows.example/flowteam/tools-${RUN}`
 const ELSEWHERE = `elsewhere.example/other/notes-${RUN}`
+const SHOP = `flows.example/flowteam/shop-${RUN}`
+const TOKEN_NAME = `e2e review records ${RUN}`
 const INGEST_URL = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
 const ADMIN_NAME = 'Admin User'
 const MEMBER_NAME = 'Member User'
@@ -167,6 +173,7 @@ test.beforeAll(({ baseURL }) => {
 
 test.afterAll(() => {
   rails(`InstanceSetting.current.update!(console_url: ${oldConsoleUrl ? JSON.stringify(oldConsoleUrl) : 'nil'})`)
+  rails(`ApiToken.where(name: ${JSON.stringify(TOKEN_NAME)}).delete_all`)
   rmSync(work, { recursive: true, force: true })
 })
 
@@ -444,6 +451,164 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   await expect(firstStep).toContainText('The cart code is in cart.go')
   await page.getByRole('button', { name: 'Oldest first' }).click()
   await expect(firstStep).toHaveAttribute('data-step', 'person')
+
+  expect(errors).toEqual([])
+})
+
+/**
+ * A PR's Review record, as open-pr and update-pr write it (version 2): the
+ * first four findings each show one path of a finding, and the rest make
+ * the record longer than a Log keeps (64 KiB) when there are many.
+ */
+function reviewRecord(pr: string, round: number, findings: number): string {
+  const f = (n: number) => `${round}.F${n}`
+  const scenario = 'The cart page adds the line totals before it applies the discount, so a cart with a coupon shows a total that is too high. '.repeat(3)
+  return JSON.stringify({
+    version: 2,
+    sessions: [{ id: randomUUID(), title: `Cart page ${RUN}` }],
+    pr,
+    round,
+    story: {
+      started_from: `The person asked for a cart page, round ${round}.`,
+      changes: ['Add the cart page and its total.'],
+      reviews: ['Run 1 reviewed the cart page step.'],
+      after_review: ['The person asked for the trivial finding to be fixed too.'],
+    },
+    reviews: [{
+      run: 1, skill: 'code-review', trigger: 'step', stage: 'step', step: 'cart page',
+      reviewers: [{ name: 'bugs-and-spec', model: 'opus', effort: 'xhigh' }, { name: 'tests', model: 'opus', effort: 'xhigh' }, { name: 'code-quality', model: 'sonnet', effort: 'high' }],
+      verifier: { model: 'opus', effort: 'high' },
+    }],
+    findings: [
+      { id: f(1), run: 1, found_by: { kind: 'reviewer', name: 'bugs-and-spec' }, severity: 'high', file: 'cart.go', line: 42,
+        title: 'The total skips the discount <img src=x onerror="window.__reviewRecordScript=1">', scenario,
+        events: [{ type: 'found' }, { type: 'triage', decision: 'fix', why: 'A wrong total is a real fault.' }, { type: 'fix', files: ['cart.go'] }], outcome: 'fixed' },
+      { id: f(2), run: 1, found_by: { kind: 'reviewer', name: 'tests' }, severity: 'low', title: 'No test for an empty cart',
+        events: [{ type: 'found' }, { type: 'triage', decision: 'trivial' }, { type: 'verify', verdict: 'CONFIRMED', pushed_back: true },
+          { type: 'person', said: 'Fix it anyway', asks: 'fix' }, { type: 'fix', files: ['cart_test.go'] }], outcome: 'fixed' },
+      { id: f(3), found_by: { kind: 'person' }, title: 'The total has no currency sign',
+        events: [{ type: 'person', said: 'Show the currency.', asks: 'fix' }], outcome: 'open' },
+      { id: f(4), found_by: { kind: 'agent' }, title: 'The cart page has no cache',
+        events: [{ type: 'agent', found: 'The page reads the prices each time.' }, { type: 'triage', decision: 'defer', why: 'Later step.' }], outcome: 'deferred' },
+      ...Array.from({ length: findings - 4 }, (_, i) => ({
+        id: f(i + 5), run: 1, found_by: { kind: 'reviewer', name: 'code-quality' }, severity: 'low', title: `Name ${i + 5} is not clear`, scenario,
+        events: [{ type: 'found' }, { type: 'triage', decision: 'fix' }, { type: 'fix', files: ['cart.go'] }], outcome: 'fixed',
+      })),
+    ],
+    confirmations: [
+      { id: 'C1', run: 1, reviewer: 'security', ask: 'Confirm that the coupon code is checked on the server.', given: true },
+      { id: 'C2', run: 1, reviewer: 'security', ask: 'Confirm that the total is not cached per person.', given: false },
+      { id: 'C3', run: 1, reviewer: 'ha-and-infrastructure', ask: 'Confirm the deploy order.', given: null },
+    ],
+  }, null, 2)
+}
+
+test('the final reply of an open-pr Agent session gives its Review record, on the Review records pages and over MCP', async ({ page, baseURL }) => {
+  test.setTimeout(240_000)
+  const errors = watchErrors(page)
+  const origin = new URL(baseURL!).origin
+  const reviewer = machine('reviewer')
+  await page.goto(`/${ORG}/review_records`)
+  await signIn(page, reviewer, origin)
+
+  // Two rounds of one PR, in two Agent sessions. Round 2 is past the Log
+  // limit, so only the parse's own copy keeps all of it. The skill's text
+  // is a user line with an example record, which is not a Review record.
+  const shopDir = gitRepository(SHOP)
+  const pr = `https://github.example/flowteam/shop-${RUN}/pull/7`
+  const examplePr = `https://github.example/flowteam/shop-${RUN}/pull/EXAMPLE`
+  const round1 = reviewRecord(pr, 1, 6)
+  const round2 = reviewRecord(pr, 2, 240)
+  expect(Buffer.byteLength(round2)).toBeGreaterThan(64 * 1024)
+  const example = reviewRecord(examplePr, 1, 4)
+  const first = openPrSession(shopDir, { exampleRecord: example, record: round1, minutesAgo: 30 })
+  const second = openPrSession(shopDir, { exampleRecord: example, record: round2, minutesAgo: 10 })
+  capture(reviewer, first, shopDir)
+  capture(reviewer, second, shopDir)
+
+  // The Review records page, from the navigation, once EventStore has
+  // parsed the uploads: one row for the PR, its newest round.
+  const table = page.getByRole('table', { name: 'Review records' })
+  const row = table.locator(`tr[data-review-record="${pr}"]`)
+  await expect(async () => {
+    await page.goto(`/${ORG}/agent_sessions`)
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Review records' }).click()
+    await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records$`))
+    await expect(row.locator('[data-cell="round"]')).toHaveText('2(1 earlier)', { timeout: 1_000 })
+  }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] })
+  await expect(row.locator('[data-cell="findings"]')).toHaveText('240')
+  await expect(row.locator('[data-cell="fixed"]')).toHaveText('238')
+  await expect(row.locator('[data-cell="missed"]')).toHaveText('2')
+  await expect(row.locator('[data-cell="not-given"]')).toHaveText('2')
+  await expect(row).toContainText(`Cart page ${RUN}`)
+  await expect(row.getByRole('link', { name: 'Open the PR' })).toHaveAttribute('href', pr)
+  await expect(row.getByRole('link', { name: second.id.slice(0, 8) })).toHaveAttribute('href', `/${ORG}/agent_sessions/${second.id}`)
+  await expect(table.locator(`tr[data-review-record="${examplePr}"]`)).toHaveCount(0)
+  await shoot(page, 'review-records-list')
+
+  // The record's page: the story, the review run, each finding with its
+  // decisions in order, the confirmations, and the other round. The text
+  // is the agent's, so it shows as text, never as HTML.
+  await row.getByRole('link', { name: pr }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records/record\\?key=`))
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(pr)
+  await expect(page.locator('[data-section="review-record-header"]')).toContainText('240 (238 fixed, 2 missed by the reviews)')
+  await expect(page.getByRole('region', { name: 'Story' })).toContainText('The person asked for a cart page, round 2.')
+  await expect(page.getByRole('table', { name: 'Reviews' }).locator('tr[data-run="1"]'))
+    .toContainText('bugs-and-spec (opus, xhigh), tests (opus, xhigh), code-quality (sonnet, high)')
+  const finding = (id: string) => page.getByRole('table', { name: 'Findings' }).locator(`tr[data-finding="${id}"]`)
+  await expect(finding('2.F2').locator('[data-cell="decisions"]')).toHaveText('trivial, verifier pushed back, person asks fix, fixed')
+  await expect(finding('2.F2').locator('[data-cell="found-by"]')).toHaveText('reviewer tests')
+  await expect(finding('2.F2').locator('[data-cell="outcome"]')).toHaveText('fixed')
+  await finding('2.F2').getByText('Details').click()
+  await expect(finding('2.F2')).toContainText('“Fix it anyway”')
+  await expect(finding('2.F3').locator('[data-cell="found-by"]')).toHaveText('personmissed')
+  await expect(finding('2.F3').locator('[data-cell="outcome"]')).toHaveText('open')
+  await expect(finding('2.F4').locator('[data-cell="decisions"]')).toHaveText('agent answered, defer')
+  await expect(finding('2.F1')).toContainText('<img src=x onerror="window.__reviewRecordScript=1">')
+  await expect(finding('2.F1').locator('img')).toHaveCount(0)
+  expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__reviewRecordScript)).toBeUndefined()
+  // The last finding is past the 64 KiB of a Log: the record is whole.
+  await expect(finding('2.F240')).toContainText('Name 240 is not clear')
+  const confirmations = page.getByRole('table', { name: 'Confirmations' })
+  await expect(confirmations.locator('tr[data-confirmation="C1"]')).toContainText('Given')
+  await expect(confirmations.locator('tr[data-confirmation="C2"]')).toContainText('Not given')
+  await expect(confirmations.locator('tr[data-confirmation="C3"]')).toContainText('Not known')
+  await shoot(page, 'review-record-page')
+  const rounds = page.getByRole('region', { name: 'Rounds of this PR' })
+  await expect(rounds.locator('li[data-round="2"]')).toContainText('Round 2 (shown)')
+  await rounds.getByRole('link', { name: 'Round 1' }).click()
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records/record\\?id=`))
+  await expect(page.locator('[data-section="review-record-header"]')).toContainText('6 (4 fixed, 2 missed by the reviews)')
+  await expect(page.getByRole('table', { name: 'Findings' }).locator('tr[data-finding]')).toHaveCount(6)
+
+  // Over MCP, with a token that only reads: the same row, and the record
+  // byte for byte as the agent wrote it.
+  const secret = rails(`
+    org = Organization.find_by!(slug: ${JSON.stringify(ORG)})
+    admin = User.find_by!(email: ${JSON.stringify(ADMIN.email)})
+    print ApiToken.issue!(user: admin, name: ${JSON.stringify(TOKEN_NAME)}, scopes: ["mcp:read"], organization_id: org.id).last
+  `)
+  const tool = async (name: string, args: object) => {
+    const resp = await fetch(`${origin}/mcp`, {
+      method: 'POST',
+      headers: { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { organization: ORG, ...args } } }),
+    })
+    expect(resp.status, name).toBe(200)
+    const body = await resp.json()
+    expect(body.result?.isError, name).toBeFalsy()
+    const text: string = body.result.content.map((c: { text: string }) => c.text).join('\n')
+    return text.split('\nConsole: ')
+  }
+  const [list, listLink] = await tool('list_review_records', {})
+  const listed = JSON.parse(list).review_records.find((r: { key: string }) => r.key === pr)
+  expect(listed).toMatchObject({ pr, round: 2, earlier: 1, findings: 240, fixed: 238, missed: 2, confirmations_not_given: 2, session_id: second.id })
+  expect(listLink).toBe(`${origin}/${ORG}/review_records`)
+  const [got, gotLink] = await tool('get_review_record', { pr })
+  expect(got.includes(`"record":${round2},"rounds":`), 'the record byte for byte').toBe(true)
+  expect(JSON.parse(got).rounds.map((r: { round: number }) => r.round)).toEqual([2, 1])
+  expect(gotLink).toBe(`${origin}/${ORG}/review_records/record?key=${encodeURIComponent(pr)}`)
 
   expect(errors).toEqual([])
 })
