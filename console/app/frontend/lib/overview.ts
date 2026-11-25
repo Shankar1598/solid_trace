@@ -38,6 +38,7 @@ export interface Overview {
     /** Kept bytes over the stored bytes of the days with Source counts; null when none of them is stored. */
     ratio: number | null
     unreadable_logs: number
+    filtered_logs: number
     dropped_by_transform: number
     overloaded_requests: number
   } | null
