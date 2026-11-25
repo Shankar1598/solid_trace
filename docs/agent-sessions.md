@@ -38,6 +38,12 @@ Step 5 of the Capture setup page gives a managed-settings block that also sends 
 
 **Settings → Agent sessions → Capture setup** in Console gives each command with your instance's version and addresses filled in. Each member of the Organization can open it.
 
+Or run the setup wizard. It does steps 1 to 3, and it can also install the review plugin ([the skills plugin](#record-what-each-review-found-the-skills-plugin)). It asks for the release, and it uses the newest release when you do not give one:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Shankar1598/solid_trace/main/cli/setup-claude-code.sh | sh
+```
+
 1. Install the `solidtrace` CLI. The script checks the SHA-256 of the file before it installs it in `~/.local/bin`:
 
    ```bash
