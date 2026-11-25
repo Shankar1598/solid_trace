@@ -38,6 +38,8 @@ Rails.application.routes.draw do
     post :proof_options, on: :collection
   end
   resources :api_tokens, only: [ :create, :destroy ]
+  # The tunnel of the frontend's Sentry SDK (BrowserErrorsController).
+  post "browser_errors", to: "browser_errors#create", as: :browser_errors
   # Child tokens, which the Dispatcher makes and revokes with its own token
   # (ChildTokensController).
   post "api/child_tokens", to: "child_tokens#create", as: :child_tokens, format: false

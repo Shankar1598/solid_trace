@@ -394,7 +394,7 @@ export default function SettingsInstance({ settings }: { settings: InstanceSetti
                   Send Console&apos;s Issues
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  Sends Console&apos;s own errors to its Sentry DSN, the Meta Organization&apos;s Project, where they become Issues.
+                  Sends Console&apos;s own errors, of its server and of its pages in the browser, to its Sentry DSN, the Meta Organization&apos;s Project, where they become Issues.
                 </p>
                 {errors.send_console_issues && <p className="text-sm font-medium text-destructive">{errors.send_console_issues}</p>}
               </div>

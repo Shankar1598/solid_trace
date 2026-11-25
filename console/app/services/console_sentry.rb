@@ -42,6 +42,23 @@ module ConsoleSentry
       Sentry.set_context(CONTEXT, { notifies_meta_organization: true })
     end
 
+    # Whether the frontend sends its errors: Console's Sentry has a DSN it
+    # sends to, and Send Console's Issues is on.
+    def browser_errors?
+      Sentry.initialized? && Sentry.configuration.sending_allowed? && settings[:send_console_issues]
+    end
+
+    # Sends a browser's Sentry envelope, its frames un-minified
+    # (BrowserSourceMaps), through Console's own transport, which puts
+    # Console's DSN key on it. false when the frontend sends no errors. Raises
+    # Sentry::ExternalError when the send fails.
+    def send_browser_envelope(body)
+      return false unless browser_errors?
+
+      Sentry.get_current_client.transport.send_data(BrowserSourceMaps.rewrite_envelope(body))
+      true
+    end
+
     # Sentry's before_send: the Event, or nil to drop it.
     def before_send(event, _hint)
       return unless settings[:send_console_issues]
