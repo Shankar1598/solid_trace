@@ -235,8 +235,15 @@ Usage:
       another session keeps all its events. A review is a skill whose name
       matches --skills (by default a name whose last part is review or
       interrogate, or ends in -review), that a person or the agent starts,
-      or a solidtrace-findings block in the agent's text or a subagent's
-      report.
+      or a solidtrace-findings block. A block comes from the output of a
+      solidtrace review block or solidtrace review fixed command that did
+      not fail, and from the agent's text or a subagent's report. With
+      --session, the digest also reads the session's subagent transcripts
+      (<projects>/*/ID/subagents/*.jsonl), and takes from them only the
+      blocks of those two commands. Each block of a subagent has its
+      agent id as its writer (no writer is the main transcript). A block
+      in a text or a report that is the same JSON as the block of a
+      command in the same session is not in the digest again.
   solidtrace review check --digest PATH --record PATH
       Check a review record (open-pr's record.md, version 2) against the
       digest that it was made from: each outcome, event type, decision
@@ -244,18 +251,49 @@ Usage:
       record and evidence that is in the digest; the story is filled in;
       the record has the digest's sessions, and reviews when the digest
       has runs; each finding of each solidtrace-findings block (update
-      blocks too) is in the record with its block events; each outcome
-      agrees with its events; each finding that a commit's
-      Review-Findings trailer names has a fix event; each confirmation's
-      given is true or false; and round, when it is there, is 1 or more.
-      Print the counts and the problems as JSON. Exit 1 when there is a
-      problem, 2 when a file cannot be read.
+      blocks too) is in the record with its block events; the findings
+      of an update block are on the run that it names, of the same
+      session and writer; each outcome agrees with its events; each
+      finding that a commit's Review-Findings trailer names (a run of the
+      main transcript) has a fix event; each confirmation's given is true
+      or false; and round, when it is there, is 1 or more. Print the
+      counts and the problems as JSON. Exit 1 when there is a problem, 2
+      when a file cannot be read.
+  solidtrace review record --digest PATH [--notes PATH] [--pr URL] [--round N]
+      Print as JSON the review record (version 2) of a digest. Without
+      --notes, it is the mechanical part: one run for each findings block
+      that is not an update block and for each review start with no
+      block, numbered in time order; each block finding with the id
+      <run>.<block id> and its events; a refound finding on the earlier
+      finding of its writer; the events of each update block on the
+      finding of the run that it names, of the same writer; a fix event
+      for a finding that a commit's Review-Findings trailer names and no
+      block gave a fix; the confirmations; and each finding's outcome
+      from its events. --notes adds what needs reading: the story, more
+      events, the findings from outside the reviews (P, A and X) and of
+      a review start with no block (T<run>-<n>), each confirmation's
+      given, and low confidence. Then each outcome is worked out again.
+      --pr sets pr (default null), and --round sets round (default 1).
+      A block that the record cannot place is a warning on stderr. Exit
+      1 when the notes name a finding, a confirmation or an evidence uuid
+      that is not there, or are not of their shape; 2 when a file cannot
+      be read.
   solidtrace review fixed [COMMIT]
       Print one solidtrace-findings update block for each run that the
       Review-Findings trailers of COMMIT (default HEAD) name, with a fix
       event for each finding: the commit's full hash and the files that
       it changes (all of them: git cannot say which file fixed which
-      finding). Exit 1 when the commit has no Review-Findings trailer.
+      finding), in the form of review block. Exit 1 when the commit has
+      no Review-Findings trailer.
+  solidtrace review block
+      Read one solidtrace-findings block (code-review's findings.md,
+      version 2) as JSON on stdin, check it, and print it as one fenced
+      solidtrace-findings block of compact JSON. A run block has run,
+      skill, trigger, stage, step, base, head, reviewers, verifier,
+      findings, confirmations and dropped (skipped is optional); an
+      update block has update and findings with id and events only. A
+      field that the format does not have is a problem. Exit 1 with each
+      problem on stderr when the block is not valid.
   solidtrace version
       Print the version of this solidtrace.
 `

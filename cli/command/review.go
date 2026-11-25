@@ -28,9 +28,13 @@ func reviewCommand(ctx context.Context, args []string, env Env) int {
 			return reviewCheck(args[1:], env)
 		case "fixed":
 			return reviewFixed(ctx, args[1:], env)
+		case "block":
+			return reviewBlock(args[1:], env)
+		case "record":
+			return reviewRecord(args[1:], env)
 		}
 	}
-	fmt.Fprintln(env.Stderr, "solidtrace review: give digest, sessions, check or fixed")
+	fmt.Fprintln(env.Stderr, "solidtrace review: give digest, sessions, check, fixed, block or record")
 	return 2
 }
 
@@ -60,7 +64,10 @@ func reviewDigest(args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "solidtrace review digest: --skills: %v\n", err)
 		return 2
 	}
-	type source struct{ id, path string }
+	type source struct {
+		id, path  string
+		subagents []string
+	}
 	var sources []source
 	for _, id := range sessions {
 		path, err := sessionTranscript(env.ClaudeProjectsDir, id)
@@ -68,14 +75,16 @@ func reviewDigest(args []string, env Env) int {
 			fmt.Fprintf(env.Stderr, "solidtrace review digest: %v\n", err)
 			return 1
 		}
-		sources = append(sources, source{id, path})
+		// The same files that review sessions reads for a session.
+		subagents, _ := filepath.Glob(filepath.Join(filepath.Dir(path), id, "subagents", "*.jsonl"))
+		sources = append(sources, source{id, path, subagents})
 	}
 	for _, path := range files {
-		sources = append(sources, source{trimExt(filepath.Base(path)), path})
+		sources = append(sources, source{trimExt(filepath.Base(path)), path, nil})
 	}
 	var digests []review.Digest
 	for _, s := range sources {
-		d, err := readDigest(s.path, s.id, pattern)
+		d, err := readDigest(s.path, s.id, pattern, s.subagents)
 		if err != nil {
 			fmt.Fprintf(env.Stderr, "solidtrace review digest: %v\n", err)
 			return 1
@@ -85,13 +94,24 @@ func reviewDigest(args []string, env Env) int {
 	return printJSON(env, "review digest", review.Merge(digests...))
 }
 
-func readDigest(path, id string, skills *regexp.Regexp) (review.Digest, error) {
+func readDigest(path, id string, skills *regexp.Regexp, subagentPaths []string) (review.Digest, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return review.Digest{}, err
 	}
 	defer f.Close()
-	d, err := review.Read(f, id, skills)
+	var subagents []review.Subagent
+	for _, p := range subagentPaths {
+		sf, err := os.Open(p)
+		if err != nil {
+			return review.Digest{}, err
+		}
+		defer sf.Close()
+		// Claude Code names a subagent's transcript agent-<id>.jsonl.
+		agent := strings.TrimPrefix(trimExt(filepath.Base(p)), "agent-")
+		subagents = append(subagents, review.Subagent{ID: agent, Transcript: sf})
+	}
+	d, err := review.Read(f, id, skills, subagents...)
 	if err != nil {
 		return review.Digest{}, fmt.Errorf("%s: %w", path, err)
 	}

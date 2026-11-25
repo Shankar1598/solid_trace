@@ -28,6 +28,6 @@ Number and decide the findings as `code-review` does (`${CLAUDE_SKILL_DIR}/../co
 
 ## 4. Report
 
-Write the findings for the person, most severe first: the id, the title, the command and its output, how it breaks the intent, and your decision. End the reply with one block in the format of `${CLAUDE_SKILL_DIR}/../code-review/findings.md`, with `"skill": "deep-review"`, `"stage": "final"`, `"step": null` and `"verifier": null`. `trigger` is `person` when the person typed this skill, and `open-pr` when `open-pr` runs it. The `scenario` of each finding is the command, the output it printed, and the output that the intent needs. `kind` is `hard`.
+Write the findings for the person, most severe first: the id, the title, the command and its output, how it breaks the intent, and your decision. Record one block with `solidtrace review block`, as `${CLAUDE_SKILL_DIR}/../code-review/findings.md` says, with `"skill": "deep-review"`, `"stage": "final"`, `"step": null` and `"verifier": null`. `trigger` is `person` when the person typed this skill, and `open-pr` when `open-pr` runs it. The `scenario` of each finding is the command, the output it printed, and the output that the intent needs. `kind` is `hard`.
 
-When the person typed this skill, stop after the block: the person decides the `ask` findings before any fix. When `open-pr` runs it, go on with the next step of `open-pr`.
+When the person typed this skill, stop after the block is recorded: the person decides the `ask` findings before any fix. When `open-pr` runs it, go on with the next step of `open-pr`.

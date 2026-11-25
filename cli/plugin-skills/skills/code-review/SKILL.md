@@ -71,7 +71,7 @@ Done when every `dispute` and `trivial` finding has a verdict.
 
 Write the findings for the person, one section per reviewer, most severe first: the id, the file and line, the scenario, your decision and the verifier's verdict. Then the confirmations that the reviewers ask the developer for.
 
-End the reply with one block in the format of [findings.md](findings.md). When you run as a subagent, also put the block in your final report, because only that report reaches the session that started you. Then fix the findings with decision `fix`, unless the person asked for a report only.
+Record the block with `solidtrace review block`, as [findings.md](findings.md) says, and do not write the JSON in your reply. Then fix the findings with decision `fix`, unless the person asked for a report only.
 
 Commit the fixes with explicit paths. End the commit message with one trailer line for each run whose findings it fixes, before the other trailers:
 
@@ -79,6 +79,6 @@ Commit the fixes with explicit paths. End the commit message with one trailer li
 Review-Findings: run 1: F2, F5, F12
 ```
 
-`run` and the ids are those of the block. Then run `solidtrace review fixed`, which prints the update block of HEAD from its trailers, and end the reply with that block. Add a `triage` event to it by hand only for a decision that changed.
+`run` and the ids are those of the block. Then run `solidtrace review fixed`, which records the update block of HEAD from its trailers. Record a decision that changed with `solidtrace review block`.
 
-Done when each finding with decision `fix` has a `fix` event in an update block.
+Done when `solidtrace review fixed` has recorded a `fix` event for each finding with decision `fix`.

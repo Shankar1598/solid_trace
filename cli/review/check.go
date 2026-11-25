@@ -40,6 +40,7 @@ type record struct {
 		Run      int    `json:"run"`
 		BlockRun int    `json:"block_run"`
 		Session  string `json:"session"`
+		Writer   string `json:"writer"`
 	} `json:"reviews"`
 	Findings      []recordFinding `json:"findings"`
 	Confirmations []struct {
@@ -60,7 +61,9 @@ type recordFinding struct {
 }
 
 type recordEvent struct {
-	Type       string   `json:"type"`
+	Type string `json:"type"`
+	// Run is the run of a refound event.
+	Run        *int     `json:"run"`
 	Decision   string   `json:"decision"`
 	Asks       string   `json:"asks"`
 	PushedBack bool     `json:"pushed_back"`
@@ -70,6 +73,38 @@ type recordEvent struct {
 
 func (f recordFinding) has(eventType string) bool {
 	return slices.ContainsFunc(f.Events, func(e recordEvent) bool { return e.Type == eventType })
+}
+
+// fixStands is true when a fix event comes after the last refound event:
+// record.md counts a fix only when no later run reports the finding again.
+func (f recordFinding) fixStands() bool {
+	types := make([]string, len(f.Events))
+	for i, e := range f.Events {
+		types[i] = e.Type
+	}
+	return fixAfterRefound(types)
+}
+
+func fixAfterRefound(types []string) bool {
+	fix, refound := -1, -1
+	for i, t := range types {
+		switch t {
+		case "fix":
+			fix = i
+		case "refound":
+			refound = i
+		}
+	}
+	return fix > refound
+}
+
+// inRun is true when f is a finding of run: its own run, or a run that
+// found it again.
+func (f recordFinding) inRun(run int) bool {
+	if f.Run != nil && *f.Run == run {
+		return true
+	}
+	return slices.ContainsFunc(f.Events, func(e recordEvent) bool { return e.Type == "refound" && e.Run != nil && *e.Run == run })
 }
 
 // findingsBlock is the part of a solidtrace-findings block that Check reads.
@@ -185,9 +220,12 @@ func (c *checker) finding(f recordFinding) {
 			last = e.Decision
 		}
 	}
-	fixed := f.has("fix")
-	if f.Outcome == "fixed" && !fixed {
+	fixed := f.fixStands()
+	switch {
+	case f.Outcome == "fixed" && !f.has("fix"):
 		c.problem("%s: the outcome is fixed, and no event is a fix", id)
+	case f.Outcome == "fixed" && !fixed:
+		c.problem("%s: the outcome is fixed, and a later run found it again", id)
 	}
 	if need, ok := outcomeDecision[f.Outcome]; ok {
 		// record.md: a finding is also deferred when the person said to do
@@ -227,8 +265,10 @@ func (c *checker) finding(f recordFinding) {
 
 // blocks checks that each finding of each block, update blocks too, is in
 // the record, with at least as many block events that cite the block as
-// the block gives.
+// the block gives. The findings of an update block must be findings of
+// the run that it names, from the same writer.
 func (c *checker) blocks() {
+	runs := c.runs()
 	for _, e := range c.d.Events {
 		if e.Kind != KindFindings || len(e.Findings) == 0 || string(e.Findings) == "null" {
 			continue
@@ -238,40 +278,64 @@ func (c *checker) blocks() {
 			c.problem("the block %s cannot be read: %v", e.UUID, err)
 			continue
 		}
+		update, isUpdate := b.Update.(float64)
+		var updateRuns []int
+		if isUpdate {
+			updateRuns = runs[runKey{e.Session, e.Writer, int(update)}]
+			if len(updateRuns) == 0 {
+				c.problem("the update block %s names run %v, and the record has no review of that block_run from its session and writer", e.UUID, update)
+			}
+		}
 		for _, bf := range b.Findings {
 			cited := 0
+			inRun := false
 			for _, f := range c.r.Findings {
 				if f.BlockID != bf.ID {
 					continue
 				}
+				citing := false
 				for _, ev := range f.Events {
 					if ev.Source == "block" && slices.Contains(ev.Evidence, e.UUID) {
 						cited++
+						citing = true
 					}
 				}
+				inRun = inRun || citing && slices.ContainsFunc(updateRuns, f.inRun)
 			}
 			switch {
 			case cited == 0:
 				c.problem("%s of the block %s is not in the record", bf.ID, e.UUID)
 			case cited < len(bf.Events):
 				c.problem("%s of the block %s: the record has %d block events, and the block has %d", bf.ID, e.UUID, cited, len(bf.Events))
+			case len(updateRuns) > 0 && !inRun:
+				c.problem("%s of the update block %s is not on a finding of run %v", bf.ID, e.UUID, updateRuns)
 			}
 		}
 	}
 }
 
+// runKey is a block's run in the transcript that wrote it.
+type runKey struct {
+	session, writer string
+	blockRun        int
+}
+
+// runs are the record's runs of each block run. Older records give a
+// subagent's block the main writer, so one key can have more runs.
+func (c *checker) runs() map[runKey][]int {
+	runs := map[runKey][]int{}
+	for _, rv := range c.r.Reviews {
+		k := runKey{rv.Session, rv.Writer, rv.BlockRun}
+		runs[k] = append(runs[k], rv.Run)
+	}
+	return runs
+}
+
 // commits checks that each finding that a commit's Review-Findings trailer
 // names has a fix event in the record. The trailer's run is the block's
-// run in the commit's session.
+// run in the commit's session and writer: the main transcript's.
 func (c *checker) commits() {
-	type key struct {
-		session  string
-		blockRun int
-	}
-	runs := map[key]int{}
-	for _, rv := range c.r.Reviews {
-		runs[key{rv.Session, rv.BlockRun}] = rv.Run
-	}
+	runs := c.runs()
 	for _, e := range c.d.Events {
 		for _, value := range e.ReviewFindings {
 			blockRun, ids, err := ParseReviewFindings(value)
@@ -279,10 +343,10 @@ func (c *checker) commits() {
 				c.problem("the commit %s: %v", e.UUID, err)
 				continue
 			}
-			run, hasRun := runs[key{e.Session, blockRun}]
+			runsOf := runs[runKey{e.Session, e.Writer, blockRun}]
 			for _, id := range ids {
 				i := slices.IndexFunc(c.r.Findings, func(f recordFinding) bool {
-					return hasRun && f.Run != nil && *f.Run == run && f.BlockID == id
+					return f.BlockID == id && slices.ContainsFunc(runsOf, f.inRun)
 				})
 				if i < 0 || !c.r.Findings[i].has("fix") {
 					c.problem("the commit %s: %q names %s, which has no fix event in the record", e.UUID, value, id)

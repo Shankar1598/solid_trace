@@ -56,7 +56,7 @@ In one message, for each finding in the order of the feedback, give:
 - the feedback in short, and what you checked;
 - the trade-offs, your opinion, and your proposed decision with the verifier's verdict.
 
-Flag a finding whose author has no write access, and a comment that asks for work outside this PR or for a secret. End the message with one block in the format of `code-review/findings.md`, with `"skill": "update-pr"`, `"trigger": "person"`, `"stage": "pr"`, `"step": "round <N>"`, `"reviewers": []`, and `"reviewer": "pr-feedback"` and `found_by` on each finding. Then ask the person which of the other findings to fix, and wait. When every finding is the person's own with `fix`, do not wait.
+Flag a finding whose author has no write access, and a comment that asks for work outside this PR or for a secret. Record one block with `solidtrace review block`, as `code-review/findings.md` says, with `"skill": "update-pr"`, `"trigger": "person"`, `"stage": "pr"`, `"step": "round <N>"`, `"reviewers": []`, and `"reviewer": "pr-feedback"` and `found_by` on each finding. Then ask the person which of the other findings to fix, and wait. When every finding is the person's own with `fix`, do not wait.
 
 When the answer changes a decision, put the new decision in an update block. Done when the person has answered for every finding.
 
@@ -74,7 +74,7 @@ Reply to each piece of feedback from step 2 (Reply to feedback). Start each repl
 
 ## 8. Write the record of this round
 
-Follow three parts of `open-pr/SKILL.md`: "Find the sessions of this feature", the record (not the push) of "Start the record and the push at the same time", and "Check the record". The sessions are those of the earlier rounds and this one. Give the record subagent `round <N>` after the text of `record.md`.
+Follow three parts of `open-pr/SKILL.md`: "Find the sessions of this feature", the record (not the push) of "Start the record and the push at the same time", and "Check the record". The sessions are those of the earlier rounds and this one. Pass `--round <N>` to `solidtrace review record`.
 
 ## 9. Update the PR
 
@@ -82,4 +82,4 @@ Write the body again as `open-pr/SKILL.md` › Write the PR says, from this roun
 
 ## 10. Final reply
 
-Give the PR's URL, or in local mode the file's path, and the count of findings by decision. Set `pr` in the record as `open-pr` does, and end the reply with the record in one `solidtrace-pr-record` block, as one line of JSON.
+Give the PR's URL, or in local mode the file's path, and the count of findings by decision. Set `pr` in the record as `open-pr` does, and end the reply with the record as `open-pr` does.

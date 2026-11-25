@@ -64,8 +64,9 @@ const (
 // task, person, agent_text and subagent_report set Text; review_start sets
 // Skill, Trigger and Args; delegate sets Text (the subagent's description
 // and prompt); findings sets Findings, and Error when the block is not
-// valid JSON (Findings is then null); edit sets Tool and File; commit sets
-// Command, and ReviewFindings from the message's Review-Findings trailers.
+// valid JSON (Findings is then null), and Writer for a block of a
+// subagent's transcript; edit sets Tool and File; commit sets Command, and
+// ReviewFindings from the message's Review-Findings trailers.
 type Entry struct {
 	Seq      int             `json:"seq"`
 	Session  string          `json:"session"`
@@ -78,14 +79,20 @@ type Entry struct {
 	Args     string          `json:"args,omitempty"`
 	Findings json.RawMessage `json:"findings,omitempty"`
 	Error    string          `json:"error,omitempty"`
-	Tool     string          `json:"tool,omitempty"`
-	File     string          `json:"file,omitempty"`
-	Command  string          `json:"command,omitempty"`
+	// Writer is the agent id of the subagent whose transcript has the
+	// block, and "" for the main transcript.
+	Writer  string `json:"writer,omitempty"`
+	Tool    string `json:"tool,omitempty"`
+	File    string `json:"file,omitempty"`
+	Command string `json:"command,omitempty"`
 	// ReviewFindings are kept whole, because Command is cut.
 	ReviewFindings []string `json:"review_findings,omitempty"`
 	// gated is true for an agent's text, an edit or a subagent's report
 	// from before the session's first review.
 	gated bool
+	// fromCall is true for a block from the output of solidtrace review
+	// block or solidtrace review fixed.
+	fromCall bool
 }
 
 // DefaultSkills matches the names of the usual review skills: a name whose
@@ -138,16 +145,26 @@ var notFromThePerson = []string{
 	"<local-command-caveat>",
 }
 
-// Read reads the main transcript of one Agent session into its Digest.
-// The session's id is the transcript's sessionId, else id.
-func Read(r io.Reader, id string, skills *regexp.Regexp) (Digest, error) {
+// Subagent is the transcript of one subagent of an Agent session, with
+// the subagent's agent id.
+type Subagent struct {
+	ID         string
+	Transcript io.Reader
+}
+
+// Read reads the main transcript of one Agent session into its Digest,
+// and from the transcripts of its subagents the blocks that solidtrace
+// review block and solidtrace review fixed printed. The session's id is
+// the transcript's sessionId, else id.
+func Read(r io.Reader, id string, skills *regexp.Regexp, subagents ...Subagent) (Digest, error) {
 	b := builder{
-		skills:    skills,
-		subagents: map[string]bool{},
-		asks:      map[string]bool{},
-		edits:     map[string]int{},
-		rejected:  map[int]bool{},
-		paths:     paths{tops: topLevels{}},
+		skills:     skills,
+		subagents:  map[string]bool{},
+		asks:       map[string]bool{},
+		blockCalls: map[string]bool{},
+		edits:      map[string]int{},
+		rejected:   map[int]bool{},
+		paths:      paths{tops: topLevels{}},
 	}
 	if err := eachLine(r, b.add); err != nil {
 		return Digest{}, err
@@ -155,22 +172,124 @@ func Read(r io.Reader, id string, skills *regexp.Regexp) (Digest, error) {
 	if b.session != "" {
 		id = b.session
 	}
-	events := []Entry{}
+	var main []Entry
 	for i, e := range b.events {
 		if !b.rejected[i] {
-			e.Session = id
-			events = append(events, e)
+			main = append(main, e)
 		}
+	}
+	sources := [][]Entry{main}
+	reviewed := b.reviewedAt
+	var subagentReview time.Time
+	for _, s := range subagents {
+		found, err := subagentBlocks(s.Transcript, s.ID)
+		if err != nil {
+			return Digest{}, err
+		}
+		if times := eventTimes(found); len(found) > 0 && (subagentReview.IsZero() || times[0].Before(subagentReview)) {
+			subagentReview = times[0]
+		}
+		sources = append(sources, found)
+	}
+	events := withoutCopies(mergeByTime(sources))
+	// A review that ran only in a subagent starts the review of the
+	// session at the time of its first block.
+	if !subagentReview.IsZero() && (reviewed.IsZero() || subagentReview.Before(reviewed)) {
+		reviewed = subagentReview
+		for i, t := range eventTimes(events) {
+			if events[i].gated && !t.Before(reviewed) {
+				events[i].gated = false
+			}
+		}
+	}
+	for i := range events {
+		events[i].Session = id
+	}
+	if events == nil {
+		events = []Entry{}
 	}
 	d := Digest{
 		Sessions: []SessionTitle{{ID: id, Title: b.titles.title()}},
 		Reviews:  b.reviews,
 		all:      events,
 		start:    b.start,
-		reviewed: b.reviewedAt,
+		reviewed: reviewed,
 	}
 	d.Events = Merge(Digest{Sessions: d.Sessions, Events: d.timeline(false)}).Events
 	return d, nil
+}
+
+// subagentBlocks are the findings entries of the solidtrace review block
+// and solidtrace review fixed commands in a subagent's transcript, with
+// the subagent's agent id as their writer.
+func subagentBlocks(r io.Reader, id string) ([]Entry, error) {
+	calls := map[string]bool{}
+	var out []Entry
+	err := eachLine(r, func(l line) {
+		var m message
+		if json.Unmarshal(l.Message, &m) != nil {
+			return
+		}
+		writer := id
+		if l.AgentID != "" {
+			writer = l.AgentID
+		}
+		for _, bl := range blocksOf(m.Content) {
+			switch {
+			case l.Type == "assistant" && bl.Type == "tool_use" && isBlockCall(bl):
+				calls[bl.ID] = true
+			case l.Type == "user" && bl.Type == "tool_result" && calls[bl.ToolUseID] && !bl.IsError:
+				for _, e := range callBlocks(l, bl) {
+					e.Writer = writer
+					out = append(out, e)
+				}
+			}
+		}
+	})
+	return out, err
+}
+
+// isBlockCall is true for a Bash tool use that runs solidtrace review
+// block or solidtrace review fixed.
+func isBlockCall(bl block) bool {
+	if bl.Name != "Bash" {
+		return false
+	}
+	var input struct {
+		Command string `json:"command"`
+	}
+	_ = json.Unmarshal(bl.Input, &input)
+	return blockCommand(input.Command)
+}
+
+// callBlocks are the findings entries of the output of a block call.
+func callBlocks(l line, bl block) []Entry {
+	text, _ := contentText(bl.Content)
+	found := findings(l, text)
+	for i := range found {
+		found[i].fromCall = true
+	}
+	return found
+}
+
+// withoutCopies is events without each findings entry from a text or a
+// report whose block is the same JSON as the block of a call: older
+// skills also put a subagent's block in its report.
+func withoutCopies(events []Entry) []Entry {
+	called := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == KindFindings && e.fromCall {
+			called[string(e.Findings)] = true
+		}
+	}
+	out := events[:0:0]
+	for _, e := range events {
+		if e.Kind == KindFindings && !e.fromCall && e.Error == "" && called[string(e.Findings)] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // Merge puts the Digests in one: their events in time order, each
@@ -186,15 +305,29 @@ func Merge(digests ...Digest) Digest {
 		}
 	}
 	all := Digest{Sessions: []SessionTitle{}, Events: []Entry{}}
-	heads := make([]int, len(digests))
 	sources := make([][]Entry, len(digests))
-	times := make([][]time.Time, len(digests))
 	for i, d := range digests {
 		all.Sessions = append(all.Sessions, d.Sessions...)
 		all.Reviews += d.Reviews
 		sources[i] = d.timeline(!first.IsZero() && d.start.After(first))
-		times[i] = eventTimes(sources[i])
 	}
+	for _, e := range mergeByTime(sources) {
+		e.Seq = len(all.Events)
+		all.Events = append(all.Events, e)
+	}
+	return all
+}
+
+// mergeByTime puts the events of sources in one list in time order: each
+// source's own events in their order, and the events of an earlier source
+// first when their times are equal.
+func mergeByTime(sources [][]Entry) []Entry {
+	heads := make([]int, len(sources))
+	times := make([][]time.Time, len(sources))
+	for i, events := range sources {
+		times[i] = eventTimes(events)
+	}
+	var out []Entry
 	for {
 		next := -1
 		for i, events := range sources {
@@ -203,11 +336,9 @@ func Merge(digests ...Digest) Digest {
 			}
 		}
 		if next < 0 {
-			return all
+			return out
 		}
-		e := sources[next][heads[next]]
-		e.Seq = len(all.Events)
-		all.Events = append(all.Events, e)
+		out = append(out, sources[next][heads[next]])
 		heads[next]++
 	}
 }
@@ -272,6 +403,7 @@ type line struct {
 	CustomTitle      string          `json:"customTitle"`
 	AITitle          string          `json:"aiTitle"`
 	IsSidechain      bool            `json:"isSidechain"`
+	AgentID          string          `json:"agentId"`
 	IsMeta           bool            `json:"isMeta"`
 	IsCompactSummary bool            `json:"isCompactSummary"`
 	Origin           *origin         `json:"origin"`
@@ -326,10 +458,12 @@ type builder struct {
 	// start is the time of the first line, now of the last line with a
 	// time, and reviewedAt of the line of the first review.
 	start, now, reviewedAt time.Time
-	// subagents are the ids of the tool uses that started a subagent, and
-	// asks those of AskUserQuestion.
-	subagents map[string]bool
-	asks      map[string]bool
+	// subagents are the ids of the tool uses that started a subagent, asks
+	// those of AskUserQuestion, and blockCalls those of solidtrace review
+	// block and solidtrace review fixed.
+	subagents  map[string]bool
+	asks       map[string]bool
+	blockCalls map[string]bool
 	// edits has the index in events of each edit, by its tool use id, and
 	// rejected the edits whose tool result is an error.
 	edits    map[string]int
@@ -429,6 +563,9 @@ func (b *builder) assistantBlock(l line, bl block) {
 		}
 		if bl.Name == "AskUserQuestion" {
 			b.asks[bl.ID] = true
+		}
+		if isBlockCall(bl) {
+			b.blockCalls[bl.ID] = true
 		}
 		if agentTools[bl.Name] {
 			b.subagents[bl.ID] = true
@@ -564,6 +701,14 @@ func (b *builder) toolResult(l line, bl block) {
 		if said || strings.HasPrefix(strings.TrimSpace(text), rejected) {
 			return
 		}
+	}
+	if b.blockCalls[bl.ToolUseID] {
+		// A call that failed printed no block.
+		if found := callBlocks(l, bl); !bl.IsError && len(found) > 0 {
+			b.markReviewed()
+			b.events = append(b.events, found...)
+		}
+		return
 	}
 	if answers, ok := strings.CutPrefix(strings.TrimSpace(text), answered); ok && b.asks[bl.ToolUseID] {
 		b.person(l, strings.TrimSuffix(strings.TrimSpace(answers), answeredEnd))

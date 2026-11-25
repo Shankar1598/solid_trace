@@ -115,9 +115,11 @@ func reviewFixed(ctx context.Context, args []string, env Env) int {
 		if err := enc.Encode(b); err != nil {
 			return fail(err)
 		}
-		out.WriteString("```solidtrace-findings\n")
-		out.Write(body.Bytes())
-		out.WriteString("```\n")
+		block, problems := review.CheckBlock(body.Bytes())
+		if len(problems) > 0 {
+			return fail(fmt.Errorf("the update block of run %d is not valid: %s", b.Update, strings.Join(problems, "; ")))
+		}
+		out.WriteString(review.FenceBlock(block))
 	}
 	if _, err := env.Stdout.Write(out.Bytes()); err != nil {
 		return fail(err)

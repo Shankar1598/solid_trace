@@ -185,6 +185,18 @@ func TestReviewCheckNamesEachProblemOfARecord(t *testing.T) {
 		}, `the commit u-commit: "run 2: F1" names F1, which has no fix event in the record`},
 		{"a trailer with no run", func(d, _ map[string]any) { digestEvent(d, 2)["review_findings"] = []any{"F1"} },
 			`the commit u-commit: the trailer value "F1" has no run`},
+		{"an update block of another writer", func(d, _ map[string]any) { digestEvent(d, 3)["writer"] = "a1" },
+			"the update block u-update names run 1, and the record has no review of that block_run from its session and writer"},
+		{"an update block on a finding of another run", func(d, r map[string]any) {
+			digestEvent(d, 3)["writer"] = "a1"
+			r["reviews"] = append(r["reviews"].([]any), map[string]any{"run": 2, "block_run": 1, "session": "s1", "writer": "a1", "start": "u-update"})
+		}, "F1 of the update block u-update is not on a finding of run [2]"},
+		{"a trailer of another writer's run", func(_, r map[string]any) {
+			r["reviews"].([]any)[0].(map[string]any)["writer"] = "a1"
+		}, `the commit u-commit: "run 1: F1" names F1, which has no fix event in the record`},
+		{"fixed and found again later", func(_, r map[string]any) {
+			addEvent(r, 0, map[string]any{"type": "refound", "run": 2, "source": "block", "evidence": []any{"u-person"}})
+		}, "1.F1: the outcome is fixed, and a later run found it again"},
 		{"a confirmation with no given", func(_, r map[string]any) {
 			delete(r["confirmations"].([]any)[0].(map[string]any), "given")
 		}, "1.C1: given is not true or false"},
@@ -214,6 +226,22 @@ func TestReviewCheckNamesEachProblemOfARecord(t *testing.T) {
 				t.Fatalf("problems:\n%s\nwant %q", strings.Join(out.Problems, "\n"), c.want)
 			}
 		})
+	}
+}
+
+func TestReviewCheckTakesATrailerOfARunThatFoundAFindingAgain(t *testing.T) {
+	digest, record := decodeJSON(t, checkDigest), decodeJSON(t, checkRecord)
+	digestEvent(digest, 2)["review_findings"] = []any{"run 2: F1"}
+	record["reviews"] = append(record["reviews"].([]any), map[string]any{"run": 2, "block_run": 2, "session": "s1", "writer": "", "start": "u-person"})
+	f := findingAt(record, 0)
+	events := f["events"].([]any)
+	refound := map[string]any{"type": "refound", "run": 2, "source": "record", "evidence": []any{"u-person"}}
+	f["events"] = append(append(append([]any{}, events[:4]...), refound), events[4])
+
+	code, out, _ := runCheck(t, digest, record)
+
+	if code != 0 {
+		t.Fatalf("exit %d, problems %v", code, out.Problems)
 	}
 }
 

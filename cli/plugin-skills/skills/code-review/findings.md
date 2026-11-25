@@ -1,9 +1,9 @@
 # The solidtrace-findings block
 
-Each review ends its reply with one block. The block records what each reviewer found and what you decided, at the time you decided it. `open-pr` adds what happened later. The JSON must be valid, on one line or several.
+Each review records one block with `solidtrace review block`, which checks the block and prints it. The block records what each reviewer found and what you decided, at the time you decided it. `open-pr` adds what happened later. The block goes in the transcript through that command, so do not also write it in your reply. A subagent does the same, and its transcript is read too.
 
 ````
-```solidtrace-findings
+solidtrace review block <<'EOF'
 {"version": 2, "run": 3, "skill": "code-review", "trigger": "agent", "stage": "step", "step": "otlp-03",
  "base": "<commit>", "head": "<git rev-parse HEAD>",
  "reviewers": [{"name": "bugs-and-spec", "model": "opus", "effort": "xhigh"},
@@ -24,8 +24,10 @@ Each review ends its reply with one block. The block records what each reviewer 
    "events": [{"type": "refound"}, {"type": "triage", "decision": "fix"}]}],
  "confirmations": [{"id": "C1", "reviewer": "tests", "ask": "run the Go tests of ./handler"}],
  "dropped": {"bugs-and-spec": 0, "code-quality": 1}}
-```
+EOF
 ````
+
+When the command refuses the block, fix what it names and run it again.
 
 - `run`: 1 for the first block in this transcript, then 2, 3 and so on. `run` and the ids count only in this transcript. Another session or a subagent starts again at 1, and the record makes them unique.
 - `skill`: `code-review`, `deep-review` or `update-pr`. `trigger`: `person` when the person asked for this review, `agent` when you started it, `open-pr` in the final stage, `update-pr` for the security review of PR feedback fixes.
@@ -45,22 +47,22 @@ Each review ends its reply with one block. The block records what each reviewer 
 
 ## The update block
 
-A decision or a fix after the report goes in a new block, not only in your text. End the reply with one update block when, after a block:
+A decision or a fix after the report goes in a new block, not only in your text. Record an update block when, after a block:
 
 - you fixed and committed findings,
 - you changed a decision, for example a `trivial` finding that turned out to be real, or
 - the person decided an `ask` finding.
 
+`solidtrace review fixed` records the `fix` events of a commit from its trailers. Record any other update block with `solidtrace review block`:
+
 ````
-```solidtrace-findings
+solidtrace review block <<'EOF'
 {"version": 2, "update": 1,
  "findings": [
   {"id": "F12", "events": [{"type": "triage", "decision": "fix", "why": "the digest of this session showed the input"},
-                           {"type": "fix", "commit": "<git rev-parse HEAD>", "files": ["cli/review/digest.go"]}]},
-  {"id": "F3", "events": [{"type": "fix", "commit": "<git rev-parse HEAD>", "files": ["app/routes.go"]}]}]}
-```
+                           {"type": "fix", "commit": "<git rev-parse HEAD>", "files": ["cli/review/digest.go"]}]}]}
+EOF
 ````
 
 - `update`: the `run` of the block that these findings came from, in this transcript. One update block has the findings of one run.
 - `events`: only the new events, in the order they happened. `triage` as above. `fix`: `commit` is the full hash of the commit that holds the fix, and `files` are the files of the fix.
-- A subagent also puts its update block in its final report.
