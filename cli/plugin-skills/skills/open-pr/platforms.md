@@ -2,7 +2,9 @@
 
 `open-pr` and `update-pr` do the same few actions on the PR. This file gives the call for each action on each platform. Find the platform from `git remote get-url origin`: github.com or bitbucket.org. A Run is a factory Run (`$SOLIDTRACE_AGENT_SOCKET` is set). Local mode is the `local` argument.
 
-On bitbucket.org, send each request to `https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>` (the base below), with `Authorization: Bearer $BITBUCKET_TOKEN`. Build each JSON body with a tool that escapes text, not by hand.
+Never put a comment, a reply, a body or a token on a command line, because the shell runs what a comment holds, such as `$(…)`, and other users can read command lines. Write each one to a file in `$dir`, and give the file.
+
+On bitbucket.org, send each request to `https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>` (the base below) with curl. Write the token's header to a file once, with a shell builtin: `(umask 077; printf 'Authorization: Bearer %s\n' "$BITBUCKET_TOKEN" > "$dir/auth")`, and give it as `-H @"$dir/auth"`. Build each JSON body with a tool that escapes text, write it to a file, and give it as `--data @<file>`. Do not use `-v` or `--trace`, and do not print the token.
 
 ## The local PR file
 
@@ -36,12 +38,14 @@ The PR file is `$(git rev-parse --git-common-dir)/solidtrace-pr/<branch>.md`, wi
 
 ## Who runs the session, and an author's access
 
-- **github.com**: `gh api user --jq .login`, and `gh api repos/{owner}/{repo}/collaborators/<login>/permission` (`admin`, `write`, `read` or `none`).
-- **bitbucket.org**: `GET https://api.bitbucket.org/2.0/user`, and whether the author is in `GET <base>/permissions-config/users`.
+Compare accounts by their id, never by a display name, which anyone can copy.
+
+- **github.com**: `gh api user --jq .login`, and compare it with each comment's `user.login`. The access is `gh api repos/{owner}/{repo}/collaborators/<login>/permission` (`admin`, `write`, `read` or `none`).
+- **bitbucket.org**: the `uuid` of `GET https://api.bitbucket.org/2.0/user`, and compare it with each comment's `user.uuid`. The access is whether that `uuid` is in `GET <base>/permissions-config/users`.
 - **Local mode**: the person runs the session, and wrote all the feedback, with `write` access.
 
 ## Reply to feedback
 
-- **github.com**: a line comment with `gh api repos/{owner}/{repo}/pulls/<number>/comments/<id>/replies -f body=<reply>`, other feedback with one `gh pr comment <number> --body-file <file>` that answers each item.
-- **bitbucket.org**: `POST <base>/pullrequests/<id>/comments` with `{"content": {"raw": <reply>}, "parent": {"id": <comment id>}}`, with no `parent` for a check.
+- **github.com**: a line comment with `gh api repos/{owner}/{repo}/pulls/<number>/comments/<id>/replies -F body=@<file>`, other feedback with one `gh pr comment <number> --body-file <file>` that answers each item.
+- **bitbucket.org**: `POST <base>/pullrequests/<id>/comments` with the file `{"content": {"raw": <reply>}, "parent": {"id": <comment id>}}`, with no `parent` for a check.
 - **Local mode**: under each item of the feedback file, add the reply as a line that starts with `> `.

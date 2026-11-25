@@ -39,7 +39,7 @@ You read two other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not re
 
 ## 4. Start the record and the push at the same time
 
-- **The record.** Run the digest in a later message than your last block, because Claude Code writes a message to the transcript only when its tool calls end. Run `solidtrace review digest` with one `--session ID` for each confirmed session, `> "$dir/digest.json"`. Then spawn one sub-agent on the `record` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`. Its prompt is the text of [record.md](record.md), then the two paths: `$dir/digest.json` to read, `$dir/record.json` to write.
+- **The record.** Run the digest in a later message than your last block, because Claude Code writes a message to the transcript only when its tool calls end. Run `solidtrace review digest` with one `--session ID` for each confirmed session, `> "$dir/digest.json"`. Then spawn one sub-agent with `subagent_type: "solidtrace-skills:record-writer"`, which can only read and write files, on the `record` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`. Its prompt is the text of [record.md](record.md), then the two paths: `$dir/digest.json` to read, `$dir/record.json` to write.
 - **The push.** Run `git push -u origin HEAD`, and wait for its result. When it fails, stop before step 7: tell the person why, and do not open a PR on an older remote head. In local mode, skip it.
 
 ## 5. Check the record
@@ -54,7 +54,7 @@ The title is one line that says what the change does. The body has these section
 
 - **Summary**: what changes for the user, and why, from the record's `story`.
 - **Evidence**: the tests and checks that ran, and their result.
-- **Review**: one row per finding found by a reviewer: id, stage and step, reviewer, severity, title, the decisions in order (for example "trivial, verifier pushed back, fixed"), outcome, and what the person said. Then one line per finding found outside the reviews, as "Missed by the review, found by the person" (or "by an agent", "by a test run"). Then the confirmations that were not given.
+- **Review**: one row per finding found by a reviewer: id, stage and step, reviewer, severity, title, the decisions in order (for example "trivial, verifier pushed back, fixed"), outcome, and what the person decided, in your own short words. Do not quote the person's messages from the sessions: they are private, and can hold host names or secrets. Then one line per finding found outside the reviews, as "Missed by the review, found by the person" (or "by an agent", "by a test run"). Then the confirmations that were not given.
 
 End the body with the line `<!-- solidtrace-record round 1 -->`, which `update-pr` reads. Write the body to `$dir/body.md`.
 
