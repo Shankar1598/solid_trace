@@ -204,6 +204,7 @@ func main() {
 	handler.RegisterPerformanceRoutes(queryApp, handler.NewPerformanceHandler(clickHouse))
 	handler.RegisterRedactionRoutes(queryApp)
 	handler.RegisterAgentQueryRoutes(queryApp, handler.NewAgentSessionsHandler(clickHouseLogs))
+	handler.RegisterReviewRecordRoutes(queryApp, handler.NewReviewRecordsHandler(clickHouseLogs))
 	handler.RegisterRunsQueryRoutes(queryApp, handler.NewRunsHandler(clickHouseLogs, clock.System{}))
 	handler.RegisterAgentEvidenceRoute(queryApp, handler.NewAgentEvidenceHandler(clickHouse))
 
