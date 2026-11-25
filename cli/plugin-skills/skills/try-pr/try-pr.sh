@@ -10,17 +10,18 @@
 #   try-pr.sh done <PR>           remove the copies and the worktree
 #
 # <PR> is a GitHub or Bitbucket Cloud PR link, a PR number of origin, or a
-# branch: origin's, else this clone's. Run it in the person's clone or in a
-# worktree of it. It needs bash 3.2 or later and git, gh for GitHub, curl and
-# jq for Bitbucket Cloud. While a stack note is there, fetch and done refuse
-# the worktree. fetch and done delete the copies, so a new head starts with
-# only its own files.
+# branch (branch:<name> for a name of digits): this clone's when it has
+# commits that origin's lacks, else origin's. Run it in the person's clone or
+# in a worktree of it. It needs bash 3.2 or later and git, gh for GitHub, curl
+# and jq for Bitbucket Cloud. fetch and done refuse a worktree while a stack
+# note is there, or while it has commits that no branch has. fetch and done
+# delete the copies, so a new head starts with only its own files.
 set -euo pipefail
 
 BITBUCKET_API=${TRY_PR_BITBUCKET_API:-https://api.bitbucket.org/2.0}
 
 # The PR that parse and the read_ functions fill in: bash 3.2 has no records.
-KIND="" FORGE="" REPO="" NUM="" BRANCH="" NAME="" TITLE="" AUTHOR="" TARGET="" URL="" REF="" LOCAL=0 WT=""
+KIND="" FORGE="" REPO="" NUM="" BRANCH="" NAME="" TITLE="" AUTHOR="" TARGET="" URL="" REF="" SHA="" FROM="" WT=""
 
 die() { echo "try-pr: $*" >&2; exit 1; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
@@ -48,7 +49,10 @@ parse() {
   local a=$1 github='^https?://(www\.)?github\.com/([^/]+)/([^/]+)/pull/([0-9]+)([/?#].*)?$'
   local bitbucket='^https?://bitbucket\.org/([^/]+)/([^/]+)/pull-requests/([0-9]+)([/?#].*)?$'
   KIND="pr"
-  if [[ $a =~ $github ]]; then
+  if [[ $a == branch:* ]]; then
+    git check-ref-format --branch "${a#branch:}" >/dev/null 2>&1 || die "not a branch name: ${a#branch:}"
+    KIND=branch BRANCH=${a#branch:}
+  elif [[ $a =~ $github ]]; then
     FORGE=github REPO=$(lower "github.com/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}") NUM=${BASH_REMATCH[4]}
   elif [[ $a =~ $bitbucket ]]; then
     FORGE=bitbucket REPO=$(lower "bitbucket.org/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}") NUM=${BASH_REMATCH[3]}
@@ -69,7 +73,11 @@ parse() {
   else
     die "not a PR link, a PR number or a branch name: $a"
   fi
-  if [[ $KIND == pr ]]; then NAME=try-pr-$NUM; else NAME=try-pr-$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-'); fi
+  if [[ $KIND == pr ]]; then
+    NAME=try-pr-$NUM
+  else
+    NAME=try-pr-$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')-$(printf '%s' "$BRANCH" | git hash-object --stdin | cut -c 1-7)
+  fi
 }
 
 remote_of() {
@@ -128,17 +136,26 @@ read_bitbucket() {
 }
 
 read_branch() {
-  local found=0
+  local found=0 origin_head="" local_head ahead
   TARGET=$(git ls-remote --symref origin HEAD | awk '$1 == "ref:" { sub("refs/heads/", "", $2); print $2 }')
   [[ -n $TARGET ]] || die "origin names no default branch"
   git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null || found=$?
   case $found in
-    0) REF=refs/heads/$BRANCH ;;
-    2) git rev-parse -q --verify "refs/heads/$BRANCH^{commit}" >/dev/null ||
-      die "neither origin nor this clone has the branch $BRANCH"
-      LOCAL=1 ;;
+    0) git fetch -q origin "refs/heads/$BRANCH" || die "could not fetch $BRANCH from origin"
+      origin_head=$(git rev-parse FETCH_HEAD) ;;
+    2) ;;
     *) die "could not read the branches of origin" ;;
   esac
+  local_head=$(git rev-parse -q --verify "refs/heads/$BRANCH^{commit}") || local_head=""
+  if [[ -z $local_head ]]; then
+    [[ -n $origin_head ]] || die "neither origin nor this clone has the branch $BRANCH"
+    SHA=$origin_head
+  elif [[ -z $origin_head ]]; then
+    SHA=$local_head FROM="this clone's only: origin does not have it"
+  else
+    ahead=$(git rev-list --count "$origin_head..$local_head")
+    if ((ahead)); then SHA=$local_head FROM="this clone's: $ahead commits ahead of origin's"; else SHA=$origin_head; fi
+  fi
 }
 
 note_of() { echo "$(git -C "$1" rev-parse --git-dir)/try-pr-stack"; }
@@ -154,6 +171,13 @@ existing_worktree() {
 
 running() { die "a stack runs from $1: stop it with the stop line of try-pr.sh list, then run try-pr.sh stopped"; }
 
+keep_commits() {
+  local n
+  n=$(git -C "$1" rev-list --count HEAD --not --branches --remotes refs/worktree/try-pr-head)
+  ((n == 0)) ||
+    die "$1 has $n commits that no branch has, and try-pr would lose them; keep them first: git branch <name> $(git -C "$1" rev-parse HEAD)"
+}
+
 remove_copies() {
   local list folder
   list=$(copies_of "$1")
@@ -164,42 +188,41 @@ remove_copies() {
 
 cmd_fetch() {
   parse "$1"
-  local remote=origin clone wt head subject behind
+  local remote=origin clone wt subject behind
   if [[ $KIND == branch ]]; then
     read_branch
   else
     remote=$(remote_of "$REPO") || die "no remote of this clone is $REPO: run try-pr in a clone of it"
     if [[ $FORGE == github ]]; then read_github; else read_bitbucket; fi
-  fi
-  if ((LOCAL)); then
-    head=$(git rev-parse "refs/heads/$BRANCH")
-  else
     git fetch -q "$remote" "$REF" || die "could not fetch $REF from $remote"
-    head=$(git rev-parse FETCH_HEAD)
+    SHA=$(git rev-parse FETCH_HEAD)
   fi
   git fetch -q "$remote" "+refs/heads/$TARGET:refs/remotes/$remote/$TARGET" || die "could not fetch $TARGET from $remote"
-  behind=$(git rev-list --count "$head..refs/remotes/$remote/$TARGET")
-  subject=$(git log -1 --format=%s "$head")
+  behind=$(git rev-list --count "$SHA..refs/remotes/$remote/$TARGET")
+  subject=$(git log -1 --format=%s "$SHA")
 
   clone=$(main_checkout)
   if ! git -C "$clone" check-ignore -q .worktrees/try-pr; then
     local exclude
     exclude=$(cd "$(git rev-parse --git-common-dir)" && pwd -P)/info/exclude
     mkdir -p "$(dirname "$exclude")"
+    [[ ! -s $exclude || -z $(tail -c 1 "$exclude") ]] || echo >>"$exclude"
     echo /.worktrees/ >>"$exclude"
     echo "ignored  /.worktrees/ is in $exclude now"
   fi
   wt=$clone/.worktrees/$NAME
   if is_worktree "$wt"; then
     [[ ! -f $(note_of "$wt") ]] || running "$wt"
+    keep_commits "$wt"
     remove_copies "$wt"
     [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has changes: git -C $wt status"
-    git -C "$wt" checkout -q --detach "$head"
+    git -C "$wt" checkout -q --detach "$SHA"
   elif [[ -e $wt ]]; then
     die "$wt is there and is not a worktree of this clone"
   else
-    git worktree add -q --detach "$wt" "$head"
+    git worktree add -q --detach "$wt" "$SHA"
   fi
+  git -C "$wt" update-ref refs/worktree/try-pr-head "$SHA"
 
   echo "worktree $wt"
   if [[ $KIND == pr ]]; then
@@ -207,12 +230,8 @@ cmd_fetch() {
     echo "title    $TITLE"
     echo "author   $AUTHOR"
   fi
-  if ((LOCAL)); then
-    echo "branch   $BRANCH (this clone's only: origin does not have it)"
-  elif [[ -n $BRANCH ]]; then
-    echo "branch   $BRANCH"
-  fi
-  echo "head     $head $subject"
+  [[ -z $BRANCH ]] || echo "branch   $BRANCH${FROM:+ ($FROM)}"
+  echo "head     $SHA $subject"
   echo "behind   $behind commits behind $remote/$TARGET"
 }
 
@@ -263,6 +282,7 @@ cmd_list() {
 cmd_done() {
   existing_worktree "$1"
   [[ ! -f $(note_of "$WT") ]] || running "$WT"
+  keep_commits "$WT"
   remove_copies "$WT"
   git worktree remove "$WT" || die "$WT was not removed; see git's reason above"
   rmdir "$(dirname "$WT")" 2>/dev/null || true
