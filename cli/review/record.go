@@ -23,11 +23,21 @@ type Record struct {
 	Confirmations []RecordConfirmation `json:"confirmations"`
 }
 
+// recordVersion is the version of the record that review record prints
+// and review final takes.
+const recordVersion = 2
+
 // ReadFinal decodes data as one review record of version 2, the record
 // that open-pr and update-pr give to review final. A field that the record
-// does not have is an error, so that a record that is not one fails at
-// once.
+// does not have, no sessions, no findings or a round below 1 is an error,
+// so that a record that is not one fails at once.
 func ReadFinal(data []byte) (Record, error) {
+	var v struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(data, &v) == nil && v.Version != recordVersion {
+		return Record{}, fmt.Errorf("version %d is not %d", v.Version, recordVersion)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var r Record
@@ -40,8 +50,13 @@ func ReadFinal(data []byte) (Record, error) {
 	if _, err := dec.Token(); err != io.EOF {
 		return Record{}, errors.New("text after the record")
 	}
-	if r.Version != 2 {
-		return Record{}, fmt.Errorf("version %d is not 2", r.Version)
+	switch {
+	case r.Sessions == nil:
+		return Record{}, errors.New("no sessions")
+	case r.Findings == nil:
+		return Record{}, errors.New("no findings")
+	case r.Round < 1:
+		return Record{}, fmt.Errorf("round %d is not 1 or more", r.Round)
 	}
 	return r, nil
 }
@@ -221,7 +236,7 @@ func newRecordBuilder(d Digest) *recordBuilder {
 		sessions = []SessionTitle{}
 	}
 	b.r = Record{
-		Version:  2,
+		Version:  recordVersion,
 		Sessions: sessions,
 		Round:    1,
 		Story:    Story{Changes: []string{}, Reviews: []string{}, AfterReview: []string{}, Sessions: []string{}},
