@@ -256,6 +256,7 @@ func subagentBlocks(r io.Reader, id string) ([]Entry, error) {
 // blockCommand).
 type blockCall struct {
 	bodies []string
+	block  bool
 }
 
 func blockCallOf(bl block) (blockCall, bool) {
@@ -266,14 +267,15 @@ func blockCallOf(bl block) (blockCall, bool) {
 		Command string `json:"command"`
 	}
 	_ = json.Unmarshal(bl.Input, &input)
-	bodies, ok := blockCommand(input.Command)
-	return blockCall{bodies: bodies}, ok
+	bodies, ok, isBlock := blockCommand(input.Command)
+	return blockCall{bodies: bodies, block: isBlock}, ok
 }
 
 // entries are the findings entries of a block call that did not fail, at
 // the line of its result: the blocks of its stdin, else those of its
-// output. A call that gives no block is an entry with an error, so that
-// the record does not lose its run with no word.
+// output. A review block call that gives no block is an entry with an
+// error, so that the record does not lose its run with no word. review
+// fixed prints nothing for a commit with no trailers.
 func (c blockCall) entries(l line, result block) []Entry {
 	var found []Entry
 	for _, body := range c.bodies {
@@ -283,7 +285,7 @@ func (c blockCall) entries(l line, result block) []Entry {
 		text, _ := contentText(result.Content)
 		found = findings(l, text)
 	}
-	if len(found) == 0 {
+	if len(found) == 0 && c.block {
 		e := newEntry(l, KindFindings)
 		e.Findings, e.Error = json.RawMessage("null"), "the output of the solidtrace review command has no solidtrace-findings block"
 		found = []Entry{e}

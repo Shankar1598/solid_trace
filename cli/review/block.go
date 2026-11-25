@@ -72,8 +72,9 @@ func FenceBlock(compact []byte) string {
 // heredoc or a here-string and no review fixed is in it: Claude Code keeps
 // only the start of a long output. A review command whose output goes to
 // a pipe or a file, and that gives no block on stdin, is not a call: the
-// tool result does not hold what it printed.
-func blockCommand(command string) (bodies []string, ok bool) {
+// tool result does not hold what it printed. block is true when the
+// command runs review block, which always gives a block.
+func blockCommand(command string) (bodies []string, ok, block bool) {
 	fromStdin := true
 	for _, c := range shellCommands(command) {
 		w := commandWords(c)
@@ -82,17 +83,18 @@ func blockCommand(command string) (bodies []string, ok bool) {
 		}
 		switch {
 		case w[2] == "block" && len(c.stdin) > 0:
-			ok = true
+			ok, block = true, true
 			// As in Bash, the last of more redirections is the stdin.
 			bodies = append(bodies, c.stdin[len(c.stdin)-1])
 		case (w[2] == "block" || w[2] == "fixed") && !c.outputAway:
 			ok, fromStdin = true, false
+			block = block || w[2] == "block"
 		}
 	}
 	if !fromStdin {
 		bodies = nil
 	}
-	return bodies, ok
+	return bodies, ok, block
 }
 
 type blockChecker struct {

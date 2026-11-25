@@ -50,6 +50,8 @@ func TestReviewDigestTakesTheBlocksThatTheReviewCommandsPrinted(t *testing.T) {
 		userLine("u-pipe", []map[string]any{toolResult("t-pipe", "```solidtrace-findings\n{\"version\":2", false)}),
 		assistantLine("a-file", bash("t-file", "solidtrace review fixed > fixed.md 2>&1; x=$(solidtrace review fixed)")),
 		userLine("u-file", []map[string]any{toolResult("t-file", "", false)}),
+		assistantLine("a-none", bash("t-none", "solidtrace review fixed fc06110c; echo \"exit $?\"")),
+		userLine("u-none", []map[string]any{toolResult("t-none", "exit 0", false)}),
 		assistantLine("a-err", bash("t-err", "solidtrace review fixed 2>/dev/null || true")),
 		userLine("u-err", []map[string]any{toolResult("t-err", fenced(callUpdateBlock), false)}),
 		assistantLine("a-copy", text("Recorded:\n"+fenced(callRunBlock))),
