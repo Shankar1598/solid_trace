@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../../app/frontend/crash.ts"],
+  "sourcesContent": ["// The source of the fixture bundle public/vite/assets/crash-test.js, which\n// BrowserSourceMapsTest un-minifies. Build it again with:\n// bunx esbuild test/fixtures/files/browser_source_maps/app/frontend/crash.ts --bundle --minify --sourcemap --format=esm --outfile=test/fixtures/files/browser_source_maps/public/vite/assets/crash-test.js\nexport function renderChart(rows: number[]) {\n  const total = rows.reduce((sum, row) => sum + row, 0)\n  if (total > 10) {\n    throw new Error('the chart has too many rows')\n  }\n  return total\n}\n\nexport const shout = (value: string) => {\n  if (value.length === 0) {\n    throw new TypeError('nothing to shout')\n  }\n  return value.toUpperCase()\n}\n"],
+  "mappings": "AAGO,SAASA,EAAYC,EAAgB,CAC1C,IAAMC,EAAQD,EAAK,OAAO,CAACE,EAAKC,IAAQD,EAAMC,EAAK,CAAC,EACpD,GAAIF,EAAQ,GACV,MAAM,IAAI,MAAM,6BAA6B,EAE/C,OAAOA,CACT,CAEO,IAAMG,EAASC,GAAkB,CACtC,GAAIA,EAAM,SAAW,EACnB,MAAM,IAAI,UAAU,kBAAkB,EAExC,OAAOA,EAAM,YAAY,CAC3B",
+  "names": ["renderChart", "rows", "total", "sum", "row", "shout", "value"]
+}

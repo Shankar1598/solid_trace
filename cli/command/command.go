@@ -203,6 +203,103 @@ Usage:
       base branch. Each later pr updates the title and description of
       the same PR (a flag that you do not give stays as it is). pr never
       merges.
+  solidtrace review sessions [--branch B] [--base REF] [--session ID] [--days N] [--all]
+      Print as JSON the Agent sessions on this machine that link to the PR
+      of branch B (default: the current branch) since REF (default: the
+      merge base with origin/HEAD, else with main), in the git repository
+      of the current folder. It reads the main transcripts that changed in
+      the last N days (default 14) with a cwd in the repository or in one
+      of its worktrees, and the transcripts of their subagents. The links
+      of a session are: the PR's commits whose subject is the subject of
+      the message of one of its git commit or git merge commands (a strong
+      link), its lines on branch B, and the PR's files that it edited. A
+      session with a strong link or lines on branch B is in the
+      repository, also when its worktree was removed. A transcript that
+      cannot be read is skipped with a warning. --session ID is the
+      current session: it is always in the list, and an error in its
+      transcript stops the command. --all also lists the repository's
+      sessions with no link.
+  solidtrace review digest --session ID... | --file PATH... [--skills REGEX]
+      Print the review timeline of one or more Claude Code transcripts as
+      JSON, for an agent that records what a review found and what
+      happened to each finding. Give --session or --file once for each
+      session. --session finds <projects>/*/ID.jsonl in CLAUDE_CONFIG_DIR
+      (else ~/.claude); --file reads PATH. The events of all sessions are
+      in one list in time order, and each event names its session. Each
+      session has its task (the first person message, or a first slash
+      command that is not one such as /clear or /model), the person's
+      messages and answers, the commits and the subagents' prompts, and
+      from its first review on also: each review's start, the agent's
+      texts, each solidtrace-findings block, the subagents' reports and
+      the edits that the tool did. A session that starts after a review of
+      another session keeps all its events. A review is a skill whose name
+      matches --skills (by default a name whose last part is review or
+      interrogate, or ends in -review), that a person or the agent starts,
+      or a solidtrace-findings block. A block comes from a solidtrace
+      review block or solidtrace review fixed command that did not fail
+      (from the heredoc or here-string that review block reads, else from
+      the output; a command that gives no block is a block with an
+      error), and from the agent's text or a subagent's report. With
+      --session, the digest also reads the session's subagent transcripts
+      (<projects>/*/ID/subagents/*.jsonl), and takes from them only the
+      blocks of those two commands. Each block of a subagent has its
+      agent id as its writer (no writer is the main transcript). A block
+      in a text or a report that is the same JSON as the block of a
+      command in the same session is not in the digest again.
+  solidtrace review check --digest PATH --record PATH
+      Check a review record (open-pr's record.md, version 2) against the
+      digest that it was made from: each outcome, event type, decision
+      and found_by kind is known; each event has the source block or
+      record and evidence that is in the digest; the story is filled in;
+      the record has the digest's sessions, and reviews when the digest
+      has runs; each finding of each solidtrace-findings block (update
+      blocks too) is in the record with its block events; the findings
+      of an update block are on the run that it names, of the same
+      session and writer; each outcome agrees with its events; each
+      finding that a commit's Review-Findings trailer names (the latest
+      block of that run of the main transcript before the commit) has a
+      fix event with no run that found it again between them;
+      each confirmation's given is true or false; and round, when it is
+      there, is 1 or more. Print the counts, the problems and the warnings
+      (a block of the digest that cannot be read) as JSON. Exit 1 when
+      there is a problem, 2 when a file cannot be read.
+  solidtrace review record --digest PATH [--notes PATH] [--pr URL] [--round N]
+      Print as JSON the review record (version 2) of a digest. Without
+      --notes, it is the mechanical part: one run for each findings block
+      that is not an update block and for each review start with no
+      block, numbered in time order; each block finding with the id
+      <run>.<block id> and its events; a refound finding on the earlier
+      finding of its writer; the events of each update block on the
+      finding of the run that it names, of the same writer; a fix event
+      for a finding that a commit's Review-Findings trailer names (the
+      latest block of that run before the commit), when no other fix
+      event has the commit with no run that found it again between
+      them; the confirmations; and each finding's outcome from its
+      events. --notes adds what needs reading: the story, more events,
+      the findings from outside the reviews (P, A and X) and of a review
+      start with no block (T<run>-<n>), each confirmation's given, and
+      low confidence. Then each outcome is worked out again. --pr sets
+      pr (default null), and --round sets round (default 1). A block
+      that the record cannot read or place is a warning on stderr. Exit
+      1 when the notes name a finding, a confirmation or an evidence uuid
+      that is not there, or are not of their shape; 2 when a file cannot
+      be read.
+  solidtrace review fixed [COMMIT]
+      Print one solidtrace-findings update block for each run that the
+      Review-Findings trailers of COMMIT (default HEAD) name, with a fix
+      event for each finding: the commit's full hash and the files that
+      it changes (all of them: git cannot say which file fixed which
+      finding), in the form of review block. Exit 1 when the commit has
+      no Review-Findings trailer.
+  solidtrace review block
+      Read one solidtrace-findings block (code-review's findings.md,
+      version 2) as JSON on stdin, check it, and print it as one fenced
+      solidtrace-findings block of compact JSON. A run block has run,
+      skill, trigger, stage, step, base, head, reviewers, verifier,
+      findings, confirmations and dropped (skipped is optional); an
+      update block has update and findings with id and events only. A
+      field that the format does not have is a problem. Exit 1 with each
+      problem on stderr when the block is not valid.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -252,6 +349,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return report(ctx, args[1:], env)
 	case "pr":
 		return pr(ctx, args[1:], env)
+	case "review":
+		return reviewCommand(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0

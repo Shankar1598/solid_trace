@@ -109,6 +109,12 @@ export interface IntegrationFailure {
   retried: boolean
 }
 
+/** Console's release and environment, which the frontend's errors carry (lib/browserErrors.ts). */
+export interface BrowserErrors {
+  release: string | null
+  environment: string
+}
+
 // Inertia shared props
 export interface SharedProps {
   current_user: User | null
@@ -123,6 +129,8 @@ export interface SharedProps {
   org_monitors: { id: number; name: string }[] | null
   /** Whether the Dispatcher URL is set: with none, no part of the Factory that needs the Dispatcher shows. */
   factory_on?: boolean
+  /** Set when the frontend sends its errors to Console's Sentry, the Meta Project on an install. */
+  browser_errors?: BrowserErrors | null
   flash: {
     notice?: string
     alert?: string

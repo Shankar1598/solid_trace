@@ -20,6 +20,10 @@ module InertiaShare
         # Whether the Dispatcher URL is set: with none, Console shows no part
         # of the Factory that needs the Dispatcher (Dispatcher.on?).
         factory_on: current_user.present? && Dispatcher.on?,
+        # Whether the frontend sends its errors to Console's Sentry, through
+        # BrowserErrorsController, with Console's release and environment.
+        browser_errors: current_user.present? && ConsoleSentry.browser_errors? ?
+          { release: Sentry.configuration.release, environment: Sentry.configuration.environment } : nil,
         flash: {
           notice: flash[:notice],
           alert: flash[:alert],

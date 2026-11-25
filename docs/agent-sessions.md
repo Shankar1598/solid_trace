@@ -32,6 +32,8 @@ If your team uses Claude Code's [managed settings](https://docs.claude.com/en/do
 
 Claude Code gets the plugin when it starts on a machine, and the plugin runs from the next start. Each engineer must still install the CLI and sign in (steps 1 and 3 below).
 
+Step 5 of the Capture setup page gives a managed-settings block that also sends Claude Code's telemetry. See [Send Claude Code's telemetry to SolidTrace](#send-claude-codes-telemetry-to-solidtrace).
+
 ## For engineers: turn on capture
 
 **Settings → Agent sessions → Capture setup** in Console gives each command with your instance's version and addresses filled in. Each member of the Organization can open it.
@@ -132,6 +134,147 @@ An agent can do the same over MCP: `query_logs` on the Agent Project runs a Quer
 ### Over MCP
 
 An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agent_sessions` lists them, each with its title, with the filters of the Agent sessions page, and `get_agent_session` reads one Agent session's header and its timeline in pages, or searches it. A token with `mcp:read` can call both. `list_agent_sessions` gives at most 50 Agent sessions, or the `limit` that the agent sets, at most 200, with the totals of all of them. Its `sort` (`last`, `start`, `tokens` or `cost`) and `direction` (`desc` or `asc`) sort them as the page's headings do, before the limit: `sort: cost` gives the most expensive Agent sessions first. When it says `more`, the agent narrows the range or filters by person or repository.
+
+## Record what each review found: the skills plugin
+
+The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is not on by default. It reviews a change in two stages, opens its PR, works on the PR's feedback, and records every finding with every decision on it:
+
+- **`/solidtrace-skills:code-review`** reviews one step of a feature. The agent can also start it after each step of a build. Three reviewers run at the same time: bugs and spec, and tests, on the session's model, and code quality on Sonnet. They read the repository's `REVIEW.md` sections and its coding standards file, when these exist. The agent decides each finding: `fix`, `dispute`, `trivial`, `defer` or `ask`. A verifier checks each finding that the agent disputes or calls trivial. The agent records a `solidtrace-findings` block with `solidtrace review block`, which checks the block. The block is in the transcript inside that tool call, not in the reply text, and a subagent's blocks are read from its own transcript. The block has the model and effort of each reviewer. Each finding has an id (`F1`, `F2`) and its events (`found`, `triage`, `verify`). A later review keeps the id for the same root cause. After the fixes, the agent commits them with a `Review-Findings: run 1: F2, F5` trailer. Then `solidtrace review fixed` records the update block of that commit, which gives each fixed finding the commit and its files. A changed decision goes in an update block too. So a fix can be found from the commit too, with `git log --format='%H %(trailers:key=Review-Findings,valueonly)'`.
+- **`/solidtrace-skills:deep-review`** tries to break the whole branch with several adversaries, each in its own worktree, and keeps only the findings that a run proves again.
+- **`/solidtrace-skills:open-pr`** runs the final stage, then pushes the branch and opens its PR (Bitbucket, GitHub, or `solidtrace pr` in a Run). The final stage reviews the whole branch diff, in this order:
+  1. the deep review;
+  2. the high availability and infrastructure reviewer;
+  3. the person's decisions, and the fixes;
+  4. security, last, because a fix can add a fault.
+
+  When the branch already has an open PR, `open-pr` stops and points to `update-pr`. `/solidtrace-skills:open-pr local` does all of this, but does not push. It writes the PR to `solidtrace-pr/<branch>.md` in the repository's Git folder, and the record gets `"pr": "local:<path>"`. Use it to test the skills, or to read the PR before it goes out.
+
+  While the branch pushes, `solidtrace review record` builds the mechanical part of the record from the digest: the runs, the ids, each finding's events, the fixes and the outcomes. A Sonnet subagent that can only read files adds notes: the story, what the person said, and what the reviews missed. The CLI merges the notes and works out the outcomes again. Each finding keeps its events in time order:
+  - what the reviewer found;
+  - the agent's decision, and the verifier's verdict;
+  - what the person said, and what the agent then found and changed;
+  - the fix.
+
+  A problem that the person, a later agent or a test run found is a finding too, with `found_by`. So the record also shows what the reviews missed. The record tells the `story` of the feature, and gives the outcome of each finding: `fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`. The PR body shows the record for the human reviewer. The reply ends with it in a `solidtrace-pr-record` block.
+
+- **`/solidtrace-skills:update-pr`** works on the feedback on the open PR: its comments, its reviews (also from a review bot) and its failed checks. Each change request becomes a finding with `found_by` (the comment's author, the bot or the check). The agent decides and fixes each one, runs security on the fix diff, and replies to each comment. Then it writes the next round of the record, and updates the PR body. A record replaces the earlier rounds of the same PR. `update-pr local` reads the feedback from `<branch>.comments.md` next to the local PR file.
+
+The repository can set the model and effort of each role in `.solidtrace/review.toml`:
+
+```toml
+[models]
+code-quality = "sonnet high"
+deep-review = ["opus xhigh", "opus xhigh", "opus xhigh"]
+record = "sonnet"
+```
+
+The roles are `bugs-and-spec`, `tests`, `code-quality`, `verifier`, `ha-and-infrastructure`, `security`, `deep-review`, `record` and `sessions`. `inherit` is the session's model. A role with no line keeps its default. The defaults are the values above, `haiku` for `sessions`, and `inherit` for the other roles. Each block records the model and effort that ran, so a team can compare them.
+
+A feature often spans several Agent sessions. Before the record, `open-pr` runs `solidtrace review sessions`, which lists the sessions on this machine that made one of the PR's commits (`strong`), checked out its branch, or changed one of its files. The person confirms the list. When no other session has a link, a Haiku subagent reads the titles of the recent sessions in the repository, and the person confirms only the ones it names.
+
+The record reads `solidtrace review digest --session A --session B`, not the transcripts: one short timeline of the confirmed sessions in time order. Before a session's first review, it keeps the task, the person's messages, the delegations and the commits. From the first review on (a review start, or a findings block in the agent's text or a subagent's report), it also has the agent's texts, the findings blocks, the subagents' reports and the edits. Each commit event keeps the commit's `Review-Findings` trailers whole. Then `solidtrace review check --digest D --record R` checks the record against the digest: each block finding and each trailer reaches the record, each outcome agrees with its events, and each claim cites an event of the digest. It exits 1 when it finds a problem. A session on Bitbucket needs `BITBUCKET_TOKEN` for `open-pr` to open the PR. Without it, `open-pr` gives the link that opens a new PR, and the body to paste.
+
+In a captured repository, the record uploads with the Agent session, so a team can count the outcomes over many sessions with `run_sql` on the Agent Project. For example, this query counts the records in the range that `run_sql` reads: `SELECT count(*) FROM logs WHERE position(message, '```solidtrace-pr-record') > 0`.
+
+## Send Claude Code's telemetry to SolidTrace
+
+Claude Code can send OpenTelemetry events and metrics while it works. SolidTrace stores them as Logs of the Agent Project, next to the Agent sessions. The records arrive in real time, but they do not hold the transcript.
+
+### What the records hold
+
+- An event for each prompt, reply, API request, tool result and hook, with its counts and durations: for example the tokens, `duration_ms`, the tool name and if the tool call was a success.
+- The metrics: the cost, the tokens, the sessions, the lines of code, the commits, the pull requests and the active time.
+- The model and the effort of each API request.
+- The cost (`cost_usd` on `claude_code.api_request`, and the `claude_code.cost.usage` metric) is Claude Code's estimate at list prices. It is not an invoice, the same as the cost on the Agent sessions page.
+- The engineer's email address, the account id and the Claude Code session id, on each record.
+- The repository: `vcs.repository.url.full`, `vcs.owner.name`, `vcs.repository.name` and `vcs.provider.name`.
+
+The records do not hold the text of a prompt or a reply (Claude Code sends `<REDACTED>`), Bash commands or tool inputs. The settings do not set `OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_TOOL_DETAILS`, because they send that text. Do not add them: Claude Code sends the records of each repository on the machine, also of the repositories that SolidTrace does not capture. Without `OTEL_LOG_TOOL_DETAILS`, Claude Code also hides the names of your own skills and subagents (as `custom_skill` and `custom`). To see which skills ran, read the Agent sessions.
+
+### Turn it on
+
+1. An Admin opens the Agent Project's page in **Projects** and clicks **Generate a key**. The Agent Project can have only one key. Each member of the Organization can read it.
+2. Open **Settings → Agent sessions → Capture setup**, step 5, **Send telemetry (optional)**. It gives the settings with your instance's Ingest URL and the key filled in.
+3. Add the `env` block to `~/.claude/settings.json` on each machine:
+
+   ```json
+   {
+     "env": {
+       "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+       "OTEL_LOGS_EXPORTER": "otlp",
+       "OTEL_METRICS_EXPORTER": "otlp",
+       "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+       "OTEL_EXPORTER_OTLP_ENDPOINT": "https://solidtrace.example.com:4443",
+       "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer <key>",
+       "OTEL_METRICS_INCLUDE_REPOSITORY": "1"
+     }
+   }
+   ```
+
+   Or, if your team uses Claude Code's managed settings, use step 5's managed-settings block in place of the block of step 2. It has the plugin and the `env` block, so each machine gets both.
+4. Start Claude Code again. Claude Code reads these variables only when it starts.
+
+Claude Code ignores these variables in a repository's `.claude/settings.json`. Put them in the user settings or in the managed settings.
+
+### Which records SolidTrace keeps
+
+- Ingest keeps a record only when its `vcs.repository.url.full` matches a captured repository. It drops each other record when it arrives, and does not store it: the records of other repositories, and the records with no repository. Claude Code sends two events (`managed_settings_resolved` and the first `hook_execution_start`) before it reads the repository, so SolidTrace always drops them.
+- When the captured repositories list is empty, Ingest drops every record.
+- Claude Code reads only the `origin` remote, one time, in the folder where the session starts. So the records of a captured repository arrive only from a clone whose `origin` is that repository. SolidTrace drops all the records of a clone with no `origin`.
+- A change to the captured repositories applies to the next request.
+- Claude Code gets a success for a dropped record, so it shows no warning. The Overview shows the dropped records in **Received → Kept → Stored**, as a slice after Kept and as **Filtered out as not of a Captured repository** below it. Look there when no record arrives.
+- The key works only on `/v1/logs` and `/v1/metrics` ([ADR 0023](adr/0023-the-agent-project-takes-one-key-for-opentelemetry-only.md)). It cannot send JSON Logs, a Sentry SDK's Events or Spans.
+
+### Read the records
+
+SolidTrace stores each record of the key in the file `otel`, and keeps a `file` that the sender sends as `original.file`. The Agent sessions and the Runs are in other files, so start each Query with `file == "otel"`.
+
+Open **Logs** and choose the Agent Project. Each event is a Log with the event's name as its message, such as `claude_code.api_request`. Each metric data point is a Log with the metric's name as its message and its number in `metric.value` (see [Metrics](logs/opentelemetry.md#metrics)). Claude Code sends delta metrics, so `sum(metric.value)` adds them up correctly.
+
+The estimated cost by model and effort:
+
+```
+where file == "otel" and message == "claude_code.cost.usage"
+| summarize sum(metric.value) by model, effort
+```
+
+The tokens by kind (`input`, `output`, `cacheRead` and `cacheCreation`) and model:
+
+```
+where file == "otel" and message == "claude_code.token.usage"
+| summarize sum(metric.value) by type, model
+```
+
+The estimated cost by engineer and day:
+
+```
+where file == "otel" and message == "claude_code.cost.usage"
+| summarize sum(metric.value) by user.email, bin(time, 1d)
+```
+
+The estimated cost by repository:
+
+```
+where file == "otel" and message == "claude_code.cost.usage"
+| summarize sum(metric.value) by vcs.repository.name
+```
+
+The tool calls, their failures and their time, by tool. On a tool result, Claude Code sends `success` and `duration_ms` as text, so the Query compares `success` with `"false"` and changes `duration_ms` to a number with `toint`:
+
+```
+where file == "otel" and message == "claude_code.tool_result"
+| summarize calls = count(), failed = countif(success == "false"), p95_ms = percentile(toint(duration_ms), 95) by tool_name
+| sort by calls desc
+```
+
+The API requests and their time, by model:
+
+```
+where file == "otel" and message == "claude_code.api_request"
+| summarize count(), avg(duration_ms), percentile(duration_ms, 95) by model
+```
+
+An agent can run the same Queries over MCP, with `query_logs` on the Agent Project.
 
 ## Set a Project's Factory settings
 

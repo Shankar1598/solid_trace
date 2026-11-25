@@ -23,6 +23,7 @@
     "@inertiajs/react": "^2.3.29",
     "@lezer/highlight": "^1.2.5",
     "@radix-ui/react-checkbox": "^1.4.1",
+    "@sentry/react": "^11.17.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-virtual": "^3.14.22",
     "@tiptap/extension-link": "^3.32.0",

@@ -1,13 +1,13 @@
 // Command releasefiles makes the files that each GitHub release gives
-// beside the binaries of cli/build: the Claude Code plugin as a zip, the
-// plugin's marketplace file, the install script, and one checksum file.
+// beside the binaries of cli/build: each Claude Code plugin as a zip, the
+// plugins' marketplace file, the install script, and one checksum file.
 // The release workflow runs it after cli/build:
 //
 //	go run ./internal/releasefiles -tag v0.19.0 -repository owner/name
 //
-// The marketplace file's plugin entry is an archive source: the release's
-// zip, with its SHA-256. So the marketplace file and the plugin of one
-// release are pinned to that release.
+// Each plugin entry of the marketplace file is an archive source: the
+// release's zip, with its SHA-256. So the marketplace file and the plugins
+// of one release are pinned to that release.
 package main
 
 import (
@@ -31,15 +31,34 @@ import (
 // The names of the release files.
 const (
 	PluginZip   = "solidtrace-plugin.zip"
+	SkillsZip   = "solidtrace-skills.zip"
 	Marketplace = "marketplace.json"
 	Install     = "install.sh"
 	Sums        = "SHA256SUMS"
 )
 
+// plugin is one Claude Code plugin of the release: its folder in cli, its
+// zip, and its marketplace entry. Its name must be the name in its
+// plugin.json.
+type plugin struct {
+	Name        string
+	Dir         string
+	Zip         string
+	Description string
+}
+
+var plugins = []plugin{
+	{Name: "solidtrace", Dir: "plugin", Zip: PluginZip,
+		Description: "Uploads your Agent sessions in the captured repositories to SolidTrace."},
+	{Name: "solidtrace-skills", Dir: "plugin-skills", Zip: SkillsZip,
+		Description: "Skills that review a change and open its PR, with a record of what the review found and what happened to each finding."},
+}
+
 type options struct {
 	// Dist holds the binaries; the other release files go there too.
-	Dist          string
-	Plugin        string
+	Dist string
+	// Root is the cli folder, which holds the folder of each plugin.
+	Root          string
 	InstallScript string
 	Tag           string
 	// Repository is the public GitHub repository, owner/name.
@@ -52,7 +71,7 @@ var (
 )
 
 func main() {
-	o := options{Dist: "dist", Plugin: "plugin", InstallScript: "install.sh"}
+	o := options{Dist: "dist", Root: ".", InstallScript: "install.sh"}
 	flag.StringVar(&o.Dist, "dist", o.Dist, "the directory of the binaries and the release files")
 	flag.StringVar(&o.Tag, "tag", "", "the release tag, such as v0.19.0")
 	flag.StringVar(&o.Repository, "repository", "", "the GitHub repository, owner/name")
@@ -73,14 +92,27 @@ func write(o options) error {
 	}
 	download := "https://github.com/" + o.Repository + "/releases/download/" + o.Tag
 
-	zipped, err := pluginZip(o.Plugin, m[1])
-	if err != nil {
-		return err
+	var entries []any
+	for _, p := range plugins {
+		zipped, err := pluginZip(filepath.Join(o.Root, p.Dir), p.Name, m[1])
+		if err != nil {
+			return fmt.Errorf("%s: %w", p.Dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(o.Dist, p.Zip), zipped, 0o644); err != nil {
+			return err
+		}
+		sum := sha256.Sum256(zipped)
+		entries = append(entries, map[string]any{
+			"name":        p.Name,
+			"description": p.Description,
+			"source": map[string]any{
+				"source": "archive",
+				"url":    download + "/" + p.Zip,
+				"sha256": hex.EncodeToString(sum[:]),
+			},
+		})
 	}
-	if err := os.WriteFile(filepath.Join(o.Dist, PluginZip), zipped, 0o644); err != nil {
-		return err
-	}
-	if err := writeMarketplace(filepath.Join(o.Dist, Marketplace), download, zipped); err != nil {
+	if err := writeMarketplace(filepath.Join(o.Dist, Marketplace), entries); err != nil {
 		return err
 	}
 	script, err := os.ReadFile(o.InstallScript)
@@ -97,7 +129,7 @@ func write(o options) error {
 
 // pluginZip zips the plugin directory, with the version in plugin.json.
 // The entries have a fixed time, so one tree gives one zip.
-func pluginZip(dir, version string) ([]byte, error) {
+func pluginZip(dir, name, version string) ([]byte, error) {
 	var buf bytes.Buffer
 	z := zip.NewWriter(&buf)
 	var paths []string
@@ -122,7 +154,7 @@ func pluginZip(dir, version string) ([]byte, error) {
 			return nil, err
 		}
 		if rel == ".claude-plugin/plugin.json" {
-			if data, err = withVersion(data, version); err != nil {
+			if data, err = withVersion(data, name, version); err != nil {
 				return nil, err
 			}
 		}
@@ -144,31 +176,27 @@ func pluginZip(dir, version string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func withVersion(manifest []byte, version string) ([]byte, error) {
+func withVersion(manifest []byte, name, version string) ([]byte, error) {
 	var m map[string]any
 	if err := json.Unmarshal(manifest, &m); err != nil {
 		return nil, fmt.Errorf("plugin.json: %w", err)
+	}
+	// Claude Code installs <name>@<marketplace>: the entry's name and the
+	// manifest's name must agree.
+	if m["name"] != name {
+		return nil, fmt.Errorf("plugin.json: the name is %v, not %s", m["name"], name)
 	}
 	m["version"] = version
 	out, err := json.MarshalIndent(m, "", "  ")
 	return append(out, '\n'), err
 }
 
-func writeMarketplace(path, download string, zipped []byte) error {
-	sum := sha256.Sum256(zipped)
+func writeMarketplace(path string, entries []any) error {
 	m := map[string]any{
 		"name":        "solidtrace",
-		"description": "The SolidTrace plugin for Claude Code, from one SolidTrace release.",
+		"description": "The SolidTrace plugins for Claude Code, from one SolidTrace release.",
 		"owner":       map[string]any{"name": "SolidTrace"},
-		"plugins": []any{map[string]any{
-			"name":        "solidtrace",
-			"description": "Uploads your Agent sessions in the captured repositories to SolidTrace.",
-			"source": map[string]any{
-				"source": "archive",
-				"url":    download + "/" + PluginZip,
-				"sha256": hex.EncodeToString(sum[:]),
-			},
-		}},
+		"plugins":     entries,
 	}
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

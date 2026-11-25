@@ -1,0 +1,26 @@
+{
+  "sessions": [{"id": "s-two", "title": "Add a retry to the uploader."}],
+  "reviews": 2,
+  "events": [
+    {"seq": 0, "session": "s-two", "uuid": "u01", "time": "2026-11-01T10:00:00Z", "kind": "task", "text": "Add a retry to the uploader."},
+    {"seq": 1, "session": "s-two", "uuid": "u04", "time": "2026-11-01T10:01:00Z", "kind": "person", "text": "Looks fine so far."},
+    {"seq": 2, "session": "s-two", "uuid": "u05", "time": "2026-11-01T10:02:00Z", "kind": "review_start", "skill": "pstack:interrogate", "trigger": "person", "args": "the retry change"},
+    {"seq": 3, "session": "s-two", "uuid": "a07", "time": "2026-11-01T10:02:10Z", "kind": "agent_text", "text": "I start the reviewers."},
+    {"seq": 4, "session": "s-two", "uuid": "a07", "time": "2026-11-01T10:02:10Z", "kind": "delegate", "text": "review"},
+    {"seq": 5, "session": "s-two", "uuid": "u10", "time": "2026-11-01T10:04:00Z", "kind": "subagent_report", "text": "The reviewers found two problems."},
+    {"seq": 6, "session": "s-two", "uuid": "a11", "time": "2026-11-01T10:04:30Z", "kind": "agent_text", "text": "Two findings.\n\n```solidtrace-findings\n{\"findings\": [{\"id\": \"F1\", \"severity\": \"high\", \"title\": \"No back-off <between> tries & no cap\"}, {\"id\": \"F2\", \"severity\": \"low\"}]}\n```\n"},
+    {"seq": 7, "session": "s-two", "uuid": "a11", "time": "2026-11-01T10:04:30Z", "kind": "findings", "findings": {"findings": [{"id": "F1", "severity": "high", "title": "No back-off <between> tries & no cap"}, {"id": "F2", "severity": "low"}]}},
+    {"seq": 8, "session": "s-two", "uuid": "u16", "time": "2026-11-01T10:06:00Z", "kind": "person", "text": "Fix F1. F2 is trivial, skip it. You missed the log line.\n[image]"},
+    {"seq": 9, "session": "s-two", "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "Edit", "file": "uploader/retry.go"},
+    {"seq": 10, "session": "s-two", "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "MultiEdit", "file": "/elsewhere/other.conf"},
+    {"seq": 11, "session": "s-two", "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "NotebookEdit", "file": "notes/a.ipynb"},
+    {"seq": 12, "session": "s-two", "uuid": "a17", "time": "2026-11-01T10:06:30Z", "kind": "edit", "tool": "Write", "file": "uploader/new.go"},
+    {"seq": 13, "session": "s-two", "uuid": "a18", "time": "2026-11-01T10:07:00Z", "kind": "commit", "command": "git add uploader && git commit -m 'Add a back-off to the retry'"},
+    {"seq": 14, "session": "s-two", "uuid": "u19", "time": "2026-11-01T10:08:00Z", "kind": "person", "text": "/compact"},
+    {"seq": 15, "session": "s-two", "uuid": "a21", "time": "2026-11-01T10:09:00Z", "kind": "agent_text", "text": "I review the fix."},
+    {"seq": 16, "session": "s-two", "uuid": "a21", "time": "2026-11-01T10:09:00Z", "kind": "review_start", "skill": "code-review", "trigger": "agent", "args": "since main"},
+    {"seq": 17, "session": "s-two", "uuid": "a22", "time": "2026-11-01T10:10:00Z", "kind": "agent_text", "text": "Standards: fine.\n```solidtrace-findings\n{\"findings\": [oops\n```"},
+    {"seq": 18, "session": "s-two", "uuid": "a22", "time": "2026-11-01T10:10:00Z", "kind": "findings", "findings": null, "error": "invalid character 'o' looking for beginning of value"},
+    {"seq": 19, "session": "s-two", "uuid": "u23", "time": "2026-11-01T10:10:30Z", "kind": "person", "text": "Also check the log line."}
+  ]
+}

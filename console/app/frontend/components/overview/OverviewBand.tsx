@@ -26,28 +26,26 @@ export interface BandSlice {
   color: string
 }
 
-/** The hatches of the dropped slices: unreadable is a shipper's fault, the Log transform's drops a filter's. */
 const UNREADABLE = 'var(--warning)'
+const FILTERED = 'var(--info)'
 const DROPPED_BY_TRANSFORM = 'var(--muted-foreground)'
 
-/**
- * The steps of the band, in order: Received, Kept, then Stored. The Logs
- * dropped between Received and Kept, unreadable or by the Log transform,
- * follow Kept as hatched slices. Their bytes aren't counted, so each is as
- * wide as its share of the Logs received is of Received's bytes.
- */
 export function bandSteps(band: NonNullable<Overview['band']>): BandStep[] {
   const { received } = band
-  const droppedBytes = (logs: number) => (received.logs > 0 ? (Math.min(logs, received.logs) / received.logs) * received.bytes : 0)
+  const bytesByShareOfReceived = (logs: number) => (received.logs > 0 ? (Math.min(logs, received.logs) / received.logs) * received.bytes : 0)
   return [
     { key: 'received', name: 'Received', bytes: received.bytes, logs: received.logs, color: INK.light },
     {
       key: 'kept', name: 'Kept', bytes: band.kept.bytes, logs: band.kept.logs, color: INK.mid,
       slices: [
-        { key: 'unreadable', label: `${valueText(band.unreadable_logs)} unreadable`, bytes: droppedBytes(band.unreadable_logs), color: UNREADABLE },
+        { key: 'unreadable', label: `${valueText(band.unreadable_logs)} unreadable Logs`, bytes: bytesByShareOfReceived(band.unreadable_logs), color: UNREADABLE },
         {
-          key: 'dropped_by_transform', label: `${valueText(band.dropped_by_transform)} dropped by the Log transform`,
-          bytes: droppedBytes(band.dropped_by_transform), color: DROPPED_BY_TRANSFORM,
+          key: 'filtered', label: `${valueText(band.filtered_logs)} Logs not of a Captured repository`,
+          bytes: bytesByShareOfReceived(band.filtered_logs), color: FILTERED,
+        },
+        {
+          key: 'dropped_by_transform', label: `${valueText(band.dropped_by_transform)} Logs dropped by the Log transform`,
+          bytes: bytesByShareOfReceived(band.dropped_by_transform), color: DROPPED_BY_TRANSFORM,
         },
       ].filter(slice => slice.bytes > 0),
     },
@@ -98,8 +96,8 @@ export function OverviewBand({ band }: { band: NonNullable<Overview['band']> }) 
                     className={`${fill} border-y border-r`}
                     style={{ width: `${filled ? width(slice.bytes) : 0}%`, background: hatch(slice.color), borderColor: slice.color }}
                     role="img"
-                    aria-label={`Dropped: ${slice.label} Logs`}
-                    title={`Dropped: ${slice.label} Logs, as wide as their share of the Logs received`}
+                    aria-label={`Dropped: ${slice.label}`}
+                    title={`Dropped: ${slice.label}, as wide as their share of the Logs received`}
                   />
                 ))}
               </div>
@@ -131,6 +129,11 @@ export function OverviewBand({ band }: { band: NonNullable<Overview['band']> }) 
         <BandFact label="Unreadable" title={`${valueText(band.unreadable_logs)} Logs`} hatch={UNREADABLE}>
           {statText(band.unreadable_logs)} Logs
         </BandFact>
+        {band.filtered_logs > 0 && (
+          <BandFact label="Filtered out as not of a Captured repository" title={`${valueText(band.filtered_logs)} Logs`} hatch={FILTERED}>
+            {statText(band.filtered_logs)} Logs
+          </BandFact>
+        )}
         <BandFact label="Dropped by the Log transform" title={`${valueText(band.dropped_by_transform)} Logs`} hatch={DROPPED_BY_TRANSFORM}>
           {statText(band.dropped_by_transform)} Logs
         </BandFact>

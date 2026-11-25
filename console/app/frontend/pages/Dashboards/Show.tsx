@@ -204,10 +204,11 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
         filters={dashboard.filters} values={values} orgSlug={orgSlug} dashboardId={dashboard.id} shown={run}
         onChange={pickValues} onEdit={() => setFiltersOpen(true)}
       />
+      {/* The cards' and the chart editor's preview's table cells are tags, which need the menu. */}
+      <TagMenuProvider onFilter={null} onSummarize={null} columns={NO_COLUMNS}>
       <div className="flex flex-col gap-3">
         {arranging && <p className="text-xs text-muted-foreground">Drag a chart by its title, or resize it from its bottom-right corner. Each change is saved.</p>}
 
-        <TagMenuProvider onFilter={null} onSummarize={null} columns={NO_COLUMNS}>
           {/* Hovering one time chart marks its time on the others. */}
           <HoverTimeProvider>
           <div ref={containerRef} className="flex flex-col gap-4">
@@ -255,7 +256,6 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
             </>)}
           </div>
           </HoverTimeProvider>
-        </TagMenuProvider>
       </div>
 
       {editor?.kind === 'text' && (
@@ -284,6 +284,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           onClose={() => setEditor(null)}
         />
       )}
+      </TagMenuProvider>
 
       <AlertDialog open={deleting !== null} onOpenChange={open => !open && setDeleting(null)}>
         <AlertDialogContent>

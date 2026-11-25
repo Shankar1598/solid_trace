@@ -87,6 +87,46 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
                  with_env("CONSOLE_URL" => nil, "PUBLIC_INGEST_URL" => nil) { setup_page["login_command"] }
   end
 
+  test "step 5 sends Claude Code's telemetry to the Ingest URL with the Agent Project's key, which each member reads" do
+    key = create(:project_key, project: turn_on([ "github.com/acme/shop" ]).project)
+    sign_in_as(@member)
+
+    telemetry = setup_page["telemetry"]
+
+    env = { "CLAUDE_CODE_ENABLE_TELEMETRY" => "1",
+            "OTEL_LOGS_EXPORTER" => "otlp",
+            "OTEL_METRICS_EXPORTER" => "otlp",
+            "OTEL_EXPORTER_OTLP_PROTOCOL" => "http/protobuf",
+            "OTEL_EXPORTER_OTLP_ENDPOINT" => "https://solidtrace.example.com:4443",
+            "OTEL_EXPORTER_OTLP_HEADERS" => "Authorization=Bearer #{key.public_key}",
+            "OTEL_METRICS_INCLUDE_REPOSITORY" => "1" }
+    assert_equal({ "env" => env }, JSON.parse(telemetry["user_settings"]))
+    assert_equal env, JSON.parse(telemetry["managed_settings"])["env"]
+    assert telemetry["has_key"]
+  end
+
+  test "step 5's managed settings also push the plugin, as step 2's do, so an Admin pastes one block" do
+    create(:project_key, project: turn_on([ "github.com/acme/shop" ]).project)
+    sign_in_as(@admin)
+
+    page = setup_page
+
+    managed = JSON.parse(page["telemetry"]["managed_settings"])
+    assert_equal JSON.parse(page["managed_settings"]), managed.except("env")
+  end
+
+  test "with no key yet, step 5 shows <key> and links to the Agent Project's page, where an Admin makes it" do
+    project = turn_on([ "github.com/acme/shop" ]).project
+    sign_in_as(@member)
+
+    telemetry = setup_page["telemetry"]
+
+    assert_equal "Authorization=Bearer <key>", JSON.parse(telemetry["user_settings"]).dig("env", "OTEL_EXPORTER_OTLP_HEADERS")
+    assert_equal "Authorization=Bearer <key>", JSON.parse(telemetry["managed_settings"]).dig("env", "OTEL_EXPORTER_OTLP_HEADERS")
+    assert_not telemetry["has_key"]
+    assert_equal project.slug, telemetry["project_slug"]
+  end
+
   test "with Agent sessions off the page says that nothing uploads" do
     sign_in_as(@member)
 
@@ -94,6 +134,7 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
 
     assert_not page["on"]
     assert_equal [], page["captured_repositories"]
+    assert_nil page["telemetry"]
   end
 
   test "someone outside the Organization gets 404" do

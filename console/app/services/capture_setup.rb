@@ -3,7 +3,8 @@
 # What the capture setup page gives an engineer or an Admin: the install
 # command of the `solidtrace` CLI and the plugin for the instance's version,
 # the managed-settings snippet that installs the plugin on each machine, the
-# `login` command for this instance, and the captured repositories.
+# `login` command for this instance, the captured repositories, and the
+# settings that send Claude Code's telemetry to the Agent Project.
 #
 # The files come from the GitHub release of the instance's version (the
 # release job's `cli` job, cli/internal/releasefiles). An instance that runs
@@ -24,6 +25,7 @@ module CaptureSetup
   # It says "enabled" for the plugin when the install worked.
   PLUGIN_CHECK_COMMAND = "claude plugin list"
   NOT_A_RELEASE = "This instance runs %{version}, which is not a release, so the commands use the newest release."
+  KEY_PLACEHOLDER = "<key>"
 
   module_function
 
@@ -43,6 +45,29 @@ module CaptureSetup
       managed_settings: JSON.pretty_generate(managed_settings(files)),
       login_command: "solidtrace login --ingest-url #{ingest_url} #{console_url}",
       status_command: STATUS_COMMAND,
+      telemetry: project && telemetry(project, files, ingest_url),
+    }
+  end
+
+  # Each member reads the key, as the keys of other Projects (ADR 0023).
+  # OTEL_LOG_USER_PROMPTS and OTEL_LOG_TOOL_DETAILS stay off: Claude Code
+  # then sends prompt text and Bash commands, from every repository.
+  def telemetry(project, files, ingest_url)
+    key = project.project_keys.pick(:public_key)
+    env = {
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+      OTEL_LOGS_EXPORTER: "otlp",
+      OTEL_METRICS_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+      OTEL_EXPORTER_OTLP_ENDPOINT: ingest_url,
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer #{key || KEY_PLACEHOLDER}",
+      OTEL_METRICS_INCLUDE_REPOSITORY: "1",
+    }
+    {
+      user_settings: JSON.pretty_generate(env: env),
+      managed_settings: JSON.pretty_generate(managed_settings(files).merge(env: env)),
+      has_key: key.present?,
+      project_slug: project.slug,
     }
   end
 

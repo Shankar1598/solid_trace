@@ -30,4 +30,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'app/frontend'),
     },
   },
+  // Console un-minifies the frames of the frontend's errors with these maps,
+  // before it sends them to its Sentry (BrowserSourceMaps).
+  build: { sourcemap: true },
 })
