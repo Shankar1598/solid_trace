@@ -720,3 +720,46 @@ func TestResumeQuotesTheBranchInTheGitSwitchLine(t *testing.T) {
 		t.Errorf("stderr %q, want the branch quoted", got)
 	}
 }
+
+// fromAnotherMachine is a transcript whose cwd is not on this machine.
+const fromAnotherMachine = `{"type":"user","cwd":"/home/someone-else/checkouts/shop","message":"Remember PELICAN"}` + "\n"
+
+func TestASecondCheckoutIsRefusedWithTheCheckoutOfAnEarlierResumeFromAnotherMachine(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	first := w.checkout()
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": fromAnotherMachine})
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("first resume: exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	w.checkout()
+	w.stderr = &syncBuffer{}
+	if code := w.resume(resumeID, "--print"); code != 1 {
+		t.Fatalf("second resume: exit %d, want 1\nstderr: %s", code, w.stderr)
+	}
+	if want := "This machine has the Agent session in " + first + ". "; !strings.Contains(w.stderr.String(), want) {
+		t.Errorf("stderr %q, want it to contain %q", w.stderr, want)
+	}
+}
+
+func TestTheSweepSendsNothingOfAnotherPersonsAgentSessionFromAnotherMachine(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	w.checkout()
+	w.inSolidTrace(resumeID, fake.Session{AnotherPerson: true}, map[string]string{resumeID + ".jsonl": fromAnotherMachine})
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	w.startSession(t.TempDir())
+
+	for _, r := range w.agent.AllRequests() {
+		if r.SessionID == resumeID && r.Method != http.MethodGet {
+			t.Errorf("capture sent %s %v for another person's Agent session", r.Method, r.Query)
+		}
+	}
+	if line := w.statusOf(resumeID); !strings.Contains(line, "not yours") {
+		t.Errorf("status line %q, want not yours", line)
+	}
+}

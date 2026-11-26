@@ -49,13 +49,29 @@ func (c *Capturer) recordPath(sessionID string) string {
 }
 
 // RecordOf is the record of the last capture of an Agent session; ok is
-// false when no capture looked at it.
+// false when no capture looked at it. Then r can still have the StartDir
+// that SetStartDir kept.
 func RecordOf(dir, sessionID string) (r Record, ok bool) {
 	data, err := os.ReadFile((&Capturer{Dir: dir}).recordPath(sessionID))
-	if err != nil || json.Unmarshal(data, &r) != nil || r.Status == "" {
+	if err != nil || json.Unmarshal(data, &r) != nil {
 		return Record{}, false
 	}
-	return r, true
+	return r, r.Status != ""
+}
+
+// SetStartDir keeps startDir as the start directory in the record of an
+// Agent session, with the other fields of the record. resume calls it for
+// a transcript that it downloaded: the first cwd of the transcript can be
+// a folder of another machine, and the sweep has no hook cwd.
+func SetStartDir(dir, sessionID, startDir string) error {
+	c := &Capturer{Dir: dir}
+	r, _ := RecordOf(dir, sessionID)
+	r.StartDir = startDir
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	return writeFile(c.recordPath(sessionID), data)
 }
 
 func (c *Capturer) record(sessionID string, r Record) {

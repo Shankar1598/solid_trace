@@ -216,6 +216,12 @@ func resume(ctx context.Context, args []string, env Env) int {
 		if err := downloadSession(ctx, env, client, f.id, f.project); err != nil {
 			return fail(1, "%v", err)
 		}
+		// The first cwd of a downloaded transcript can be a folder of
+		// another machine. The record tells capture's sweep, and the next
+		// resume, that the Agent session starts in the target folder.
+		if err := capture.SetStartDir(env.ConfigDir, f.id, f.target); err != nil {
+			fmt.Fprintf(env.Stderr, "solidtrace resume: keep the folder of the Agent session for capture: %v\n", err)
+		}
 	}
 	tellBranch(ctx, env, f.root, lastBranch(filepath.Join(f.project, f.id+".jsonl")))
 	if info, err := os.Stat(f.target); err != nil || !info.IsDir() {
@@ -300,10 +306,14 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 	if err != nil {
 		return f, fmt.Errorf("read the Claude Code projects folder: %w", err)
 	}
+	// After a resume from another machine, the first cwd of the transcript
+	// is not on this machine, and the record has the folder that resume
+	// downloaded into.
+	record, _ := capture.RecordOf(env.ConfigDir, id)
 	for _, s := range sessions {
 		project := filepath.Dir(s.TranscriptPath)
 		if s.ID == id && project != f.project && !strings.HasPrefix(filepath.Base(project), resumeStaging) {
-			f.elsewhere = cmp.Or(capture.StartDir(s.TranscriptPath, ""), project)
+			f.elsewhere = cmp.Or(capture.StartDir(s.TranscriptPath, record.StartDir), project)
 		}
 	}
 	return f, nil
