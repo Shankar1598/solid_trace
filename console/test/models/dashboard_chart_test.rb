@@ -132,4 +132,32 @@ class DashboardChartTest < ActiveSupport::TestCase
     assert_not DashboardChart.exists?(chart.id)
     assert Dashboard.exists?(@dashboard.id)
   end
+
+  test "a chart runs a Query unless it is given SQL, and a Text block has no language" do
+    assert_equal "query", create(:dashboard_chart, dashboard: @dashboard).language
+    assert_equal "sql", create(:dashboard_chart, :sql, dashboard: @dashboard).language
+    assert_nil create(:dashboard_chart, :text, dashboard: @dashboard, language: "sql").language
+
+    chart = build(:dashboard_chart, dashboard: @dashboard, language: "python")
+    assert_not chart.valid?
+    assert chart.errors[:language].any?
+  end
+
+  test "a SQL Chart is saved only while SQL queries are on, and while they are off a saved one keeps its SQL and can move" do
+    chart = create(:dashboard_chart, :sql, dashboard: @dashboard)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
+    added = build(:dashboard_chart, :sql, dashboard: @dashboard)
+    assert_not added.valid?
+    assert_includes added.errors[:base], LogMonitor::SQL_QUERIES_OFF
+    chart.query = "SELECT 1"
+    assert_not chart.valid?
+    assert_includes chart.errors[:base], LogMonitor::SQL_QUERIES_OFF
+
+    chart.reload
+    assert chart.update(x: 6, title: "Levels")
+    assert create(:dashboard_chart, dashboard: @dashboard).valid?
+    query_chart = create(:dashboard_chart, dashboard: @dashboard)
+    assert_not query_chart.update(language: "sql", query: "SELECT 1")
+  end
 end

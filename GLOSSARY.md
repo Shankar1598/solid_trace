@@ -133,7 +133,7 @@ The Logs explorer's way of showing a Project's Logs as they arrive, in place of 
 _Avoid_: live stream, streaming, live mode
 
 **Chart**:
-A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single number. A time series needs the last summarize's time bins, which are its x; its number columns are the series and its by columns split them. Bars need a summarize with no time bin. Any table of one row and one number is a single number. The Logs explorer shows it above the table.
+A **Query**'s or **SQL query**'s table drawn as a time series, bars or a single number. A time series needs the last summarize's time bins, which are its x; its number columns are the series and its by columns split them. Bars need a summarize with no time bin. Any table of one row and one number is a single number. The Logs explorer shows it above the table. On a **Dashboard**, a SQL query's table is a time series when its first column is a time, bars when it has no time column, and a single number for one row of one number.
 _Avoid_: graph, plot, visualization
 
 **Threshold line**:
@@ -145,7 +145,7 @@ An Organization's page of what came in, what was kept and what it costs, over To
 _Avoid_: stats page, usage page, home
 
 **Dashboard**:
-A page of **Charts** and **Text blocks** that belongs to an organization. Each chart saves a **Query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows, with the values of the **Dashboard filters** it names. Any member of the organization can see, make, change and delete it.
+A page of **Charts** and **Text blocks** that belongs to an organization. Each chart saves a **Query** or a **SQL query** on one of the organization's **Projects**, and every chart runs over the time range the Dashboard shows, with the values of the **Dashboard filters** it names. Any member of the organization can see, make, change and delete it.
 _Avoid_: board, panel page
 
 **Text block**:
@@ -153,7 +153,7 @@ A note in Markdown on a **Dashboard**, with an optional title, at a place on the
 _Avoid_: note, markdown panel, text chart
 
 **Dashboard filter**:
-A control in a **Dashboard**'s filter bar, a select or a search box, whose value a **Chart** uses by naming it in its **Query**, as in `where service == $service`. It narrows only the Charts that name it. With no value, it is All, and its comparisons match every **Log**. It can have default values, which it has when the Dashboard opens, until a member picks others or All.
+A control in a **Dashboard**'s filter bar, a select or a search box, whose value a **Chart** uses by naming it in its **Query**, as in `where service == $service`, or in its **SQL query** as a ClickHouse query parameter of type `Array(String)`, `String` or `Nullable(String)`, as in `(empty({service:Array(String)}) OR service IN {service:Array(String)})`. It narrows only the Charts that name it. With no value, it is All: its comparisons in a Query match every **Log**, and in a SQL query it is `[]`, `''` or `NULL`, so the SQL writes the All case itself. It can have default values, which it has when the Dashboard opens, until a member picks others or All.
 _Avoid_: variable, dashboard parameter, template variable
 
 **Section**:
@@ -390,8 +390,8 @@ _Avoid_: command, mention, slash command
 - A **Trace** joins the **Spans**, **Logs** and **Events** of one trace id across an organization's **Projects**
 - A **Project**'s **Trace Retention** decides when its **Spans** are deleted
 - A **Chart** draws one **Query**'s or **SQL query**'s table; the **Logs explorer** shows it above the table
-- A **Dashboard** holds many **Charts**, each a saved **Query** on a **Project** of the Dashboard's organization
-- A **Dashboard** has an ordered list of **Dashboard filters**; each narrows the **Charts** whose **Query** names it
+- A **Dashboard** holds many **Charts**, each a saved **Query** or **SQL query** on a **Project** of the Dashboard's organization
+- A **Dashboard** has an ordered list of **Dashboard filters**; each narrows the **Charts** whose **Query** or **SQL query** names it
 - A **Dashboard** has an ordered list of **Sections**; a **Chart** is in one Section of its Dashboard or in none
 - A **Dashboard** holds **Text blocks** on the same grid as its **Charts**; a Text block is in one **Section** or in none, and has no **Project** or **Query**
 - A **Console** presents **Projects**, **Issues**, and **Integrations**

@@ -27,5 +27,12 @@ FactoryBot.define do
       title { nil }
       text { "**Read me** first." }
     end
+
+    # A SQL Chart: ClickHouse SQL in query.
+    trait :sql do
+      language { "sql" }
+      query { "SELECT level, count() AS n FROM logs WHERE (empty({level:Array(String)}) OR level IN {level:Array(String)}) GROUP BY level" }
+      viz { "bar" }
+    end
   end
 end

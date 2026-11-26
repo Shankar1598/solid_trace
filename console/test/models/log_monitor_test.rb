@@ -263,6 +263,19 @@ class LogMonitorTest < ActiveSupport::TestCase
     assert_equal [ "SQL can't run: Unknown function cuont" ], monitor.errors.full_messages
   end
 
+  test "a SQL Monitor's SQL can't name a Dashboard filter" do
+    stub_monitor_sql_check(@project)
+    stub_request(:post, %r{/logs/sql}).to_return(status: 200, body: {
+      table: { columns: [ SERVICE_COLUMN, COUNT_COLUMN ], rows: [], truncated: false }, parameters: %w[service q],
+    }.to_json)
+
+    monitor = build(:monitor, :sql, project: @project,
+      query: "SELECT service, count() FROM logs WHERE service IN {service:Array(String)} AND {q:String} = '' GROUP BY service")
+
+    assert_not monitor.valid?
+    assert_equal [ "can't name a filter. Filters ({service}, {q}) work only on Dashboard Charts" ], monitor.errors[:sql]
+  end
+
   test "a SQL Monitor's table must give exactly one number per group, in words that name the SQL" do
     stub_monitor_sql_check(@project, columns: [ SERVICE_COLUMN ])
     none = build(:monitor, :sql, project: @project)

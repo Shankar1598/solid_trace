@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/solidtrace/event_store/logquery"
 	"github.com/solidtrace/event_store/pkg/logger"
+	"github.com/solidtrace/event_store/sqlfilter"
 	"github.com/solidtrace/event_store/storage"
 )
 
@@ -27,6 +28,9 @@ type sqlRequest struct {
 	From           time.Time `json:"from"`
 	To             time.Time `json:"to"`
 	TimeoutSeconds *float64  `json:"timeout_seconds"`
+	// Parameters are the values of the Dashboard filters the SQL names, by
+	// name. A filter without values is All.
+	Parameters map[string][]string `json:"parameters"`
 }
 
 // sqlTimeout is the timeout a SQL run gets for the timeout_seconds it asked
@@ -48,15 +52,20 @@ const simplerSQL = "try a shorter time range or a simpler query"
 //
 // Runs ClickHouse SQL, {"sql", "from", "to"} (RFC 3339), as written, as the
 // Project's SQL user, whose logs and events show the Project's rows of
-// [from, to) and nothing else (ADR 0003), with "timeout_seconds" optional.
-// Only while the instance's SQL queries setting is on; otherwise 403. The run
-// stops after timeout_seconds, and at the SQL users' time limit whatever it
-// asks for. Answers {"table": {"columns": [{"name", "type"}], "rows": [[…]],
-// "truncated"}, "elapsed_ms"}, at most maxTableRows rows. SQL that fails
-// answers 400 with {"error"}, ClickHouse's message, which gives a syntax
-// error's position: so does SQL that reads what its user may not, or
-// changes a setting. A run past its timeout answers 504 with {"errors":
-// [{"message"}]}.
+// [from, to) and nothing else (ADR 0003), with "timeout_seconds" and
+// "parameters" optional. "parameters" fills in the Dashboard filters the SQL
+// names as query parameters, such as {region:Array(String)}, {name:
+// [values]} as for a Query; ClickHouse binds them (ADR 0026). Only while the
+// instance's SQL queries setting is on; otherwise 403. The run stops after
+// timeout_seconds, and at the SQL users' time limit whatever it asks for.
+// Answers {"table": {"columns": [{"name", "type"}], "rows": [[…]],
+// "truncated"}, "parameters", "elapsed_ms"}, at most maxTableRows rows, with
+// the names of the filters the SQL names, in order of first use. SQL that
+// fails answers 400 with {"error"}, ClickHouse's message, which gives a
+// syntax error's position: so does SQL that reads what its user may not, or
+// changes a setting, and SQL that names a filter with a type other than
+// Array(String), String or Nullable(String). A run past its timeout answers
+// 504 with {"errors": [{"message"}]}.
 func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -74,6 +83,13 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "body must be JSON with sql, from and to"})
 	}
+	if problem := parametersProblem(req.Parameters); problem != nil {
+		return c.Status(400).JSON(problem)
+	}
+	filters, err := sqlfilter.Scan(req.SQL)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
 	run, problem := startRun(c, "sql", sqlTimeout(h.sql.Limits().Time, req.TimeoutSeconds))
 	if problem != nil {
 		return c.Status(400).JSON(problem)
@@ -82,7 +98,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	result, err := h.sql.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, maxTableRows)
+	result, err := h.sql.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, sqlfilter.Parameters(filters, req.Parameters), maxTableRows)
 	// Stopped, the SQL fails as the context ends or ClickHouse stops it at
 	// its time limit.
 	var sqlErr *storage.SQLError
@@ -101,7 +117,10 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	for i, col := range result.Columns {
 		columns[i] = logquery.Column{Name: col.Name, Type: columnType(col.Type)}
 	}
-	return run.answer(c, fiber.Map{"table": fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated}})
+	return run.answer(c, fiber.Map{
+		"table":      fiber.Map{"columns": columns, "rows": result.Rows, "truncated": result.Truncated},
+		"parameters": sqlfilter.Names(filters),
+	})
 }
 
 // columnType names a ClickHouse type as a table's column types are named:

@@ -35,17 +35,24 @@ class ChartRuns
   @running = 0
 
   class << self
-    # A chart's Query run on a Project from from to to, as one chart run that
-    # EventStore stops after EventStoreProxy::RUN_TIMEOUT_SECONDS: EventStore's
-    # answer, whose "table" is the table. A Dashboard's charts, the chart
-    # editor's and a Monitor's preview and the MCP server's chart tools run
-    # through it. parameters are the values of the Dashboard filters the
-    # Query names. Raises NotATable for a Query that answers Logs, and Busy
-    # past the limit.
-    def run_chart(project, query, from:, to:, parameters: nil)
+    # A chart's Query, or SQL with language "sql", run on a Project from from
+    # to to, as one chart run that EventStore stops after
+    # EventStoreProxy::RUN_TIMEOUT_SECONDS: EventStore's answer, whose
+    # "table" is the table. A Dashboard's charts, the chart editor's and a
+    # Monitor's preview and the MCP server's chart tools run through it.
+    # parameters are the values of the Dashboard filters the text names; a
+    # SQL run's answer has their names in "parameters". Raises NotATable for
+    # a Query that answers Logs, EventStore::SQLQueriesOff for SQL while SQL
+    # queries are off, and Busy past the limit.
+    def run_chart(project, query, from:, to:, parameters: nil, language: "query")
       answer = hold do
-        EventStore.query_logs(project_id: project.id, query: query, from: from, to: to,
-                              timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: parameters)
+        if language == "sql"
+          EventStore.run_logs_sql(project_id: project.id, sql: query, from: from, to: to,
+                                  timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: parameters)
+        else
+          EventStore.query_logs(project_id: project.id, query: query, from: from, to: to,
+                                timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: parameters)
+        end
       end
       raise NotATable unless answer.is_a?(Hash) && answer["table"].is_a?(Hash)
 

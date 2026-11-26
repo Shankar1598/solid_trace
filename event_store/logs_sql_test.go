@@ -30,9 +30,10 @@ func setSQLQueries(t *testing.T, env *TestEnv, on bool) {
 
 // sqlRequest is a run of SQL, as the console sends it.
 type sqlRequest struct {
-	SQL  string    `json:"sql"`
-	From time.Time `json:"from"`
-	To   time.Time `json:"to"`
+	SQL        string              `json:"sql"`
+	From       time.Time           `json:"from"`
+	To         time.Time           `json:"to"`
+	Parameters map[string][]string `json:"parameters,omitempty"`
 }
 
 // runSQL runs SQL for a Project and returns the status and the raw answer.

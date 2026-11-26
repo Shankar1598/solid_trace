@@ -128,26 +128,27 @@ func NewClickHouseSQL(ch *ClickHouse, limits SQLLimits) *ClickHouseSQL {
 func (s *ClickHouseSQL) Limits() SQLLimits { return s.limits }
 
 // RunSQL runs a SQL query as written, as projectID's SQL user, with logs,
-// events and spans showing the Project's rows of [from, to). It reads at most limit
-// rows. If the query itself fails, the error is a *SQLError with
+// events and spans showing the Project's rows of [from, to). ClickHouse
+// binds parameters to the query's {name:Type} parameters, each value in
+// ClickHouse's text form of its type. It reads at most limit rows. If the query itself fails, the error is a *SQLError with
 // ClickHouse's message. Cancelling ctx stops it. Each run records the
 // query in ctx's ReadStatements.
-func (s *ClickHouseSQL) RunSQL(ctx context.Context, projectID uint32, from, to time.Time, query string, limit int) (SQLResult, error) {
+func (s *ClickHouseSQL) RunSQL(ctx context.Context, projectID uint32, from, to time.Time, query string, parameters map[string]string, limit int) (SQLResult, error) {
 	from, to = from.UTC(), to.UTC()
 	if !to.After(from) {
 		to = from
 	}
-	result, err := s.run(ctx, projectID, from, to, query, limit)
+	result, err := s.run(ctx, projectID, from, to, query, parameters, limit)
 	// The user was dropped or its password changed since this process made
 	// it, as by another EventStore on the same database: make it again.
 	if exception, ok := clickHouseException(err); ok && (exception.Code == chAuthenticationFailed || exception.Code == chUnknownUser) {
 		s.forget(projectID)
-		result, err = s.run(ctx, projectID, from, to, query, limit)
+		result, err = s.run(ctx, projectID, from, to, query, parameters, limit)
 	}
 	return result, err
 }
 
-func (s *ClickHouseSQL) run(ctx context.Context, projectID uint32, from, to time.Time, query string, limit int) (SQLResult, error) {
+func (s *ClickHouseSQL) run(ctx context.Context, projectID uint32, from, to time.Time, query string, parameters map[string]string, limit int) (SQLResult, error) {
 	user, password, err := s.user(ctx, projectID)
 	if err != nil {
 		return SQLResult{}, fmt.Errorf("making Project %d's SQL user: %w", projectID, err)
@@ -172,7 +173,7 @@ func (s *ClickHouseSQL) run(ctx context.Context, projectID uint32, from, to time
 	queryCtx = clickhouse.Context(queryCtx, clickhouse.WithSettings(clickhouse.Settings{
 		sqlFromSetting: clickhouse.CustomSetting{Value: chsql.TimeText(from)},
 		sqlToSetting:   clickhouse.CustomSetting{Value: chsql.TimeText(to)},
-	}))
+	}), clickhouse.WithParameters(parameters))
 
 	began := time.Now()
 	result, err := readSQL(queryCtx, conn, query, limit)

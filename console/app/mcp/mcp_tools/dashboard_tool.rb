@@ -151,6 +151,23 @@ module McpTools
       },
     }.freeze
 
+    # The sql argument of add_chart and update_chart, listed only while SQL
+    # queries are on, and what the tools' descriptions say of it then.
+    CHART_SQL = {
+      type: "string",
+      description: "A SQL query (ClickHouse SQL) that the Chart runs in place of a Query. Use query first. Use sql only when the " \
+                   "Chart needs a join, a subquery, a window, or a read of the events or spans tables. The SQL reads the logs, " \
+                   "events and spans tables of the Chart's Project, as run_sql does, over the Dashboard's range, so it needs no " \
+                   "time condition. It names a Dashboard filter as a ClickHouse query parameter, and writes its All case: a select " \
+                   "as (empty({service:Array(String)}) OR service IN {service:Array(String)}), where All is []; a search as " \
+                   "({q:String} = '' OR positionCaseInsensitive(message, {q:String}) > 0), where All is '' and several values " \
+                   "are joined by a space; or {name:Nullable(String)}, as String with All NULL. No other type names a filter. " \
+                   "line and area need a time column first; bar needs no time column; stat needs one row of one number. " \
+                   "EventStore runs the SQL over no time before the Chart is saved: SQL that does not run, or that names a " \
+                   "filter the Dashboard lacks, is not saved. Give sql or query, not both. Giving sql makes the Chart's language sql.",
+    }.freeze
+    CHART_SQL_NOTE = "A Chart that needs a join, a subquery, a window, or the events or spans tables takes sql in place of query."
+
     class_methods do
       # The organization and dashboard arguments, which #dashboard reads.
       def takes_dashboard
@@ -179,7 +196,10 @@ module McpTools
       def takes_chart_fields(required: [])
         argument :project, { type: "string", description: "The slug of the Project the Chart's Query runs on. list_projects lists them." },
           required: required.include?(:project)
-        CHART_FIELDS.each { |name, schema| argument name, schema, required: required.include?(name) }
+        CHART_FIELDS.each do |name, schema|
+          argument name, schema, required: required.include?(name)
+          sql_argument :sql, CHART_SQL, note: CHART_SQL_NOTE if name == :query
+        end
       end
     end
 
@@ -205,26 +225,59 @@ module McpTools
       arguments.slice(*names)
     end
 
-    # Saves a Chart whose fields are valid. A new Chart, or one whose Query or
-    # Project changed, is saved only when EventStore finds no mistakes in its
-    # Query on its Project, and the Query names only the Dashboard's filters,
-    # as the chart editor checks before it saves. The check compiles the
-    # Query and runs nothing. A Text block has no Query to check.
+    # The Chart fields given, with query or sql as the Chart's text and
+    # language.
+    def chart_fields
+      raise ToolError, "Give query or sql, not both: a Chart runs one of them." if arguments.key?(:query) && arguments.key?(:sql)
+
+      fields = given(CHART_FIELDS.keys)
+      fields[:language] = "query" if arguments.key?(:query)
+      fields.merge!(language: "sql", query: arguments[:sql]) if arguments.key?(:sql)
+      fields
+    end
+
+    # Saves a Chart whose fields are valid. A new Chart, or one whose Query,
+    # language or Project changed, is saved only when EventStore finds no
+    # mistakes in its Query on its Project, and the Query names only the
+    # Dashboard's filters, as the chart editor checks before it saves. The
+    # check compiles the Query and runs nothing. A SQL Chart's SQL is run
+    # over no time instead, which reads no rows, with its filters as All:
+    # its answer names the filters it uses. A Text block has no Query to
+    # check.
     def save_chart!(chart)
       chart.validate!
-      if !chart.text? && (chart.new_record? || chart.query_changed? || chart.project_id_changed?)
-        validation = EventStore.validate_logs_query(project_id: chart.project_id, query: chart.query)
-        if Array(validation["errors"]).any?
-          EventStore.mistakes(validation).each { |mistake| chart.errors.add(:query, mistake) }
-          raise ActiveRecord::RecordInvalid, chart
-        end
-        unknown = Array(validation["parameters"]) - dashboard.filter_names
+      if !chart.text? && (chart.new_record? || chart.query_changed? || chart.language_changed? || chart.project_id_changed?)
+        names = chart.language_sql? ? sql_filter_names(chart) : query_filter_names(chart)
+        unknown = names - dashboard.filter_names
         if unknown.any?
-          chart.errors.add(:query, "names #{unknown.map { |name| "$#{name}" }.to_sentence}, which #{not_its_filters(unknown)}")
+          mark = chart.language_sql? ? "" : "$"
+          attribute = chart.language_sql? ? :sql : :query
+          chart.errors.add(attribute, "names #{unknown.map { |name| "#{mark}#{name}" }.to_sentence}, which #{not_its_filters(unknown)}")
           raise ActiveRecord::RecordInvalid, chart
         end
       end
       chart.save!
+    end
+
+    # The filters a Chart's Query names, which validate finds.
+    def query_filter_names(chart)
+      validation = EventStore.validate_logs_query(project_id: chart.project_id, query: chart.query)
+      if Array(validation["errors"]).any?
+        EventStore.mistakes(validation).each { |mistake| chart.errors.add(:query, mistake) }
+        raise ActiveRecord::RecordInvalid, chart
+      end
+      Array(validation["parameters"])
+    end
+
+    # The filters a SQL Chart's SQL names, from a run over no time.
+    def sql_filter_names(chart)
+      now = Time.current
+      answer = EventStore.run_logs_sql(project_id: chart.project_id, sql: chart.query, from: now, to: now,
+                                       timeout_seconds: EventStoreProxy::SQL_TIMEOUT_SECONDS)
+      Array(answer["parameters"])
+    rescue EventStore::Rejected => e
+      chart.errors.add(:sql, "can't run: #{EventStore.error_text(e.body)}")
+      raise ActiveRecord::RecordInvalid, chart
     end
 
     # What a refusal of names the Dashboard has no filters of says of them,

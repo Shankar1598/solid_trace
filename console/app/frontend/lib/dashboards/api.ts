@@ -6,16 +6,24 @@ import { RunError, runFailure, type TableAnswer } from '../logs/api'
 import { elapsedOf } from '../logs/runLine'
 import type { LogTable } from '../logs/table'
 import {
-  appendValues, type ChartOptions, type Dashboard, type DashboardChart, type DashboardViz, type FieldValue, type FilterValues, type Place,
+  appendValues, type ChartLanguage, type ChartOptions, type Dashboard, type DashboardChart, type DashboardViz, type FieldValue, type FilterValues, type Place,
 } from './dashboard'
 
 /**
- * A chart's saved Query run over [from, to) with the values of the filters it
- * names, as `v_<name>` keys: its table. The Query is read on the server, never sent.
+ * A chart's answer: its table, and for SQL the names of the Dashboard
+ * filters the SQL names, which EventStore found in it (null for a Query).
+ */
+export interface ChartAnswer extends TableAnswer {
+  parameters: string[] | null
+}
+
+/**
+ * A chart's saved Query or SQL run over [from, to) with the values of the filters it
+ * names, as `v_<name>` keys: its table. The text is read on the server, never sent.
  */
 export async function fetchChartData({ orgSlug, dashboardId, chartId, from, to, parameters = {}, signal }: {
   orgSlug: string; dashboardId: number; chartId: number; from: Date; to: Date; parameters?: FilterValues; signal?: AbortSignal
-}): Promise<TableAnswer> {
+}): Promise<ChartAnswer> {
   const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() })
   appendValues(params, parameters)
   return tableOf(await call(`/${orgSlug}/dashboards/${dashboardId}/charts/${chartId}/data?${params}`, { signal }))
@@ -37,13 +45,15 @@ export async function fetchFilterValues({ orgSlug, dashboardId, name, from, to, 
 
 export interface PreviewRun {
   projectId: number; query: string; from: Date; to: Date
+  /** sql runs query as SQL; a Query otherwise. */
+  language?: ChartLanguage
   /** The filter bar's values, for the chart editor's preview. */
   parameters?: FilterValues
   signal?: AbortSignal
 }
 
 /** The chart editor's preview, through fetchPreview. */
-export async function fetchChartPreview({ orgSlug, dashboardId, ...run }: { orgSlug: string; dashboardId: number } & PreviewRun): Promise<TableAnswer> {
+export async function fetchChartPreview({ orgSlug, dashboardId, ...run }: { orgSlug: string; dashboardId: number } & PreviewRun): Promise<ChartAnswer> {
   return fetchPreview(`/${orgSlug}/dashboards/${dashboardId}/charts/preview`, run)
 }
 
@@ -52,18 +62,21 @@ export async function fetchChartPreview({ orgSlug, dashboardId, ...run }: { orgS
  * timeout and within Console's cap on chart runs. The Query goes in the body. The chart editor's
  * and the Monitor form's preview endpoints answer it.
  */
-export async function fetchPreview(url: string, { projectId, query, from, to, parameters, signal }: PreviewRun): Promise<TableAnswer> {
+export async function fetchPreview(url: string, { projectId, query, language, from, to, parameters, signal }: PreviewRun): Promise<ChartAnswer> {
   return tableOf(await call(url, {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
-    body: JSON.stringify({ project_id: projectId, query, from: from.toISOString(), to: to.toISOString(), parameters }),
+    body: JSON.stringify({ project_id: projectId, query, language, from: from.toISOString(), to: to.toISOString(), parameters }),
   }))
 }
 
-async function tableOf(response: Response): Promise<TableAnswer> {
+async function tableOf(response: Response): Promise<ChartAnswer> {
   const body = await response.json().catch(() => null)
-  if (response.ok && body?.table && typeof body.table === 'object') return { table: body.table as LogTable, elapsedMs: elapsedOf(body) }
+  if (response.ok && body?.table && typeof body.table === 'object') {
+    const parameters = Array.isArray(body.parameters) ? (body.parameters as string[]) : null
+    return { table: body.table as LogTable, elapsedMs: elapsedOf(body), parameters }
+  }
   throw runFailure(body, response.status)
 }
 
@@ -76,6 +89,7 @@ export interface ChartInput {
   project_id: number
   title: string
   query: string
+  language?: ChartLanguage
   viz: DashboardViz
   options?: ChartOptions
 }

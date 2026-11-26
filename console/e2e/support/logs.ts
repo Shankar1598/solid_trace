@@ -175,7 +175,8 @@ function sqlQueriesOn(): boolean {
   return /^SQL queries: on$/m.test(out)
 }
 
-function setSqlQueries(on: boolean) {
+/** Sets SQL queries on or off for the dev instance, as an instance admin does. */
+export function setSqlQueries(on: boolean) {
   execFileSync('mise', ['exec', '--', 'bin/rails', 'instance_settings:set', `SQL_QUERIES_ENABLED=${on}`], {
     cwd: resolve(__dirname, '../..'), stdio: 'pipe', timeout: 120_000,
   })

@@ -52,6 +52,8 @@ const editorOf = (item: DashboardItem): ItemEditor =>
 interface DashboardsShowProps {
   dashboard: Dashboard & { sections: DashboardSection[]; charts: DashboardItem[] }
   projects: ProjectOption[]
+  /** Whether the instance runs SQL queries, which SQL Charts need. */
+  sql_queries_enabled: boolean
 }
 
 /**
@@ -67,7 +69,7 @@ interface DashboardsShowProps {
  * Edit lets the cards be dragged by their titles and resized from their
  * corners, inside their group; each move is saved.
  */
-export default function DashboardsShow({ dashboard, projects }: DashboardsShowProps) {
+export default function DashboardsShow({ dashboard, projects, sql_queries_enabled }: DashboardsShowProps) {
   const orgSlug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const basePath = `/${orgSlug}/dashboards/${dashboard.id}`
   const [range, setRange] = useState<TimeRange>(() => rangeOfSearch(window.location.search, dashboard.default_range))
@@ -281,6 +283,7 @@ export default function DashboardsShow({ dashboard, projects }: DashboardsShowPr
           ran={run}
           values={values}
           search={search}
+          sqlQueriesEnabled={sql_queries_enabled}
           onClose={() => setEditor(null)}
         />
       )}
