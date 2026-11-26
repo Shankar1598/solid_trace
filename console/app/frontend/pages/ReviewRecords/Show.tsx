@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { agentSessionPath } from '@/lib/agentSessions'
 import type { EvidenceFile } from '@/lib/evidenceFiles'
 import {
   decisionsOf,
@@ -98,7 +99,7 @@ function Header({ row }: { row: ReviewRecordRow }) {
       ? <a href={href} target="_blank" rel="noreferrer noopener" className="break-all underline underline-offset-2">{row.pr}</a>
       : <span className="break-all">{row.pr || <span className="text-muted-foreground">No PR opened</span>}</span>],
     ['Stored', <time dateTime={row.stored_at}>{format(new Date(row.stored_at), 'MMM d, yyyy HH:mm')}</time>],
-    ['Agent session', <Link href={`/${current_org?.slug ?? ''}/agent_sessions/${row.session_id}`} className="font-mono text-xs underline underline-offset-2">{row.session_id}</Link>],
+    ['Agent session', <Link href={agentSessionPath(current_org?.slug ?? '', row.session_id)} className="font-mono text-xs underline underline-offset-2">{row.session_id}</Link>],
     ['Findings', `${row.findings} (${row.fixed} fixed, ${row.missed} missed by the reviews)`],
     ['Confirmations not given', String(row.confirmations_not_given)],
   ]

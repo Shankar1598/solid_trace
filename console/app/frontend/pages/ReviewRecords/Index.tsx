@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { agentSessionPath } from '@/lib/agentSessions'
 import { prHref, recordPath, type ListedReviewRecord } from '@/lib/reviewRecords'
 import type { SharedProps } from '@/types'
 
@@ -116,7 +117,7 @@ function RecordsList({ view }: { view: Extract<ReviewRecordsProps, { on: true }>
                 <TableCell className="text-right font-mono text-xs tabular-nums" data-cell="missed">{row.missed}</TableCell>
                 <TableCell className="text-right font-mono text-xs tabular-nums max-md:hidden" data-cell="not-given">{row.confirmations_not_given}</TableCell>
                 <TableCell className="max-md:hidden">
-                  <Link href={`/${slug}/agent_sessions/${row.session_id}`} className="font-mono text-xs underline underline-offset-2">
+                  <Link href={agentSessionPath(slug, row.session_id)} className="font-mono text-xs underline underline-offset-2">
                     {row.session_id.slice(0, 8)}
                   </Link>
                 </TableCell>

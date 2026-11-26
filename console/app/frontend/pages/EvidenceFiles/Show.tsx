@@ -6,6 +6,7 @@ import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardContent } from '@/components/ui/card'
 import { Segmented } from '@/components/ui/segmented'
+import { agentSessionPath } from '@/lib/agentSessions'
 import { evidenceBytesPath, evidenceTitle, isVideo, readSpeed, saveSpeed, SPEEDS, type EvidenceFile, type Speed } from '@/lib/evidenceFiles'
 import { bytesText } from '@/lib/overview'
 import { browserStorage } from '@/lib/recentQueries'
@@ -13,8 +14,10 @@ import { sessionRecordPath, type SessionReviewRecord } from '@/lib/reviewRecords
 import type { SharedProps } from '@/types'
 
 type EvidenceFileProps = EvidenceFile & {
-  /** The Review record of the file's Agent session, null for none or when EventStore could not say. */
+  /** The Review record of the file's Agent session, null for none. */
   review_record: SessionReviewRecord | null
+  /** False when EventStore could not say. */
+  review_record_known: boolean
   list_path: string
 }
 
@@ -84,8 +87,8 @@ function Facts({ file, slug }: { file: EvidenceFileProps; slug: string }) {
     ['Size', <span className="font-mono text-xs">{bytesText(file.byte_size)}</span>],
     ['Uploaded by', file.uploaded_by ?? none('Deleted user')],
     ['Uploaded', <time dateTime={file.created_at}>{format(new Date(file.created_at), 'MMM d, yyyy HH:mm')}</time>],
-    ['Agent session', <Link href={`/${slug}/agent_sessions/${file.agent_session_id}`} className="break-all font-mono text-xs underline underline-offset-2">{file.agent_session_id}</Link>],
-    ['Review record', file.review_record
+    ['Agent session', <Link href={agentSessionPath(slug, file.agent_session_id)} className="break-all font-mono text-xs underline underline-offset-2">{file.agent_session_id}</Link>],
+    ['Review record', !file.review_record_known ? none('Not known') : file.review_record
       ? (
         <span>
           <Link href={sessionRecordPath(slug, file.review_record)} aria-label={`Review record, round ${file.review_record.round}`} className="underline underline-offset-2" data-review-record-link>

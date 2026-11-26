@@ -8,6 +8,9 @@ import type { TimeRange } from './timeRange'
 
 export type RunFilter = 'run' | 'none'
 
+/** The page of the Agent session id, in the Organization `slug`. */
+export const agentSessionPath = (slug: string, id: string) => `/${slug}/agent_sessions/${id}`
+
 export interface AgentSessionFilters {
   /** A user id. */
   person: number | null

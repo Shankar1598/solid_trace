@@ -36,10 +36,14 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
   # A row as EventStore writes it.
   def evidence(id, organization: @organization, content_type: "image/png", byte_size: 84, caption: nil, created_at: Time.current, deleted_at: nil)
     EvidenceFile.insert!({
-      id: id, organization_id: organization.id, agent_session_id: SESSION, sha256: SecureRandom.hex(32), caption: caption,
+      id: id, organization_id: organization.id, agent_session_id: SESSION, sha256: sha256(id), caption: caption,
       content_type: content_type, byte_size: byte_size, storage_key: "evidence/org=#{organization.id}/#{id}.png",
       uploaded_by_user_id: @admin.id, created_at: created_at, deleted_at: deleted_at,
     })
+  end
+
+  def sha256(id)
+    Digest::SHA256.hexdigest(id)
   end
 
   def inertia_page(path, component)
@@ -64,6 +68,15 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_not view["more"]
   end
 
+  test "the list shows at most its limit of files, and says that there are more" do
+    sign_in_as(@member)
+
+    view = stub_const(EvidenceFile, :LIST_LIMIT, 1) { inertia_page(evidence_files_path(org_slug: "acme"), "EvidenceFiles/Index")["evidence_files"] }
+
+    assert_equal [ VIDEO ], view["rows"].map { |row| row["id"] }
+    assert view["more"]
+  end
+
   test "a member opens a file's page, with the Review record of its Agent session" do
     project = AgentSessionsSettings.turn_on(organization: @organization, user: @admin, entries: [ "github.com/acme/shop" ], confirmed: "1").project
     asked = stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/sessions")
@@ -77,6 +90,18 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_requested asked
     assert_equal [ SHOT, "Cart page", SESSION, "Ada", "/acme/evidence" ], view.values_at("id", "caption", "agent_session_id", "uploaded_by", "list_path")
     assert_equal({ "id" => "r1", "pr" => "https://github.com/acme/shop/pull/7", "round" => 2 }, view["review_record"])
+    assert view["review_record_known"]
+  end
+
+  test "when EventStore cannot give the Review record, the page does not say that the file has none" do
+    project = AgentSessionsSettings.turn_on(organization: @organization, user: @admin, entries: [ "github.com/acme/shop" ], confirmed: "1").project
+    stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/sessions").to_return(status: 500, body: "boom")
+    sign_in_as(@member)
+
+    view = inertia_page(evidence_file_path(org_slug: "acme", id: SHOT), "EvidenceFiles/Show")["evidence_file"]
+
+    assert_nil view["review_record"]
+    assert_equal false, view["review_record_known"]
   end
 
   test "a person who is not signed in signs in, then comes back to the file's page" do
@@ -129,8 +154,28 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "nosniff", response.headers["X-Content-Type-Options"]
     assert_equal "sandbox", response.headers["Content-Security-Policy"]
     assert_equal "inline", response.headers["Content-Disposition"]
-    assert_equal "private", response.headers["Cache-Control"]
     assert_equal "bytes", response.headers["Accept-Ranges"]
+  end
+
+  test "the browser keeps the bytes, and gets 304 for its ETag without a read from EventStore" do
+    bytes = stub_request(:get, content_url(SHOT)).to_return(status: 200, headers: { "Content-Length" => "84" }, body: "p" * 84)
+    sign_in_as(@member)
+
+    get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+    assert_response :ok
+    etag = response.headers["ETag"]
+    assert_equal %("#{sha256(SHOT)}"), etag
+    assert_equal %w[immutable max-age=31536000 private], response.headers["Cache-Control"].split(/,\s*/).sort
+
+    get evidence_file_bytes_path(org_slug: "acme", id: SHOT), headers: { "If-None-Match" => etag }
+    assert_response :not_modified
+    assert_equal etag, response.headers["ETag"]
+    assert_equal "", response.body
+    assert_requested bytes, times: 1
+
+    get evidence_file_bytes_path(org_slug: "acme", id: SHOT), headers: { "If-None-Match" => %("#{sha256(VIDEO)}") }
+    assert_response :ok
+    assert_requested bytes, times: 2
   end
 
   test "the browser's Range goes to EventStore, and its 206 comes back with its range" do
@@ -156,6 +201,7 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :range_not_satisfiable
     assert_equal "bytes */1000", response.headers["Content-Range"]
+    assert_plain_answer
   end
 
   test "a deleted file's page says when, and its bytes get 410 without a read from EventStore" do
@@ -168,7 +214,10 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     get evidence_file_bytes_path(org_slug: "acme", id: deleted)
 
     assert_response :gone
-    assert_equal "This evidence was deleted on October 30, 2026.", response.body
+    assert_equal "Gone", response.body
+    assert_equal "nosniff", response.headers["X-Content-Type-Options"]
+    assert_equal "private", response.headers["Cache-Control"]
+    assert_nil response.headers["ETag"]
     assert_not_requested bytes
   end
 
@@ -178,7 +227,50 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
 
     get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
 
+    assert_bad_gateway
+  end
+
+  test "an answer of EventStore that is not the bytes gets 502, not its status or the file's headers" do
+    sign_in_as(@member)
+
+    [ 404, 500, 503 ].each do |status|
+      stub_request(:get, content_url(VIDEO))
+        .to_return(status: status, headers: { "Content-Type" => "application/json", "Content-Range" => "bytes 0-9/1000" }, body: { error: "no" }.to_json)
+
+      get evidence_file_bytes_path(org_slug: "acme", id: VIDEO), headers: { "Range" => "bytes=0-9" }
+
+      assert_bad_gateway
+    end
+  end
+
+  test "a read that fails before the first chunk gets 502 without the headers of the file" do
+    answer = Net::HTTPPartialContent.new("1.1", "206", "Partial Content")
+    answer["Content-Range"] = "bytes 0-9/1000"
+    answer["Accept-Ranges"] = "bytes"
+    answer.define_singleton_method(:read_body) { raise EventStore::Unavailable, "EventStore connection error: read timeout" }
+    sign_in_as(@member)
+
+    EventStore.stub(:evidence_content, ->(**, &block) { block.call(answer) }) do
+      get evidence_file_bytes_path(org_slug: "acme", id: VIDEO), headers: { "Range" => "bytes=0-9" }
+    end
+
+    assert_bad_gateway
+  end
+
+  private
+
+  def assert_bad_gateway
     assert_response :bad_gateway
     assert_equal "EventStore can't read the Evidence file. Try again shortly.", response.body
+    assert_plain_answer
+  end
+
+  # A plain answer: no headers of the file's bytes, and no long cache.
+  def assert_plain_answer
+    assert_equal "text/plain", response.media_type
+    assert_equal "private", response.headers["Cache-Control"]
+    assert_equal "nosniff", response.headers["X-Content-Type-Options"]
+    %w[Accept-Ranges Content-Disposition ETag].each { |name| assert_nil response.headers[name], name }
+    assert_nil response.headers["Content-Range"] unless response.status == 416
   end
 end

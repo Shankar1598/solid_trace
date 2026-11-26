@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { agentSessionPath } from '@/lib/agentSessions'
 import { evidencePath, evidenceTitle, type EvidenceFile } from '@/lib/evidenceFiles'
 import { bytesText } from '@/lib/overview'
 import type { SharedProps } from '@/types'
@@ -56,12 +57,12 @@ export default function EvidenceFilesIndex({ evidence_files: view }: { evidence_
                         <Link href={evidencePath(slug, file.id)} className="block truncate font-medium underline-offset-2 hover:underline" title={evidenceTitle(file)}>
                           {evidenceTitle(file)}
                         </Link>
-                        {file.deleted_at && <Badge variant="neutral">deleted</Badge>}
+                        {file.deleted_at && <Badge variant="neutral" data-badge="deleted">deleted</Badge>}
                       </TableCell>
                       <TableCell className="font-mono text-xs max-md:hidden" data-cell="type">{file.content_type}</TableCell>
                       <TableCell className="text-right font-mono text-xs tabular-nums whitespace-nowrap max-md:hidden" data-cell="size">{bytesText(file.byte_size)}</TableCell>
                       <TableCell className="max-md:hidden">
-                        <Link href={`/${slug}/agent_sessions/${file.agent_session_id}`} className="font-mono text-xs underline underline-offset-2">
+                        <Link href={agentSessionPath(slug, file.agent_session_id)} className="font-mono text-xs underline underline-offset-2">
                           {file.agent_session_id.slice(0, 8)}
                         </Link>
                       </TableCell>

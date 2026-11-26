@@ -12,10 +12,15 @@ class EvidenceFile < ApplicationRecord
 
   scope :newest_first, -> { order(created_at: :desc, id: :desc) }
 
+  # The files of the relation as the lists show them, newest first.
+  def self.list_rows
+    includes(:uploaded_by_user).newest_first.map(&:listed)
+  end
+
   # The files of the Agent sessions session_ids, newest first, as the
   # Agent session and Review record pages list them.
   def self.of_sessions(organization, session_ids)
-    organization.evidence_files.where(agent_session_id: session_ids.map(&:downcase)).includes(:uploaded_by_user).newest_first.map(&:listed)
+    organization.evidence_files.where(agent_session_id: session_ids.map(&:downcase)).list_rows
   end
 
   def readonly?

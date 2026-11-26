@@ -85,18 +85,33 @@ class ReviewRecordsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [], view["evidence_files"]
   end
 
-  test "a record's page lists the Evidence files of its Agent session" do
+  test "a record's page lists the Evidence files of the Agent sessions of all its PR's rounds, newest first, and no other" do
     project = turn_on
-    EvidenceFile.insert!({ id: EARLIER, organization_id: @organization.id, agent_session_id: SESSION, sha256: "a" * 64, caption: "Cart page",
-                           content_type: "video/webm", byte_size: 1000, storage_key: "evidence/#{EARLIER}.webm", created_at: Time.current })
+    first_round = "1c6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41"
+    other_session = "2c6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41"
+    other_org = create(:organization, slug: "globex")
+    files = { "1f000000-0000-4f6a-8c0e-3d5b7f9a1c4e" => [ @organization, SESSION, 2.minutes.ago, "video/webm" ],
+              "2f000000-0000-4f6a-8c0e-3d5b7f9a1c4e" => [ @organization, first_round, 1.minute.ago, "image/png" ],
+              "3f000000-0000-4f6a-8c0e-3d5b7f9a1c4e" => [ @organization, first_round, 1.hour.ago, "image/png" ],
+              "4f000000-0000-4f6a-8c0e-3d5b7f9a1c4e" => [ @organization, other_session, Time.current, "image/png" ],
+              "5f000000-0000-4f6a-8c0e-3d5b7f9a1c4e" => [ other_org, SESSION, Time.current, "image/png" ] }
+    files.each do |id, (organization, session, at, type)|
+      EvidenceFile.insert!({ id: id, organization_id: organization.id, agent_session_id: session, sha256: id, caption: "Cart page",
+                             content_type: type, byte_size: 1000, storage_key: "evidence/#{id}", created_at: at })
+    end
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/record")
-      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
-                 body: { review_record: row, record: record_json, rounds: [] }.to_json)
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: {
+        review_record: row, record: record_json,
+        rounds: [ { id: RECORD, session_id: SESSION, round: 2 }, { id: EARLIER, session_id: first_round.upcase, round: 1 } ],
+      }.to_json)
     sign_in_as(@member)
 
     view = inertia_page(review_record_path(org_slug: "acme", id: RECORD), "ReviewRecords/Show")["review_record"]
 
-    assert_equal [ [ EARLIER, "Cart page", "video/webm", nil ] ], view["evidence_files"].map { |f| f.values_at("id", "caption", "content_type", "uploaded_by") }
+    assert_equal [ [ "2f000000-0000-4f6a-8c0e-3d5b7f9a1c4e", first_round ], [ "1f000000-0000-4f6a-8c0e-3d5b7f9a1c4e", SESSION ],
+                   [ "3f000000-0000-4f6a-8c0e-3d5b7f9a1c4e", first_round ] ],
+      view["evidence_files"].map { |f| f.values_at("id", "agent_session_id") }
+    assert_equal [ "Cart page", "video/webm", nil ], view["evidence_files"][1].values_at("caption", "content_type", "uploaded_by")
   end
 
   test "an earlier round opens by its id" do

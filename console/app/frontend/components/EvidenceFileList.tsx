@@ -8,8 +8,8 @@ import type { SharedProps } from '@/types'
 export function EvidenceThumb({ file, className }: { file: EvidenceFile; className?: string }) {
   const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const mark = cn('flex items-center justify-center bg-muted text-muted-foreground', className)
-  if (file.deleted_at) return <span className={mark} title="Deleted"><ImageOff className="h-4 w-4" aria-hidden /></span>
-  if (isVideo(file)) return <span className={mark} title="Video"><Film className="h-4 w-4" aria-hidden /></span>
+  if (file.deleted_at) return <span className={mark} title="Deleted" data-mark="deleted"><ImageOff className="h-4 w-4" aria-hidden /></span>
+  if (isVideo(file)) return <span className={mark} title="Video" data-mark="video"><Film className="h-4 w-4" aria-hidden /></span>
   return <img src={evidenceBytesPath(slug, file.id)} alt="" loading="lazy" className={cn('bg-muted object-cover', className)} />
 }
 
