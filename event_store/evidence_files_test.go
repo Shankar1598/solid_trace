@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -101,18 +102,34 @@ func storedEvidence(t *testing.T, env *TestEnv) int {
 	return n
 }
 
-func TestEvidenceFileUpload(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-	o := newAgentOrganization(t, env)
-	o.rows.exec(`INSERT INTO instance_settings (id, console_url, created_at, updated_at) VALUES (1, 'https://console.example.com', ?, ?)`,
-		railsTime(o.rows.now), railsTime(o.rows.now))
+// organizationSlug is the slug of the Organization id.
+func organizationSlug(t *testing.T, o agentOrganization, id int64) string {
+	t.Helper()
 	var slug string
-	if err := o.rows.db.QueryRow("SELECT slug FROM organizations WHERE id = ?", o.organization).Scan(&slug); err != nil {
+	if err := o.rows.db.QueryRow("SELECT slug FROM organizations WHERE id = ?", id).Scan(&slug); err != nil {
 		t.Fatal(err)
 	}
+	return slug
+}
 
-	t.Run("each type of image and video is stored with the type of its bytes, and answers its Console URL", func(t *testing.T) {
+func TestEvidenceFileUpload(t *testing.T) {
+	env := newTestEnv(t, func(env *TestEnv) { env.ConsoleURL = " https://fallback.example.com// " })
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	slug := organizationSlug(t, o, o.organization)
+
+	t.Run("with no Console URL setting, the URL is on CONSOLE_URL, without the spaces and slashes at its ends", func(t *testing.T) {
+		answer := uploadEvidence(t, env, o.secret, laptopSession, "", evidenceOf(pngBytes, 999), nil)
+		expectStatus(t, answer, 201)
+		if want := fmt.Sprintf("https://fallback.example.com/%s/evidence/%s", slug, answer.body["id"]); answer.body["url"] != want {
+			t.Errorf("Expected the URL %s, got %s", want, answer.raw)
+		}
+	})
+
+	o.rows.exec(`INSERT INTO instance_settings (id, console_url, created_at, updated_at) VALUES (1, 'https://console.example.com', ?, ?)`,
+		railsTime(o.rows.now), railsTime(o.rows.now))
+
+	t.Run("each type of image and video is stored with the type of its bytes, and answers its URL on the Console URL setting", func(t *testing.T) {
 		for _, c := range []struct{ head, contentType string }{
 			{pngBytes, "image/png"}, {jpegBytes, "image/jpeg"}, {gifBytes, "image/gif"},
 			{webpBytes, "image/webp"}, {mp4Bytes, "video/mp4"}, {webmBytes, "video/webm"},
@@ -125,8 +142,8 @@ func TestEvidenceFileUpload(t *testing.T) {
 				t.Errorf("Expected %s of 1000 bytes at %s, got %s", c.contentType, want, answer.raw)
 			}
 		}
-		if n := storedEvidence(t, env); n != 6 {
-			t.Errorf("Expected 6 stored files, got %d", n)
+		if n := storedEvidence(t, env); n != 7 {
+			t.Errorf("Expected 7 stored files, got %d", n)
 		}
 	})
 
@@ -237,6 +254,9 @@ func TestEvidenceFileReads(t *testing.T) {
 	answer := uploadEvidence(t, env, o.secret, laptopSession, "The checkout", video, nil)
 	expectStatus(t, answer, 201)
 	id := answer.body["id"].(string)
+	if want := fmt.Sprintf("/%s/evidence/%s", organizationSlug(t, o, o.organization), id); answer.body["url"] != want {
+		t.Errorf("With no Console URL setting and no CONSOLE_URL, expected the path %s, got %s", want, answer.raw)
+	}
 
 	t.Run("the row", func(t *testing.T) {
 		resp, body := readEvidence(t, env, "/evidence/"+id, nil)
@@ -270,6 +290,8 @@ func TestEvidenceFileReads(t *testing.T) {
 			{"bytes=0-1,5-9", 200, "", video},
 			{"items=0-9", 200, "", video},
 			{"bytes=1000-", 416, "bytes */1000", nil},
+			{"bytes=-0", 416, "bytes */1000", nil},
+			{"bytes=9-3", 200, "", video},
 		} {
 			headers := map[string]string{}
 			if c.rangeHeader != "" {
@@ -289,6 +311,21 @@ func TestEvidenceFileReads(t *testing.T) {
 		}
 	})
 
+	t.Run("a file whose bytes are missing answers 500", func(t *testing.T) {
+		shot := uploadEvidence(t, env, o.secret, laptopSession, "", evidenceOf(pngBytes, 700), nil)
+		expectStatus(t, shot, 201)
+		var key string
+		if err := o.rows.db.QueryRow("SELECT storage_key FROM evidence_files WHERE id = ?", shot.body["id"]).Scan(&key); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(env.dir, "evidence", filepath.FromSlash(key))); err != nil {
+			t.Fatal(err)
+		}
+		if resp, body := readEvidence(t, env, "/evidence/"+shot.body["id"].(string)+"/content", nil); resp.StatusCode != 500 {
+			t.Errorf("Expected 500, got %d: %s", resp.StatusCode, body)
+		}
+	})
+
 	t.Run("an id with no row is 404, and a deleted file's bytes are 410", func(t *testing.T) {
 		for _, path := range []string{"/evidence/5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f", "/evidence/not-an-id/content"} {
 			if resp, body := readEvidence(t, env, path, nil); resp.StatusCode != 404 {
@@ -299,8 +336,26 @@ func TestEvidenceFileReads(t *testing.T) {
 		if resp, body := readEvidence(t, env, "/evidence/"+id+"/content", nil); resp.StatusCode != 410 {
 			t.Errorf("Expected 410, got %d: %s", resp.StatusCode, body)
 		}
-		if _, body := readEvidence(t, env, "/evidence/"+id, nil); strings.Contains(string(body), `"deleted_at":null`) {
-			t.Errorf("Expected the row's deleted_at, got %s", body)
+		resp, body := readEvidence(t, env, "/evidence/"+id, nil)
+		var row map[string]any
+		if err := json.Unmarshal(body, &row); err != nil || resp.StatusCode != 200 || row["deleted_at"] == nil {
+			t.Errorf("Expected 200 with the row's deleted_at, got %d: %s", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("the same bytes after Evidence Retention deleted them are a new file", func(t *testing.T) {
+		stored := storedEvidence(t, env)
+		again := uploadEvidence(t, env, o.secret, laptopSession, "The checkout again", video, nil)
+		expectStatus(t, again, 201)
+		if again.body["id"] == id {
+			t.Fatalf("Expected a new row, got the deleted one: %s", again.raw)
+		}
+		if n := storedEvidence(t, env); n != stored+1 {
+			t.Errorf("Expected 1 new stored file, got %d after %d", n, stored)
+		}
+		resp, body := readEvidence(t, env, "/evidence/"+again.body["id"].(string)+"/content", nil)
+		if resp.StatusCode != 200 || !bytes.Equal(body, video) {
+			t.Errorf("Expected 200 with the %d bytes, got %d with %d bytes", len(video), resp.StatusCode, len(body))
 		}
 	})
 }

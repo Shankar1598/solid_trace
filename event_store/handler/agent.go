@@ -64,7 +64,8 @@ type AgentConfig struct {
 	// Evidence keeps the Evidence files of Agent sessions.
 	Evidence EvidenceFiles
 	// ConsoleURL is Console's URL when the Console URL instance setting is
-	// not set, as CONSOLE_URL gives it.
+	// not set, as CONSOLE_URL gives it. The handler cleans it as Console's
+	// PublicUrls.clean does: no spaces around it, no slash at its end.
 	ConsoleURL string
 	Clock      clock.Clock
 	// Version is the server's version, as SOLIDTRACE_VERSION gives it
@@ -104,7 +105,7 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 		runEvents:   cfg.RunEvents,
 		totals:      cfg.Totals,
 		evidence:    cfg.Evidence,
-		consoleURL:  cfg.ConsoleURL,
+		consoleURL:  strings.TrimRight(strings.TrimSpace(cfg.ConsoleURL), "/"),
 		clock:       cfg.Clock,
 		version:     cfg.Version,
 		minimum:     minimumClientVersion(cfg.Version),

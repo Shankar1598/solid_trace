@@ -142,7 +142,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_120000) do
     t.integer "uploaded_by_user_id"
     t.datetime "created_at", null: false
     t.datetime "deleted_at"
-    t.index ["organization_id", "agent_session_id", "sha256"], name: "index_evidence_files_on_session_and_sha256", unique: true
+    t.index ["organization_id", "agent_session_id", "sha256"], name: "index_evidence_files_on_session_and_sha256", unique: true, where: "deleted_at IS NULL"
     t.index ["organization_id", "created_at"], name: "index_evidence_files_on_organization_id_and_created_at"
   end
 

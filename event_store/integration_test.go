@@ -99,6 +99,8 @@ type TestEnv struct {
 	// ServerVersion is the version that the agent ingest API says it is,
 	// v0.19.0 unless a test changes it.
 	ServerVersion string
+	// ConsoleURL is the agent ingest API's CONSOLE_URL.
+	ConsoleURL string
 
 	// LogTransforms runs each Project's Log transform in Log processing.
 	// Restart keeps it; Reopen makes a new one.
@@ -591,7 +593,7 @@ func (env *TestEnv) open(t *testing.T) {
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter,
 		NotifyFiles: func(projectID uint32) { env.AgentFileProcessor.Notify(projectID) },
 		Downloads:   clickHouse, RunEvents: ingestService, Totals: env.ClickHouseLogs, Evidence: env.EvidenceFiles,
-		Clock: env.Clock, Version: env.ServerVersion,
+		ConsoleURL: env.ConsoleURL, Clock: env.Clock, Version: env.ServerVersion,
 	}))
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),

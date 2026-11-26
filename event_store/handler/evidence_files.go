@@ -45,15 +45,13 @@ func (h *AgentHandler) UploadEvidenceFile(c *fiber.Ctx) error {
 	if !ok {
 		return err
 	}
-	if token.AgentSessionIDs == nil {
-		session, known, _, err := h.files.AgentSessionFiles(projectID, sessionID)
-		if err != nil {
-			logger.L.Error("Failed to read an Agent session", "project_id", projectID, "session_id", sessionID, "error", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The Agent session could not be read. Try again later."})
-		}
-		if known && session.UserID != token.UserID {
-			return anotherPersons(c, sessionID)
-		}
+	session, known, _, err := h.files.AgentSessionFiles(projectID, sessionID)
+	if err != nil {
+		logger.L.Error("Failed to read an Agent session", "project_id", projectID, "session_id", sessionID, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The Agent session could not be read. Try again later."})
+	}
+	if known && anotherPersonsSession(token, session) {
+		return anotherPersons(c, sessionID)
 	}
 	caption := strings.TrimSpace(c.Query("caption"))
 	if !utf8.ValidString(caption) || utf8.RuneCountInString(caption) > evidenceCaptionLimit {
@@ -183,14 +181,13 @@ func (h *EvidenceFilesHandler) Content(c *fiber.Ctx) error {
 	}
 	offset, length, status := int64(0), file.ByteSize, fiber.StatusOK
 	if header := c.Get(fiber.HeaderRange); header != "" {
-		start, end, ok, satisfiable := byteRange(header, file.ByteSize)
-		if !satisfiable {
+		switch r := byteRange(header, file.ByteSize); r.kind {
+		case outsideFile:
 			c.Set(fiber.HeaderContentRange, fmt.Sprintf("bytes */%d", file.ByteSize))
 			return c.Status(fiber.StatusRequestedRangeNotSatisfiable).JSON(fiber.Map{"error": "The range is outside the file"})
-		}
-		if ok {
-			offset, length, status = start, end-start+1, fiber.StatusPartialContent
-			c.Set(fiber.HeaderContentRange, fmt.Sprintf("bytes %d-%d/%d", start, end, file.ByteSize))
+		case partOfFile:
+			offset, length, status = r.start, r.end-r.start+1, fiber.StatusPartialContent
+			c.Set(fiber.HeaderContentRange, fmt.Sprintf("bytes %d-%d/%d", r.start, r.end, file.ByteSize))
 		}
 	}
 	// The body streams after this returns, so the read's context ends when
@@ -217,38 +214,54 @@ func (r cancelOnClose) Close() error {
 	return r.ReadCloser.Close()
 }
 
-// byteRange reads a Range header of one range of bytes, start to end
-// inclusive, in a file of size bytes. ok is false for a header that is not
-// one such range, which the file then answers whole. satisfiable is false
-// for a range that starts after the file's end.
-func byteRange(header string, size int64) (start, end int64, ok, satisfiable bool) {
+// rangeKind is what a Range header asks for: the whole file (also for a
+// header that is not one range of bytes), a part of it, or a range outside
+// it.
+type rangeKind int
+
+const (
+	wholeFile rangeKind = iota
+	partOfFile
+	outsideFile
+)
+
+// fileRange is the answer to a Range header: for partOfFile, the bytes from
+// start to end inclusive.
+type fileRange struct {
+	kind       rangeKind
+	start, end int64
+}
+
+// byteRange reads a Range header of one range of bytes in a file of size
+// bytes.
+func byteRange(header string, size int64) fileRange {
 	spec, found := strings.CutPrefix(strings.TrimSpace(header), "bytes=")
 	first, last, dash := strings.Cut(spec, "-")
 	if !found || !dash || strings.Contains(spec, ",") {
-		return 0, 0, false, true
+		return fileRange{kind: wholeFile}
 	}
 	if first == "" {
 		suffix, err := strconv.ParseInt(last, 10, 64)
 		if err != nil || suffix < 0 {
-			return 0, 0, false, true
+			return fileRange{kind: wholeFile}
 		}
 		if suffix == 0 {
-			return 0, 0, false, false
+			return fileRange{kind: outsideFile}
 		}
-		return max(size-suffix, 0), size - 1, true, true
+		return fileRange{kind: partOfFile, start: max(size-suffix, 0), end: size - 1}
 	}
 	start, err := strconv.ParseInt(first, 10, 64)
 	if err != nil || start < 0 {
-		return 0, 0, false, true
+		return fileRange{kind: wholeFile}
 	}
-	end = size - 1
+	end := size - 1
 	if last != "" {
 		if end, err = strconv.ParseInt(last, 10, 64); err != nil || end < start {
-			return 0, 0, false, true
+			return fileRange{kind: wholeFile}
 		}
 	}
 	if start >= size {
-		return 0, 0, false, false
+		return fileRange{kind: outsideFile}
 	}
-	return start, min(end, size-1), true, true
+	return fileRange{kind: partOfFile, start: start, end: min(end, size-1)}
 }

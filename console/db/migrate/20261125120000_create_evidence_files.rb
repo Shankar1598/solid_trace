@@ -6,8 +6,9 @@
 # change both in the same commit). The id is a random UUID, so a link cannot
 # be guessed. agent_session_id has no foreign key: a file can arrive before
 # its Agent session. A second upload of the same bytes to the same Agent
-# session gives the same row. Evidence Retention sets deleted_at and keeps
-# the row, so that its link can say when the file was deleted.
+# session gives the same row, while it is not deleted. Evidence Retention
+# sets deleted_at and keeps the row, so that its link can say when the file
+# was deleted; an upload of the same bytes after that gets a new row.
 class CreateEvidenceFiles < ActiveRecord::Migration[8.1]
   def change
     create_table :evidence_files, id: :string do |t|
@@ -24,7 +25,7 @@ class CreateEvidenceFiles < ActiveRecord::Migration[8.1]
     end
 
     add_index :evidence_files, %i[organization_id agent_session_id sha256], unique: true,
-      name: "index_evidence_files_on_session_and_sha256"
+      where: "deleted_at IS NULL", name: "index_evidence_files_on_session_and_sha256"
     add_index :evidence_files, %i[organization_id created_at]
   end
 end

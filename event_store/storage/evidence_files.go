@@ -90,8 +90,12 @@ func isMP4(b []byte) bool {
 	if size < 12 || size > len(b) {
 		return false
 	}
-	for i := 8; i+4 <= size; i += 4 {
-		if i != 12 && mp4Brands[string(b[i:i+4])] {
+	majorBrand, compatibleBrands := string(b[8:12]), b[min(16, size):size]
+	if mp4Brands[majorBrand] {
+		return true
+	}
+	for i := 0; i+4 <= len(compatibleBrands); i += 4 {
+		if mp4Brands[string(compatibleBrands[i:i+4])] {
 			return true
 		}
 	}
@@ -153,8 +157,8 @@ func NewEvidenceFiles(sqlite *SQLiteWriter, bucket ObjectStore, dir string) (*Ev
 
 // Add stores an uploaded Evidence file, and reports whether it is new. The
 // same bytes again to the same Agent session give the row of the first
-// upload, and store nothing. The bytes are stored before the row, so a row
-// always has its bytes.
+// upload, and store nothing, while Evidence Retention has not deleted it.
+// The bytes are stored before the row, so a row always has its bytes.
 func (e *EvidenceFiles) Add(ctx context.Context, upload EvidenceUpload) (EvidenceFile, bool, error) {
 	sum := sha256.Sum256(upload.Bytes)
 	hash := hex.EncodeToString(sum[:])
@@ -238,13 +242,13 @@ func (e *EvidenceFiles) localPath(key string) string {
 }
 
 // insert adds the row, or reports false when the Agent session already has
-// a row with the same bytes.
+// a row with the same bytes that is not deleted.
 func (e *EvidenceFiles) insert(ctx context.Context, file EvidenceFile) (bool, error) {
 	result, err := e.db.ExecContext(ctx, `
 		INSERT INTO evidence_files (id, organization_id, agent_session_id, sha256, caption, content_type, byte_size,
 			storage_key, uploaded_by_user_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (organization_id, agent_session_id, sha256) DO NOTHING`,
+		ON CONFLICT (organization_id, agent_session_id, sha256) WHERE deleted_at IS NULL DO NOTHING`,
 		file.ID.String(), file.OrganizationID, file.AgentSessionID.String(), file.SHA256,
 		sql.NullString{String: file.Caption, Valid: file.Caption != ""}, file.ContentType, file.ByteSize,
 		file.StorageKey, file.UploadedByUserID, file.CreatedAt.Format(railsTimeLayout))
@@ -260,7 +264,7 @@ const evidenceColumns = `id, organization_id, agent_session_id, sha256, caption,
 
 func (e *EvidenceFiles) find(ctx context.Context, organizationID int64, sessionID uuid.UUID, hash string) (EvidenceFile, bool, error) {
 	return scanEvidenceFile(e.db.QueryRowContext(ctx, "SELECT "+evidenceColumns+` FROM evidence_files
-		WHERE organization_id = ? AND agent_session_id = ? AND sha256 = ?`, organizationID, sessionID.String(), hash))
+		WHERE organization_id = ? AND agent_session_id = ? AND sha256 = ? AND deleted_at IS NULL`, organizationID, sessionID.String(), hash))
 }
 
 // EvidenceFile reads the row of the Evidence file id.
