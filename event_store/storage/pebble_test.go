@@ -91,6 +91,42 @@ func TestPebbleWriterRefusesWritesOnceClosed(t *testing.T) {
 	})
 }
 
+// Log ingest writes before Log processing prepares, as while ClickHouse
+// starts. A Log batch written then, with the clock behind the Processing
+// cursor, must still come after the cursor, or Log processing never reads it.
+func TestLogBatchWrittenAtOpenComesAfterTheProcessingCursor(t *testing.T) {
+	logger.Init()
+	path := filepath.Join(t.TempDir(), "pebble")
+	writer, err := NewPebbleWriter(&config.Config{PebblePath: path})
+	if err != nil {
+		t.Fatalf("Failed to create PebbleWriter: %v", err)
+	}
+	cursor, err := newLogBatchID(time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.SetLogProcessingCursor(7, cursor); err != nil {
+		t.Fatalf("SetLogProcessingCursor failed: %v", err)
+	}
+	writer.Close()
+
+	writer, err = NewPebbleWriter(&config.Config{PebblePath: path})
+	if err != nil {
+		t.Fatalf("Failed to open PebbleWriter again: %v", err)
+	}
+	defer writer.Close()
+	if err := writer.WriteLogBatch(7, []models.Log{{Message: "after a restart"}}, time.Now()); err != nil {
+		t.Fatalf("WriteLogBatch failed: %v", err)
+	}
+	batches, err := writer.LogBatchesAfter(7, cursor, 100)
+	if err != nil {
+		t.Fatalf("LogBatchesAfter failed: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("Expected the batch written after the open to come after the cursor, got %d batches after it", len(batches))
+	}
+}
+
 // Event processing reads a Project forward from a processing cursor, so a
 // reader must never see an Event key while a lower one is still uncommitted.
 func TestConcurrentWritesCommitInUUIDOrder(t *testing.T) {

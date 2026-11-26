@@ -49,8 +49,9 @@ func New(batches *storage.PebbleWriter, store Store, stored func(projectID uint3
 	return p
 }
 
-// Prepare runs once, before the worker starts and before the agent ingest
-// API writes. It keeps new batch ids above every Project's cursor, and
+// Prepare runs before the worker starts, and again after an error. The agent
+// ingest API may write before it, as Pebble keeps new batch ids above every
+// cursor from its open. It keeps new batch ids above every Project's cursor, and
 // marks every Project with batches as pending.
 func (p *Processor) Prepare() error {
 	if err := p.batches.KeepBatchIDsAboveAgentFileCursors(); err != nil {

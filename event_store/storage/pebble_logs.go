@@ -122,7 +122,10 @@ func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
 }
 
 // seedLogBatchFloor keeps new batch ids above the newest stored Log batch
-// and Transaction batch and Agent file batch of every Project, reading one key per Project.
+// and Transaction batch and Agent file batch of every Project, reading one key per Project,
+// and above the Processing cursor of each. Ingest writes before Log
+// processing, Span processing and Agent file processing prepare, as while
+// ClickHouse starts, and a batch id under its cursor is never processed.
 func (w *PebbleWriter) seedLogBatchFloor() error {
 	for _, keyspace := range [][2][]byte{
 		{logBatchKeyspace, logBatchKeyspaceEnd},
@@ -133,7 +136,17 @@ func (w *PebbleWriter) seedLogBatchFloor() error {
 			return err
 		}
 	}
-	return nil
+	cursors, err := w.LogProcessingCursors()
+	if err != nil {
+		return err
+	}
+	for _, cursor := range cursors {
+		w.KeepLogBatchIDsAbove(cursor)
+	}
+	if err := w.KeepBatchIDsAboveSpanCursors(); err != nil {
+		return err
+	}
+	return w.KeepBatchIDsAboveAgentFileCursors()
 }
 
 // seedBatchFloor keeps new batch ids above the newest batch of every Project

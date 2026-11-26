@@ -85,8 +85,9 @@ func New(batches *storage.PebbleWriter, store Store) *Processor {
 	}
 }
 
-// Prepare runs once, before the worker starts and before ingest writes. It
-// keeps new batch ids above every Project's cursor, deletes the batches a
+// Prepare runs before the worker starts, and again after an error. Ingest
+// may write before it, as Pebble keeps new batch ids above every cursor from
+// its open. It keeps new batch ids above every Project's cursor, deletes the batches a
 // crash left in Pebble after they were stored, and marks every Project with
 // batches as pending.
 func (p *Processor) Prepare() error {

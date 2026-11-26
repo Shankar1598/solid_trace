@@ -25,6 +25,9 @@ type ClickHouse struct {
 	bucket bool
 	// localCache is when the day tables' parts move there.
 	localCache localCache
+	// cfg and bucketConfig are what Prepare readies the database with.
+	cfg          config.ClickHouse
+	bucketConfig *config.ObjectStore
 }
 
 // clickHouseMigration is one step of making EventStore's tables. Its
@@ -58,51 +61,67 @@ var clickHouseMigrations = []clickHouseMigration{
 // clickHousePingTimeout bounds a health check of ClickHouse.
 const clickHousePingTimeout = 3 * time.Second
 
-// OpenClickHouse connects to the ClickHouse server in cfg and makes
-// EventStore's database if it is missing. With cfg.ConfigDir set, it first
-// writes the tables' storage policy for bucket (nil for none) and waits for
-// ClickHouse to load it. Then it runs the migrations the database hasn't had,
-// making the tables on cfg's storage policy, and with no bucket keeps the day
-// tables' parts on local disk (useBucket). With a bucket, UseLocalCacheHours
-// sets when they move to it.
+// OpenClickHouse is NewClickHouse and Prepare, for a caller that needs the
+// database ready before it goes on.
 func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHouse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-	server, err := openClickHouseConn(cfg, "")
+	ch, err := NewClickHouse(cfg, bucket)
 	if err != nil {
 		return nil, err
 	}
-	err = server.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+cfg.Database)
-	server.Close()
-	if err != nil {
-		return nil, fmt.Errorf("making database %s on ClickHouse at %s: %w", cfg.Database, cfg.Address, err)
+	if err := ch.Prepare(context.Background()); err != nil {
+		ch.Close()
+		return nil, err
 	}
+	return ch, nil
+}
 
+// NewClickHouse is EventStore's database on the ClickHouse server in cfg,
+// with bucket (nil for none) as the bucket volume of its tables. It does not
+// connect, and nothing may use the database before Prepare passes. So
+// EventStore can take Logs into Pebble while ClickHouse starts.
+func NewClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHouse, error) {
 	conn, err := openClickHouseConn(cfg, cfg.Database)
 	if err != nil {
 		return nil, err
 	}
-	ch := &ClickHouse{conn: conn, database: cfg.Database, address: cfg.Address, bucket: bucket != nil}
-	if cfg.ConfigDir != "" {
-		if err := ch.useStoragePolicy(ctx, cfg.ConfigDir, bucket); err != nil {
-			conn.Close()
-			return nil, err
+	return &ClickHouse{conn: conn, database: cfg.Database, address: cfg.Address, bucket: bucket != nil,
+		cfg: cfg, bucketConfig: bucket}, nil
+}
+
+// Prepare makes EventStore's database if it is missing. With cfg.ConfigDir
+// set, it first writes the tables' storage policy for the bucket and waits
+// for ClickHouse to load it. Then it runs the migrations the database hasn't
+// had, making the tables on cfg's storage policy, and with no bucket keeps
+// the day tables' parts on local disk (useBucket). With a bucket,
+// UseLocalCacheHours sets when they move to it. Each step is safe to run
+// again, so Prepare can run again after an error.
+func (ch *ClickHouse) Prepare(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+
+	server, err := openClickHouseConn(ch.cfg, "")
+	if err != nil {
+		return err
+	}
+	err = server.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+ch.cfg.Database)
+	server.Close()
+	if err != nil {
+		return fmt.Errorf("making database %s on ClickHouse at %s: %w", ch.cfg.Database, ch.cfg.Address, err)
+	}
+
+	if ch.cfg.ConfigDir != "" {
+		if err := ch.useStoragePolicy(ctx, ch.cfg.ConfigDir, ch.bucketConfig); err != nil {
+			return err
 		}
 	}
 	steps := clickHouseMigrations
-	if cfg.StoragePolicy != "" {
-		steps = onStoragePolicy(steps, cfg.StoragePolicy)
+	if ch.cfg.StoragePolicy != "" {
+		steps = onStoragePolicy(steps, ch.cfg.StoragePolicy)
 	}
 	if err := ch.migrate(ctx, steps); err != nil {
-		conn.Close()
-		return nil, err
+		return err
 	}
-	if err := ch.useBucket(ctx, bucket); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return ch, nil
+	return ch.useBucket(ctx, ch.bucketConfig)
 }
 
 // onStoragePolicy is steps with their tables made on policy in place of
