@@ -43,7 +43,7 @@ class ReviewRecordView
     { event_store: event_store, review_record: review_record, record: record, rounds: rounds }
   end
 
-  # The record's row, with the place of its line; nil when EventStore did
+  # The record's row, with the place of its file or line; nil when EventStore did
   # not answer.
   def review_record
     answer&.dig("review_record")

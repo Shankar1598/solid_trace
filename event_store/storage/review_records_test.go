@@ -81,20 +81,20 @@ func TestOnlyTheHighestVersionOfAPathCounts(t *testing.T) {
 
 func TestTwoRecordsOfOneRoundInOneSessionAreOneRound(t *testing.T) {
 	const pr = "https://github.com/acme/shop/pull/7"
-	refused, retry := record(sessionA, 1, 100, pr, 1, 9), record(sessionA, 1, 900, pr, 1, 9)
+	earlier, later := record(sessionA, 1, 100, pr, 1, 9), record(sessionA, 1, 900, pr, 1, 9)
 	otherSession := record(sessionB, 1, 50, pr, 1, 10)
-	noPRRefused, noPRRetry := record(sessionB, 1, 300, "", 2, 11), record(sessionB, 1, 700, "", 2, 11)
+	noPREarlier, noPRLater := record(sessionB, 1, 300, "", 2, 11), record(sessionB, 1, 700, "", 2, 11)
 
-	prs := storage.ReviewRecordsByPR([]storage.ReviewRecord{retry, noPRRetry, otherSession, refused, noPRRefused})
+	prs := storage.ReviewRecordsByPR([]storage.ReviewRecord{later, noPRLater, otherSession, earlier, noPREarlier})
 
 	if len(prs) != 2 {
 		t.Fatalf("Expected two keys, got %+v", prs)
 	}
 	noPR, withPR := prs[0], prs[1]
-	if len(noPR.Records) != 1 || noPR.Records[0].ID != noPRRetry.ID {
+	if len(noPR.Records) != 1 || noPR.Records[0].ID != noPRLater.ID {
 		t.Errorf("Expected only the later record with no PR, got %+v", noPR.Records)
 	}
-	if len(withPR.Records) != 2 || withPR.Records[0].ID != otherSession.ID || withPR.Records[1].ID != retry.ID {
+	if len(withPR.Records) != 2 || withPR.Records[0].ID != otherSession.ID || withPR.Records[1].ID != later.ID {
 		t.Errorf("Expected round 1 of the other session, then the later record of the first, got %+v", withPR.Records)
 	}
 }

@@ -89,9 +89,14 @@ func reviewRecordOfFile(unit storage.AgentFileUnit) *storage.ReviewRecord {
 	}
 	r := reviewRecordOf(string(unit.Bytes))
 	if r != nil {
-		r.ID, r.SessionID, r.Path, r.Version, r.StoredAt = placeID(unit, 0), unit.SessionID, unit.Path, unit.Version, unit.StoredAt.UTC()
+		placeRecord(r, unit, 0)
 	}
 	return r
+}
+
+// placeRecord gives r the place of its record: offset in unit.
+func placeRecord(r *storage.ReviewRecord, unit storage.AgentFileUnit, offset uint64) {
+	r.ID, r.SessionID, r.Path, r.Version, r.Offset, r.StoredAt = placeID(unit, offset), unit.SessionID, unit.Path, unit.Version, offset, unit.StoredAt.UTC()
 }
 
 // lastReviewRecordBlock is the text in the last block of text that a line

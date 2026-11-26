@@ -170,8 +170,8 @@ func placeID(unit storage.AgentFileUnit, offset uint64) uuid.UUID {
 // parseUnits makes one Log for each line of the units of .jsonl files in a
 // range of the parse, by Log ingest's normalise, at the Agent Project's
 // Retention: the Logs of units[i] are logs[i]. A unit of another file has
-// no Logs, and a record file gives its Review record. It reads the parse state that the range before left, and gives
-// the state after this range.
+// no Logs, and a record file gives its Review record. It reads the parse
+// state that the range before left, and gives the state after this range.
 //
 // Some rules read more than one line, so the parse reads the whole range
 // before it makes a Log:
@@ -272,7 +272,7 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 		addSource(object, unit, line.offset, line.length)
 		id := placeID(unit, line.offset)
 		if r := f.reviewRecord; r != nil {
-			r.ID, r.SessionID, r.Path, r.Version, r.Offset, r.StoredAt = id, unit.SessionID, unit.Path, unit.Version, line.offset, unit.StoredAt.UTC()
+			placeRecord(r, unit, line.offset)
 			records = append(records, *r)
 		}
 		log, outcome := normalise.JSON(object, receipt)

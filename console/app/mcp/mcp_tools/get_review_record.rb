@@ -16,8 +16,8 @@ module McpTools
       Reads one Review record of an Organization, with one page of its findings, and links to its page. Give pr for the
       newest record of a PR (its URL, its local:<path>, or for a record with no PR the Agent session id, as the key of
       list_review_records), or id for one record, as rounds gives it. review_record is its row, as list_review_records
-      gives it, with the place of its line (session_id, path, version, offset). record is the record as the agent wrote
-      it (version 2): sessions, pr, round, story, reviews (each run with its skill, stage, step, reviewers and
+      gives it, with the place of its record file or line (session_id, path, version, offset). record is the record as
+      the agent wrote it (version 2): sessions, pr, round, story, reviews (each run with its skill, stage, step, reviewers and
       verifier), findings (each with found_by, severity, title, scenario, its events in order: found, triage with its
       decision, verify with its verdict and pushed_back, person with what they said and asked, agent, fix, refound; and
       its outcome: fixed, ignored_by_person, disputed, deferred, ignored_trivial or open), and confirmations (each with
