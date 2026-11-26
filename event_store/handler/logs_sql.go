@@ -55,7 +55,7 @@ const simplerSQL = "try a shorter time range or a simpler query"
 // [from, to) and nothing else (ADR 0003), with "timeout_seconds" and
 // "parameters" optional. "parameters" fills in the Dashboard filters the SQL
 // names as query parameters, such as {region:Array(String)}, {name:
-// [values]} as for a Query; ClickHouse binds them (ADR 0025). Only while the
+// [values]} as for a Query; ClickHouse binds them (ADR 0026). Only while the
 // instance's SQL queries setting is on; otherwise 403. The run stops after
 // timeout_seconds, and at the SQL users' time limit whatever it asks for.
 // Answers {"table": {"columns": [{"name", "type"}], "rows": [[…]],

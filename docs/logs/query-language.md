@@ -205,7 +205,7 @@ A filter goes on either side of `==`, `!=`, `=~` and `!~`, after `contains`, `st
 
 ### Dashboard filters in SQL
 
-While SQL queries are on, a Chart can save a SQL query in place of a Query: the SQL tab of the chart editor. The SQL names a filter as a ClickHouse query parameter, and ClickHouse fills in the values ([ADR 0025](../adr/0025-dashboard-filters-in-sql-are-clickhouse-query-parameters.md)). SQL can't drop a comparison, so the SQL writes the All case itself:
+While SQL queries are on, a Chart can save a SQL query in place of a Query: the SQL tab of the chart editor. The SQL names a filter as a ClickHouse query parameter, and ClickHouse fills in the values ([ADR 0026](../adr/0026-dashboard-filters-in-sql-are-clickhouse-query-parameters.md)). SQL can't drop a comparison, so the SQL writes the All case itself:
 
 ```sql
 SELECT level, count() AS n FROM logs

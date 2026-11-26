@@ -4,7 +4,7 @@
 # the Dashboard's Organization, drawn as a line, area, bar, stat or table, at
 # a place on the Dashboard's grid of COLUMNS columns. language says which; the
 # text is in query either way, as a Monitor keeps it. SQL names a Dashboard
-# filter as a ClickHouse query parameter, {region:Array(String)} (ADR 0025).
+# filter as a ClickHouse query parameter, {region:Array(String)} (ADR 0026).
 # A chart in a Section has its place on that Section's grid; a chart in no
 # Section, on the grid above the Sections.
 # A chart of viz text is a Text block: Markdown in text, with no Project, no

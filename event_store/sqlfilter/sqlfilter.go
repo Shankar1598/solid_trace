@@ -1,5 +1,5 @@
 // Package sqlfilter finds the Dashboard filters a SQL query names and writes
-// their values as ClickHouse query parameters (ADR 0025).
+// their values as ClickHouse query parameters (ADR 0026).
 //
 // SQL names a filter as a query parameter, {region:Array(String)}, and
 // ClickHouse binds the value on the server, so no value goes into the SQL
