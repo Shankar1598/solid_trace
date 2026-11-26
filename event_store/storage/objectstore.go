@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -36,8 +37,9 @@ type ObjectStore interface {
 
 // StoredObject is one object of an ObjectStore.
 type StoredObject struct {
-	Key  string // relative to the store's prefix
-	Size int64
+	Key      string // relative to the store's prefix
+	Size     int64
+	Modified time.Time
 }
 
 // NewObjectStore returns the bucket of an object_store config, reached
@@ -175,8 +177,9 @@ func (s *s3Store) List(ctx context.Context, prefix string) ([]StoredObject, erro
 		}
 		for _, object := range page.Contents {
 			objects = append(objects, StoredObject{
-				Key:  strings.TrimPrefix(aws.ToString(object.Key), s.prefix),
-				Size: aws.ToInt64(object.Size),
+				Key:      strings.TrimPrefix(aws.ToString(object.Key), s.prefix),
+				Size:     aws.ToInt64(object.Size),
+				Modified: aws.ToTime(object.LastModified),
 			})
 		}
 		if !aws.ToBool(page.IsTruncated) || len(page.Contents) == 0 {

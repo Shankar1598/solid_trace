@@ -140,7 +140,8 @@ func main() {
 	agentFileProcessor.Start()
 	agentParser.Start()
 
-	// Retention and deleted Projects once a day, the disk limit hourly.
+	// Retention, deleted Projects and Evidence Retention once a day, the
+	// disk limit hourly.
 	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
@@ -152,6 +153,7 @@ func main() {
 		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
 		// The Agent Project's Log Retention, which its derived Logs keep too.
 		logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})
+	logCleanup.Evidence = &logprocessing.Evidence{Files: evidenceFiles, Retention: consoleSettings.EvidenceRetention}
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
@@ -216,6 +218,7 @@ func main() {
 	handler.RegisterRunsQueryRoutes(queryApp, handler.NewRunsHandler(clickHouseLogs, clock.System{}))
 	handler.RegisterAgentEvidenceRoute(queryApp, handler.NewAgentEvidenceHandler(clickHouse))
 	handler.RegisterEvidenceQueryRoutes(queryApp, handler.NewEvidenceFilesHandler(evidenceFiles))
+	handler.RegisterRetentionRoute(queryApp, logCleanup)
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort

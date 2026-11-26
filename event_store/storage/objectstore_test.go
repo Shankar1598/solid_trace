@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -61,6 +62,15 @@ func minIOStore(t *testing.T, cfg *config.ObjectStore) *s3Store {
 	return store
 }
 
+// withoutModified is objects with no Modified time, to compare with keys
+// and sizes.
+func withoutModified(objects []StoredObject) []StoredObject {
+	for i := range objects {
+		objects[i].Modified = time.Time{}
+	}
+	return objects
+}
+
 // writeFile writes a local file and returns its path.
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
@@ -93,9 +103,14 @@ func testObjectStore(t *testing.T, store ObjectStore, read func(key string) stri
 		if err != nil {
 			t.Fatalf("List %q: %v", prefix, err)
 		}
-		return objects
+		for _, object := range objects {
+			if age := time.Since(object.Modified); age < -time.Minute || age > time.Hour {
+				t.Errorf("Expected %s modified just now, got %v", object.Key, object.Modified)
+			}
+		}
+		return withoutModified(objects)
 	}
-	want := []StoredObject{{hour7, 6}, {hour8, 10}}
+	want := []StoredObject{{Key: hour7, Size: 6}, {Key: hour8, Size: 10}}
 	if got := list("project=1/"); !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected project 1's objects %v, got %v", want, got)
 	}
@@ -120,7 +135,7 @@ func testObjectStore(t *testing.T, store ObjectStore, read func(key string) stri
 			t.Errorf("Delete %s: %v", hour7, err)
 		}
 	}
-	if got, want := list(""), []StoredObject{{hour8, 10}, {other, 9}}; !reflect.DeepEqual(got, want) {
+	if got, want := list(""), []StoredObject{{Key: hour8, Size: 10}, {Key: other, Size: 9}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected %v after the delete, got %v", want, got)
 	}
 
@@ -162,11 +177,11 @@ func TestAnObjectStoreOnMinIOListsPastOnePage(t *testing.T) {
 			t.Fatalf("Put %s: %v", key, err)
 		}
 		if key[0] == 'a' {
-			want = append(want, StoredObject{key, 3})
+			want = append(want, StoredObject{Key: key, Size: 3})
 		}
 	}
 	got, err := store.List(ctx, "a/")
-	if err != nil || !reflect.DeepEqual(got, want) {
+	if err != nil || !reflect.DeepEqual(withoutModified(got), want) {
 		t.Errorf("Expected %v, got %v (%v)", want, got, err)
 	}
 }

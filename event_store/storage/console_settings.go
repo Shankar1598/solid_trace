@@ -28,6 +28,13 @@ const (
 	// MaxLocalCacheHours is the most local_cache_hours may be, 30 days, as
 	// Console's validation allows.
 	MaxLocalCacheHours = 720
+	// DefaultEvidenceRetentionDays is the Evidence Retention of an
+	// Organization that has no Agent Project:
+	// projects.evidence_retention_days' default.
+	DefaultEvidenceRetentionDays = 90
+	// MaxEvidenceRetentionDays is the most Evidence Retention may be, as
+	// Console's validation allows.
+	MaxEvidenceRetentionDays = 3650
 )
 
 // instanceSettingsID is the one instance_settings row (InstanceSetting::ID in
@@ -262,6 +269,33 @@ func (s *ConsoleSettings) AgentProject(organizationID int64) (uint32, bool, erro
 		return 0, false, err
 	}
 	return id, true, nil
+}
+
+// EvidenceRetention returns the Evidence Retention, in whole days, of each
+// Organization's Agent Project (projects.agent), by Organization id. An
+// Organization with no Agent Project is not in it. A Retention outside 1 to
+// MaxEvidenceRetentionDays, which only Console's validations prevent, is 0.
+func (s *ConsoleSettings) EvidenceRetention() (map[int64]int, error) {
+	rows, err := s.db.Query("SELECT organization_id, evidence_retention_days FROM projects WHERE agent = 1")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	retention := make(map[int64]int)
+	for rows.Next() {
+		var (
+			organizationID int64
+			days           int
+		)
+		if err := rows.Scan(&organizationID, &days); err != nil {
+			return nil, err
+		}
+		if days < 1 || days > MaxEvidenceRetentionDays {
+			days = 0
+		}
+		retention[organizationID] = days
+	}
+	return retention, rows.Err()
 }
 
 // ProjectLogRetention returns the effective Retention, in whole days, of every

@@ -1,8 +1,10 @@
 package logprocessing
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -42,6 +44,28 @@ type Family struct {
 	Retention func() (map[uint32]int, error)
 }
 
+// EvidenceStore deletes the Evidence files past Evidence Retention:
+// *storage.EvidenceFiles.
+type EvidenceStore interface {
+	DeletePastRetention(ctx context.Context, now time.Time, retention map[int64]int) (storage.EvidenceSweep, error)
+}
+
+// Evidence is the Evidence files with their Evidence Retention, as a Family
+// is a family of day tables with its Retention.
+type Evidence struct {
+	Files EvidenceStore
+	// Retention returns each Organization's Evidence Retention in whole
+	// days, as (*storage.ConsoleSettings).EvidenceRetention reads it.
+	Retention func() (map[int64]int, error)
+}
+
+// RetentionPass is what one daily pass did, and how long each part took.
+type RetentionPass struct {
+	Days     time.Duration
+	Evidence time.Duration
+	storage.EvidenceSweep
+}
+
 const (
 	// cleanupAfterHour is how long after each hour start the cleanup runs.
 	cleanupAfterHour = 5 * time.Minute
@@ -51,16 +75,24 @@ const (
 
 // Cleanup is the timer inside EventStore that keeps each family's days, as
 // Logs, from outliving their Retention or their Project, and from passing
-// the disk limit. Once a UTC day by its clock, and when it starts, it
-// deletes the days past their family's Retention and every day of a deleted
-// Project; a few minutes past each hour start, it enforces the disk limit.
-// A failed run is tried again a minute later.
+// the disk limit, and Evidence files from outliving Evidence Retention.
+// Once a UTC day by its clock, and when it starts, it deletes the days past
+// their family's Retention and every day of a deleted Project, then the
+// Evidence files past Evidence Retention; a few minutes past each hour
+// start, it enforces the disk limit. A failed run is tried again a minute
+// later.
 type Cleanup struct {
 	store     CleanupStore
 	sqlUsers  SQLUsers
 	families  []Family
 	diskLimit storage.LogDiskLimit
 	clock     clock.Clock
+	// Evidence, when it is set before Start, has its Evidence Retention
+	// in the daily pass.
+	Evidence *Evidence
+	// passLock keeps a daily pass that RunDailyPass asks for apart from
+	// the timer's runs.
+	passLock sync.Mutex
 
 	*worker
 }
@@ -85,11 +117,16 @@ func (c *Cleanup) Stop() {
 }
 
 func (c *Cleanup) run() {
-	var lastPass time.Time // the UTC day of the last whole daily pass
+	// The UTC days of the last whole daily passes over the days and over
+	// the Evidence files, apart, so that a failure of one does not run the
+	// other again.
+	var lastPass, lastEvidencePass time.Time
 	for {
+		c.passLock.Lock()
 		now := c.clock.Now()
+		day := storage.LogDay(now)
 		failed := false
-		if day := storage.LogDay(now); !day.Equal(lastPass) {
+		if !day.Equal(lastPass) {
 			if err := c.DeleteDaysPastRetention(now); err != nil {
 				logRetry("Deleting days past their Retention failed, retrying", err)
 				failed = true
@@ -97,10 +134,19 @@ func (c *Cleanup) run() {
 				lastPass = day
 			}
 		}
+		if c.Evidence != nil && !day.Equal(lastEvidencePass) {
+			if _, err := c.deleteEvidencePastRetention(now); err != nil {
+				logRetry("Deleting Evidence files past Evidence Retention failed, retrying", err)
+				failed = true
+			} else {
+				lastEvidencePass = day
+			}
+		}
 		if err := c.store.EnforceDiskLimit(c.diskLimit, c.days()); err != nil {
 			logRetry("Enforcing the disk limit failed, retrying", err)
 			failed = true
 		}
+		c.passLock.Unlock()
 
 		wait := retryCleanupAfter
 		if !failed {
@@ -119,6 +165,42 @@ func (c *Cleanup) run() {
 		case <-timer.C:
 		}
 	}
+}
+
+// RunDailyPass runs the daily pass now, apart from the timer's runs: the
+// days past their family's Retention, then the Evidence files past Evidence
+// Retention. It is the hook of the query API's POST /retention, for an
+// operator or a test that cannot wait for the next UTC day.
+func (c *Cleanup) RunDailyPass() (RetentionPass, error) {
+	c.passLock.Lock()
+	defer c.passLock.Unlock()
+	now := c.clock.Now()
+	var pass RetentionPass
+	start := time.Now()
+	daysErr := c.DeleteDaysPastRetention(now)
+	pass.Days = time.Since(start)
+	if c.Evidence == nil {
+		return pass, daysErr
+	}
+	start = time.Now()
+	sweep, evidenceErr := c.deleteEvidencePastRetention(now)
+	pass.Evidence, pass.EvidenceSweep = time.Since(start), sweep
+	return pass, errors.Join(daysErr, evidenceErr)
+}
+
+// deleteEvidencePastRetention runs Evidence Retention at now.
+func (c *Cleanup) deleteEvidencePastRetention(now time.Time) (storage.EvidenceSweep, error) {
+	retention, err := c.Evidence.Retention()
+	if err != nil {
+		return storage.EvidenceSweep{}, fmt.Errorf("read Evidence Retention: %w", err)
+	}
+	start := time.Now()
+	sweep, err := c.Evidence.Files.DeletePastRetention(context.Background(), now, retention)
+	if sweep != (storage.EvidenceSweep{}) {
+		logger.L.Info("Deleted Evidence files past Evidence Retention", "files", sweep.Deleted,
+			"objects_with_no_row", sweep.Unreferenced, "took", time.Since(start))
+	}
+	return sweep, err
 }
 
 // logRetry logs a cleanup that runs again soon.

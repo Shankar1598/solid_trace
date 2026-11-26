@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/solidtrace/event_store/pkg/logger"
 )
 
 func TestTheTypeOfAnEvidenceFileIsFoundFromItsFirstBytes(t *testing.T) {
@@ -72,6 +74,7 @@ CREATE UNIQUE INDEX index_evidence_files_on_session_and_sha256 ON evidence_files
 // evidence_files table, and their bytes in bucket, or under dir without one.
 func newTestEvidenceFiles(t *testing.T, bucket ObjectStore, dir string) *EvidenceFiles {
 	t.Helper()
+	logger.Init()
 	writer := newTestSQLiteWriter(t)
 	if _, err := writer.db.Exec(evidenceFilesDDL); err != nil {
 		t.Fatalf("Failed to create evidence_files: %v", err)
@@ -84,22 +87,30 @@ func newTestEvidenceFiles(t *testing.T, bucket ObjectStore, dir string) *Evidenc
 }
 
 // memoryStore is an ObjectStore in memory. onPut, if set, runs after each
-// Put.
+// Put, and failDelete, if set, gives the error of a Delete.
 type memoryStore struct {
-	objects map[string][]byte
-	puts    int
-	onPut   func()
+	mu         sync.Mutex
+	objects    map[string][]byte
+	modified   map[string]time.Time
+	puts       int
+	onPut      func()
+	failDelete func(key string) error
 }
 
-func newMemoryStore() *memoryStore { return &memoryStore{objects: map[string][]byte{}} }
+func newMemoryStore() *memoryStore {
+	return &memoryStore{objects: map[string][]byte{}, modified: map[string]time.Time{}}
+}
 
 func (m *memoryStore) Put(_ context.Context, key, localPath string) error {
 	data, err := os.ReadFile(localPath)
 	if err != nil {
 		return err
 	}
+	m.mu.Lock()
 	m.objects[key] = data
+	m.modified[key] = time.Now()
 	m.puts++
+	m.mu.Unlock()
 	if m.onPut != nil {
 		m.onPut()
 	}
@@ -107,15 +118,24 @@ func (m *memoryStore) Put(_ context.Context, key, localPath string) error {
 }
 
 func (m *memoryStore) Delete(_ context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failDelete != nil {
+		if err := m.failDelete(key); err != nil {
+			return err
+		}
+	}
 	delete(m.objects, key)
 	return nil
 }
 
 func (m *memoryStore) List(_ context.Context, prefix string) ([]StoredObject, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var objects []StoredObject
 	for key, data := range m.objects {
 		if strings.HasPrefix(key, prefix) {
-			objects = append(objects, StoredObject{Key: key, Size: int64(len(data))})
+			objects = append(objects, StoredObject{Key: key, Size: int64(len(data)), Modified: m.modified[key]})
 		}
 	}
 	slices.SortFunc(objects, func(a, b StoredObject) int { return strings.Compare(a.Key, b.Key) })
@@ -295,5 +315,18 @@ func TestEvidenceFilesInABucketOnMinIOAreStoredReadAndDeleted(t *testing.T) {
 	}
 	if objects, err := store.List(ctx, "evidence/"); err != nil || len(objects) != 1 || objects[0].Key != file.StorageKey {
 		t.Errorf("Expected the failed upload's object to be deleted, got %v (%v)", objects, err)
+	}
+
+	// Evidence Retention deletes the file's object, and an object with no
+	// row, which the bucket lists with its time.
+	if err := store.Put(ctx, "evidence/org=1/"+uuid.NewString()+".png", writeFile(t, "no row")); err != nil {
+		t.Fatal(err)
+	}
+	sweep, err := e.DeletePastRetention(ctx, time.Now().Add(91*24*time.Hour), nil)
+	if err != nil || sweep != (EvidenceSweep{Deleted: 1, Unreferenced: 1}) {
+		t.Errorf("Expected 1 file and 1 object with no row deleted, got %+v (%v)", sweep, err)
+	}
+	if objects, err := store.List(ctx, "evidence/"); err != nil || len(objects) != 0 {
+		t.Errorf("Expected no objects after Evidence Retention, got %v (%v)", objects, err)
 	}
 }
