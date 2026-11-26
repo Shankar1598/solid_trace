@@ -170,13 +170,18 @@ describe('groupLabel', () => {
 })
 
 describe('runText', () => {
-  const run = { status: 'ok' as const, error: null, firing: 0, matched: null, logs_skipped: false }
+  const run = { status: 'ok' as const, error: null, held_reason: null, firing: 0, matched: null, logs_skipped: false }
 
   it('says what a run found', () => {
     expect(runText(run, 'threshold')).toBe('Nothing firing')
     expect(runText({ ...run, firing: 2 }, 'threshold')).toBe('2 groups firing')
     expect(runText({ ...run, firing: null, matched: 1 }, 'match')).toBe('1 Log matched')
     expect(runText({ ...run, status: 'error', error: 'EventStore is unavailable' }, 'threshold')).toBe('EventStore is unavailable')
+  })
+
+  it('says why a run was held, not what it found', () => {
+    const held = { ...run, status: 'held' as const, firing: null, held_reason: 'Waiting for Log processing: it is 5 minutes behind.' }
+    expect(runText(held, 'threshold')).toBe('Held: Waiting for Log processing: it is 5 minutes behind.')
   })
 
   it('says when a Match monitor skipped Logs to start again', () => {

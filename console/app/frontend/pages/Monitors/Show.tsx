@@ -32,6 +32,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
   const [deleting, setDeleting] = useState(false)
   const states = monitor.states ?? []
   const runs = monitor.runs ?? []
+  const heldReason = runs[0]?.status === 'held' ? runs[0].held_reason : null
   const integrations = monitor.integrations ?? []
   const comparesChange = monitor.kind === 'threshold' && monitor.compare === 'change'
 
@@ -77,6 +78,12 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
         {monitor.last_error && (
           <div role="alert" className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             The last run failed: {monitor.last_error}
+          </div>
+        )}
+        {monitor.held_since && (
+          <div role="status" className="border bg-muted p-3 text-sm" data-monitor-held>
+            Held since {format(new Date(monitor.held_since), 'p')}: {heldReason ?? 'the Logs are not complete.'}{' '}
+            <span className="text-muted-foreground">Runs compare nothing and send nothing until the Logs are complete. It runs again each minute.</span>
           </div>
         )}
 
@@ -163,7 +170,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
                   {runs.map(r => (
                     <TableRow key={r.id} data-run-status={r.status}>
                       <TableCell className="font-mono text-xs text-muted-foreground">{format(new Date(r.ran_at), 'PPpp')}</TableCell>
-                      <TableCell className={r.status === 'error' ? 'text-destructive' : undefined}>{runText(r, monitor.kind)}</TableCell>
+                      <TableCell className={r.status === 'error' ? 'text-destructive' : r.status === 'held' ? 'text-muted-foreground' : undefined}>{runText(r, monitor.kind)}</TableCell>
                       <TableCell className="text-right font-mono text-xs text-muted-foreground">{r.elapsed_ms === null ? '' : `${r.elapsed_ms} ms`}</TableCell>
                     </TableRow>
                   ))}

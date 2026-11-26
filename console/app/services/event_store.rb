@@ -51,6 +51,27 @@ class EventStore
     end
   end
 
+  # EventStore did not run a Query or SQL sent with hold_if_incomplete,
+  # because the Project's Logs in ClickHouse are not complete: a 200 with
+  # "incomplete" in place of a table. reason is "log_processing_behind",
+  # with behind_seconds, the age of the Project's oldest Log batch that
+  # waits for Log processing, or "ingest_gap", with held_until, when
+  # EventStore stops holding for the Logs that senders kept while its
+  # ingest was down.
+  class Incomplete < StandardError
+    LOG_PROCESSING_BEHIND = "log_processing_behind"
+    INGEST_GAP = "ingest_gap"
+
+    attr_reader :reason, :behind_seconds, :held_until
+
+    def initialize(facts)
+      @reason = facts["reason"].to_s
+      @behind_seconds = facts["behind_seconds"]&.to_i
+      @held_until = facts["until"].presence && Time.iso8601(facts["until"])
+      super("The Project's Logs are not complete: #{facts.to_json}")
+    end
+  end
+
   # How much longer than a run's timeout_seconds Console waits for EventStore
   # to answer.
   TIMEOUT_GRACE_SECONDS = 5
@@ -305,18 +326,23 @@ class EventStore
     # nil} without running it. A large read takes one of EventStore's few
     # heavy-read slots; with replaces_reads_of, who it is for, it stops their
     # older large read and takes its slot, rather than being refused as busy.
+    # With hold_if_incomplete, as a Threshold monitor's run sends it,
+    # EventStore does not run the Query while the Project's Logs are not
+    # complete, and this raises Incomplete.
     def query_logs(project_id:, query:, from:, to:, cursor: nil, limit: nil, totals: false, timeout_seconds: nil, parameters: nil,
-                   check_budget: false, force: false, estimate: false, replaces_reads_of: nil)
+                   check_budget: false, force: false, estimate: false, replaces_reads_of: nil, hold_if_incomplete: false)
       body = { query: query, from: utc(from), to: utc(to) }
+      body[:hold_if_incomplete] = true if hold_if_incomplete
       body[:cursor] = cursor if cursor.present?
       body[:limit] = limit if limit
       body[:totals] = true if totals
       body[:timeout_seconds] = timeout_seconds if timeout_seconds
       body[:parameters] = parameters if parameters.present?
       body.merge!(budget_body(check_budget: check_budget, force: force, estimate: estimate, replaces_reads_of: replaces_reads_of))
-      CallTimings.log_read("query", project_id: project_id, query: query, from: from, to: to) do
+      answer = CallTimings.log_read("query", project_id: project_id, query: query, from: from, to: to) do
         post!("#{base_url}/api/#{project_id}/logs/query", body, read_timeout: read_timeout(timeout_seconds))
       end
+      complete!(answer)
     end
 
     # A Match monitor's run: the Logs of a Project's Log batches after
@@ -425,15 +451,17 @@ class EventStore
     # tables show the Project's rows of [from, to):
     # {"table" => {"columns", "rows", "truncated"}}, shaped like a tabular
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
-    # timeout_seconds works as in query_logs.
-    def run_logs_sql(project_id:, sql:, from:, to:, timeout_seconds: nil, parameters: nil)
-      CallTimings.log_read("sql", project_id: project_id, query: sql, from: from, to: to) do
+    # timeout_seconds and hold_if_incomplete work as in query_logs.
+    def run_logs_sql(project_id:, sql:, from:, to:, timeout_seconds: nil, parameters: nil, hold_if_incomplete: false)
+      answer = CallTimings.log_read("sql", project_id: project_id, query: sql, from: from, to: to) do
         refuse_sql_unless_enabled!
         body = { sql: sql, from: utc(from), to: utc(to) }
         body[:timeout_seconds] = timeout_seconds if timeout_seconds
         body[:parameters] = parameters if parameters.present?
+        body[:hold_if_incomplete] = true if hold_if_incomplete
         post!("#{base_url}/api/#{project_id}/logs/sql", body, sql: true, read_timeout: read_timeout(timeout_seconds))
       end
+      complete!(answer)
     end
 
     # Compiles a Log transform's program without running it: {"errors" =>
@@ -479,6 +507,13 @@ class EventStore
     end
 
     private
+
+    # The answer of a run, or Incomplete when EventStore held it.
+    def complete!(answer)
+      raise Incomplete, answer["incomplete"] if answer.is_a?(Hash) && answer["incomplete"].is_a?(Hash)
+
+      answer
+    end
 
     def refuse_sql_unless_enabled!
       raise SQLQueriesOff unless InstanceSetting.current.sql_queries_enabled?

@@ -748,6 +748,137 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
+  # Threshold: held while the Logs are not complete
+  # ---------------------------------------------------------------------------
+
+  test "a Threshold run asks EventStore to hold it while the Project's Logs are not complete" do
+    answer_table([ [ 3 ] ])
+    evaluate(threshold_monitor)
+
+    assert_requested(:post, @query_url, times: 1) { |request| JSON.parse(request.body)["hold_if_incomplete"] == true }
+  end
+
+  test "a firing Monitor whose Logs are not complete is held: still firing, no Notification, and it runs again at the next tick" do
+    monitor = threshold_monitor(interval_minutes: 10)
+    answer_table([ [ 12 ] ])
+    evaluate(monitor)
+    assert_equal [ [ "monitor_firing", "", 12 ] ], notifications
+
+    travel 10.minutes
+    answer_incomplete(reason: "log_processing_behind", behind_seconds: 312)
+    run = evaluate(monitor)
+
+    assert run.status_held?
+    assert_equal "Waiting for Log processing: it is 6 minutes behind.", run.held_reason
+    assert_nil run.error
+    assert_nil run.firing
+    monitor.reload
+    assert_state monitor, "", "firing", 12, since: NOW
+    assert_equal 1, Notification.count
+    assert_equal [ Time.current, Time.current + 1.minute ], [ monitor.held_since, monitor.next_run_at ]
+    assert_nil monitor.last_error
+  end
+
+  test "an ok Monitor with alert_on_no_data is held, not fired, while EventStore waits for the senders' Logs after its restart" do
+    monitor = threshold_monitor(alert_on_no_data: true)
+    answer_incomplete(reason: "ingest_gap", until: (Time.current + 2.minutes + 10.seconds).utc.iso8601(9))
+
+    run = evaluate(monitor)
+
+    assert run.status_held?
+    assert_equal "Waiting for the senders' Logs after EventStore's restart: 3 minutes more.", run.held_reason
+    assert_empty monitor.states
+    assert_equal 0, Notification.count
+  end
+
+  test "held_since is the first held run's time, a hold never compares however long it lasts, and a run that compares clears it" do
+    monitor = threshold_monitor(alert_on_no_data: true)
+    answer_table([ [ 3 ] ])
+    evaluate(monitor)
+
+    answer_incomplete(reason: "log_processing_behind", behind_seconds: 90)
+    held_from = Time.current + 1.minute
+    30.times do
+      travel 1.minute
+      assert evaluate(monitor).status_held?
+    end
+    assert_equal held_from, monitor.reload.held_since
+    assert_equal 0, Notification.count
+    assert_state monitor, "", "ok", 3, since: NOW
+
+    travel 1.minute
+    answer_table([])
+    assert evaluate(monitor).status_ok?
+    assert_nil monitor.reload.held_since
+    assert_equal [ [ "monitor_firing", "", nil ] ], notifications
+  end
+
+  test "a run that fails after a hold is an error and clears held_since" do
+    monitor = threshold_monitor
+    answer_incomplete(reason: "log_processing_behind", behind_seconds: 90)
+    evaluate(monitor)
+    assert monitor.reload.held_since
+
+    travel 1.minute
+    stub_request(:post, @query_url).to_return(status: 503, body: "starting")
+    assert evaluate(monitor).status_error?
+    assert_nil monitor.reload.held_since
+  end
+
+  test "a change Monitor whose Baseline read is not complete is held and keeps its states" do
+    monitor = change_monitor(operator: "rises")
+    api = { "service" => "api" }.to_json
+    answer_ranges(now: [ [ "api", 120 ] ], before: [ [ "api", 60 ] ])
+    evaluate(monitor)
+    assert_state monitor, api, "firing", 120
+
+    travel 1.minute
+    WebMock::RequestRegistry.instance.reset!
+    answer_ranges(now: [ [ "api", 10 ] ], before: [ [ "api", 60 ] ])
+    baseline_from = (Time.current - LogMonitor::PROCESSING_LAG - 10.minutes).utc.iso8601(3)
+    stub_request(:post, @query_url).with(body: hash_including("from" => baseline_from))
+      .to_return(status: 200, body: { incomplete: { reason: "log_processing_behind", behind_seconds: 61 } }.to_json)
+    run = evaluate(monitor)
+
+    assert run.status_held?
+    assert_requested(:post, @query_url, times: 2) { |request| JSON.parse(request.body)["hold_if_incomplete"] == true }
+    assert_state monitor, api, "firing", 120
+    assert_equal 1, Notification.count
+  end
+
+  test "a SQL Monitor's run asks to be held too, and is held" do
+    monitor = sql_monitor
+    stub_request(:post, @sql_url)
+      .to_return(status: 200, body: { incomplete: { reason: "log_processing_behind", behind_seconds: 120 } }.to_json)
+
+    run = evaluate(monitor)
+
+    assert run.status_held?
+    assert_requested(:post, @sql_url, times: 1) { |request| JSON.parse(request.body)["hold_if_incomplete"] == true }
+  end
+
+  test "the form's preview is never held: it reads what the Logs give now" do
+    monitor = @organization.monitors.new(project: @project, kind: "threshold", query: "* | summarize count()",
+      operator: ">", threshold: 10)
+    answer_table([ [ 12 ] ])
+
+    found = MonitorEvaluation.preview(monitor, Time.current)
+
+    assert_equal [ true ], found.groups.map { |group| group[:firing] }
+    assert_requested(:post, @query_url, times: 1) { |request| !JSON.parse(request.body).key?("hold_if_incomplete") }
+  end
+
+  test "a Match run never asks to be held" do
+    monitor = match_monitor
+    answer_matched([], total: 0, ingest_cursor: NEXT_CURSOR)
+
+    evaluate(monitor)
+
+    assert_requested(:post, @query_url, times: 1) { |request| !JSON.parse(request.body).key?("hold_if_incomplete") }
+    assert monitor.runs.sole.status_ok?
+  end
+
+  # ---------------------------------------------------------------------------
   # Threshold: SQL
   # ---------------------------------------------------------------------------
 
@@ -1156,6 +1287,13 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
       assert_equal CURSOR, monitor.ingest_cursor
       WebMock::RequestRegistry.instance.reset!
     end
+  end
+
+  # Answers a Threshold run's reads as EventStore answers a run sent with
+  # hold_if_incomplete while the Project's Logs are not complete.
+  def answer_incomplete(**facts)
+    stub_request(:post, @query_url).with(body: hash_including("from", "to"))
+      .to_return(status: 200, body: { incomplete: facts }.to_json)
   end
 
   def answer_table(rows, columns: [ COUNT_COLUMN ])

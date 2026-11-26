@@ -18,8 +18,8 @@ export type ValueOperator = '>' | '>=' | '<' | '<='
 /** Comparing the change: fires when the change is at least the threshold percent up, down, or either way. */
 export type ChangeOperator = 'rises' | 'falls' | 'changes'
 export type MonitorOperator = ValueOperator | ChangeOperator
-/** disabled when off, error when its last run failed, firing when any group is, ok otherwise. */
-export type MonitorStatus = 'firing' | 'ok' | 'disabled' | 'error'
+/** disabled when off, firing when any group is, held while its runs are held, error when its last run failed, ok otherwise. */
+export type MonitorStatus = 'firing' | 'ok' | 'disabled' | 'held' | 'error'
 
 export const OPERATORS: ValueOperator[] = ['>', '>=', '<', '<=']
 export const CHANGE_OPERATORS: ChangeOperator[] = ['rises', 'falls', 'changes']
@@ -67,8 +67,10 @@ export interface MonitorGroupState {
 export interface MonitorRun {
   id: number
   ran_at: string
-  status: 'ok' | 'error'
+  /** held: the Project's Logs were not complete, so the run compared nothing. */
+  status: 'ok' | 'error' | 'held'
   error: string | null
+  held_reason: string | null
   firing: number | null
   matched: number | null
   logs_skipped: boolean
@@ -90,6 +92,8 @@ export interface Monitor extends MonitorSettings {
   firing_count: number
   last_run_at: string | null
   last_error: string | null
+  /** When its runs started to be held, while they are. */
+  held_since: string | null
   logs_skipped_at: string | null
   created_at: string
   updated_at: string
@@ -281,9 +285,10 @@ export function groupLabel(group: Record<string, unknown>): string {
   return entries.map(([name, value]) => `${name}: ${typeof value === 'string' ? value : JSON.stringify(value)}`).join(', ')
 }
 
-/** What a run found, or why it failed, for the run history. */
-export function runText(run: Pick<MonitorRun, 'status' | 'error' | 'firing' | 'matched' | 'logs_skipped'>, kind: MonitorKind): string {
+/** What a run found, why it failed, or why it was held, for the run history. */
+export function runText(run: Pick<MonitorRun, 'status' | 'error' | 'held_reason' | 'firing' | 'matched' | 'logs_skipped'>, kind: MonitorKind): string {
   if (run.status === 'error') return run.error ?? 'The run failed.'
+  if (run.status === 'held') return `Held: ${run.held_reason ?? 'the Logs were not complete.'}`
   let text: string
   if (kind === 'match') {
     const matched = run.matched ?? 0

@@ -16,6 +16,10 @@
 # - A Match monitor reads the Logs ingested since its last run, from
 #   ingest_cursor, and sends one message when any match.
 #
+# held_since is when a Threshold monitor's runs started to be held, while
+# EventStore said that the Project's Logs were not complete; nil while its
+# runs are not held.
+#
 # MonitorEvaluation runs it; any member of the Organization can manage it.
 class LogMonitor < ApplicationRecord
   self.table_name = "monitors"

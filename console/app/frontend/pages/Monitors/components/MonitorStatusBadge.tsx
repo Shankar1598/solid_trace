@@ -1,17 +1,19 @@
 import { Badge } from '@/components/ui/badge'
 import type { Monitor, MonitorStatus } from '@/lib/monitors/monitor'
 
-const LABELS: Record<MonitorStatus, string> = { firing: 'Firing', ok: 'OK', disabled: 'Off', error: 'Error' }
-const TONES = { firing: 'error', ok: 'ok', disabled: 'neutral', error: 'warn' } as const
+const LABELS: Record<MonitorStatus, string> = { firing: 'Firing', ok: 'OK', disabled: 'Off', held: 'Held', error: 'Error' }
+const TONES = { firing: 'error', ok: 'ok', disabled: 'neutral', held: 'neutral', error: 'warn' } as const
 
 /**
- * A Monitor's status: firing (with how many groups), ok, off, or error when its last run failed.
- * A firing Monitor whose last run failed is still firing, with the failure noted beside it.
+ * A Monitor's status: firing (with how many groups), ok, off, held while its runs wait for complete Logs,
+ * or error when its last run failed. A firing Monitor whose last run failed or was held is still firing,
+ * with that noted beside it.
  */
-export function MonitorStatusBadge({ monitor }: { monitor: Pick<Monitor, 'status' | 'firing_count' | 'last_error'> }) {
+export function MonitorStatusBadge({ monitor }: { monitor: Pick<Monitor, 'status' | 'firing_count' | 'last_error' | 'held_since'> }) {
   const { status } = monitor
   const label = status === 'firing' && monitor.firing_count > 1 ? `Firing (${monitor.firing_count})` : LABELS[status]
   const failed = status === 'firing' && monitor.last_error
+  const held = status === 'firing' && monitor.held_since
   return (
     <span className="inline-flex items-center gap-2">
       <Badge
@@ -25,6 +27,7 @@ export function MonitorStatusBadge({ monitor }: { monitor: Pick<Monitor, 'status
       {failed && (
         <span className="text-xs text-muted-foreground" title={monitor.last_error ?? undefined}>Last run failed</span>
       )}
+      {held && <span className="text-xs text-muted-foreground">Runs held</span>}
     </span>
   )
 }

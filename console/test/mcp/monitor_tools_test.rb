@@ -437,9 +437,24 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal 1, @monitor.runs.count
   end
 
+  test "run_monitor says why a run is held, and get_monitor and list_monitors give the held run and held_since" do
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/query")
+      .to_return(status: 200, body: { incomplete: { reason: "log_processing_behind", behind_seconds: 120 } }.to_json)
+
+    held = call_tool(:run_monitor, user: @user, monitor: @monitor.id)
+
+    assert_not held.error?
+    assert_match(/\AThe run is held, so it compared nothing: Waiting for Log processing: it is 2 minutes behind\./, held.text)
+    monitor = call_tool(:get_monitor, user: @user, monitor: @monitor.id).json
+    assert_equal [ "held", @monitor.reload.held_since.iso8601 ], monitor.values_at("status", "held_since")
+    assert_equal [ "held", "Waiting for Log processing: it is 2 minutes behind." ], monitor["runs"].sole.values_at("status", "held_reason")
+    listed = call_tool(:list_monitors, user: @user, organization: "acme").json["monitors"].find { |m| m["id"] == @monitor.id }
+    assert_equal [ "held", monitor["held_since"] ], listed.values_at("status", "held_since")
+  end
+
   # SQL
 
-  SQL = "SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service"
+  SQL ="SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service"
 
   test "create_monitor makes a SQL Threshold monitor once EventStore has dry-run its SQL, and get_monitor and list_monitors give its language" do
     stub_monitor_sql_check(@shop)
