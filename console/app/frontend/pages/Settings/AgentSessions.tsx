@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { FormSection } from '@/components/FormSection'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -24,6 +25,8 @@ interface AgentSessionsProps {
     on: boolean
     project: { name: string; slug: string; log_retention_days: number | null } | null
     captured_repositories: string[]
+    /** Evidence Retention in whole days, null while Agent sessions are off. */
+    evidence_retention_days: number | null
     confirmations: Confirmation[]
   }
   notice_text: string
@@ -86,6 +89,10 @@ export default function SettingsAgentSessions({ agent_sessions, notice_text, can
           </p>
         )}
       </FormSection>
+
+      {agent_sessions.evidence_retention_days !== null && (
+        <EvidenceRetention path={path} days={agent_sessions.evidence_retention_days} canManage={can_manage} />
+      )}
 
       <FormSection
         className="mt-6"
@@ -173,5 +180,45 @@ export default function SettingsAgentSessions({ agent_sessions, notice_text, can
         </FormSection>
       )}
     </SettingsLayout>
+  )
+}
+
+/** Evidence Retention: Admins save it, each other member reads it. */
+function EvidenceRetention({ path, days, canManage }: { path: string; days: number; canManage: boolean }) {
+  const { data, setData, patch, processing, errors } = useForm({ evidence_retention_days: String(days) })
+  const submit: FormEventHandler = (e) => {
+    e.preventDefault()
+    patch(`${path}/evidence_retention`, { preserveScroll: true })
+  }
+  const error = (errors as Record<string, string | undefined>).evidence_retention_days
+  return (
+    <FormSection
+      className="mt-6"
+      title="Evidence Retention"
+      description="How many days each screenshot and video that an agent uploads to prove a PR is kept. Then it is deleted, and its link says when. A change applies to the files already uploaded."
+    >
+      {canManage ? (
+        <form onSubmit={submit} className="space-y-2" data-section="evidence-retention">
+          <Label htmlFor="evidence_retention_days">Evidence Retention (days)</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="evidence_retention_days"
+              inputMode="numeric"
+              className="max-w-32"
+              value={data.evidence_retention_days}
+              onChange={(e) => setData('evidence_retention_days', e.target.value)}
+              aria-invalid={!!error}
+            />
+            <Button type="submit" variant="outline" disabled={processing}>{processing ? 'Saving…' : 'Save'}</Button>
+          </div>
+          {error && <p className="text-sm font-medium text-destructive">Evidence Retention {error}</p>}
+          <p className="text-xs text-muted-foreground">Whole days, from 1 to 3650. EventStore deletes older files once a day.</p>
+        </form>
+      ) : (
+        <p className="text-sm" data-section="evidence-retention">
+          Kept for <span className="font-mono">{days}</span> days. Only an Admin can change this.
+        </p>
+      )}
+    </FormSection>
   )
 }

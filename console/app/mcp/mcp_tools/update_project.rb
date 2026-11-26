@@ -2,10 +2,13 @@
 
 module McpTools
   # Changes a Project's settings, as its Project page does: its description and
-  # its Log and trace Retention. For the Organization's admins (ProjectPolicy).
+  # its Log and trace Retention; and the Agent Project's Evidence Retention, as
+  # Settings → Agent sessions does. For the Organization's admins
+  # (ProjectPolicy).
   class UpdateProject < Base
     description "Changes a Project's description, which says what it holds so agents can tell which Project to query, " \
-                "or how many days back its Logs and its traces' Spans are kept. Arguments left out stay as they are. Only an Organization admin can."
+                "or how many days back its Logs and its traces' Spans are kept, or, for the Agent Project, how many days its Evidence files are kept. " \
+                "Arguments left out stay as they are. Only an Organization admin can."
     writes!
     takes_project
     argument :description, {
@@ -14,10 +17,15 @@ module McpTools
     }
     argument :log_retention_days, { type: "integer", description: "How many days back its Logs are kept." }
     argument :trace_retention_days, { type: "integer", description: "How many days back its traces' Spans are kept." }
+    argument :evidence_retention_days, {
+      type: "integer",
+      description: "The Agent Project only: how many days each Evidence file (a screenshot or a video that proves a PR) is kept, " \
+                   "from 1 to #{Project::EVIDENCE_RETENTION_MAX_DAYS}. Older files are deleted once a day, also the files already uploaded.",
+    }
 
     def run
       authorize!(project, :update?, "change a Project's settings")
-      project.update!(arguments.slice(:description, :log_retention_days, :trace_retention_days))
+      project.update!(arguments.slice(:description, :log_retention_days, :trace_retention_days, :evidence_retention_days))
 
       json({ organization: organization.slug, project: ProjectOptionSerializer.new(project).as_json },
         link: links.project(project))

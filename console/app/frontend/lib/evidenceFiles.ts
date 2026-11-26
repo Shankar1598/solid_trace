@@ -1,3 +1,4 @@
+import { format } from 'date-fns'
 import type { StorageLike } from './recentQueries'
 
 /** An Evidence file: a screenshot or a video that an agent uploaded to prove a PR. */
@@ -24,6 +25,19 @@ export const isVideo = (file: EvidenceFile) => file.content_type.startsWith('vid
 export function evidenceTitle(file: EvidenceFile): string {
   const kind = isVideo(file) ? 'Video' : 'Screenshot'
   return file.caption ? `${kind}: ${file.caption}` : kind
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The sentence of a file that Evidence Retention deleted. N is the whole
+ * days from the upload to the delete: the days the file was kept, which
+ * stays true after a change of the setting.
+ */
+export function evidenceDeletedText(file: EvidenceFile & { deleted_at: string }): string {
+  const deleted = new Date(file.deleted_at)
+  const days = Math.floor((deleted.getTime() - new Date(file.created_at).getTime()) / DAY_MS)
+  return `This evidence was deleted on ${format(deleted, 'MMM d, yyyy')}, after ${days} ${days === 1 ? 'day' : 'days'} of Evidence Retention.`
 }
 
 export const SPEEDS = ['0.25', '0.5', '1', '2'] as const

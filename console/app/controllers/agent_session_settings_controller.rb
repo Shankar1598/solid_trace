@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 # Organization settings → Agent sessions: the turn-on of Agent sessions,
-# which makes the Organization's Agent Project, and its captured
-# repositories, through AgentSessionsSettings. Each member reads the page;
-# only the Organization's Admins turn on and save, and anyone else's write
-# is 403. Someone outside the Organization gets 404 (set_current_org).
+# which makes the Organization's Agent Project, its captured repositories,
+# through AgentSessionsSettings, and its Evidence Retention. Each member
+# reads the page; only the Organization's Admins turn on and save, and
+# anyone else's write is 403. Someone outside the Organization gets 404
+# (set_current_org).
 class AgentSessionSettingsController < ApplicationController
   layout "dashboard"
 
@@ -12,7 +13,7 @@ class AgentSessionSettingsController < ApplicationController
   CONFIRMATIONS_SHOWN = 20
 
   before_action :set_current_org
-  before_action :require_admin, only: [ :create, :update ]
+  before_action :require_admin, only: [ :create, :update, :evidence_retention ]
 
   def show
     render inertia: "Settings/AgentSessions", props: page_props
@@ -31,6 +32,21 @@ class AgentSessionSettingsController < ApplicationController
 
     answer AgentSessionsSettings.save(project: project, user: current_user, entries: entries, confirmed: params[:confirmed]),
       "Captured repositories saved"
+  end
+
+  # A save of Evidence Retention, in whole days. EventStore deletes the
+  # Evidence files older than it in its next daily pass.
+  def evidence_retention
+    project = @current_org.agent_project
+    return redirect_to(page_path, alert: "Turn on Agent sessions first.") unless project
+
+    if project.update(evidence_retention_days: params[:evidence_retention_days])
+      redirect_to page_path, notice: "Evidence Retention saved"
+    else
+      errors = project.errors.to_hash
+      project.restore_attributes
+      render inertia: "Settings/AgentSessions", props: page_props.merge(errors: errors)
+    end
   end
 
   private
@@ -70,6 +86,7 @@ class AgentSessionSettingsController < ApplicationController
         on: project.present?,
         project: project && ProjectSerializer.new(project).as_json,
         captured_repositories: project&.captured_repositories || [],
+        evidence_retention_days: project&.evidence_retention_days,
         confirmations: project ? confirmations(project) : [],
       },
       notice_text: AgentSessionsSettings::NOTICE,

@@ -75,6 +75,23 @@ class McpAdminToolsTest < ActiveSupport::TestCase
     assert_equal 3, @shop.reload.trace_retention_days
   end
 
+  test "an admin's update_project sets the Agent Project's Evidence Retention, and no other Project's" do
+    agent_project = AgentSessionsSettings.turn_on(organization: @acme, user: @admin, entries: [ "github.com/acme/shop" ], confirmed: true).project
+
+    refused = call_tool(:update_project, user: @member, project: agent_project.slug, evidence_retention_days: 7)
+    assert refused.error?
+    answer = call_tool(:update_project, user: @admin, project: agent_project.slug, evidence_retention_days: 7)
+    assert_not answer.error?, answer.text
+    assert_equal 7, agent_project.reload.evidence_retention_days
+    assert_equal 7, answer.json.dig("project", "evidence_retention_days")
+
+    bad = call_tool(:update_project, user: @admin, project: agent_project.slug, evidence_retention_days: 3651)
+    assert_equal "Not saved: Evidence retention days must be in 1..3650.", bad.text
+    other = call_tool(:update_project, user: @admin, project: "shop", evidence_retention_days: 7)
+    assert_equal "Not saved: Evidence retention days is a setting of the Agent Project only.", other.text
+    assert_equal 90, @shop.reload.evidence_retention_days
+  end
+
   test "update_project won't save a description over 1000 characters" do
     answer = call_tool(:update_project, user: @admin, project: "shop", description: "a" * 1001)
 

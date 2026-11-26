@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { evidenceTitle, evidenceBytesPath, evidencePath, readSpeed, saveSpeed, type EvidenceFile } from './evidenceFiles'
+import { evidenceDeletedText, evidenceTitle, evidenceBytesPath, evidencePath, readSpeed, saveSpeed, type EvidenceFile } from './evidenceFiles'
 import type { StorageLike } from './recentQueries'
 
 function memoryStorage(): StorageLike {
@@ -59,5 +59,17 @@ describe('an Evidence file', () => {
     expect(evidenceTitle(file('video/webm', 'Checkout'))).toBe('Video: Checkout')
     expect(evidenceTitle(file('image/png'))).toBe('Screenshot')
     expect(evidenceTitle(file('video/webm'))).toBe('Video')
+  })
+})
+
+describe('the sentence of a deleted file', () => {
+  it('gives the date and the whole days from the upload to the delete', () => {
+    const deleted = { ...file('image/png'), created_at: '2026-08-28T10:00:00Z', deleted_at: '2026-11-26T12:00:00Z' }
+    expect(evidenceDeletedText(deleted)).toBe('This evidence was deleted on Nov 26, 2026, after 90 days of Evidence Retention.')
+  })
+
+  it('says 1 day for one day', () => {
+    const deleted = { ...file('video/webm'), created_at: '2026-11-25T10:00:00Z', deleted_at: '2026-11-26T12:00:00Z' }
+    expect(evidenceDeletedText(deleted)).toBe('This evidence was deleted on Nov 26, 2026, after 1 day of Evidence Retention.')
   })
 })

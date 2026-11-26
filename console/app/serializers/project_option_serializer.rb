@@ -5,6 +5,7 @@
 # instance's default, so the time-range picker can turn away longer ranges;
 # trace_retention_days is the same for its Spans.
 # description is what it holds, for agents over MCP to pick the Project to query.
+# The Agent Project also has evidence_retention_days, its Evidence Retention.
 class ProjectOptionSerializer
   def self.list(projects)
     settings = InstanceSetting.current
@@ -17,7 +18,7 @@ class ProjectOptionSerializer
   end
 
   def as_json(*)
-    {
+    option = {
       id: @project.id,
       name: @project.name,
       slug: @project.slug,
@@ -25,6 +26,8 @@ class ProjectOptionSerializer
       log_retention_days: @project.log_retention_days || settings.default_log_retention_days,
       trace_retention_days: @project.trace_retention_days || settings.default_trace_retention_days,
     }
+    option[:evidence_retention_days] = @project.evidence_retention_days if @project.agent?
+    option
   end
 
   def to_json(*)

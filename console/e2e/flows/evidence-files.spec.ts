@@ -105,11 +105,11 @@ async function expectMarks(entry: Locator, mark: 'video' | 'deleted') {
   await expect(entry.locator('img')).toHaveCount(0)
 }
 
-/** A row of the Agent session that Evidence Retention deleted an hour ago, as EventStore marks it. */
+/** A row of the Agent session, uploaded 91 days ago, that Evidence Retention deleted an hour ago, as EventStore marks it. */
 function insertDeletedRow() {
   rails(`EvidenceFile.insert!({ id: ${JSON.stringify(DELETED)}, organization_id: Organization.find_by!(slug: ${JSON.stringify(ORG)}).id,
     agent_session_id: ${JSON.stringify(session.id)}, sha256: SecureRandom.hex(32), caption: "Old screen", content_type: "image/png",
-    byte_size: 84, storage_key: "evidence/flow-deleted-${RUN}.png", created_at: 2.hours.ago, deleted_at: 1.hour.ago })`)
+    byte_size: 84, storage_key: "evidence/flow-deleted-${RUN}.png", created_at: 91.days.ago, deleted_at: 1.hour.ago })`)
 }
 
 /** The headers of a GET of the bytes with the cookies of context and the request headers, by curl, as text with no Set-Cookie line. */
@@ -244,7 +244,7 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
 
   // The deleted file's page says when, with no image.
   await page.goto(deletedPath)
-  await expect(page.locator('[data-notice="evidence-deleted"]')).toContainText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4}\.$/)
+  await expect(page.locator('[data-notice="evidence-deleted"]')).toContainText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4}, after 90 days of Evidence Retention\.$/)
   await expect(page.locator('[data-evidence]')).toHaveCount(0)
   expect(errors).toEqual([])
 
