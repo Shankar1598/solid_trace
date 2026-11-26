@@ -525,7 +525,7 @@ func tellBranch(ctx context.Context, env Env, root, branch string) {
 // to print. Another member wrote the transcript, so the name can hold
 // terminal escapes or be an option of git switch.
 func validBranch(ctx context.Context, root, branch string) bool {
-	if branch == "" || strings.HasPrefix(branch, "-") || !utf8.ValidString(branch) {
+	if branch == "" || branch == "HEAD" || strings.HasPrefix(branch, "-") || !utf8.ValidString(branch) {
 		return false
 	}
 	for _, r := range branch {
