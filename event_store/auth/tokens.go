@@ -27,14 +27,15 @@ const FactoryResourcePath = "/factory"
 // registry (Oauth::Scopes) has. A Grant's Scope that is not here, or that
 // is for another resource than its access token, does not reach a call.
 var scopeResourcePaths = map[string]string{
-	"mcp":              "/mcp",
-	"mcp:read":         "/mcp",
-	"sessions:write":   FactoryResourcePath,
-	"sessions:read":    FactoryResourcePath,
-	"run_events:write": FactoryResourcePath,
-	"factory":          FactoryResourcePath,
-	"issues:comment":   FactoryResourcePath,
-	"tokens:create":    FactoryResourcePath,
+	"mcp":               "/mcp",
+	"mcp:read":          "/mcp",
+	"sessions:write":    FactoryResourcePath,
+	"sessions:read":     FactoryResourcePath,
+	"sessions:download": FactoryResourcePath,
+	"run_events:write":  FactoryResourcePath,
+	"factory":           FactoryResourcePath,
+	"issues:comment":    FactoryResourcePath,
+	"tokens:create":     FactoryResourcePath,
 }
 
 // Token is a live token that a client sent: an API token or an OAuth access
@@ -53,8 +54,8 @@ type Token struct {
 	// Scopes are the names of the Scopes the token acts with: mcp for an
 	// API token with none.
 	Scopes []string
-	// AgentSessionIDs is the list of Agent sessions that sessions:write and
-	// sessions:read are limited to; nil is no list.
+	// AgentSessionIDs is the list of Agent sessions that each Agent session
+	// call of the token is limited to; nil is no list.
 	AgentSessionIDs []string
 	// ExpiresAt is nil for an API token that does not expire.
 	ExpiresAt *time.Time

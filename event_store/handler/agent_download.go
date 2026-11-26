@@ -20,6 +20,12 @@ import (
 // of Agent session ids. It always has a list.
 const ScopeSessionsRead = "sessions:read"
 
+// ScopeSessionsDownload lets a token download, and read the files call of,
+// each Agent session of its Organization's Agent Project: also another
+// person's and a Run's. It writes nothing. It gives no new access, as each
+// member reads these Agent sessions in Console.
+const ScopeSessionsDownload = "sessions:download"
+
 // agentDownloadTimeout is the longest time that one download reads. The
 // prototype's largest Agent session (434 MB) streams in about 2 seconds
 // on the server; this lets a slow client have 1 MB a second.
@@ -58,7 +64,8 @@ type AgentDownloads interface {
 // DownloadAgentSession answers the Agent session directory as a tar
 // archive, for a resume on another machine: for each path its highest
 // version, as the server stored it (after Redaction). Only a token with
-// sessions:read that lists the Agent session gets it. A file whose start
+// sessions:read that lists the Agent session, or with sessions:download,
+// gets it. A file whose start
 // Retention dropped is marked partial with the offset where it starts; a
 // file with a cut unit is marked cut with its missing ranges. The server
 // does not promise a resume from a partial or cut file.
@@ -70,9 +77,9 @@ type AgentDownloads interface {
 // client sees an error and not a short archive.
 func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	token := agentToken(c)
-	if token.AgentSessionIDs == nil {
+	if token.AgentSessionIDs == nil && !token.Has(ScopeSessionsDownload) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "A download needs a token with sessions:read for a list of Agent session ids, and this token has no list."})
+			"error": "A download needs a token with sessions:download, or with sessions:read for a list of Agent session ids, and this token has neither."})
 	}
 	projectID, sessionID, ok, err := h.agentSessionOf(c, token)
 	if !ok {

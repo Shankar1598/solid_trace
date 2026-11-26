@@ -96,9 +96,11 @@ func anotherPersons(c *fiber.Ctx, sessionID uuid.UUID) error {
 }
 
 // AgentSessionFiles answers what the server has of an Agent session: who
-// and where it is, and for each path its highest version with its end
-// offset and hash. The solidtrace CLI asks before it uploads, and sends
-// only what is new. An Agent session with no upload has no files.
+// and where it is, whether it is yours (the token's person's, and not a
+// Run's), and for each path its highest version with its end offset and
+// hash. The solidtrace CLI asks before it uploads, and sends only what is
+// new. An Agent session with no upload has no files. Another person's
+// Agent session gets 403, except with sessions:download.
 func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 	token := agentToken(c)
 	projectID, sessionID, ok, err := h.agentSessionOf(c, token)
@@ -114,7 +116,7 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 	if !known {
 		return c.JSON(answer)
 	}
-	if anotherPersonsSession(token, session) {
+	if anotherPersonsSession(token, session) && !token.Has(ScopeSessionsDownload) {
 		return anotherPersons(c, sessionID)
 	}
 	list := make([]fiber.Map, len(files))
@@ -124,6 +126,7 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 	answer["agent_session"] = fiber.Map{
 		"id":                sessionID.String(),
 		"person":            fiber.Map{"user_id": session.UserID},
+		"yours":             session.UserID == token.UserID && session.RunID == "",
 		"harness":           session.Harness,
 		"repository":        session.Repository,
 		"folder":            session.Folder,
