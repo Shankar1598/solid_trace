@@ -90,14 +90,12 @@ Open the PR as [platforms.md](platforms.md) says, in Open a PR.
 
 ## 8. Final reply
 
-Run the command of step 4.4 again, with the same `--round`, and with `--pr` set to the PR's URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened). Then send the record to `solidtrace review final` in one Bash call, with the record's JSON as one line in a heredoc:
+Run the command of step 4.4 again, with the same `--round`, and with `--pr` set to the PR's URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened). Then write the record to the Agent session with this command, as it is:
 
-````
-solidtrace review final <<'SOLIDTRACE_RECORD_END'
-{"version": 2, ...}
-SOLIDTRACE_RECORD_END
-````
+```bash
+solidtrace review final "$dir/record.json"
+```
 
-This call is how SolidTrace keeps the record: the call uploads with the session. Put the whole JSON in the heredoc, not a path to its file, and keep the word `'SOLIDTRACE_RECORD_END'` in single quotes, so that the shell does not change the text of the record: SolidTrace keeps no record from a word with no quotes. The record holds the words of PR commenters, so do not use a short word such as `EOF`, which a comment can hold on a line of its own. The command must be only this call: no pipe, `&&`, `;`, redirect or other command, or SolidTrace does not keep the record. It prints the round and the counts on one line. When it refuses the record (exit 1), fix what it names and run it again. When the call fails with "Argument list too long" (Linux refuses a command of 128 KiB or more), SolidTrace keeps the record all the same: do not send it again, and say so in the reply.
+It checks the record, and writes it to the folder of this Agent session, where the capture uploads it with the session. It prints the round, the counts and the path of the file on one line. When it refuses the record (exit 1), fix what it names and run it again. When it fails for another reason, for example no Agent session, say so in the final reply, with the path of `$dir/record.json`.
 
 Then give the PR's URL, or in local mode the file's path, and a short summary of the findings. Do not write the record's JSON in the reply.

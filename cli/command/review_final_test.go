@@ -233,3 +233,31 @@ func TestReviewFinalWithTwoTranscriptsOfTheSessionNamesThemAndWritesNothing(t *t
 		}
 	}
 }
+
+func TestTheFinalReplyOfOpenPRWritesTheRecordFile(t *testing.T) {
+	data, err := os.ReadFile(openPRSkill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, step, _ := strings.Cut(string(data), "## 8. Final reply")
+	step, _, _ = strings.Cut(step, "\n## ")
+	_, block, found := strings.Cut(step, "```bash\n")
+	block, _, _ = strings.Cut(block, "```")
+	if !found || strings.TrimSpace(block) != `solidtrace review final "$dir/record.json"` {
+		t.Fatalf("Expected the Final reply step to give the review final command on the record file, got %q", block)
+	}
+	update, err := os.ReadFile(updatePRSkill)
+	if err != nil || !strings.Contains(string(update), "with `solidtrace review final` as `open-pr` › Final reply says") {
+		t.Fatalf("Expected update-pr to write the record as open-pr's Final reply says: %v", err)
+	}
+
+	projects, project := finalProjects(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "record.json"), finalRecord)
+	args := strings.Fields(strings.ReplaceAll(strings.TrimSpace(block), `"$dir/record.json"`, filepath.Join(dir, "record.json")))
+	var stdout, stderr bytes.Buffer
+	code := command.Run(context.Background(), args[1:], command.Env{Stdout: &stdout, Stderr: &stderr, ClaudeProjectsDir: projects, ClaudeSessionID: finalSession})
+	if got, _ := os.ReadFile(recordFile(project, 2, "local:/tmp/pr.md")); code != 0 || string(got) != finalRecord {
+		t.Fatalf("Expected the skill's command to write the record file, got exit %d: %s", code, stderr.String())
+	}
+}

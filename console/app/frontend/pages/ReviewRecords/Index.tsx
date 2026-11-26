@@ -69,7 +69,7 @@ function RecordsList({ view }: { view: Extract<ReviewRecordsProps, { on: true }>
           <ClipboardCheck className="mb-4 h-12 w-12 text-muted-foreground opacity-50" aria-hidden />
           <h2 className="text-lg font-medium">No Review records</h2>
           <p className="max-w-md text-sm text-muted-foreground">
-            The open-pr and update-pr skills of the solidtrace-skills plugin end by sending the PR's Review record to solidtrace review final. It shows here when the Agent session uploads.
+            The open-pr and update-pr skills of the solidtrace-skills plugin end by writing the PR's Review record with solidtrace review final. It shows here when the Agent session uploads.
           </p>
         </CardContent>
       </Card>

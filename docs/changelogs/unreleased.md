@@ -12,11 +12,12 @@ The notes of the next release, for the changes since v0.24.2 on this file. At th
 
 ## Changed
 
+- **A Review record of any size.** `solidtrace review final FILE [--session ID]` checks the Review record in a file, and writes it to `<session id>/solidtrace/review-records/round-<n>-<h>.json` in the folder of the Agent session. `open-pr` and `update-pr` end with `solidtrace review final "$dir/record.json"`, not with the record's JSON in a `solidtrace-pr-record` block of the final reply. So the record no longer shows on the person's screen, and the agent does not type it, also when it is 100 KB or more. The capture uploads the file with the Agent session, at once, with the same rules: only in a captured repository or a Run. A round written again replaces its record. Agent sessions from before keep the records of their block. See [ADR 0024](../adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md#the-record-moves-to-a-file-of-the-agent-session).
 - **The Coding agents group in the sidebar.** One **Coding agents** group holds **Agent sessions**, **Review records** and **Evidence files**. It opens on the page of each of them, and a click on its heading opens or closes it. The Agent sessions and Review records tabs are gone. **Runs** stays its own entry.
 
 ## Upgrading
 
-Upgrade EventStore and Console before the plugin. The new `open-pr` and `update-pr` skills call `solidtrace evidence add`, and an older EventStore answers it with 404. The skills then write no Evidence links.
+Upgrade EventStore and Console before the plugin. The new `open-pr` and `update-pr` skills call `solidtrace evidence add`, and an older EventStore answers it with 404. The skills then write no Evidence links. An older EventStore also does not read the Review record files that the new `solidtrace review final` writes: the files upload, but their records do not show, and SolidTrace does not parse them again after the upgrade.
 
 1. Add the line `evidence_path: /storage/evidence/production` to `deploy/config/event_store.yml`. `deploy/install` keeps the config of an earlier install, which has no `evidence_path`, and EventStore then uses its default folder, `/storage/evidence/development`. A new install gets the line from `deploy/event_store.yml`.
    If you upgraded with no `evidence_path` and EventStore has Evidence files with no bucket, keep the default, or move the files before you add the line. Without the move, Console cannot show the older files, and Evidence Retention does not delete them. To move them:
