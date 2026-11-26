@@ -310,9 +310,10 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 }
 
 // downloadSession downloads the Agent session into a temporary folder beside
-// the project folder, then renames each file into the project folder, the
-// transcript last. So a crash leaves the project folder with a whole
-// transcript or with the earlier one, and the next resume downloads again.
+// the project folder, then renames each file of the Agent session (<id>.jsonl
+// and the files under <id>/) into the project folder, the transcript last.
+// So a crash leaves the project folder with a whole transcript or with the
+// earlier one, and the next resume downloads again.
 func downloadSession(ctx context.Context, env Env, client *agentapi.Client, id, project string) error {
 	staging := filepath.Join(filepath.Dir(project), resumeStaging+id)
 	if err := os.RemoveAll(staging); err != nil {
@@ -341,9 +342,24 @@ func downloadSession(ctx context.Context, env Env, client *agentapi.Client, id, 
 		return err
 	}
 	transcript := id + ".jsonl"
+	// An archive can have a name more than once: the last copy is the one
+	// in the folder, as Extract wrote it.
+	last := map[string]int{}
+	for i, file := range extracted {
+		last[file.Name] = i
+	}
 	var names []string
-	for _, file := range extracted {
+	others := 0
+	for i, file := range extracted {
 		switch {
+		case last[file.Name] != i:
+			// A later copy replaced it.
+		case file.Name != transcript && !strings.HasPrefix(file.Name, id+"/"):
+			// Only the Agent session's own files go into the project
+			// folder. Another person can upload other paths
+			// (memory/MEMORY.md, the transcript of another Agent session),
+			// and a Run has evidence/.
+			others++
 		case file.Name == transcript && file.Flags != "":
 			return fmt.Errorf("the transcript of the Agent session is %s in SolidTrace, so a resume is not "+
 				"promised. Start a new Agent session.", file.Flags)
@@ -353,6 +369,13 @@ func downloadSession(ctx context.Context, env Env, client *agentapi.Client, id, 
 		case file.Name != transcript:
 			names = append(names, file.Name)
 		}
+	}
+	if others > 0 {
+		text := fmt.Sprintf("%d files of the download are not of the Agent session. Resume does not put them", others)
+		if others == 1 {
+			text = "1 file of the download is not of the Agent session. Resume does not put it"
+		}
+		fmt.Fprintf(env.Stderr, "solidtrace resume: %s in the project folder.\n", text)
 	}
 	if !slices.ContainsFunc(extracted, func(file agentapi.ExtractedFile) bool { return file.Name == transcript }) {
 		return fmt.Errorf("the download of the Agent session %s has no transcript", id)
