@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -56,6 +57,8 @@ func ReadFinal(data []byte) (Record, error) {
 		return Record{}, errors.New("no findings")
 	case r.Round < 1:
 		return Record{}, fmt.Errorf("round %d is not 1 or more", r.Round)
+	case r.Round > math.MaxUint32:
+		return Record{}, fmt.Errorf("round %d is more than %d", r.Round, uint32(math.MaxUint32))
 	}
 	return r, nil
 }

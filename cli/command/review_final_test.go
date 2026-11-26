@@ -136,6 +136,7 @@ func TestReviewFinalRefusesWhatIsNotARecordOfVersion2AndWritesNothing(t *testing
 		"only a version":     {`{"version":2}`, "no sessions"},
 		"null findings":      {`{"version":2,"sessions":[],"round":1,"findings":null}`, "no findings"},
 		"round 0":            {strings.Replace(finalRecord, `"round":2`, `"round":0`, 1), "round 0 is not 1 or more"},
+		"round 2^32":         {strings.Replace(finalRecord, `"round":2`, `"round":4294967296`, 1), "round 4294967296 is more than 4294967295"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -218,7 +219,7 @@ func TestReviewFinalSaysSoWhenItCannotWriteTheFile(t *testing.T) {
 
 func TestReviewFinalWithTwoTranscriptsOfTheSessionWritesToTheFolderOfTheNewer(t *testing.T) {
 	projects, project := finalProjects(t)
-	copied := filepath.Join(projects, "-home-ann-shop-old")
+	copied := filepath.Join(projects, "-home-ann-sh")
 	writeFile(t, filepath.Join(copied, finalSession+".jsonl"), "{}\n")
 	old := time.Now().Add(-time.Hour)
 	if err := os.Chtimes(filepath.Join(copied, finalSession+".jsonl"), old, old); err != nil {
