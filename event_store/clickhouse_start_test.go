@@ -33,32 +33,12 @@ func TestIngestTakesLogsWhileClickHouseStarts(t *testing.T) {
 	clickHouse := clickhousetest.Config()
 	upstream := clickHouse.Address
 	clickHouse.Address = freeAddress(t)
-	dir := t.TempDir()
-	cfg := config.Defaults()
-	cfg.Port = port(freeAddress(t))
-	cfg.QueryPort = port(freeAddress(t))
-	cfg.PebblePath = filepath.Join(dir, "pebble")
-	cfg.LogsDuckDBPath = filepath.Join(dir, "logs.duckdb")
-	cfg.LogsParquetPath = filepath.Join(dir, "logs_parquet")
-	cfg.SQLitePath = sqlitePath
-	cfg.MessageQueuePath = "../storage/sqlite/test/message_queue.sqlite3"
-	cfg.EvidencePath = filepath.Join(dir, "evidence")
-	cfg.LogsDiskLimitBytes = 1 << 30
-	cfg.ClickHouse = clickHouse
+	cfg := startConfig(t, sqlitePath, clickHouse)
 	ingestURL := "http://127.0.0.1:" + cfg.Port
 	queryURL := "http://127.0.0.1:" + cfg.QueryPort
 
-	ctx, cancel := context.WithCancel(context.Background())
-	stopped := make(chan struct{})
 	started := time.Now()
-	go func() {
-		defer close(stopped)
-		eventstore.Run(ctx, cfg)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		<-stopped
-	})
+	runEventStore(t, cfg)
 
 	// While ClickHouse refuses connections.
 	const sent = 20
@@ -128,6 +108,41 @@ func TestIngestTakesLogsWhileClickHouseStarts(t *testing.T) {
 			t.Errorf("%s once ClickHouse is ready: expected 200 with ClickHouse ready, got %d: %s", url, status, body)
 		}
 	}
+}
+
+// startConfig is the config of an EventStore on free ports, with its stores
+// in a new directory, its SQLite at sqlitePath and its ClickHouse at
+// clickHouse.
+func startConfig(t *testing.T, sqlitePath string, clickHouse config.ClickHouse) *config.Config {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := config.Defaults()
+	cfg.Port = port(freeAddress(t))
+	cfg.QueryPort = port(freeAddress(t))
+	cfg.PebblePath = filepath.Join(dir, "pebble")
+	cfg.LogsDuckDBPath = filepath.Join(dir, "logs.duckdb")
+	cfg.LogsParquetPath = filepath.Join(dir, "logs_parquet")
+	cfg.SQLitePath = sqlitePath
+	cfg.MessageQueuePath = "../storage/sqlite/test/message_queue.sqlite3"
+	cfg.EvidencePath = filepath.Join(dir, "evidence")
+	cfg.LogsDiskLimitBytes = 1 << 30
+	cfg.ClickHouse = clickHouse
+	return cfg
+}
+
+// runEventStore runs EventStore's start with cfg until the test ends.
+func runEventStore(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		eventstore.Run(ctx, cfg)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
 }
 
 // waitForIngest posts one Log to Project 123 as soon as the ingest port

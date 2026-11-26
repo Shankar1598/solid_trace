@@ -1,7 +1,6 @@
 package ingestgap_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -36,12 +35,11 @@ func openAt(t *testing.T, lastBeat time.Duration) ingestgap.Gap {
 			t.Fatalf("Write a heartbeat: %v", err)
 		}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	gap, err := ingestgap.Open(ctx, pebble, clock.NewManual(start))
+	gap, stop, err := ingestgap.Open(pebble, clock.NewManual(start))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(stop)
 	return gap
 }
 
@@ -92,9 +90,8 @@ func TestIngestWritesAHeartbeatAtItsOpenAndEveryFiveSeconds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pebble")
 	pebble := openPebble(t, path)
 	clk := clock.NewManual(start)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if _, err := ingestgap.Open(ctx, pebble, clk); err != nil {
+	_, stop, err := ingestgap.Open(pebble, clk)
+	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	assertLastBeat(t, pebble, start)
@@ -105,7 +102,7 @@ func TestIngestWritesAHeartbeatAtItsOpenAndEveryFiveSeconds(t *testing.T) {
 		want := start.Add(time.Duration(beat) * ingestgap.BeatEvery)
 		waitForLastBeat(t, pebble, want)
 	}
-	cancel()
+	stop()
 	pebble.StopWrites()
 	pebble.Close()
 
@@ -114,16 +111,54 @@ func TestIngestWritesAHeartbeatAtItsOpenAndEveryFiveSeconds(t *testing.T) {
 	defer reopened.Close()
 	last := start.Add(3 * ingestgap.BeatEvery)
 	restart := last.Add(2 * time.Minute)
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	defer cancel2()
-	gap, err := ingestgap.Open(ctx2, reopened, clock.NewManual(restart))
+	gap, stopAgain, err := ingestgap.Open(reopened, clock.NewManual(restart))
 	if err != nil {
 		t.Fatalf("Open again: %v", err)
 	}
+	defer stopAgain()
 	if want := restart.Add(2 * time.Minute); !gap.Until.Equal(want) {
 		t.Fatalf("Expected the gap to hold until %v, got %v", want, gap.Until)
 	}
 	assertLastBeat(t, reopened, restart)
+}
+
+// As ingest closes, it writes a last heartbeat, so the next start measures
+// its gap from the close: a deploy's restart of some seconds holds nothing,
+// although the last regular heartbeat was up to 5 s before the close.
+func TestIngestWritesALastHeartbeatAsItCloses(t *testing.T) {
+	logger.Init()
+	path := filepath.Join(t.TempDir(), "pebble")
+	pebble := openPebble(t, path)
+	clk := clock.NewManual(start)
+	_, stop, err := ingestgap.Open(pebble, clk)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	clk.BlockUntilTimers(1)
+	closed := start.Add(ingestgap.BeatEvery - time.Second)
+	clk.Set(closed)
+	stop()
+	assertLastBeat(t, pebble, closed)
+
+	// After stop, ingest writes no more heartbeats.
+	clk.Advance(ingestgap.BeatEvery)
+	assertLastBeat(t, pebble, closed)
+	pebble.StopWrites()
+	pebble.Close()
+
+	// A restart 12 s after the close holds nothing, though it is 16 s after
+	// the last regular heartbeat.
+	reopened := openPebble(t, path)
+	defer reopened.Close()
+	restart := closed.Add(12 * time.Second)
+	gap, stopAgain, err := ingestgap.Open(reopened, clock.NewManual(restart))
+	if err != nil {
+		t.Fatalf("Open again: %v", err)
+	}
+	defer stopAgain()
+	if gap.Holds(restart) {
+		t.Fatalf("Expected no gap 12 s after the close, got one until %v", gap.Until)
+	}
 }
 
 func assertLastBeat(t *testing.T, pebble *storage.PebbleWriter, want time.Time) {

@@ -30,9 +30,8 @@ const (
 	maxBackoff = 30 * time.Second
 
 	// Every backlogInterval by the clock, Log processing names each Project
-	// whose oldest Log batch has waited longer than backlogThreshold.
-	backlogInterval  = time.Minute
-	backlogThreshold = time.Minute
+	// whose oldest Log batch has waited longer than storage.LogProcessingLag.
+	backlogInterval = time.Minute
 )
 
 // ErrStopped is returned when Stop ends processing.
@@ -574,9 +573,11 @@ func (p *Processor) logCommits(window time.Duration) {
 }
 
 // logBacklog logs each Project whose oldest Log batch was written more than
-// backlogThreshold before now, with how far behind it is. Batches leave
-// Pebble once they are stored, so it reads Pebble alone, and reports even
-// while ClickHouse is down.
+// storage.LogProcessingLag before now, with how far behind it is. Batches
+// leave Pebble once they are stored, so it reads Pebble alone, and reports
+// even while ClickHouse is down. It reads OldestLogBatches, one scan for
+// every Project, and not each Project's OldestWaitingLogBatch: a batch that
+// is stored but not deleted yet is in it only for some milliseconds.
 func (p *Processor) logBacklog(now time.Time) {
 	oldest, err := p.batches.OldestLogBatches()
 	if err != nil {
@@ -584,7 +585,7 @@ func (p *Processor) logBacklog(now time.Time) {
 		return
 	}
 	for _, batch := range oldest {
-		if behind := now.Sub(storage.LogBatchWrittenAt(batch.BatchID)); behind > backlogThreshold {
+		if behind := now.Sub(storage.LogBatchWrittenAt(batch.BatchID)); behind > storage.LogProcessingLag {
 			logger.L.Warn("Log processing is behind", "project_id", batch.ProjectID, "behind", behind.Round(time.Second).String())
 		}
 	}

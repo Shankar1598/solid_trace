@@ -167,7 +167,7 @@ func run(ctx context.Context, cfg *config.Config) {
 
 	// The ingest gap is measured as the ingest port opens, before the
 	// ClickHouse start, so the time that ClickHouse takes is not in it.
-	ingestGap, err := ingestgap.Open(ctx, pebbleWriter, clock.System{})
+	ingestGap, stopIngestBeats, err := ingestgap.Open(pebbleWriter, clock.System{})
 	if err != nil {
 		logger.L.Warn("Reading the last ingest heartbeat failed: this start holds no Monitor for an ingest gap", "error", err)
 	}
@@ -201,8 +201,11 @@ func run(ctx context.Context, cfg *config.Config) {
 	if queryErr != nil || ingestErr != nil {
 		logger.L.Error("HTTP shutdown timed out", "query_error", queryErr, "ingest_error", ingestErr)
 	}
-	// Ingest takes no more requests: the last seconds' counts are written.
+	// Ingest takes no more requests: the last seconds' counts are written,
+	// and the last ingest heartbeat, so the next start measures its gap from
+	// now.
 	ingestService.StopFlushingIngestCounts()
+	stopIngestBeats()
 
 	// Every later write returns ErrShuttingDown, so nothing reaches Pebble
 	// after the deferred Close.

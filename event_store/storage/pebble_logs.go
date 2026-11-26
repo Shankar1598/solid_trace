@@ -204,9 +204,9 @@ func (w *PebbleWriter) LogBatchesAfter(projectID uint32, after uuid.UUID, maxLog
 	logs := 0
 	for valid := iter.First(); valid && logs < maxLogs; valid = iter.Next() {
 		key := iter.Key()
-		batchID, err := uuid.FromBytes(key[len(key)-16:])
+		batchID, err := logBatchKeyID(key)
 		if err != nil {
-			return nil, fmt.Errorf("log batch key %x: %w", key, err)
+			return nil, err
 		}
 		batch, err := decodeLogBatch(iter.Value())
 		if err != nil {
@@ -243,7 +243,10 @@ type OldestLogBatch struct {
 }
 
 // OldestLogBatches returns the oldest Log batch of every Project that has
-// one, in Project order, reading one key per Project.
+// one, in Project order, reading one key per Project. It reads each
+// Project's first key, so for some milliseconds after Log processing moves
+// its cursor, a batch that it stored but has not deleted yet is the oldest.
+// The oldest batch that waits is OldestWaitingLogBatch's.
 func (w *PebbleWriter) OldestLogBatches() ([]OldestLogBatch, error) {
 	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: logBatchKeyspace, UpperBound: logBatchKeyspaceEnd})
 	if err != nil {
@@ -255,9 +258,9 @@ func (w *PebbleWriter) OldestLogBatches() ([]OldestLogBatch, error) {
 	for valid := iter.First(); valid; {
 		key := iter.Key()
 		projectID := binary.BigEndian.Uint32(key[len(logBatchKeyspace):])
-		batchID, err := uuid.FromBytes(key[len(key)-16:])
+		batchID, err := logBatchKeyID(key)
 		if err != nil {
-			return nil, fmt.Errorf("log batch key %x: %w", key, err)
+			return nil, err
 		}
 		oldest = append(oldest, OldestLogBatch{projectID, batchID})
 		valid = iter.SeekGE(logBatchUpperBound(projectID))
@@ -287,12 +290,20 @@ func (w *PebbleWriter) OldestWaitingLogBatch(projectID uint32) (uuid.UUID, bool,
 	if !iter.First() {
 		return uuid.Nil, false, iter.Error()
 	}
-	key := iter.Key()
-	batchID, err := uuid.FromBytes(key[len(key)-16:])
+	batchID, err := logBatchKeyID(iter.Key())
 	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("log batch key %x: %w", key, err)
+		return uuid.Nil, false, err
 	}
 	return batchID, true, nil
+}
+
+// logBatchKeyID is the id of the Log batch at key: its last 16 bytes.
+func logBatchKeyID(key []byte) (uuid.UUID, error) {
+	batchID, err := uuid.FromBytes(key[len(key)-16:])
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("log batch key %x: %w", key, err)
+	}
+	return batchID, nil
 }
 
 // Log processing keeps two ids per Project in Pebble, beside Event
@@ -397,6 +408,14 @@ func (w *PebbleWriter) logBatchID(key []byte) (uuid.UUID, error) {
 	}
 	return id, nil
 }
+
+// LogProcessingLag is how long a Log batch may wait for Log processing
+// before Log processing is behind for its Project: Log processing logs a
+// warning, and a run that asks for hold_if_incomplete is held. Console's
+// LogMonitor::PROCESSING_LAG is the same 60 s: a Threshold monitor's range
+// ends that long before its run, so a shorter wait misses no Log of the
+// range.
+const LogProcessingLag = time.Minute
 
 // LogBatchWrittenAt is when the Log batch with id batchID was written, to the
 // millisecond: the time in its UUIDv7.

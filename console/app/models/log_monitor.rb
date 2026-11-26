@@ -46,7 +46,7 @@ class LogMonitor < ApplicationRecord
   MAX_TEXT_LENGTH = 20_000
   # A Threshold monitor's range ends this long before its run, so Logs
   # still waiting for Log processing are not counted as missing.
-  # EventStore's logProcessingLag (event_store/handler/logs_incomplete.go)
+  # EventStore's storage.LogProcessingLag (event_store/storage/pebble_logs.go)
   # is the same 60 s: past it, a run with hold_if_incomplete is held.
   PROCESSING_LAG = 60.seconds
 

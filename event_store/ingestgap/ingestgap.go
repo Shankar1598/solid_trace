@@ -9,8 +9,8 @@
 package ingestgap
 
 import (
-	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -57,28 +57,38 @@ func Measure(last time.Time, beat bool, opened time.Time) Gap {
 }
 
 // Open runs as the ingest port opens. It measures the gap since the last
-// heartbeat, writes a heartbeat at once and then every BeatEvery until ctx
-// is done. A heartbeat that it cannot read gives no gap, and the error.
-func Open(ctx context.Context, beats Beats, clk clock.Clock) (Gap, error) {
+// heartbeat, writes a heartbeat at once and then every BeatEvery. A
+// heartbeat that it cannot read gives no gap, and the error. Call stop as
+// ingest closes, before Pebble closes: it writes a last heartbeat, so the
+// next start measures its gap from the close and not from a heartbeat up to
+// BeatEvery before it. Thus a restart that takes some seconds holds nothing.
+func Open(beats Beats, clk clock.Clock) (gap Gap, stop func(), err error) {
 	opened := clk.Now()
 	last, beat, err := beats.LastIngestBeat()
-	gap := Measure(last, beat, opened)
+	gap = Measure(last, beat, opened)
 	if gap.Holds(opened) {
 		logger.L.Info("Ingest was down before this start: Monitors that ask wait for the senders' kept Logs",
 			"last_heartbeat", last.UTC(), "gap", opened.Sub(last).Round(time.Second).String(), "until", gap.Until.UTC())
 	}
 	write(beats, opened)
+	quit, done := make(chan struct{}), make(chan struct{})
 	go func() {
+		defer close(done)
 		for {
 			select {
-			case <-ctx.Done():
+			case <-quit:
+				write(beats, clk.Now())
 				return
 			case now := <-clk.After(BeatEvery):
 				write(beats, now)
 			}
 		}
 	}()
-	return gap, err
+	stop = sync.OnceFunc(func() {
+		close(quit)
+		<-done
+	})
+	return gap, stop, err
 }
 
 func write(beats Beats, at time.Time) {

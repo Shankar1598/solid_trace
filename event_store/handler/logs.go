@@ -39,9 +39,14 @@ type LogsHandler struct {
 	// Logs, the Logs ingested after a batch and the Fields are read from it.
 	// sql runs SQL queries on it, each as its Project's SQL user.
 	clickHouse *storage.ClickHouseLogs
-	sql        *storage.ClickHouseSQL
-	settings   ConsoleSettings
-	clock      clock.Clock
+	// waiting reads a Project's oldest waiting Log batch for
+	// hold_if_incomplete: clickHouse's.
+	waiting interface {
+		OldestWaitingLogBatch(projectID uint32) (uuid.UUID, bool, error)
+	}
+	sql      *storage.ClickHouseSQL
+	settings ConsoleSettings
+	clock    clock.Clock
 	// ScanBudget is how long a run of Log rows reads before it answers with
 	// what it has found and a next_cursor.
 	ScanBudget time.Duration
@@ -59,7 +64,7 @@ type LogsHandler struct {
 // ago() and now() read.
 func NewLogsHandler(clickHouse *storage.ClickHouseLogs, sql *storage.ClickHouseSQL, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
 	return &LogsHandler{
-		clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget,
+		clickHouse: clickHouse, waiting: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget,
 		HeavyReads: NewHeavyReads(config.DefaultLogsHeavyReadSlots(runtime.NumCPU())),
 	}
 }
@@ -145,8 +150,9 @@ func parametersProblem(parameters map[string][]string) fiber.Map {
 // change.
 //
 // With "after_batch", a Match monitor's run reads the Logs ingested since
-// its last run instead (afterBatch). It reads in Log batch order, so a late
-// Log is read when it comes, and it ignores hold_if_incomplete.
+// its last run instead (afterBatch). It reads in Log batch order: a run
+// reads each Log once, in the first run after Log ingest writes the Log's
+// batch, whatever the Log's time. It ignores hold_if_incomplete.
 func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -190,8 +196,13 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
 	}
 
-	if answered, err := h.holdIfIncomplete(c, run, projectID, req.HoldIfIncomplete); answered {
-		return err
+	held, err := h.holdIfIncomplete(projectID, req.HoldIfIncomplete)
+	if err != nil {
+		logger.L.Error("Checking whether a Project's Logs are complete failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	if held != nil {
+		return run.answer(c, fiber.Map{"incomplete": held})
 	}
 
 	from, to := query.Range()

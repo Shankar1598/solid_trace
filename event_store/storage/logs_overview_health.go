@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -14,13 +13,20 @@ import (
 // the Log reads ClickHouse's query_log holds, and the Events of a range.
 
 // OldestWaitingLogBatches is the oldest Log batch still waiting for Log
-// processing of each Project of projectIDs that has one, read from Pebble.
+// processing of each Project of projectIDs that has one, read from Pebble
+// (OldestWaitingLogBatch).
 func (s *ClickHouseLogs) OldestWaitingLogBatches(projectIDs []uint32) ([]OldestLogBatch, error) {
-	oldest, err := s.pebble.OldestLogBatches()
-	if err != nil {
-		return nil, fmt.Errorf("find the oldest waiting Log batches: %w", err)
+	var oldest []OldestLogBatch
+	for _, projectID := range projectIDs {
+		batchID, waiting, err := s.pebble.OldestWaitingLogBatch(projectID)
+		if err != nil {
+			return nil, fmt.Errorf("find Project %d's oldest waiting Log batch: %w", projectID, err)
+		}
+		if waiting {
+			oldest = append(oldest, OldestLogBatch{projectID, batchID})
+		}
 	}
-	return slices.DeleteFunc(oldest, func(b OldestLogBatch) bool { return !slices.Contains(projectIDs, b.ProjectID) }), nil
+	return oldest, nil
 }
 
 // OldestWaitingLogBatch is a Project's oldest Log batch still waiting for Log

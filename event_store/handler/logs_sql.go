@@ -103,8 +103,13 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	if answered, err := h.holdIfIncomplete(c, run, projectID, req.HoldIfIncomplete); answered {
-		return err
+	held, err := h.holdIfIncomplete(projectID, req.HoldIfIncomplete)
+	if err != nil {
+		logger.L.Error("Checking whether a Project's Logs are complete failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	if held != nil {
+		return run.answer(c, fiber.Map{"incomplete": held})
 	}
 	result, err := h.sql.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, sqlfilter.Parameters(filters, req.Parameters), maxTableRows)
 	// Stopped, the SQL fails as the context ends or ClickHouse stops it at

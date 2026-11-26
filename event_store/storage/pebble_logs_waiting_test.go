@@ -2,6 +2,7 @@ package storage
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -46,6 +47,23 @@ func TestTheOldestWaitingLogBatchIsTheFirstAfterTheCursor(t *testing.T) {
 		t.Fatalf("Move the cursor: %v", err)
 	}
 	assertWaiting("with the cursor at the second batch, none deleted", batches[2].ID)
+	// The Overview's Health reads the same oldest waiting batch.
+	others, err := w.LogBatchesAfter(8, uuid.Nil, 100)
+	if err != nil || len(others) != 1 {
+		t.Fatalf("Expected 1 batch of Project 8, got %d (%v)", len(others), err)
+	}
+	health, err := (&ClickHouseLogs{pebble: w}).OldestWaitingLogBatches([]uint32{7, 8, 9})
+	want := []OldestLogBatch{{7, batches[2].ID}, {8, others[0].ID}}
+	if err != nil || !slices.Equal(health, want) {
+		t.Fatalf("Health: expected %v, got %v (%v)", want, health, err)
+	}
+
+	// As Log processing does, the batches up to the cursor are deleted, the
+	// cursor's batch too.
+	if err := w.DeleteLogBatchesUpTo(7, batches[1].ID); err != nil {
+		t.Fatalf("Delete the stored batches: %v", err)
+	}
+	assertWaiting("with the batches up to the cursor deleted", batches[2].ID)
 
 	if err := w.SetLogProcessingCursor(7, batches[2].ID); err != nil {
 		t.Fatalf("Move the cursor: %v", err)
