@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join, resolve } from 'node:path'
 import { ADMIN, MEMBER, ORG } from '../support/data'
 import { EFFORT, fakeAnthropicKey, longSession, MODEL, openPrSession, shortSession, SUBAGENT_EFFORT, SUBAGENT_MODEL, writeSession, type FixtureSession } from '../support/agentTranscripts'
-import { shoot, watchErrors } from '../support/screens'
+import { expectFits, shoot, watchErrors } from '../support/screens'
 import { newContext } from '../support/video'
 
 // Laptop Agent sessions, from the real capture to the pages. The admin and
@@ -735,11 +735,13 @@ test('the Agent session page gives the command that resumes it on another machin
 
       await page.evaluate(() => navigator.clipboard.writeText(''))
       await resume.getByRole('button', { name: 'Copy the resume command' }).click()
-      await expect(page.getByText('Command copied').first()).toBeVisible()
+      await expect(page.getByText('Resume command copied').first()).toBeVisible()
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(command)
 
-      const across = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
-      expect(across, `sideways scroll at ${size.width} px`).toBeLessThanOrEqual(0)
+      // The layout scrolls inside main, so main and the command box show a sideways scroll.
+      await expectFits(resume.locator('[data-command="resume"]'))
+      const across = await page.locator('main').evaluate(el => el.scrollWidth - el.clientWidth)
+      expect(across, `sideways scroll of main at ${size.width} px`).toBeLessThanOrEqual(0)
       await resume.scrollIntoViewIfNeeded()
       await shot(`resume-${size.name}-${theme}`)
     }

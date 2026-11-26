@@ -295,7 +295,7 @@ function Resume({ session }: { session: AgentSessionRow }) {
       <p className="text-sm text-muted-foreground">{resumeText(session, viewer?.id)}</p>
       <div className="flex items-start gap-2">
         <code className="min-w-0 flex-1 break-all border bg-muted/40 px-3 py-2 font-mono text-xs leading-5" data-command="resume">{command}</code>
-        <Button variant="outline" size="sm" onClick={() => copyText(command, 'Command')} aria-label="Copy the resume command" title="Copy">
+        <Button variant="outline" size="sm" onClick={() => copyText(command, 'Resume command')} aria-label="Copy the resume command">
           <Copy className="h-3.5 w-3.5" /> Copy
         </Button>
       </div>
