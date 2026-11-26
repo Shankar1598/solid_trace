@@ -1,14 +1,14 @@
 #!/bin/sh
 # Installs or upgrades SolidTrace for Claude Code on this machine: the
-# solidtrace CLI of a release, the SolidTrace marketplace, the capture plugin
-# and the review plugin. It asks no questions. Run it again to upgrade.
+# solidtrace CLI of a release, the SolidTrace marketplace and the solidtrace
+# plugin (capture and the review skills). It asks no questions. Run it again
+# to upgrade.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Shankar1598/solid_trace/main/cli/setup-claude-code.sh | sh
 #
 # Environment:
 #   SOLIDTRACE_VERSION      the release, such as v0.24.3 (default: the newest)
 #   SOLIDTRACE_INSTALL_DIR  the folder of solidtrace (default: ~/.local/bin)
-#   SOLIDTRACE_REVIEW_PLUGIN=no   do not install the review plugin
 #   SOLIDTRACE_CONSOLE_URL and SOLIDTRACE_INGEST_URL   sign in when this
 #                           machine has no sign-in (Console's Capture setup
 #                           page gives both)
@@ -19,7 +19,7 @@ set -eu
 # before a command can read stdin.
 main() {
   REPOSITORY="Shankar1598/solid_trace"
-  MARKETPLACE_FILE="$HOME/.local/share/solidtrace/.claude-plugin/marketplace.json"
+  MARKETPLACE="solidtrace"
   BIN_DIR="${SOLIDTRACE_INSTALL_DIR:-$HOME/.local/bin}"
   ST="$BIN_DIR/solidtrace"
   CLAUDE_SETTINGS="$HOME/.claude/settings.json"
@@ -39,6 +39,10 @@ main() {
     v[0-9]*) ;;
     *) fail "a release is a tag such as v0.24.3, not $VERSION" ;;
   esac
+  # A release before the marketplace file was in the repository has no
+  # plugin that this script can add. Stop before the script changes a thing.
+  curl -fsSIL -o /dev/null "https://raw.githubusercontent.com/$REPOSITORY/$VERSION/.claude-plugin/marketplace.json" \
+    || fail "$VERSION has no .claude-plugin/marketplace.json, so this script cannot add its plugin: use a newer release"
   RELEASE_URL="https://github.com/$REPOSITORY/releases/download/$VERSION"
   info "SolidTrace $VERSION (now: $("$ST" version 2>/dev/null || echo "no solidtrace in $BIN_DIR"))"
 
@@ -47,33 +51,31 @@ main() {
     || fail "the CLI install failed"
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
-    *) todo "Add $BIN_DIR to PATH, so that the capture plugin finds solidtrace." ;;
+    *) todo "Add $BIN_DIR to PATH, so that the solidtrace plugin finds solidtrace." ;;
   esac
 
-  # Claude Code cannot add the marketplace file from a github.com URL, so the
-  # script downloads it into a .claude-plugin folder and adds it from there.
-  info "Adding the SolidTrace marketplace"
-  mkdir -p "$(dirname "$MARKETPLACE_FILE")"
-  curl -fsSL -o "$MARKETPLACE_FILE.new" "$RELEASE_URL/marketplace.json" \
-    || fail "could not download $RELEASE_URL/marketplace.json"
-  mv -f "$MARKETPLACE_FILE.new" "$MARKETPLACE_FILE"
-  if claude plugin marketplace list 2>/dev/null | grep -qF "$MARKETPLACE_FILE"; then
-    claude plugin marketplace update solidtrace </dev/null || fail "could not update the solidtrace marketplace"
+  # The marketplace is the file .claude-plugin/marketplace.json of the
+  # repository at the release's tag. Claude Code clones only that folder and
+  # the plugin's. It does not add a marketplace of the same name at another
+  # tag, so a move to a new tag removes the marketplace first. That also
+  # removes its plugins (also solidtrace-skills, of v0.24.3 and earlier), and
+  # the plugin keeps no data.
+  if marketplace_at_tag; then
+    info "The SolidTrace marketplace is at $VERSION already"
   else
-    claude plugin marketplace add "$MARKETPLACE_FILE" </dev/null || fail "could not add the solidtrace marketplace"
+    if claude plugin marketplace list --json </dev/null 2>/dev/null | marketplace_object | grep -q .; then
+      info "Removing the SolidTrace marketplace and its plugins, to add it at $VERSION"
+      claude plugin marketplace remove "$MARKETPLACE" </dev/null || fail "could not remove the $MARKETPLACE marketplace"
+    fi
+    info "Adding the SolidTrace marketplace at $VERSION"
+    claude plugin marketplace add "$REPOSITORY#$VERSION" --sparse .claude-plugin cli/plugin </dev/null \
+      || fail "could not add the $MARKETPLACE marketplace"
   fi
 
-  info "Installing the capture plugin"
-  install_plugin solidtrace@solidtrace
-
-  if [ "${SOLIDTRACE_REVIEW_PLUGIN:-yes}" = no ]; then
-    info "Not installing the review plugin (SOLIDTRACE_REVIEW_PLUGIN=no)"
-  else
-    info "Installing the review plugin"
-    install_plugin solidtrace-skills@solidtrace
-    if [ -z "${BITBUCKET_TOKEN:-}" ] && ! grep -qs '"BITBUCKET_TOKEN"' "$CLAUDE_SETTINGS"; then
-      todo "On bitbucket.org, open-pr and update-pr need BITBUCKET_EMAIL and BITBUCKET_TOKEN in env of $CLAUDE_SETTINGS (an Atlassian API token with the scopes read:user:bitbucket, read:repository:bitbucket, read:pullrequest:bitbucket and write:pullrequest:bitbucket). GitHub needs no token."
-    fi
+  info "Installing the solidtrace plugin"
+  install_plugin "solidtrace@$MARKETPLACE"
+  if [ -z "${BITBUCKET_TOKEN:-}" ] && ! grep -qs '"BITBUCKET_TOKEN"' "$CLAUDE_SETTINGS"; then
+    todo "On bitbucket.org, open-pr and update-pr need BITBUCKET_EMAIL and BITBUCKET_TOKEN in env of $CLAUDE_SETTINGS (an Atlassian API token with the scopes read:user:bitbucket, read:repository:bitbucket, read:pullrequest:bitbucket and write:pullrequest:bitbucket). GitHub needs no token."
   fi
 
   # capture status exits 1 when one of its checks fails, also when this machine
@@ -93,7 +95,7 @@ main() {
   fi
 
   printf '\n'
-  claude plugin list 2>/dev/null | grep -A3 -E "solidtrace(-skills)?@solidtrace\$" | sed 's/^/  /' || true
+  claude plugin list 2>/dev/null | grep -A3 -E "solidtrace@solidtrace\$" | sed 's/^/  /' || true
   printf '\n'
   "$ST" capture status 2>&1 | sed -n '1,8p' | sed 's/^/  /' || true
   printf '\nDone: SolidTrace %s. Restart Claude Code: a running session does not load new plugins.\n' "$VERSION"
@@ -106,6 +108,20 @@ info() { printf '==> %s\n' "$1"; }
 fail() { printf 'setup: %s\n' "$1" >&2; exit 1; }
 todo() { TODO="$TODO  - $1
 "; }
+
+# marketplace_object reads `claude plugin marketplace list --json` and prints
+# the marketplace MARKETPLACE on one line, with no spaces: such as
+# {"name":"solidtrace","source":"github","repo":"o/n","ref":"v0.25.0",...
+marketplace_object() {
+  tr -d ' \n' | tr '}' '\n' | grep -E "\"name\":\"$MARKETPLACE\"(,|\$)"
+}
+
+# marketplace_at_tag is true when the marketplace MARKETPLACE is REPOSITORY
+# on GitHub at the tag VERSION.
+marketplace_at_tag() {
+  claude plugin marketplace list --json </dev/null 2>/dev/null | marketplace_object \
+    | grep -F "\"repo\":\"$REPOSITORY\"" | grep -qF "\"ref\":\"$VERSION\""
+}
 
 # plugin_installed NAME is true when Claude Code has the plugin NAME.
 plugin_installed() {

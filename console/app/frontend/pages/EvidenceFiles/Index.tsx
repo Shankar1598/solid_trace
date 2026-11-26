@@ -28,7 +28,7 @@ export default function EvidenceFilesIndex({ evidence_files: view }: { evidence_
               <Images className="mb-4 h-12 w-12 text-muted-foreground opacity-50" aria-hidden />
               <h2 className="text-lg font-medium">No Evidence files</h2>
               <p className="max-w-md text-sm text-muted-foreground">
-                The open-pr and update-pr skills of the solidtrace-skills plugin upload the screenshots and videos of their checks with solidtrace evidence add. They show here.
+                The open-pr and update-pr skills of the solidtrace plugin upload the screenshots and videos of their checks with solidtrace evidence add. They show here.
               </p>
             </CardContent>
           </Card>

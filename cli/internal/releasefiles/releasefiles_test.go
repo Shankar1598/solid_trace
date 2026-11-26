@@ -1,25 +1,22 @@
 package main
 
 import (
-	"archive/zip"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"io"
 	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 const (
+	repoDir   = "../../.."
 	cliDir    = "../.."
 	pluginDir = "../../plugin"
-	skillsDir = "../../plugin-skills"
 )
 
 var binaries = []string{"solidtrace-darwin-amd64", "solidtrace-darwin-arm64", "solidtrace-linux-amd64", "solidtrace-linux-arm64"}
@@ -34,24 +31,41 @@ func release(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	err := write(options{Dist: dist, Root: cliDir, InstallScript: "../../install.sh",
-		Tag: "v0.19.0", Repository: "example/solid_trace"})
+	err := write(options{Dist: dist, Root: pluginRoot(t, `{"name":"solidtrace","version":"0.19.0"}`),
+		InstallScript: "../../install.sh", Tag: "v0.19.0", Repository: "example/solid_trace"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return dist
 }
 
-func readJSON(t *testing.T, data []byte) map[string]any {
+// pluginRoot is a cli folder whose plugin folder has the manifest.
+func pluginRoot(t *testing.T, manifest string) string {
 	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "plugin", ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plugin", ".claude-plugin", "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var v map[string]any
 	if err := json.Unmarshal(data, &v); err != nil {
-		t.Fatalf("%v: %s", err, data)
+		t.Fatalf("%s: %v", path, err)
 	}
 	return v
 }
 
-func TestTheReleaseHasTheBinariesOneChecksumFileThePluginZipAndTheMarketplaceFile(t *testing.T) {
+func TestTheReleaseHasTheBinariesTheInstallScriptAndOneChecksumFile(t *testing.T) {
 	dist := release(t)
 
 	entries, _ := os.ReadDir(dist)
@@ -59,8 +73,7 @@ func TestTheReleaseHasTheBinariesOneChecksumFileThePluginZipAndTheMarketplaceFil
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	want := append(slices.Clone(binaries), "SHA256SUMS", "install.sh", "marketplace.json", "solidtrace-plugin.zip",
-		"solidtrace-skills.zip")
+	want := append(slices.Clone(binaries), "SHA256SUMS", "install.sh")
 	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		t.Fatalf("release files:\n%v\nwant\n%v", names, want)
@@ -78,118 +91,10 @@ func TestTheReleaseHasTheBinariesOneChecksumFileThePluginZipAndTheMarketplaceFil
 	}
 }
 
-// unzip gives the names, in order, and the contents of the zip's files.
-func unzip(t *testing.T, path string) ([]string, map[string][]byte) {
-	t.Helper()
-	z, err := zip.OpenReader(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer z.Close()
-	files := map[string][]byte{}
-	for _, f := range z.File {
-		r, err := f.Open()
-		if err != nil {
-			t.Fatal(err)
-		}
-		files[f.Name], _ = io.ReadAll(r)
-		r.Close()
-	}
-	var names []string
-	for n := range files {
-		names = append(names, n)
-	}
-	slices.Sort(names)
-	return names, files
-}
-
-func TestTheSkillsZipHoldsTheSkillsAndAManifestWithTheReleaseVersion(t *testing.T) {
-	dist := release(t)
-
-	names, files := unzip(t, filepath.Join(dist, "solidtrace-skills.zip"))
-
-	if !slices.Contains(names, ".claude-plugin/plugin.json") || !slices.ContainsFunc(names, func(n string) bool {
-		return strings.HasPrefix(n, "skills/")
-	}) {
-		t.Fatalf("zip entries: %v", names)
-	}
-	manifest := readJSON(t, files[".claude-plugin/plugin.json"])
-	if manifest["name"] != "solidtrace-skills" || manifest["version"] != "0.19.0" || manifest["displayName"] != "SolidTrace skills" {
-		t.Fatalf("plugin.json: %v", manifest)
-	}
-}
-
-func TestThePluginZipHoldsTheHooksAndAManifestWithTheReleaseVersion(t *testing.T) {
-	dist := release(t)
-
-	names, files := unzip(t, filepath.Join(dist, "solidtrace-plugin.zip"))
-	if !slices.Equal(names, []string{".claude-plugin/plugin.json", "README.md", "hooks/hooks.json"}) {
-		t.Fatalf("zip entries: %v", names)
-	}
-	manifest := readJSON(t, files[".claude-plugin/plugin.json"])
-	if manifest["name"] != "solidtrace" || manifest["version"] != "0.19.0" {
-		t.Fatalf("plugin.json: %v", manifest)
-	}
-	source, _ := os.ReadFile(filepath.Join(pluginDir, "hooks", "hooks.json"))
-	if string(files["hooks/hooks.json"]) != string(source) {
-		t.Fatal("the zip's hooks.json differs from cli/plugin/hooks/hooks.json")
-	}
-}
-
-func TestTheMarketplaceFilePinsEachPluginToItsReleaseZip(t *testing.T) {
-	dist := release(t)
-
-	data, _ := os.ReadFile(filepath.Join(dist, "marketplace.json"))
-	m := readJSON(t, data)
-	owner, _ := m["owner"].(map[string]any)
-	if m["name"] != "solidtrace" || owner["name"] == "" || owner["name"] == nil {
-		t.Fatalf("marketplace: %s", data)
-	}
-	plugins, _ := m["plugins"].([]any)
-	wantEntries := []struct{ name, zip string }{
-		{"solidtrace", "solidtrace-plugin.zip"},
-		{"solidtrace-skills", "solidtrace-skills.zip"},
-	}
-	if len(plugins) != len(wantEntries) {
-		t.Fatalf("plugins: %v", plugins)
-	}
-	for i, want := range wantEntries {
-		entry := plugins[i].(map[string]any)
-		// The entry's name must equal plugin.json's name in the zip.
-		_, files := unzip(t, filepath.Join(dist, want.zip))
-		if entry["name"] != want.name || readJSON(t, files[".claude-plugin/plugin.json"])["name"] != want.name {
-			t.Fatalf("entry %d: name %v, want %s, the name in plugin.json", i, entry["name"], want.name)
-		}
-		if d, _ := entry["description"].(string); d == "" {
-			t.Errorf("%s: no description", want.name)
-		}
-		source, _ := entry["source"].(map[string]any)
-		zipped, _ := os.ReadFile(filepath.Join(dist, want.zip))
-		sum := sha256.Sum256(zipped)
-		wantSource := map[string]any{
-			"source": "archive",
-			"url":    "https://github.com/example/solid_trace/releases/download/v0.19.0/" + want.zip,
-			"sha256": hex.EncodeToString(sum[:]),
-		}
-		if len(source) != len(wantSource) {
-			t.Fatalf("%s source: %v, want %v", want.name, source, wantSource)
-		}
-		for k, v := range wantSource {
-			if source[k] != v {
-				t.Fatalf("%s source.%s = %v, want %v", want.name, k, source[k], v)
-			}
-		}
-		// plugin.json in the zip holds the version; the entry must not also
-		// set one (Claude Code then takes plugin.json's without a word).
-		if _, ok := entry["version"]; ok {
-			t.Fatalf("%s: the entry sets a version", want.name)
-		}
-	}
-}
-
 func TestTheReleaseRefusesATagThatIsNotAVersion(t *testing.T) {
+	root := pluginRoot(t, `{"name":"solidtrace","version":"0.19.0"}`)
 	for _, tag := range []string{"", "latest", "0.19.0", "v0.19", "v0.19.0/../x"} {
-		err := write(options{Dist: t.TempDir(), Root: cliDir, InstallScript: "../../install.sh",
+		err := write(options{Dist: t.TempDir(), Root: root, InstallScript: "../../install.sh",
 			Tag: tag, Repository: "example/solid_trace"})
 		if err == nil {
 			t.Errorf("tag %q: no error", tag)
@@ -198,8 +103,9 @@ func TestTheReleaseRefusesATagThatIsNotAVersion(t *testing.T) {
 }
 
 func TestTheReleaseRefusesARepositoryThatIsNotOwnerName(t *testing.T) {
+	root := pluginRoot(t, `{"name":"solidtrace","version":"0.19.0"}`)
 	for _, repository := range []string{"", "owner", "a/b/c", "a/b/../../x", "a b/c", "o/n\nx"} {
-		err := write(options{Dist: t.TempDir(), Root: cliDir, InstallScript: "../../install.sh",
+		err := write(options{Dist: t.TempDir(), Root: root, InstallScript: "../../install.sh",
 			Tag: "v0.19.0", Repository: repository})
 		if err == nil {
 			t.Errorf("repository %q: no error", repository)
@@ -207,55 +113,87 @@ func TestTheReleaseRefusesARepositoryThatIsNotOwnerName(t *testing.T) {
 	}
 }
 
-// A symbolic link in the plugin directory can point at a file outside the
-// tree; the release must not put its target into the public zip.
-func TestTheReleaseRefusesAPluginFileThatIsNotARegularFile(t *testing.T) {
-	root := pluginRoot(t, `{"name":"solidtrace"}`)
-	secret := filepath.Join(t.TempDir(), "secret")
-	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(secret, filepath.Join(root, "plugin", "link")); err != nil {
-		t.Fatal(err)
-	}
-	dist := t.TempDir()
-	err := write(options{Dist: dist, Root: root, InstallScript: "../../install.sh",
-		Tag: "v0.19.0", Repository: "example/solid_trace"})
-	if err == nil {
-		t.Fatal("no error for a symbolic link in the plugin")
-	}
-	if _, err := os.Stat(filepath.Join(dist, PluginZip)); !os.IsNotExist(err) {
-		t.Fatalf("the release wrote a plugin zip: %v", err)
-	}
-}
-
-// Claude Code installs <name>@solidtrace with the entry's name: a manifest
-// of another name would install a plugin that the entry does not name.
-func TestTheReleaseRefusesAPluginWhoseManifestHasAnotherName(t *testing.T) {
-	root := pluginRoot(t, `{"name":"another"}`)
-
-	err := write(options{Dist: t.TempDir(), Root: root, InstallScript: "../../install.sh",
-		Tag: "v0.19.0", Repository: "example/solid_trace"})
-
-	if err == nil || !strings.Contains(err.Error(), "another") {
-		t.Fatalf("error: %v", err)
+// Claude Code installs the plugin of the marketplace at the release's tag,
+// and updates it only when plugin.json's version changes. A release commit
+// that does not set the version gives the plugin of the last release a new
+// tag, and installed plugins then do not update.
+func TestTheReleaseRefusesATagThatIsNotThePluginVersion(t *testing.T) {
+	for _, c := range []struct{ name, manifest, tag string }{
+		{"an older version", `{"name":"solidtrace","version":"0.18.0"}`, "v0.19.0"},
+		{"no version", `{"name":"solidtrace"}`, "v0.19.0"},
+		{"the version without the pre-release suffix", `{"name":"solidtrace","version":"0.20.0"}`, "v0.20.0-rc.1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dist := t.TempDir()
+			err := write(options{Dist: dist, Root: pluginRoot(t, c.manifest), InstallScript: "../../install.sh",
+				Tag: c.tag, Repository: "example/solid_trace"})
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if entries, _ := os.ReadDir(dist); len(entries) != 0 {
+				t.Fatalf("the release wrote files: %v", entries)
+			}
+		})
 	}
 }
 
-// pluginRoot is a cli folder whose plugin folder has the manifest, and
-// whose skills plugin folder is correct.
-func pluginRoot(t *testing.T, manifest string) string {
-	t.Helper()
-	root := t.TempDir()
-	for dir, data := range map[string]string{"plugin": manifest, "plugin-skills": `{"name":"solidtrace-skills"}`} {
-		if err := os.MkdirAll(filepath.Join(root, dir, ".claude-plugin"), 0o755); err != nil {
-			t.Fatal(err)
+var changelogName = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)\.md$`)
+
+// The release commit adds docs/changelogs/<tag>.md and sets plugin.json's
+// version. This test fails in CI when it does only the first.
+func TestThePluginVersionIsTheVersionOfTheNewestChangelog(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join(repoDir, "docs", "changelogs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest []int
+	for _, e := range entries {
+		m := changelogName.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
 		}
-		if err := os.WriteFile(filepath.Join(root, dir, ".claude-plugin", "plugin.json"), []byte(data), 0o644); err != nil {
-			t.Fatal(err)
+		v := make([]int, 3)
+		for i := range v {
+			v[i], _ = strconv.Atoi(m[i+1])
+		}
+		if slices.Compare(v, newest) > 0 {
+			newest = v
 		}
 	}
-	return root
+	if newest == nil {
+		t.Fatal("docs/changelogs has no v*.md")
+	}
+	want := strconv.Itoa(newest[0]) + "." + strconv.Itoa(newest[1]) + "." + strconv.Itoa(newest[2])
+	got, err := pluginVersion(filepath.Join(cliDir, pluginManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("cli/plugin/.claude-plugin/plugin.json has the version %q; the newest changelog is v%s", got, want)
+	}
+}
+
+// Claude Code installs <plugin>@<marketplace>. Console, the setup script and
+// `solidtrace capture status` use solidtrace@solidtrace.
+func TestTheMarketplaceAtTheRepositoryRootGivesThePluginOfCliAsSolidtraceAtSolidtrace(t *testing.T) {
+	m := readJSON(t, filepath.Join(repoDir, ".claude-plugin", "marketplace.json"))
+	plugins, _ := m["plugins"].([]any)
+	if m["name"] != "solidtrace" || len(plugins) != 1 {
+		t.Fatalf("marketplace: %v", m)
+	}
+	entry, _ := plugins[0].(map[string]any)
+	if entry["name"] != "solidtrace" || entry["source"] != "./cli/plugin" {
+		t.Fatalf("plugin entry: %v", entry)
+	}
+	manifest := readJSON(t, filepath.Join(repoDir, "cli", "plugin", ".claude-plugin", "plugin.json"))
+	if manifest["name"] != entry["name"] {
+		t.Fatalf("plugin.json has the name %v, not the entry's name %v", manifest["name"], entry["name"])
+	}
+	// The entry must not set a version: Claude Code then takes plugin.json's
+	// without a word.
+	if _, ok := entry["version"]; ok {
+		t.Fatal("the entry sets a version")
+	}
 }
 
 func TestEachHookOfThePluginStartsCaptureInTheBackground(t *testing.T) {
@@ -299,9 +237,7 @@ func TestThePluginsHoldNoInstanceURLAndNoSecret(t *testing.T) {
 	// name a public forge's site or API.
 	url := regexp.MustCompile(`[a-z]+://[^\s"]+`)
 	secret := regexp.MustCompile(`(?i)token|secret|password|bearer|authorization|api[_-]?key`)
-	for _, dir := range []string{pluginDir, skillsDir} {
-		checkNoInstanceURLAndNoSecret(t, dir, url, secret)
-	}
+	checkNoInstanceURLAndNoSecret(t, pluginDir, url, secret)
 }
 
 // publicHosts are the public forges, with their subdomains. A host that

@@ -189,7 +189,7 @@ export function openPrSession(cwd: string, opts: { exampleRecord: string; record
   const id = randomUUID()
   const main = new Transcript(id, cwd, minutesAgo(opts.minutesAgo))
   const usage = { input: 3, output: 30, cacheRead: 300, cacheWrite: 30 }
-  main.person('/solidtrace-skills:open-pr')
+  main.person('/solidtrace:open-pr')
   if (opts.inReply) {
     main.person(`End the reply with the record:\n\n\`\`\`solidtrace-pr-record\n${opts.exampleRecord}\n\`\`\``)
     main.reply([{ type: 'text', text: `Opened the PR.\n\n\`\`\`solidtrace-pr-record\n${opts.record}\n\`\`\`` }], usage)

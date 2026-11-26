@@ -12,7 +12,7 @@ The person typed this command, so push the branch and open the PR without asking
 ## 1. Check the branch
 
 - The branch is not the base branch. The base branch is the one the person names, else the remote's default branch (`git remote show origin`). Run `git fetch origin <base>`, and use `origin/<base>` as `<base>` in every later step, so that the diff holds only this branch's work. In local mode, use the local base branch: the person may not have pushed it.
-- The branch has no open PR ([platforms.md](platforms.md), Find the open PR of the branch). When a PR exists, stop and tell the person to run `/solidtrace-skills:update-pr`, which works on the PR's feedback.
+- The branch has no open PR ([platforms.md](platforms.md), Find the open PR of the branch). When a PR exists, stop and tell the person to run `/solidtrace:update-pr`, which works on the PR's feedback.
 - The working tree is clean. If it is not, list the changed files and ask the person whether to commit them. Continue when the tree is clean.
 
 Make a folder for this PR's files: `dir=$(mktemp -d)`.
@@ -41,7 +41,7 @@ You read two other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not re
 - **The record.** Run the digest in a later message than your last block, because Claude Code writes a message to the transcript only when its tool calls end. Then:
   1. Run `solidtrace review digest` with one `--session ID` for each confirmed session, `> "$dir/digest.json"`.
   2. Run `solidtrace review record --digest "$dir/digest.json" > "$dir/record0.json"`. This is the mechanical part of the record.
-  3. Spawn one sub-agent with `subagent_type: "solidtrace-skills:record-writer"`, which can only read files, on the `record` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`. Its prompt is the text of [record.md](record.md), then the two paths to read: `$dir/digest.json` and `$dir/record0.json`. It replies with the notes. Write them to `$dir/notes.json`.
+  3. Spawn one sub-agent with `subagent_type: "solidtrace:record-writer"`, which can only read files, on the `record` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`. Its prompt is the text of [record.md](record.md), then the two paths to read: `$dir/digest.json` and `$dir/record0.json`. It replies with the notes. Write them to `$dir/notes.json`.
   4. Run `solidtrace review record --digest "$dir/digest.json" --notes "$dir/notes.json" --round 1 > "$dir/record.json"`. When it refuses a note (exit 1), send the sub-agent the error, and wait for new notes. After two refusals, write the record with no notes: `solidtrace review record --digest "$dir/digest.json" --round 1 > "$dir/record.json"`. Use this command, not the one with `--notes`, when step 8 runs the command of this step again, and say in the final reply which notes were refused.
 - **The push.** Run `git push -u origin HEAD`, and wait for its result. When it fails, stop before step 7: tell the person why, and do not open a PR on an older remote head. In local mode, skip it.
 

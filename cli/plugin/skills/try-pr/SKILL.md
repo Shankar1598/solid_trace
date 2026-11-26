@@ -77,7 +77,7 @@ Give these, in this order:
 - Each URL with its port, and the sign-in: the user and the password that the recipe seeds.
 - On Linux, the host name (`hostname`). The person can be on a laptop with a port forward to this machine, so name each port to forward.
 - After a start from the docs (kind 3): a launch skill in the repository makes the next start repeatable.
-- The stop: `done <PR>`, with the command name that the person typed: `/try-pr done <PR>` when the skill is linked into `~/.claude/skills/try-pr`, or `/solidtrace-skills:try-pr done <PR>` from the solidtrace-skills plugin.
+- The stop: `done <PR>`, with the command name that the person typed: `/try-pr done <PR>` when the skill is linked into `~/.claude/skills/try-pr`, or `/solidtrace:try-pr done <PR>` from the solidtrace plugin.
 
 ## Done
 

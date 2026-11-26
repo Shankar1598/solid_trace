@@ -1,0 +1,12 @@
+{
+  "name": "solidtrace",
+  "description": "The SolidTrace plugin for Claude Code. Add it at a release's tag to get the plugin of that release.",
+  "owner": { "name": "SolidTrace" },
+  "plugins": [
+    {
+      "name": "solidtrace",
+      "source": "./cli/plugin",
+      "description": "Uploads your Agent sessions in the captured repositories to SolidTrace, and gives skills that review a change and open its PR, with a record of what the review found and what happened to each finding."
+    }
+  ]
+}

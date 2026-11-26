@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	openPRSkill   = "../plugin-skills/skills/open-pr/SKILL.md"
-	updatePRSkill = "../plugin-skills/skills/update-pr/SKILL.md"
+	openPRSkill   = "../plugin/skills/open-pr/SKILL.md"
+	updatePRSkill = "../plugin/skills/update-pr/SKILL.md"
 )
 
 var (
