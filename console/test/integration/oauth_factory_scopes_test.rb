@@ -4,7 +4,8 @@ require "test_helper"
 
 # Seam 2: the factory Scopes in the registry, as an OAuth client meets them
 # on the approval page and at the token endpoint. Only the Scopes that a
-# sign-in needs are for OAuth: mcp, mcp:read, sessions:write and factory.
+# sign-in needs are for OAuth: mcp, mcp:read, sessions:write,
+# sessions:download and factory.
 class OauthFactoryScopesTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
   include PasskeyTestHelper
@@ -28,6 +29,13 @@ class OauthFactoryScopesTest < ActionDispatch::IntegrationTest
                    "Use the Dispatcher as you, in Acme: start, message and stop Runs, and do the Admin actions " \
                    "that your role allows." ],
                  props["organizations"].sole["scopes"]
+  end
+
+  test "the approval page shows the text of sessions:download" do
+    props = approval_page(@client_id, scope: "sessions:write sessions:download factory", resource: nil)
+
+    assert_includes props["organizations"].sole["scopes"],
+                    "Download the Agent sessions of Acme's Agent Project, which each member can read."
   end
 
   test "the approval page shows the text of mcp:read" do

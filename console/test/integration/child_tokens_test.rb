@@ -133,7 +133,8 @@ class ChildTokensTest < ActionDispatch::IntegrationTest
   test "a child token with a scope that its parent cannot give is refused" do
     _, secret = dispatcher_token
 
-    [ [ "factory" ], [ "mcp" ], [ "sessions:write", "factory" ], [ "admin" ] ].each do |scopes|
+    [ [ "factory" ], [ "mcp" ], [ "sessions:write", "factory" ], [ "sessions:read", "sessions:download" ],
+      [ "admin" ] ].each do |scopes|
       refused_child(secret, scopes: scopes, agent_session_ids: [ SESSION_A ], expires_at: 1.hour.from_now.iso8601)
       assert errors["scopes"].present?, scopes.inspect
     end

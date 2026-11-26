@@ -68,7 +68,8 @@ class ApiTokenScopesTest < ActionDispatch::IntegrationTest
   test "the page offers each scope that a person can give, with its text, and not tokens:create" do
     offered = page_props["scopes"]
 
-    assert_equal [ "mcp", "mcp:read", "sessions:write", "sessions:read", "run_events:write", "factory", "issues:comment" ],
+    assert_equal [ "mcp", "mcp:read", "sessions:write", "sessions:read", "sessions:download", "run_events:write", "factory",
+                   "issues:comment" ],
                  offered.pluck("name")
     offered.each { |scope| assert scope["text"].present?, scope["name"] }
     assert_not_includes offered.pluck("name"), "tokens:create"

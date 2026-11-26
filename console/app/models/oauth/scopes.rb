@@ -10,8 +10,9 @@ module Oauth
   # Two flags say who can give a Scope:
   # - oauth: an OAuth client can ask for it on the approval page. Only the
   #   Scopes that a sign-in needs are: mcp and mcp:read for an MCP client,
-  #   sessions:write and factory for `solidtrace login`. A Grant has no
-  #   limits, so sessions:read (always limited) is never for OAuth.
+  #   sessions:write, sessions:download and factory for `solidtrace login`.
+  #   A Grant has no limits, so sessions:read (always limited) is never for
+  #   OAuth.
   # - person: a person can put it on their own API token. tokens:create is
   #   only for the Dispatcher's token.
   module Scopes
@@ -82,6 +83,13 @@ module Oauth
         resource_path: FACTORY_PATH,
         text: "Download the Agent sessions that the token names from %{organization}'s Agent Project.",
         oauth: false, person: true,
+      ),
+      # Not for children: a Run's token reads only its Run's Agent sessions.
+      Scope.new(
+        name: "sessions:download",
+        resource_path: FACTORY_PATH,
+        text: "Download the Agent sessions of %{organization}'s Agent Project, which each member can read.",
+        oauth: true, person: true,
       ),
       Scope.new(
         name: "run_events:write",
