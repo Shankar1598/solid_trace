@@ -468,6 +468,14 @@ type AgentAPI struct {
 	Requests []Request
 	// Sessions are the stored Agent sessions, by id.
 	Sessions map[string]*Session
+	// ConsoleURL is the start of the url of an Evidence file; "" gives a
+	// url that starts with "/", as a server with no Console URL setting.
+	ConsoleURL string
+	// NoEvidence answers 404 to an Evidence file, as an older server.
+	NoEvidence bool
+
+	evidence      map[string]*EvidenceFile
+	evidenceOrder []string
 }
 
 // Request is one offsets call or upload that the fake got.
@@ -555,6 +563,7 @@ func NewAgentAPI(oauth *OAuth) *AgentAPI {
 	mux.HandleFunc("GET /api/agent/v1/captured-repositories", f.capturedRepositories)
 	mux.HandleFunc("GET /api/agent/v1/agent-sessions/{id}/files", f.files)
 	mux.HandleFunc("POST /api/agent/v1/agent-sessions/{id}/files", f.upload)
+	mux.HandleFunc("POST /api/agent/v1/agent-sessions/{id}/evidence", f.addEvidence)
 	f.Server = httptest.NewServer(mux)
 	return f
 }

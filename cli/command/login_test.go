@@ -35,6 +35,8 @@ type world struct {
 	clock       *clock
 	slept       []time.Duration
 	version     string
+	// claudeSession is CLAUDE_CODE_SESSION_ID.
+	claudeSession string
 }
 
 type syncBuffer struct {
@@ -118,6 +120,7 @@ func (w *world) env() command.Env {
 		},
 		Version:           w.version,
 		ClaudeProjectsDir: w.projectsDir(),
+		ClaudeSessionID:   w.claudeSession,
 	}
 }
 

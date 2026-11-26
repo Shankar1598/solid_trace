@@ -47,6 +47,10 @@ type Env struct {
 	// AgentSocket is the path of the agent's socket inside a Run (""
 	// outside one), for `report`.
 	AgentSocket string
+	// ClaudeSessionID is CLAUDE_CODE_SESSION_ID, which Claude Code sets in
+	// the environment of its Bash tool: the Agent session of `evidence
+	// add`.
+	ClaudeSessionID string
 }
 
 const usage = `solidtrace: the SolidTrace agent CLI.
@@ -308,6 +312,16 @@ Usage:
       from the command in the Agent session that the capture uploads.
       It sends nothing. Exit 1 when the JSON is not a record of version
       2, or has a field that the record does not have.
+  solidtrace evidence add FILE... [--caption TEXT] [--session ID]
+      Upload each FILE as an Evidence file of the Agent session: a PNG,
+      JPEG, WebP or GIF image, or an MP4 or WebM video, of at most 32 MiB,
+      that proves a PR. The Agent session is --session, else
+      CLAUDE_CODE_SESSION_ID, which Claude Code sets. --caption (at most
+      200 characters) goes with each FILE. For each FILE it prints one
+      line: the link to the file's page in Console, the type and the size.
+      Members of the Organization open the link after they sign in. The
+      same FILE again gives the same link. A FILE that fails prints its
+      error, and the next FILE uploads. Exit 1 when a FILE failed.
   solidtrace version
       Print the version of this solidtrace.
 `
@@ -359,6 +373,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return pr(ctx, args[1:], env)
 	case "review":
 		return reviewCommand(ctx, args[1:], env)
+	case "evidence":
+		return evidence(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0
