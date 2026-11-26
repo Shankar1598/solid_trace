@@ -126,7 +126,7 @@ func (f *AgentAPI) upload(w http.ResponseWriter, r *http.Request) {
 	case len(body) == 0:
 		fail(http.StatusBadRequest, "The body is empty: send the bytes of the unit.")
 		return
-	case len(body) > UnitLimit || size < uint64(len(body)) || (size > uint64(len(body)) && len(body) != UnitLimit):
+	case len(body) > BodyLimit || size < uint64(len(body)) || (size > uint64(len(body)) && len(body) != BodyLimit):
 		fail(http.StatusBadRequest, "The size does not fit the body.")
 		return
 	case jsonl && size == uint64(len(body)) && body[len(body)-1] != '\n':

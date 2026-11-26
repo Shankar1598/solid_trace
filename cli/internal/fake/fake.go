@@ -473,6 +473,9 @@ type AgentAPI struct {
 	ConsoleURL string
 	// NoEvidence answers 404 to an Evidence file, as an older server.
 	NoEvidence bool
+	// EvidenceLimit, when not 0, is the most bytes of an Evidence file in
+	// place of BodyLimit, as a server with a lower limit than the CLI's.
+	EvidenceLimit int
 
 	evidence      map[string]*EvidenceFile
 	evidenceOrder []string
@@ -508,8 +511,9 @@ type File struct {
 	Versions int
 }
 
-// UnitLimit is the largest unit that the server stores whole: 32 MiB.
-const UnitLimit = 32 << 20
+// BodyLimit is the most bytes that the server stores of one body: the
+// largest unit that it stores whole, and the largest Evidence file.
+const BodyLimit = 32 << 20
 
 // Uploads are the upload requests that got 200.
 func (f *AgentAPI) Uploads() []Request {

@@ -2,10 +2,13 @@ package fake
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"time"
 	"unicode/utf8"
 )
 
@@ -42,16 +45,27 @@ func evidenceType(body []byte) (string, bool) {
 	return "", false
 }
 
+// sessionIDPattern is the form of an Agent session id that the real
+// server takes: a UUID of 36 characters.
+var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 // addEvidence follows the rules of the real upload of an Evidence file:
-// the type from the first bytes and no Content-Encoding (else 415), at
-// most 32 MiB (else 413), a caption of at most 200 characters, and the
-// same bytes again to the same Agent session give 200 with the first row.
-// An old server has no route: NoEvidence answers 404.
+// an Agent session id that is a UUID (else 400), the type from the first
+// bytes and no Content-Encoding (else 415), at most BodyLimit bytes (else
+// 413), a caption of at most 200 characters, and the same bytes again to
+// the same Agent session give 200 with the first row. An old server has
+// no route: NoEvidence answers 404.
 func (f *AgentAPI) addEvidence(w http.ResponseWriter, r *http.Request) {
 	org := f.check(w, r)
 	if org == nil {
 		return
 	}
+	body, err := io.ReadAll(r.Body)
+	f.mu.Lock()
+	delay := f.UploadDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.NoEvidence {
@@ -59,11 +73,16 @@ func (f *AgentAPI) addEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID, caption := r.PathValue("id"), r.URL.Query().Get("caption")
+	if !sessionIDPattern.MatchString(sessionID) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": fmt.Sprintf("%q is not an Agent session id: send the UUID that the harness gives it.", sessionID)})
+		return
+	}
+	limit := cmp.Or(f.EvidenceLimit, BodyLimit)
 	if s := f.Sessions[sessionID]; s != nil && s.Organization != org.Slug {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "Agent session " + sessionID + " was uploaded by another person."})
 		return
 	}
-	body, err := io.ReadAll(r.Body)
 	switch {
 	case err != nil:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "The body is bad."})
@@ -71,8 +90,9 @@ func (f *AgentAPI) addEvidence(w http.ResponseWriter, r *http.Request) {
 	case utf8.RuneCountInString(caption) > 200:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Send a caption of at most 200 characters, in UTF-8."})
 		return
-	case len(body) > EvidenceLimit:
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "An Evidence file is at most 32 MiB."})
+	case len(body) > limit:
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
+			"error": fmt.Sprintf("An Evidence file is at most %d MiB; this one has %d bytes.", limit>>20, len(body))})
 		return
 	case len(body) == 0:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "The body is empty: send the bytes of the file."})
@@ -104,9 +124,6 @@ func (f *AgentAPI) addEvidence(w http.ResponseWriter, r *http.Request) {
 		"byte_size":    len(file.Bytes),
 	})
 }
-
-// EvidenceLimit is the most bytes of an Evidence file: 32 MiB.
-const EvidenceLimit = 32 << 20
 
 // StoredEvidence are copies of the stored Evidence files, in the order of
 // their first upload.

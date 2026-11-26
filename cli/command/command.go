@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/solidtrace/cli/agentapi"
 	"github.com/solidtrace/cli/credentials"
 	"github.com/solidtrace/cli/signin"
 )
@@ -47,13 +49,13 @@ type Env struct {
 	// AgentSocket is the path of the agent's socket inside a Run (""
 	// outside one), for `report`.
 	AgentSocket string
-	// ClaudeSessionID is CLAUDE_CODE_SESSION_ID, which Claude Code sets in
+	// ClaudeSessionID is ClaudeSessionEnv, which Claude Code sets in
 	// the environment of its Bash tool: the Agent session of `evidence
 	// add`.
 	ClaudeSessionID string
 }
 
-const usage = `solidtrace: the SolidTrace agent CLI.
+var usage = `solidtrace: the SolidTrace agent CLI.
 
 Usage:
   solidtrace login [--device] [--ingest-url URL] [Console URL]
@@ -314,10 +316,10 @@ Usage:
       2, or has a field that the record does not have.
   solidtrace evidence add FILE... [--caption TEXT] [--session ID]
       Upload each FILE as an Evidence file of the Agent session: a PNG,
-      JPEG, WebP or GIF image, or an MP4 or WebM video, of at most 32 MiB,
+      JPEG, WebP or GIF image, or an MP4 or WebM video, of at most ` + evidenceLimit + `,
       that proves a PR. The Agent session is --session, else
-      CLAUDE_CODE_SESSION_ID, which Claude Code sets. --caption (at most
-      200 characters) goes with each FILE. For each FILE it prints one
+      ` + ClaudeSessionEnv + `, which Claude Code sets. --caption (at most
+      ` + strconv.Itoa(agentapi.MaxEvidenceCaption) + ` characters) goes with each FILE. For each FILE it prints one
       line: the link to the file's page in Console, the type and the size.
       Members of the Organization open the link after they sign in. The
       same FILE again gives the same link. A FILE that fails prints its

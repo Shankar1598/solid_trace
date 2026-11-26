@@ -39,7 +39,7 @@ func main() {
 		Version:         version.Version,
 		Detach:          detach,
 		AgentSocket:     os.Getenv(agentsocket.Env),
-		ClaudeSessionID: os.Getenv("CLAUDE_CODE_SESSION_ID"),
+		ClaudeSessionID: os.Getenv(command.ClaudeSessionEnv),
 	}
 	if home, err := os.UserHomeDir(); err == nil || os.Getenv("CLAUDE_CONFIG_DIR") != "" {
 		env.ClaudeProjectsDir = command.ClaudeProjectsDir(os.Getenv, home)

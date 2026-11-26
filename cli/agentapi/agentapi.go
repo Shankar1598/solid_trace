@@ -179,19 +179,30 @@ func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploa
 	if err := zw.Close(); err != nil {
 		return Uploaded{}, err
 	}
-	limit := UploadBase + time.Duration(body.Len()/UploadRate)*time.Second
-	ctx, cancel := context.WithTimeout(ctx, limit)
+	ctx, cancel, hc := c.uploadClient(ctx, body.Len())
 	defer cancel()
-	hc := *c.HTTP
-	hc.Timeout = 0
 	var answer Uploaded
-	err := c.callWith(ctx, &hc, http.MethodPost, "/agent-sessions/"+url.PathEscape(sessionID)+"/files?"+query.Encode(),
+	err := c.callWith(ctx, hc, http.MethodPost, "/agent-sessions/"+url.PathEscape(sessionID)+"/files?"+query.Encode(),
 		&requestBody{data: body.Bytes(), encoding: "gzip"}, &answer)
 	return answer, err
 }
 
+// uploadClient gives the context and the HTTP client of an upload of size
+// bytes. The client's Timeout is for the small calls, so the context's
+// deadline grows with the size in its place.
+func (c *Client) uploadClient(ctx context.Context, size int) (context.Context, context.CancelFunc, *http.Client) {
+	ctx, cancel := context.WithTimeout(ctx, UploadBase+time.Duration(size/UploadRate)*time.Second)
+	hc := *c.HTTP
+	hc.Timeout = 0
+	return ctx, cancel, &hc
+}
+
 // MaxEvidenceBytes is the most bytes of one Evidence file.
 const MaxEvidenceBytes = 32 << 20
+
+// MaxEvidenceCaption is the most characters (runes) of the caption of an
+// Evidence file.
+const MaxEvidenceCaption = 200
 
 // Evidence is the server's answer to an upload of an Evidence file. URL is
 // the file's page in Console. It starts with "/" when the server does not
@@ -212,12 +223,10 @@ func (c *Client) AddEvidence(ctx context.Context, sessionID, caption string, dat
 	if caption != "" {
 		path += "?" + url.Values{"caption": {caption}}.Encode()
 	}
-	ctx, cancel := context.WithTimeout(ctx, UploadBase+time.Duration(len(data)/UploadRate)*time.Second)
+	ctx, cancel, hc := c.uploadClient(ctx, len(data))
 	defer cancel()
-	hc := *c.HTTP
-	hc.Timeout = 0
 	var answer Evidence
-	err := c.callWith(ctx, &hc, http.MethodPost, path, &requestBody{data: data}, &answer)
+	err := c.callWith(ctx, hc, http.MethodPost, path, &requestBody{data: data}, &answer)
 	return answer, err
 }
 
