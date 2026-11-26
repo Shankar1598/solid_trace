@@ -12,15 +12,17 @@ Each repository that you add later is new capture, so it needs the confirm too. 
 
 ### Push the plugin with managed settings
 
-If your team uses Claude Code's [managed settings](https://docs.claude.com/en/docs/claude-code/settings), add the snippet from **Settings → Agent sessions → Capture setup** to them. It registers the SolidTrace marketplace of the instance's release (a `url` source, so no machine clones the repository) and force-enables the `solidtrace@solidtrace` plugin, so an engineer cannot turn it off:
+If your team uses Claude Code's [managed settings](https://docs.claude.com/en/docs/claude-code/settings), add the snippet from **Settings → Agent sessions → Capture setup** to them. It registers the SolidTrace marketplace, `.claude-plugin/marketplace.json` of the repository at the instance's release tag, and force-enables the `solidtrace@solidtrace` plugin, so an engineer cannot turn it off. Each machine clones only the `.claude-plugin` and `cli/plugin` folders (`sparsePaths`):
 
 ```json
 {
   "extraKnownMarketplaces": {
     "solidtrace": {
       "source": {
-        "source": "url",
-        "url": "https://github.com/Shankar1598/solid_trace/releases/download/v0.19.0/marketplace.json"
+        "source": "github",
+        "repo": "Shankar1598/solid_trace",
+        "ref": "v0.25.0",
+        "sparsePaths": [".claude-plugin", "cli/plugin"]
       }
     }
   },
@@ -38,7 +40,7 @@ Step 5 of the Capture setup page gives a managed-settings block that also sends 
 
 **Settings → Agent sessions → Capture setup** in Console gives each command with your instance's version and addresses filled in. Each member of the Organization can open it. The CLI sends tokens only over HTTPS, or to a loopback address. So when the Ingest URL is `http://` and Console is on `https://`, the page gives ingest's HTTPS address, `https://<ingest host>:4443`, where Caddy serves ingest.
 
-Or run the setup script. It asks no questions. It installs or upgrades the CLI and the `solidtrace` plugin, which has capture and [the review skills](#record-what-each-review-found-the-review-skills). It removes the `solidtrace-skills` plugin of v0.24.3 and earlier, because `solidtrace` now has the same skills. Run it again to upgrade. It uses the newest release, or the release in `SOLIDTRACE_VERSION`:
+Or run the setup script. It asks no questions. It installs or upgrades the CLI and the `solidtrace` plugin, which has capture and [the review skills](#record-what-each-review-found-the-review-skills). It adds the SolidTrace marketplace from GitHub at the release's tag. When the marketplace is at a different tag, or is the marketplace file of v0.24.3 and earlier, the script removes it first. That also removes the `solidtrace-skills` plugin of v0.24.3 and earlier, because `solidtrace` now has the same skills. Run it again to upgrade. At the same release, it changes nothing. It uses the newest release, or the release in `SOLIDTRACE_VERSION`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Shankar1598/solid_trace/main/cli/setup-claude-code.sh | sh
@@ -49,17 +51,17 @@ When the machine has no sign-in, the script signs in if you give `SOLIDTRACE_CON
 1. Install the `solidtrace` CLI. The script checks the SHA-256 of the file before it installs it in `~/.local/bin`:
 
    ```bash
-   curl -fsSL https://github.com/Shankar1598/solid_trace/releases/download/v0.19.0/install.sh | sh
+   curl -fsSL https://github.com/Shankar1598/solid_trace/releases/download/v0.25.0/install.sh | sh
    ```
 
-2. Install the Claude Code plugin, unless your Admin pushes it with managed settings. Claude Code reads a `github.com` URL as a git repository, so it cannot add the marketplace file from the release's URL. And it does not load a marketplace file that you add as a plain path. So download the file into a `.claude-plugin` folder, and add it from there:
+2. Install the Claude Code plugin, unless your Admin pushes it with managed settings. Add the marketplace of the repository at your instance's release tag. Claude Code then clones only the folders of the marketplace and the plugin:
 
    ```bash
-   mkdir -p ~/.local/share/solidtrace/.claude-plugin
-   curl -fsSL -o ~/.local/share/solidtrace/.claude-plugin/marketplace.json https://github.com/Shankar1598/solid_trace/releases/download/v0.19.0/marketplace.json
-   claude plugin marketplace add ~/.local/share/solidtrace/.claude-plugin/marketplace.json
+   claude plugin marketplace add Shankar1598/solid_trace#v0.25.0 --sparse .claude-plugin cli/plugin
    claude plugin install solidtrace@solidtrace
    ```
+
+   To move to a new release, remove the marketplace (this also removes its plugin), then do this step again with the new tag. Claude Code does not add a marketplace of the same name at a different tag. The setup script does this for you.
 
    Then check that the list shows `solidtrace@solidtrace` with `Status: ✔ enabled`:
 

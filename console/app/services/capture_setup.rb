@@ -6,25 +6,25 @@
 # `login` command for this instance, the captured repositories, and the
 # settings that send Claude Code's telemetry to the Agent Project.
 #
-# The files come from the GitHub release of the instance's version (the
-# release job's `cli` job, cli/internal/releasefiles). An instance that runs
-# no release (a development build) gets the newest release's files.
+# The CLI comes from the GitHub release of the instance's version (the
+# release job's `cli` job, cli/internal/releasefiles). The plugin comes from
+# the marketplace file at the repository root, at the release's tag. An
+# instance that runs no release (a development build) gets the newest
+# release's CLI and the plugin of main.
 module CaptureSetup
-  RELEASES = "https://github.com/Shankar1598/solid_trace/releases"
+  REPOSITORY = "Shankar1598/solid_trace"
+  RELEASES = "https://github.com/#{REPOSITORY}/releases".freeze
+  # Claude Code clones only these folders of the repository.
+  SPARSE_PATHS = [ ".claude-plugin", "cli/plugin" ].freeze
   # A release's tag, as the release workflow builds the images from.
   RELEASE_TAG = /\Av\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?\z/
   # The plugin's install id: <plugin>@<marketplace>.
   MARKETPLACE = "solidtrace"
   PLUGIN = "solidtrace@#{MARKETPLACE}".freeze
   STATUS_COMMAND = "solidtrace capture status"
-  # Where the plugin commands put the release's marketplace file. Claude Code
-  # reads a github.com URL as a git repository, and it does not load a
-  # marketplace file added as a plain path. It loads one at
-  # <folder>/.claude-plugin/marketplace.json.
-  MARKETPLACE_FILE = "~/.local/share/solidtrace/.claude-plugin/marketplace.json"
   # It says "enabled" for the plugin when the install worked.
   PLUGIN_CHECK_COMMAND = "claude plugin list"
-  NOT_A_RELEASE = "This instance runs %{version}, which is not a release, so the commands use the newest release."
+  NOT_A_RELEASE = "This instance runs %{version}, which is not a release, so the commands use the CLI of the newest release and the plugin of main."
   KEY_PLACEHOLDER = "<key>"
 
   module_function
@@ -33,6 +33,7 @@ module CaptureSetup
   # console_url and ingest_url are where the CLI reaches this instance.
   def props(organization:, version:, console_url:, ingest_url:)
     files = release_files(version)
+    source = marketplace_source(version)
     project = organization.agent_project
     {
       on: project.present?,
@@ -40,19 +41,19 @@ module CaptureSetup
       version: version,
       version_note: (format(NOT_A_RELEASE, version: version) unless release?(version)),
       install_command: "curl -fsSL #{files}/install.sh | sh",
-      plugin_commands: plugin_commands(files),
+      plugin_commands: plugin_commands(source),
       plugin_check_command: PLUGIN_CHECK_COMMAND,
-      managed_settings: JSON.pretty_generate(managed_settings(files)),
+      managed_settings: JSON.pretty_generate(managed_settings(source)),
       login_command: "solidtrace login --ingest-url #{ingest_url} #{console_url}",
       status_command: STATUS_COMMAND,
-      telemetry: project && telemetry(project, files, ingest_url),
+      telemetry: project && telemetry(project, source, ingest_url),
     }
   end
 
   # Each member reads the key, as the keys of other Projects (ADR 0023).
   # OTEL_LOG_USER_PROMPTS and OTEL_LOG_TOOL_DETAILS stay off: Claude Code
   # then sends prompt text and Bash commands, from every repository.
-  def telemetry(project, files, ingest_url)
+  def telemetry(project, source, ingest_url)
     key = project.project_keys.pick(:public_key)
     env = {
       CLAUDE_CODE_ENABLE_TELEMETRY: "1",
@@ -65,7 +66,7 @@ module CaptureSetup
     }
     {
       user_settings: JSON.pretty_generate(env: env),
-      managed_settings: JSON.pretty_generate(managed_settings(files).merge(env: env)),
+      managed_settings: JSON.pretty_generate(managed_settings(source).merge(env: env)),
       has_key: key.present?,
       project_slug: project.slug,
     }
@@ -80,25 +81,27 @@ module CaptureSetup
     release?(version) ? "#{RELEASES}/download/#{version}" : "#{RELEASES}/latest/download"
   end
 
-  # Download the marketplace file, add it to Claude Code, and install the plugin.
-  def plugin_commands(files)
+  # The marketplace as Claude Code's settings give it: the repository at the
+  # release's tag, or at main (no ref) when the instance runs no release.
+  def marketplace_source(version)
+    { source: "github", repo: REPOSITORY, ref: (version if release?(version)), sparsePaths: SPARSE_PATHS }.compact
+  end
+
+  # Add the marketplace to Claude Code, and install the plugin.
+  def plugin_commands(source)
     [
-      "mkdir -p #{File.dirname(MARKETPLACE_FILE)}",
-      "curl -fsSL -o #{MARKETPLACE_FILE} #{files}/marketplace.json",
-      "claude plugin marketplace add #{MARKETPLACE_FILE}",
+      "claude plugin marketplace add #{[ source[:repo], source[:ref] ].compact.join("#")} --sparse #{source[:sparsePaths].join(" ")}",
       "claude plugin install #{PLUGIN}"
     ]
   end
 
-  # Claude Code's managed settings: the marketplace with a url source (a git
-  # source would clone the whole repository on each machine), and the
-  # plugin force-enabled, so a person cannot turn it off. In settings, a url
-  # source loads (Claude Code 2.1.323): the first start of Claude Code adds
-  # the marketplace and gets the plugin, and the plugin runs from the next
-  # start.
-  def managed_settings(files)
+  # Claude Code's managed settings: the marketplace, and the plugin
+  # force-enabled, so a person cannot turn it off. The first start of Claude
+  # Code adds the marketplace and gets the plugin, and the plugin runs from
+  # the next start.
+  def managed_settings(source)
     {
-      extraKnownMarketplaces: { MARKETPLACE => { source: { source: "url", url: "#{files}/marketplace.json" } } },
+      extraKnownMarketplaces: { MARKETPLACE => { source: source } },
       enabledPlugins: { PLUGIN => true },
     }
   end

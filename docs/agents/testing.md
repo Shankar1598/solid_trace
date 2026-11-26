@@ -65,7 +65,7 @@ Day to day, run the tests for what you changed. Before a release, run all three 
 
 If Vite stops with `ENOSPC` on a `watch`, the inotify watch limit is used up, not the disk. Restart Vite with `CHOKIDAR_USEPOLLING=1` set, and it polls instead of watching.
 
-Each release has its changelog, `docs/changelogs/<tag>.md`: the GitHub release's notes, then a "Release record" section saying what was tagged, the migrations and config changes, and the tests run. Before tagging, record each suite's result (exit, time, counts) there.
+Each release has its changelog, `docs/changelogs/<tag>.md`: the GitHub release's notes, then a "Release record" section saying what was tagged, the migrations and config changes, and the tests run. Before tagging, record each suite's result (exit, time, counts) there. The release commit also sets `version` in `cli/plugin/.claude-plugin/plugin.json` to the tag without its `v`, such as `0.25.0`. A Go test fails when that version is not the newest changelog's, and the release job fails when it is not the tag's.
 
 The last step of a release, after the GitHub release is published and its images are built: give the user the upgrade command for the new tag, such as:
 
