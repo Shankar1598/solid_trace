@@ -61,7 +61,12 @@ func TestAgentDownloadsOverTheLimitGet503WithRetryAfter(t *testing.T) {
 	sessionID := uuid.NewString()
 	app.Get("/agent-sessions/:session_id/download", func(c *fiber.Ctx) error {
 		token := auth.Token{Organization: auth.Organization{ID: 1}, Scopes: []string{ScopeSessionsDownload}}
-		if c.Query("token") == "run" {
+		switch c.Query("token") {
+		case "run":
+			token = auth.Token{Organization: auth.Organization{ID: 1}, Scopes: []string{ScopeSessionsRead},
+				AgentSessionIDs: []string{sessionID}, Child: true}
+		case "list":
+			// A person's own API token with a list of ids, not a child.
 			token = auth.Token{Organization: auth.Organization{ID: 1}, Scopes: []string{ScopeSessionsRead},
 				AgentSessionIDs: []string{sessionID}}
 		}
@@ -115,6 +120,10 @@ func TestAgentDownloadsOverTheLimitGet503WithRetryAfter(t *testing.T) {
 
 	if got := get(""); got.status != http.StatusServiceUnavailable || got.retryAfter != agentDownloadRetryAfter {
 		t.Errorf("Expected 503 with Retry-After %s over the limit, got %d with %q: %s",
+			agentDownloadRetryAfter, got.status, got.retryAfter, got.body)
+	}
+	if got := get("?token=list"); got.status != http.StatusServiceUnavailable || got.retryAfter != agentDownloadRetryAfter {
+		t.Errorf("Expected 503 with Retry-After %s for a person's token with a list over the limit, got %d with %q: %s",
 			agentDownloadRetryAfter, got.status, got.retryAfter, got.body)
 	}
 

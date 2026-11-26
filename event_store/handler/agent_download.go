@@ -120,7 +120,9 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 			"error": "The last uploads of this Agent session are stored but not yet ready to download. Try again in a second."})
 	}
 	release := func() {}
-	if !limitedToARun(token) {
+	// A Run's child token is not in the limit, as before people could
+	// download. A person's token with a list of ids is in it.
+	if !token.Child {
 		select {
 		case h.downloadSlots <- struct{}{}:
 		default:
