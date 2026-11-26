@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 )
 
-// EvidenceFile is one stored Evidence file.
 type EvidenceFile struct {
 	ID          string
 	SessionID   string
@@ -21,9 +20,6 @@ type EvidenceFile struct {
 	Bytes       []byte
 }
 
-// evidenceTypes are the first bytes of the types that the server takes.
-// The real server also checks the brands of an MP4 and the DocType of a
-// WebM.
 var evidenceTypes = []struct{ contentType, magic string }{
 	{"image/png", "\x89PNG\r\n\x1a\n"},
 	{"image/jpeg", "\xff\xd8\xff"},
@@ -45,16 +41,8 @@ func evidenceType(body []byte) (string, bool) {
 	return "", false
 }
 
-// sessionIDPattern is the form of an Agent session id that the real
-// server takes: a UUID of 36 characters.
 var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// addEvidence follows the rules of the real upload of an Evidence file:
-// an Agent session id that is a UUID (else 400), the type from the first
-// bytes and no Content-Encoding (else 415), at most BodyLimit bytes (else
-// 413), a caption of at most 200 characters, and the same bytes again to
-// the same Agent session give 200 with the first row. An old server has
-// no route: NoEvidence answers 404.
 func (f *AgentAPI) addEvidence(w http.ResponseWriter, r *http.Request) {
 	org := f.check(w, r)
 	if org == nil {

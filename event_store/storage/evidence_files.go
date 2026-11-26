@@ -28,18 +28,16 @@ type EvidenceFile struct {
 	OrganizationID int64
 	AgentSessionID uuid.UUID
 	SHA256         string
-	// Caption is "" for none.
-	Caption     string
-	ContentType string
-	ByteSize    int64
+	Caption        string
+	ContentType    string
+	ByteSize       int64
 	// StorageKey is the key of the bytes in the bucket, or their path under
 	// the evidence folder: evidence/org=<id>/<id>.<ext>.
 	StorageKey string
 	// UploadedByUserID is 0 after Console deletes the user.
 	UploadedByUserID int64
 	CreatedAt        time.Time
-	// DeletedAt is set when Evidence Retention deleted the bytes.
-	DeletedAt *time.Time
+	DeletedAt        *time.Time
 }
 
 // EvidenceUpload is one upload of an Evidence file: its bytes, with the
@@ -54,9 +52,8 @@ type EvidenceUpload struct {
 	At             time.Time
 }
 
-// evidenceTypes are the types of Evidence files, with their file
-// extensions. Console serves the bytes from its own domain, so each other
-// type, as SVG or HTML, could run script there.
+// Console serves the bytes from its own domain, so each other type, as SVG
+// or HTML, could run script there.
 var evidenceTypes = []struct {
 	contentType, extension string
 	matches                func(head []byte) bool
@@ -80,8 +77,6 @@ var mp4Brands = map[string]bool{
 	"mp41": true, "mp42": true, "avc1": true, "dash": true, "M4V ": true,
 }
 
-// isMP4 reports whether the file starts with an ftyp box whose major or a
-// compatible brand is an MP4 brand.
 func isMP4(b []byte) bool {
 	if len(b) < 12 || string(b[4:8]) != "ftyp" {
 		return false
@@ -102,8 +97,8 @@ func isMP4(b []byte) bool {
 	return false
 }
 
-// isWebM reports whether the file starts with an EBML header whose DocType
-// is webm. Matroska files have the same header with the DocType matroska.
+// Matroska files have the same EBML header as WebM, with the DocType
+// matroska.
 func isWebM(b []byte) bool {
 	head := b[:min(len(b), 64)]
 	docType := bytes.Index(head, []byte("\x42\x82"))
@@ -111,8 +106,6 @@ func isWebM(b []byte) bool {
 		bytes.Contains(head[docType:min(len(head), docType+12)], []byte("webm"))
 }
 
-// EvidenceContentType is the type of an Evidence file from its first bytes,
-// or false for a file that is not one of the types.
 func EvidenceContentType(data []byte) (string, bool) {
 	for _, t := range evidenceTypes {
 		if t.matches(data) {
@@ -131,9 +124,6 @@ func evidenceExtension(contentType string) string {
 	panic("no Evidence file type " + contentType)
 }
 
-// EvidenceFiles keeps Evidence files: their rows in Console's SQLite, and
-// their bytes in the bucket, or under the evidence folder when there is no
-// bucket.
 type EvidenceFiles struct {
 	db     *sql.DB
 	bucket ObjectStore
@@ -201,8 +191,6 @@ func (e *EvidenceFiles) Add(ctx context.Context, upload EvidenceUpload) (Evidenc
 	}
 	inserted, err := e.insert(ctx, file)
 	if err != nil || !inserted {
-		// A failed insert, or an upload of the same bytes that inserted its
-		// row first: this one's bytes have no row.
 		if deleteErr := e.deleteBytes(ctx, file.StorageKey); deleteErr != nil {
 			err = errors.Join(err, deleteErr)
 		}
@@ -217,8 +205,6 @@ func (e *EvidenceFiles) Add(ctx context.Context, upload EvidenceUpload) (Evidenc
 	return file, true, nil
 }
 
-// pastRetention reports whether file is past its Organization's Evidence
-// Retention at now, as DeletePastRetention finds it.
 func (e *EvidenceFiles) pastRetention(ctx context.Context, file EvidenceFile, now time.Time) (bool, error) {
 	days, err := evidenceRetentionOf(ctx, e.db, file.OrganizationID)
 	if err != nil {
@@ -228,8 +214,6 @@ func (e *EvidenceFiles) pastRetention(ctx context.Context, file EvidenceFile, no
 	return ok && file.CreatedAt.Before(cutoff), nil
 }
 
-// put writes data to a temporary file, then moves it to key: into the
-// bucket, or into place under the evidence folder.
 func (e *EvidenceFiles) put(ctx context.Context, key string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Join(e.dir, "tmp"), "upload-*")
 	if err != nil {
@@ -270,8 +254,6 @@ func (e *EvidenceFiles) localPath(key string) string {
 	return filepath.Join(e.dir, filepath.FromSlash(key))
 }
 
-// insert adds the row, or reports false when the Agent session already has
-// a row with the same bytes that is not deleted.
 func (e *EvidenceFiles) insert(ctx context.Context, file EvidenceFile) (bool, error) {
 	result, err := e.db.ExecContext(ctx, `
 		INSERT INTO evidence_files (id, organization_id, agent_session_id, sha256, caption, content_type, byte_size,
@@ -296,7 +278,6 @@ func (e *EvidenceFiles) find(ctx context.Context, organizationID int64, sessionI
 		WHERE organization_id = ? AND agent_session_id = ? AND sha256 = ? AND deleted_at IS NULL`, organizationID, sessionID.String(), hash))
 }
 
-// EvidenceFile reads the row of the Evidence file id.
 func (e *EvidenceFiles) EvidenceFile(ctx context.Context, id uuid.UUID) (EvidenceFile, bool, error) {
 	return scanEvidenceFile(e.db.QueryRowContext(ctx, "SELECT "+evidenceColumns+" FROM evidence_files WHERE id = ?", id.String()))
 }
@@ -317,7 +298,6 @@ func (e *EvidenceFiles) OpenEvidenceFile(ctx context.Context, file EvidenceFile,
 	}{io.NewSectionReader(f, offset, length), f}, nil
 }
 
-// railsTimeLayout is a datetime as Rails writes it to SQLite, in UTC.
 const railsTimeLayout = "2006-01-02 15:04:05.000000"
 
 func scanEvidenceFile(row *sql.Row) (EvidenceFile, bool, error) {

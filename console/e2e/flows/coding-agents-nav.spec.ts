@@ -2,10 +2,6 @@ import { expect, test, type Page } from '@playwright/test'
 import { ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 
-// The sidebar's Coding agents group: an accordion that holds Agent sessions
-// and Review records. It is open on their pages. Elsewhere it stays as the
-// viewer last left it, also after a reload.
-
 const isDark = (page: Page) => page.evaluate(() => document.documentElement.classList.contains('dark'))
 
 async function shot(page: Page, name: string) {
@@ -20,7 +16,6 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   const records = nav.getByRole('link', { name: 'Review records' })
   const lit = nav.locator('[aria-current="page"]')
 
-  // From Issues, before the viewer opens it: closed, its children hidden.
   await page.goto(`/${ORG}/issues`)
   await page.evaluate(() => localStorage.removeItem('solidtrace.sidebarGroup.coding_agents'))
   await page.reload()
@@ -33,7 +28,6 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   await expect.poll(() => isDark(page)).toBe(false)
   await shot(page, 'closed-on-issues-light')
 
-  // Open it, then go to Review records: still open, and Review records alone lit.
   await heading.click()
   await expect(heading).toHaveAttribute('aria-expanded', 'true')
   await records.click()
@@ -46,13 +40,10 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   await expect(page.getByRole('navigation', { name: 'Agent sessions tabs' })).toHaveCount(0)
   await shot(page, 'open-on-review-records-light')
 
-  // A reload keeps it open.
   await page.reload()
   await expect(heading).toHaveAttribute('aria-expanded', 'true')
   await expect(records).toHaveAttribute('aria-current', 'page')
 
-  // Closed on Review records, the heading is lit in the place of its
-  // hidden child. Open again, Review records is lit and the heading not.
   await heading.click()
   await expect(heading).toHaveAttribute('aria-expanded', 'false')
   await expect(heading).toHaveAttribute('data-lit', 'true')
@@ -63,7 +54,6 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   await expect(heading).toHaveAttribute('data-lit', 'false')
   await expect(records).toHaveAttribute('aria-current', 'page')
 
-  // Dark mode, then Agent sessions from the group: it alone is lit.
   await page.getByRole('button', { name: 'Toggle theme' }).click()
   await expect.poll(() => isDark(page)).toBe(true)
   await shot(page, 'open-on-review-records-dark')
@@ -73,8 +63,6 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   await expect(sessions).toHaveAttribute('aria-current', 'page')
   await shot(page, 'open-on-agent-sessions-dark')
 
-  // On Issues the group stays as the viewer left it: open. Closed, it stays
-  // closed after a reload.
   await nav.getByRole('link', { name: 'Issues' }).click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/issues`))
   await expect(heading).toHaveAttribute('aria-expanded', 'true')
@@ -85,17 +73,12 @@ test('the Coding agents group opens, closes, keeps the choice, and lights only t
   await expect(heading).toHaveAttribute('aria-expanded', 'false')
   await shot(page, 'closed-on-issues-dark')
 
-  // A child's page opens it, also after the viewer closed it.
   await page.goto(`/${ORG}/review_records`)
   await expect(heading).toHaveAttribute('aria-expanded', 'true')
   await expect(records).toHaveAttribute('aria-current', 'page')
 
   expect(errors).toEqual([])
 
-  // With no localStorage the group still works: closed elsewhere, open on
-  // its children's pages. The saved choice is "open", so a closed group on
-  // Issues shows that the page did not read it. The layout's theme script
-  // throws then, so page errors are not checked past this point.
   await page.evaluate(() => localStorage.setItem('solidtrace.sidebarGroup.coding_agents', 'open'))
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', { get() { throw new Error('blocked') } })

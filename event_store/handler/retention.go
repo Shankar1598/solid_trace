@@ -8,7 +8,6 @@ import (
 	"github.com/solidtrace/event_store/pkg/logger"
 )
 
-// DailyPass runs the cleanup's daily pass now: *logprocessing.Cleanup.
 type DailyPass interface {
 	RunDailyPass() (logprocessing.RetentionPass, error)
 }

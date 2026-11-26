@@ -3,11 +3,6 @@
 require "test_helper"
 require "webmock/minitest"
 
-# The Evidence files pages and their bytes: the rows are in Console's
-# evidence_files table, which EventStore writes; the bytes come from
-# EventStore's /evidence/:id/content, streamed with the browser's Range.
-# Each member of the file's Organization sees them; anyone else gets 404,
-# and a person who is not signed in signs in and comes back.
 class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
 
@@ -33,7 +28,6 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: { sessions: {} }.to_json)
   end
 
-  # A row as EventStore writes it.
   def evidence(id, organization: @organization, content_type: "image/png", byte_size: 84, caption: nil, created_at: Time.current, deleted_at: nil)
     EvidenceFile.insert!({
       id: id, organization_id: organization.id, agent_session_id: SESSION, sha256: sha256(id), caption: caption,
@@ -265,7 +259,6 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_plain_answer
   end
 
-  # A plain answer: no headers of the file's bytes, and no long cache.
   def assert_plain_answer
     assert_equal "text/plain", response.media_type
     assert_equal "private", response.headers["Cache-Control"]

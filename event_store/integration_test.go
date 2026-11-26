@@ -83,9 +83,7 @@ type TestEnv struct {
 	AgentParser *agentprocessing.Parser
 	// ConsoleSettings reads Console's settings, as Retention.
 	ConsoleSettings *storage.ConsoleSettings
-	// EvidenceFiles keeps Evidence files: rows in Console's test database,
-	// bytes in the test's own folder.
-	EvidenceFiles *storage.EvidenceFiles
+	EvidenceFiles   *storage.EvidenceFiles
 	// LogCleanup cleans up every family of day tables, Spans' too.
 	LogCleanup  *logprocessing.Cleanup
 	LogsHandler *handler.LogsHandler
@@ -99,8 +97,7 @@ type TestEnv struct {
 	// ServerVersion is the version that the agent ingest API says it is,
 	// v0.19.0 unless a test changes it.
 	ServerVersion string
-	// ConsoleURL is the agent ingest API's CONSOLE_URL.
-	ConsoleURL string
+	ConsoleURL    string
 
 	// LogTransforms runs each Project's Log transform in Log processing.
 	// Restart keeps it; Reopen makes a new one.

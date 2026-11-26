@@ -14,7 +14,6 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// fakeDailyPass answers each daily pass with pass and err.
 type fakeDailyPass struct {
 	pass logprocessing.RetentionPass
 	err  error

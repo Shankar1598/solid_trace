@@ -44,22 +44,15 @@ type Family struct {
 	Retention func() (map[uint32]int, error)
 }
 
-// EvidenceStore deletes the Evidence files past Evidence Retention:
-// *storage.EvidenceFiles.
 type EvidenceStore interface {
 	DeletePastRetention(ctx context.Context, now time.Time, retention map[int64]int) (storage.EvidenceSweep, error)
 }
 
-// Evidence is the Evidence files with their Evidence Retention, as a Family
-// is a family of day tables with its Retention.
 type Evidence struct {
-	Files EvidenceStore
-	// Retention returns each Organization's Evidence Retention in whole
-	// days, as (*storage.ConsoleSettings).EvidenceRetention reads it.
+	Files     EvidenceStore
 	Retention func() (map[int64]int, error)
 }
 
-// RetentionPass is what one daily pass did, and how long each part took.
 type RetentionPass struct {
 	DaysTook     time.Duration
 	EvidenceTook time.Duration
@@ -88,11 +81,8 @@ type Cleanup struct {
 	families  []Family
 	diskLimit storage.LogDiskLimit
 	clock     clock.Clock
-	// evidence is nil for a cleanup with no Evidence files.
-	evidence *Evidence
-	// passLock keeps a daily pass that RunDailyPass asks for apart from
-	// the timer's runs.
-	passLock sync.Mutex
+	evidence  *Evidence
+	passLock  sync.Mutex
 
 	*worker
 }
@@ -119,9 +109,6 @@ func (c *Cleanup) Stop() {
 }
 
 func (c *Cleanup) run() {
-	// The UTC days of the last whole daily pass over the days, and of the
-	// last run of Evidence Retention, apart, so that a failure of one does
-	// not run the other again.
 	var lastPass, lastEvidencePass time.Time
 	for {
 		c.passLock.Lock()
@@ -197,8 +184,6 @@ func (c *Cleanup) RunDailyPass() (RetentionPass, error) {
 	return pass, errors.Join(daysErr, evidenceErr)
 }
 
-// deleteEvidencePastRetention runs Evidence Retention at now, with each
-// Organization's Evidence Retention in retention.
 func (c *Cleanup) deleteEvidencePastRetention(now time.Time, retention map[int64]int) (storage.EvidenceSweep, error) {
 	start := time.Now()
 	sweep, err := c.evidence.Files.DeletePastRetention(context.Background(), now, retention)

@@ -102,7 +102,6 @@ func fileProblems(path, skill, text string, headings map[string][]string) []stri
 		if strings.ContainsRune(l, '—') {
 			add(n, "has an em dash (U+2014)")
 		}
-		// A link in a code span is an example of a link, not a link.
 		for _, m := range markdownLink.FindAllStringSubmatch(bare, -1) {
 			target, _, _ := strings.Cut(m[1], "#")
 			if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {

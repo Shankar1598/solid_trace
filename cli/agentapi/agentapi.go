@@ -187,9 +187,6 @@ func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploa
 	return answer, err
 }
 
-// uploadClient gives the context and the HTTP client of an upload of size
-// bytes. The client's Timeout is for the small calls, so the context's
-// deadline grows with the size in its place.
 func (c *Client) uploadClient(ctx context.Context, size int) (context.Context, context.CancelFunc, *http.Client) {
 	ctx, cancel := context.WithTimeout(ctx, UploadBase+time.Duration(size/UploadRate)*time.Second)
 	hc := *c.HTTP
@@ -197,7 +194,6 @@ func (c *Client) uploadClient(ctx context.Context, size int) (context.Context, c
 	return ctx, cancel, &hc
 }
 
-// MaxEvidenceBytes is the most bytes of one Evidence file.
 const MaxEvidenceBytes = 32 << 20
 
 // MaxEvidenceCaption is the most characters (runes) of the caption of an
@@ -230,8 +226,6 @@ func (c *Client) AddEvidence(ctx context.Context, sessionID, caption string, dat
 	return answer, err
 }
 
-// requestBody is the body of a request and its Content-Encoding ("" for
-// none).
 type requestBody struct {
 	data     []byte
 	encoding string
@@ -241,7 +235,6 @@ func (c *Client) getJSON(ctx context.Context, path string, into any) error {
 	return c.call(ctx, http.MethodGet, path, into)
 }
 
-// call sends one request with no body.
 func (c *Client) call(ctx context.Context, method, path string, into any) error {
 	return c.callWith(ctx, c.HTTP, method, path, nil, into)
 }

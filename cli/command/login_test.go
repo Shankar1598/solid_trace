@@ -29,13 +29,12 @@ type world struct {
 	stdout   *syncBuffer
 	stderr   *syncBuffer
 	// httpTimeout is the HTTP client's Timeout; 0 is 10 s.
-	httpTimeout time.Duration
-	browser     func(url string) error
-	opened      []string
-	clock       *clock
-	slept       []time.Duration
-	version     string
-	// claudeSession is CLAUDE_CODE_SESSION_ID.
+	httpTimeout   time.Duration
+	browser       func(url string) error
+	opened        []string
+	clock         *clock
+	slept         []time.Duration
+	version       string
 	claudeSession string
 }
 

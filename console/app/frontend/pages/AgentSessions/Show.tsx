@@ -63,7 +63,6 @@ interface AgentSessionProps {
   review_record: SessionReviewRecord | null
   /** False when EventStore could not say whether it has one. */
   review_record_known: boolean
-  /** The Evidence files of this Agent session, the newest first. */
   evidence_files: EvidenceFile[]
 }
 

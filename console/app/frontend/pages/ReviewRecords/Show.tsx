@@ -32,7 +32,6 @@ type ReviewRecordProps = {
   record: ReviewRecord | null
   rounds: ReviewRound[]
   list_path: string
-  /** The Evidence files of the record's Agent session, the newest first. */
   evidence_files: EvidenceFile[]
 }
 

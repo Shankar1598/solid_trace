@@ -192,7 +192,6 @@ func (s *s3Store) List(ctx context.Context, prefix string) ([]StoredObject, erro
 	return objects, nil
 }
 
-// Get asks for the range in one GET, and streams the answer's body.
 func (s *s3Store) Get(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
 	if err := checkObjectKey(key); err != nil {
 		return nil, err

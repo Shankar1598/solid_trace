@@ -60,8 +60,7 @@ type AgentConfig struct {
 	// RunEvents stores the Dispatcher's run events as Logs.
 	RunEvents RunEventsIngest
 	// Totals reads the totals of Agent sessions for the totals call.
-	Totals AgentTotals
-	// Evidence keeps the Evidence files of Agent sessions.
+	Totals   AgentTotals
 	Evidence EvidenceFiles
 	// ConsoleURL is Console's URL when the Console URL instance setting is
 	// not set, as CONSOLE_URL gives it. The handler cleans it as Console's

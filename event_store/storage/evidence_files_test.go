@@ -50,10 +50,6 @@ func TestTheTypeOfAnEvidenceFileIsFoundFromItsFirstBytes(t *testing.T) {
 	}
 }
 
-// evidenceFilesDDL copies the evidence_files table from console/db/schema.rb,
-// which owns it, without its foreign keys, and the columns of projects that
-// give Evidence Retention. Keep the unique index in step: the dedup depends
-// on it.
 const evidenceFilesDDL = `
 CREATE TABLE projects (
 	id INTEGER PRIMARY KEY,
@@ -78,8 +74,6 @@ CREATE UNIQUE INDEX index_evidence_files_on_session_and_sha256 ON evidence_files
 	WHERE deleted_at IS NULL;
 `
 
-// newTestEvidenceFiles keeps Evidence files in a new SQLite with the
-// evidence_files table, and their bytes in bucket, or under dir without one.
 func newTestEvidenceFiles(t *testing.T, bucket ObjectStore, dir string) *EvidenceFiles {
 	t.Helper()
 	logger.Init()
@@ -94,8 +88,6 @@ func newTestEvidenceFiles(t *testing.T, bucket ObjectStore, dir string) *Evidenc
 	return files
 }
 
-// memoryStore is an ObjectStore in memory. onPut, if set, runs after each
-// Put, and failDelete, if set, gives the error of a Delete.
 type memoryStore struct {
 	mu         sync.Mutex
 	objects    map[string][]byte
@@ -174,7 +166,6 @@ func evidenceUpload(data []byte) EvidenceUpload {
 	}
 }
 
-// readEvidenceFile reads length bytes of file from offset.
 func readEvidenceFile(t *testing.T, e *EvidenceFiles, file EvidenceFile, offset, length int64) []byte {
 	t.Helper()
 	reader, err := e.OpenEvidenceFile(context.Background(), file, offset, length)
@@ -189,7 +180,6 @@ func readEvidenceFile(t *testing.T, e *EvidenceFiles, file EvidenceFile, offset,
 	return data
 }
 
-// refuseEvidenceInserts makes each insert into evidence_files fail.
 func refuseEvidenceInserts(t *testing.T, e *EvidenceFiles) {
 	t.Helper()
 	if _, err := e.db.Exec(`CREATE TRIGGER refuse_evidence_files BEFORE INSERT ON evidence_files
@@ -361,8 +351,6 @@ func TestEvidenceFilesInABucketOnMinIOAreStoredReadAndDeleted(t *testing.T) {
 		t.Errorf("Expected the failed upload's object to be deleted, got %v (%v)", objects, err)
 	}
 
-	// Evidence Retention deletes the file's object, and an object with no
-	// row, which the bucket lists with its time.
 	if err := store.Put(ctx, "evidence/org=1/"+uuid.NewString()+".png", writeFile(t, "no row")); err != nil {
 		t.Fatal(err)
 	}

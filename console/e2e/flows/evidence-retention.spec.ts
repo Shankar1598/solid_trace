@@ -6,16 +6,6 @@ import { randomUUID } from 'node:crypto'
 import { ADMIN, ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 
-// Evidence Retention, from the setting to the deleted page. The flow uploads
-// a PNG with a sessions:write token to EventStore's agent ingest API, as
-// `solidtrace evidence add` does. The admin sets Evidence Retention to 1 day
-// on Settings → Agent sessions. The file's row is moved 2 days back (a
-// fixture), and EventStore's daily pass runs at once through the query API's
-// POST /retention. Then the file's page says when it was deleted and after
-// how many days, its bytes get 410, and its object is gone from EventStore's
-// evidence folder. The setting goes back to 90 days after, and the file's
-// row and object are removed.
-
 const RUN = Date.now().toString(36)
 const ENTRY = 'flows.example/flowteam/*'
 const TOKEN_NAME = `e2e evidence retention ${RUN}`
@@ -57,7 +47,6 @@ test.afterAll(() => {
 
 const shot = (page: Page, name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), animations: 'disabled' })
 
-/** A small PNG of its own bytes: the signature, then the run's id. */
 const png = () => Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'binary'), Buffer.from(`evidence retention ${RUN}`)])
 
 test('an admin sets Evidence Retention to 1 day, and the daily pass deletes an older file and its bytes', async ({ page, baseURL }) => {
@@ -76,7 +65,6 @@ test('an admin sets Evidence Retention to 1 day, and the daily pass deletes an o
   object = join(STACK ?? '', 'stack', 'evidence', storageKey)
   expect(existsSync(object)).toBe(true)
 
-  // The admin sets Evidence Retention to 1 day on the page.
   await page.goto(`/${ORG}/settings/agent_sessions`)
   const setting = page.locator('[data-section="evidence-retention"]')
   const days = setting.getByLabel('Evidence Retention (days)')
@@ -90,15 +78,12 @@ test('an admin sets Evidence Retention to 1 day, and the daily pass deletes an o
   await expect(days).toHaveValue('1')
   expect(rails(`print Organization.find_by!(slug: ${JSON.stringify(ORG)}).agent_project.evidence_retention_days`)).toBe('1')
 
-  // The file was uploaded 2 days ago (a fixture), and EventStore's daily
-  // pass runs now.
   rails(`EvidenceFile.where(id: ${JSON.stringify(uploaded.id)}).update_all(created_at: 2.days.ago)`)
   const pass = await fetch(`${QUERY_URL}/retention`, { method: 'POST' })
   const passed = await pass.json()
   expect(pass.status, JSON.stringify(passed)).toBe(200)
   expect(passed.evidence_files_deleted).toBeGreaterThanOrEqual(1)
 
-  // The page says when and after how many days; the bytes are gone.
   await page.goto(filePath)
   await expect(page.locator('[data-notice="evidence-deleted"]'))
     .toHaveText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4} by Evidence Retention, 2 days after its upload\.$/)
@@ -107,7 +92,6 @@ test('an admin sets Evidence Retention to 1 day, and the daily pass deletes an o
   expect(existsSync(object)).toBe(false)
   expect(errors).toEqual([])
 
-  // Light and dark screenshots of the setting and the deleted page, for the review of the UI.
   for (const theme of ['light', 'dark']) {
     await page.evaluate(scheme => localStorage.setItem('theme', scheme), theme)
     await page.goto(`/${ORG}/settings/agent_sessions`)

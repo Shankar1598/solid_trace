@@ -18,13 +18,8 @@ import (
 // its Bash tool the id of the Agent session.
 const ClaudeSessionEnv = "CLAUDE_CODE_SESSION_ID"
 
-// evidenceLimit is the most bytes of an Evidence file, for a person to
-// read.
 var evidenceLimit = fmt.Sprintf("%d MiB", agentapi.MaxEvidenceBytes>>20)
 
-// evidence runs `evidence add`: it uploads each file as an Evidence file
-// of the Agent session, and prints one line for each file. A file that
-// fails does not stop the next one.
 func evidence(ctx context.Context, args []string, env Env) int {
 	if len(args) == 0 || args[0] != "add" {
 		fmt.Fprintln(env.Stderr, "solidtrace evidence: give add FILE... [--caption TEXT] [--session ID]")
@@ -99,8 +94,6 @@ func addEvidence(ctx context.Context, client *agentapi.Client, sessionID, captio
 	return client.AddEvidence(ctx, sessionID, caption, data)
 }
 
-// evidenceProblem is the text of an upload's error, with what to do for
-// the refusals of the Evidence files API.
 func evidenceProblem(err error) string {
 	var refused *agentapi.Error
 	if !errors.As(err, &refused) {
@@ -121,8 +114,6 @@ func evidenceProblem(err error) string {
 	return err.Error()
 }
 
-// byteSize is a size for a person to read: 512 B, 84 KB, 3.4 MB. A size
-// that rounds to 1024 KB is in MB.
 func byteSize(n int64) string {
 	switch {
 	case n < 1<<10:

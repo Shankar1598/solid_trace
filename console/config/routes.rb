@@ -198,7 +198,6 @@ Rails.application.routes.draw do
       resource :organization, only: [ :show, :update ], controller: "organization_settings"
       resources :organization_users, only: [ :index, :create, :update, :destroy ]
       resources :integrations, only: [ :index, :new, :create, :edit, :update, :destroy ]
-      # The turn-on of Agent sessions, the captured repositories and Evidence Retention (AgentSessionSettingsController).
       resource :agent_session_settings, only: [ :show, :create, :update ], path: "agent_sessions", controller: "agent_session_settings" do
         patch :evidence_retention
       end

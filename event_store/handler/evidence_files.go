@@ -15,19 +15,14 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// EvidenceFiles keeps the Evidence files that agents upload to prove a PR
-// (*storage.EvidenceFiles).
 type EvidenceFiles interface {
 	Add(ctx context.Context, upload storage.EvidenceUpload) (storage.EvidenceFile, bool, error)
 	EvidenceFile(ctx context.Context, id uuid.UUID) (storage.EvidenceFile, bool, error)
 	OpenEvidenceFile(ctx context.Context, file storage.EvidenceFile, offset, length int64) (io.ReadCloser, error)
 }
 
-// evidenceCaptionLimit is the most characters of a caption.
 const evidenceCaptionLimit = 200
 
-// evidenceTimeout is the most time that one upload, or one read of the
-// bytes as Console streams them, may take.
 const evidenceTimeout = 10 * time.Minute
 
 // UploadEvidenceFile stores one Evidence file of an Agent session: the body
@@ -118,14 +113,11 @@ func NewEvidenceFilesHandler(files EvidenceFiles) *EvidenceFilesHandler {
 	return &EvidenceFilesHandler{files: files}
 }
 
-// RegisterEvidenceQueryRoutes mounts the reads of Evidence files on the
-// loopback query listener.
 func RegisterEvidenceQueryRoutes(app *fiber.App, h *EvidenceFilesHandler) {
 	app.Get("/evidence/:id", h.Show)
 	app.Get("/evidence/:id/content", h.Content)
 }
 
-// find answers 404 for an id with no row. ok is false when it has answered.
 func (h *EvidenceFilesHandler) find(c *fiber.Ctx) (file storage.EvidenceFile, ok bool, err error) {
 	id, parseErr := uuid.Parse(c.Params("id"))
 	if parseErr == nil {
@@ -141,7 +133,6 @@ func (h *EvidenceFilesHandler) find(c *fiber.Ctx) (file storage.EvidenceFile, ok
 	return file, true, nil
 }
 
-// Show answers GET /evidence/:id: the file's row.
 func (h *EvidenceFilesHandler) Show(c *fiber.Ctx) error {
 	file, ok, err := h.find(c)
 	if !ok {
@@ -214,9 +205,6 @@ func (r cancelOnClose) Close() error {
 	return r.ReadCloser.Close()
 }
 
-// rangeKind is what a Range header asks for: the whole file (also for a
-// header that is not one range of bytes), a part of it, or a range outside
-// it.
 type rangeKind int
 
 const (
@@ -225,15 +213,11 @@ const (
 	outsideFile
 )
 
-// fileRange is the answer to a Range header: for partOfFile, the bytes from
-// start to end inclusive.
 type fileRange struct {
 	kind       rangeKind
 	start, end int64
 }
 
-// byteRange reads a Range header of one range of bytes in a file of size
-// bytes.
 func byteRange(header string, size int64) fileRange {
 	spec, found := strings.CutPrefix(strings.TrimSpace(header), "bytes=")
 	first, last, dash := strings.Cut(spec, "-")

@@ -25,7 +25,6 @@ interface AgentSessionsProps {
     on: boolean
     project: { name: string; slug: string; log_retention_days: number | null } | null
     captured_repositories: string[]
-    /** Evidence Retention in whole days, null while Agent sessions are off. */
     evidence_retention_days: number | null
     confirmations: Confirmation[]
   }
@@ -183,7 +182,6 @@ export default function SettingsAgentSessions({ agent_sessions, notice_text, can
   )
 }
 
-/** Evidence Retention: Admins save it, each other member reads it. */
 function EvidenceRetention({ path, days, canManage }: { path: string; days: number; canManage: boolean }) {
   const { data, setData, patch, processing, errors } = useForm({ evidence_retention_days: String(days) })
   const submit: FormEventHandler = (e) => {

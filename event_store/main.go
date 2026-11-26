@@ -70,8 +70,6 @@ func main() {
 	}
 	defer sqliteWriter.Close()
 
-	// Evidence files' rows are in Console's SQLite, and their bytes in the
-	// bucket, or in the evidence folder without one.
 	evidenceFiles, err := storage.NewEvidenceFiles(sqliteWriter, storage.NewObjectStore(cfg.ObjectStore), cfg.EvidencePath)
 	if err != nil {
 		logger.L.Fatal("Failed to open the Evidence files", "error", err)
@@ -140,8 +138,6 @@ func main() {
 	agentFileProcessor.Start()
 	agentParser.Start()
 
-	// Retention, deleted Projects and Evidence Retention once a day, the
-	// disk limit hourly.
 	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)

@@ -1,12 +1,5 @@
 # frozen_string_literal: true
 
-# The Evidence files pages (Organization navigation): the list, newest
-# first, and the page of one file, with its image or its video, its
-# caption, who uploaded it and when, and links to its Agent session and to
-# that session's Review record. Each member sees them; someone outside the
-# Organization gets 404 (set_current_org), and a person who is not signed
-# in signs in and comes back to the same URL. EvidenceFileBytesController
-# serves the bytes.
 class EvidenceFilesController < ApplicationController
   layout "dashboard"
 

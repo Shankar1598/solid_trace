@@ -32,8 +32,6 @@ class AgentSessionSettingsController < ApplicationController
       confirmed: params[:confirmed]), "Captured repositories saved"
   end
 
-  # A save of Evidence Retention, in whole days. EventStore deletes the
-  # Evidence files older than it in its next daily pass.
   def evidence_retention
     answer AgentSessionsSettings.save_evidence_retention(project: @current_org.agent_project, days: params[:evidence_retention_days]),
       "Evidence Retention saved"

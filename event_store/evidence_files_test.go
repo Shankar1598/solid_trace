@@ -18,7 +18,6 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// The first bytes of a file of each type, padded to a size.
 var (
 	pngBytes  = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
 	jpegBytes = "\xff\xd8\xff\xe0\x00\x10JFIF\x00"
@@ -66,7 +65,6 @@ func uploadEvidence(t *testing.T, env *TestEnv, secret, sessionID, caption strin
 	return answer
 }
 
-// readEvidence is a read of the query API: its status, headers and body.
 func readEvidence(t *testing.T, env *TestEnv, path string, headers map[string]string) (*http.Response, []byte) {
 	t.Helper()
 	req, _ := http.NewRequest("GET", path, nil)
@@ -82,7 +80,6 @@ func readEvidence(t *testing.T, env *TestEnv, path string, headers map[string]st
 	return resp, body
 }
 
-// storedEvidence counts the files in the evidence folder, outside tmp.
 func storedEvidence(t *testing.T, env *TestEnv) int {
 	t.Helper()
 	n := 0
@@ -102,7 +99,6 @@ func storedEvidence(t *testing.T, env *TestEnv) int {
 	return n
 }
 
-// organizationSlug is the slug of the Organization id.
 func organizationSlug(t *testing.T, o agentOrganization, id int64) string {
 	t.Helper()
 	var slug string
@@ -188,7 +184,6 @@ func TestEvidenceFileUpload(t *testing.T) {
 		if !strings.Contains(string(row), `"caption":"Before"`) {
 			t.Errorf("Expected the first upload's caption, got %s", row)
 		}
-		// Another Agent session gets its own row.
 		other := uploadEvidence(t, env, o.secret, runSession, "", shot, nil)
 		expectStatus(t, other, 201)
 		if other.body["id"] == first.body["id"] {

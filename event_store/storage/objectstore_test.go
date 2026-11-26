@@ -62,8 +62,6 @@ func minIOStore(t *testing.T, cfg *config.ObjectStore) *s3Store {
 	return store
 }
 
-// withoutModified is objects with no Modified time, to compare with keys
-// and sizes.
 func withoutModified(objects []StoredObject) []StoredObject {
 	for i := range objects {
 		objects[i].Modified = time.Time{}

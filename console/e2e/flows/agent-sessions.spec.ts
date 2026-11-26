@@ -536,9 +536,6 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   capture(reviewer, first, shopDir)
   capture(reviewer, second, shopDir)
 
-  // The Review records page, from its link in the sidebar's Coding agents
-  // group, once EventStore has parsed the uploads: one row for the PR, its
-  // newest round. Review records alone is lit.
   const table = page.getByRole('table', { name: 'Review records' })
   const row = table.locator(`tr[data-review-record="${pr}"]`)
   const sidebar = page.getByRole('navigation', { name: 'Main' })

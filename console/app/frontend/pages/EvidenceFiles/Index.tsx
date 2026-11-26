@@ -16,7 +16,6 @@ type EvidenceFilesProps = { rows: EvidenceFile[]; more: boolean }
 
 const DESCRIPTION = 'The screenshots and videos that agents uploaded to prove their PRs, newest first.'
 
-/** The Evidence files page of Coding agents: each file of the Organization, the newest first. */
 export default function EvidenceFilesIndex({ evidence_files: view }: { evidence_files: EvidenceFilesProps }) {
   const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
   return (

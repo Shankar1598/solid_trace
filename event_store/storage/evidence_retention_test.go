@@ -13,13 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// sweepNow is the fixed clock of the Evidence Retention tests.
 var sweepNow = time.Date(2026, 12, 1, 6, 0, 0, 0, time.UTC)
 
 var sweepSeed int
 
-// addEvidenceAt stores a new Evidence file of organizationID, uploaded age
-// before sweepNow.
 func addEvidenceAt(t *testing.T, e *EvidenceFiles, organizationID int64, age time.Duration) EvidenceFile {
 	t.Helper()
 	sweepSeed++
@@ -41,7 +38,6 @@ func sweep(t *testing.T, e *EvidenceFiles, retention map[int64]int) EvidenceSwee
 	return result
 }
 
-// deletedAt is the deleted_at of file's row, or nil.
 func deletedAt(t *testing.T, e *EvidenceFiles, file EvidenceFile) *time.Time {
 	t.Helper()
 	row, found, err := e.EvidenceFile(context.Background(), file.ID)
@@ -65,10 +61,8 @@ func TestEvidenceRetentionDeletesTheBytesOfOldFilesAndMarksTheirRows(t *testing.
 	day := 24 * time.Hour
 	young := addEvidenceAt(t, e, 1, 2*day-time.Minute)
 	old := addEvidenceAt(t, e, 1, 2*day+time.Minute)
-	// Organization 2 has no Agent Project, so it has the default of 90 days.
 	keptByDefault := addEvidenceAt(t, e, 2, 89*day)
 	pastDefault := addEvidenceAt(t, e, 2, 91*day)
-	// Organization 3's Evidence Retention is not valid, so its files stay.
 	notValid := addEvidenceAt(t, e, 3, 1000*day)
 
 	if got := sweep(t, e, map[int64]int{1: 2, 3: 0}); got != (EvidenceSweep{Deleted: 2}) {
@@ -180,7 +174,6 @@ func TestEvidenceRetentionDeletesMoreFilesThanOneBatch(t *testing.T) {
 	}
 }
 
-// putObject stores bytes under key with no row, modified age before now.
 func putObject(t *testing.T, e *EvidenceFiles, key string, age time.Duration) {
 	t.Helper()
 	if err := e.put(context.Background(), key, []byte("bytes with no row")); err != nil {

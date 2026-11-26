@@ -82,9 +82,6 @@ func limitHas(ids []string, sessionID uuid.UUID) bool {
 	return false
 }
 
-// anotherPersonsSession reports whether a known Agent session is another
-// person's for token. A token limited to a Run's Agent sessions adds to each
-// of them, whoever uploaded it.
 func anotherPersonsSession(token auth.Token, session storage.AgentSession) bool {
 	return token.AgentSessionIDs == nil && session.UserID != token.UserID
 }

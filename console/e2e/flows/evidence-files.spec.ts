@@ -8,18 +8,6 @@ import { ADMIN, MEMBER, ORG } from '../support/data'
 import { watchErrors } from '../support/screens'
 import { newContext } from '../support/video'
 
-// Evidence files, from the real upload API to Console's pages. The flow
-// records a 12-second WebM and takes a PNG, and uploads them with a
-// sessions:write token to EventStore's agent ingest API, with the Agent
-// session they prove, as `solidtrace evidence add` and `solidtrace capture`
-// send them. Then the member, signed out, opens the PNG's link, signs in and
-// lands on its page; plays the video, seeks, and picks 0.5x; and finds both
-// files on the Agent session page and the Evidence files list. A row that
-// Evidence Retention deleted (a fixture the flow removes) shows as deleted on
-// the lists and its page, and its bytes get 410. A member of another
-// Organization gets 404, and curl with the member's cookie shows the headers
-// of the bytes and the 304 of the browser's ETag.
-
 const RUN = Date.now().toString(36)
 const ENTRY = 'flows.example/flowteam/*'
 const REPOSITORY = `flows.example/flowteam/evidence-${RUN}`
@@ -62,7 +50,6 @@ test.afterAll(() => {
     User.where(email: ${JSON.stringify(OUTSIDER.email)}).each { |user| OrganizationUser.where(user: user).delete_all; user.destroy! }`)
 })
 
-/** A 12-second WebM of a running clock, from Playwright's own video, and a PNG of the clock. */
 async function makeFiles(browser: Browser): Promise<{ png: Buffer; webm: Buffer }> {
   const size = { width: 640, height: 360 }
   const context = await browser.newContext({ viewport: size, recordVideo: { dir: test.info().outputPath('seed'), size }, storageState: { cookies: [], origins: [] } })
@@ -96,23 +83,19 @@ const shot = (page: Page, name: string) => page.screenshot({ path: test.info().o
 const gateShot = (page: Page, theme: string, name: string) =>
   page.screenshot({ path: test.info().outputPath(`review-gate/${theme}-${name}.png`), animations: 'disabled' })
 
-/** The directives of the Cache-Control header in headers, sorted. */
 const cacheControl = (headers: string) => (headers.match(/^cache-control: (.*)$/mi)?.[1] ?? '').split(/,\s*/).sort()
 
-/** A list entry that shows the mark of a video or a deleted file, not an image. */
 async function expectMarks(entry: Locator, mark: 'video' | 'deleted') {
   await expect(entry.locator(`[data-mark="${mark}"]`)).toHaveCount(1)
   await expect(entry.locator('img')).toHaveCount(0)
 }
 
-/** A row of the Agent session, uploaded 91 days ago, that Evidence Retention deleted an hour ago, as EventStore marks it. */
 function insertDeletedRow() {
   rails(`EvidenceFile.insert!({ id: ${JSON.stringify(DELETED)}, organization_id: Organization.find_by!(slug: ${JSON.stringify(ORG)}).id,
     agent_session_id: ${JSON.stringify(session.id)}, sha256: SecureRandom.hex(32), caption: "Old screen", content_type: "image/png",
     byte_size: 84, storage_key: "evidence/flow-deleted-${RUN}.png", created_at: 91.days.ago, deleted_at: 1.hour.ago })`)
 }
 
-/** The headers of a GET of the bytes with the cookies of context and the request headers, by curl, as text with no Set-Cookie line. */
 async function curlHeaders(context: BrowserContext, url: string, headers: string[] = []): Promise<string> {
   const cookie = (await context.cookies()).map(c => `${c.name}=${c.value}`).join('; ')
   const args = ['-sS', '-D', '-', '-o', '/dev/null', '-H', `Cookie: ${cookie}`, ...headers.flatMap(header => ['-H', header]), url]
@@ -124,7 +107,6 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   const origin = new URL(baseURL!).origin
   const { png, webm } = await makeFiles(browser)
 
-  // The Agent session and its two files, through the agent ingest API.
   const [transcript, lines] = Object.entries(session.files)[0]
   await ingest('files', { path: transcript, version: '1', offset: '0', harness: 'claude-code', repository: REPOSITORY }, Buffer.from(lines))
   const image = await ingest('evidence', { caption: 'Cart page' }, png)
@@ -137,7 +119,6 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   insertDeletedRow()
   writeFileSync(test.info().outputPath('uploads.json'), JSON.stringify({ session: session.id, image: image.json, video: video.json, webm_bytes: webm.length }, null, 2))
 
-  // Signed out, the link goes to sign-in, then back to the file's page.
   const member = await newContext(browser, { storageState: { cookies: [], origins: [] } })
   const page = await member.newPage()
   const errors = watchErrors(page)
@@ -151,7 +132,6 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   await expect(page.locator('[data-section="evidence-file-facts"]')).toContainText('Admin User')
   await shot(page, 'evidence-image-page')
 
-  // The video seeks with ranges of the bytes, and keeps the speed picked.
   const statuses: number[] = []
   page.on('response', response => { if (response.url().endsWith(`${videoPath}/file`)) statuses.push(response.status()) })
   await page.goto(videoPath)
@@ -184,8 +164,6 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   await expect(page.getByRole('button', { name: '0.5x' })).toHaveAttribute('aria-pressed', 'true')
   await expect.poll(() => player.evaluate((v: HTMLVideoElement) => v.playbackRate)).toBe(0.5)
 
-  // The headers of the bytes, as curl gets them with the member's cookie;
-  // the file's ETag gets 304, and the deleted file 410.
   const imageHeaders = await curlHeaders(member, `${origin}${imagePath}/file`)
   const videoHeaders = await curlHeaders(member, `${origin}${videoPath}/file`, ['Range: bytes=100-199'])
   const etag = imageHeaders.match(/^etag: (.*)$/mi)?.[1] ?? ''
@@ -210,8 +188,6 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   expect(goneHeaders).toMatch(/^x-content-type-options: nosniff$/mi)
   expect(cacheControl(goneHeaders)).toEqual(['private'])
 
-  // The Agent session page lists the three, each a link to its page: the
-  // video and the deleted file with their marks, not an image.
   const files = page.getByRole('region', { name: 'Evidence files' })
   await expect(async () => {
     await page.goto(`/${ORG}/agent_sessions/${session.id}`)
@@ -224,7 +200,6 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   await files.getByRole('link', { name: 'Screenshot: Cart page' }).click()
   await expect(page).toHaveURL(`${origin}${imagePath}`)
 
-  // The list has both, the newest first, and the sidebar lights Evidence files.
   await page.goto(`/${ORG}/evidence`)
   const rows = page.getByRole('table', { name: 'Evidence files' }).locator('tbody tr')
   const ids = await rows.evaluateAll(trs => trs.map(tr => tr.getAttribute('data-evidence-file')))
@@ -242,13 +217,11 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   await expect(nav.locator('[aria-current="page"]')).toHaveText('Evidence files')
   await shot(page, 'evidence-files-list')
 
-  // The deleted file's page says when, with no image.
   await page.goto(deletedPath)
   await expect(page.locator('[data-notice="evidence-deleted"]')).toContainText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4} by Evidence Retention, 90 days after its upload\.$/)
   await expect(page.locator('[data-evidence]')).toHaveCount(0)
   expect(errors).toEqual([])
 
-  // Light and dark screenshots of each page, for the review of the UI.
   for (const theme of ['light', 'dark']) {
     await page.evaluate(scheme => localStorage.setItem('theme', scheme), theme)
     await page.goto(imagePath)
@@ -272,7 +245,6 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
     await gateShot(page, theme, 'agent-session-evidence-files')
   }
 
-  // A member of another Organization gets 404 for the pages and the bytes.
   const outsider = await newContext(browser, { storageState: { cookies: [], origins: [] } })
   const other = await outsider.newPage()
   await other.goto('/login')

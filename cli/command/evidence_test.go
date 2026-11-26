@@ -16,7 +16,6 @@ const (
 	webmHead = "\x1a\x45\xdf\xa3\x42\x82\x84webm"
 )
 
-// evidenceFile writes a file of size bytes that starts with head.
 func (w *world) evidenceFile(name, head string, size int) string {
 	w.t.Helper()
 	path := filepath.Join(w.t.TempDir(), name)
@@ -208,8 +207,6 @@ func TestEvidenceAddOfTheSameFileAgainGivesTheSameLink(t *testing.T) {
 	}
 }
 
-// The HTTP client's Timeout is for the small calls: an upload of a large
-// video on a slow link can take longer.
 func TestAnEvidenceUploadIsNotStoppedByTheTimeoutOfTheSmallCalls(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()

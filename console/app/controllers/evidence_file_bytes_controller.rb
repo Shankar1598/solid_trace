@@ -1,14 +1,5 @@
 # frozen_string_literal: true
 
-# The bytes of an Evidence file, for its page's image or video: Console
-# finds the file in the Organization of the URL, which only its members can
-# open (set_current_org), then streams the bytes from EventStore's query
-# API with the browser's Range, so a video can seek and no file is read
-# into memory. The headers keep the bytes from running as a page on
-# Console's domain, and from a shared cache. The bytes of an id never
-# change, so the browser keeps them, with the file's sha256 as the ETag. A
-# file that Evidence Retention deleted gets 410.
-#
 # Live streams the answer, and runs each action in a thread of its own,
 # so the pages of Evidence files are in EvidenceFilesController.
 class EvidenceFileBytesController < ApplicationController
@@ -16,7 +7,6 @@ class EvidenceFileBytesController < ApplicationController
 
   before_action :set_current_org
 
-  # The headers of a file's bytes, which a plain answer drops.
   FILE_HEADERS = %w[Content-Type Content-Range Accept-Ranges Content-Disposition ETag].freeze
 
   def show
@@ -37,10 +27,6 @@ class EvidenceFileBytesController < ApplicationController
     response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
   end
 
-  # EventStore's 200 and 206 stream to the browser, and its 416 goes back
-  # with its Content-Range. Any other answer, or a failure before the first
-  # chunk, gets 502 with no file headers; after the first chunk, the
-  # browser gets the bytes up to there.
   def stream_bytes(file)
     EventStore.evidence_content(id: file.id, range: request.headers["Range"]) do |answer|
       case answer.code.to_i

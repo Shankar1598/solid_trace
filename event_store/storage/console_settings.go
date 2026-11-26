@@ -296,9 +296,6 @@ func (s *ConsoleSettings) EvidenceRetention() (map[int64]int, error) {
 	return retention, rows.Err()
 }
 
-// evidenceRetentionOf reads the Evidence Retention of one Organization, as
-// EvidenceRetention does, with DefaultEvidenceRetentionDays for one with no
-// Agent Project, as DeletePastRetention gives it.
 func evidenceRetentionOf(ctx context.Context, db *sql.DB, organizationID int64) (int, error) {
 	var days int
 	err := db.QueryRowContext(ctx, "SELECT evidence_retention_days FROM projects WHERE organization_id = ? AND agent = 1",
@@ -312,8 +309,6 @@ func evidenceRetentionOf(ctx context.Context, db *sql.DB, organizationID int64) 
 	return validEvidenceRetention(days), nil
 }
 
-// validEvidenceRetention is days, or 0 when it is outside 1 to
-// MaxEvidenceRetentionDays.
 func validEvidenceRetention(days int) int {
 	if days < 1 || days > MaxEvidenceRetentionDays {
 		return 0

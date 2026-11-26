@@ -13,9 +13,6 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// fakeCleanup is the stores of a cleanup: one Project with Logs, and the
-// Evidence files. It records, in order, each step that it is asked to do,
-// and gives the errors that a test sets.
 type fakeCleanup struct {
 	mu           sync.Mutex
 	steps        []string
@@ -36,14 +33,12 @@ func (f *fakeCleanup) step(name string) {
 	f.steps = append(f.steps, name)
 }
 
-// done is the steps so far.
 func (f *fakeCleanup) done() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.steps)
 }
 
-// fail sets the errors of the next steps.
 func (f *fakeCleanup) fail(days, delete, retention error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -87,7 +82,6 @@ type noSQLUsers struct{}
 
 func (noSQLUsers) DropProjectUser(uint32) error { return nil }
 
-// testStart is 06:00 UTC, so a run with no failure waits until 06:05.
 var testStart = time.Date(2026, 12, 1, 6, 0, 0, 0, time.UTC)
 
 func newTestCleanup() (*Cleanup, *fakeCleanup, *clock.Manual) {
@@ -100,8 +94,6 @@ func newTestCleanup() (*Cleanup, *fakeCleanup, *clock.Manual) {
 	return cleanup, fake, manual
 }
 
-// tick moves the clock by d, which ends the cleanup's wait, and waits for
-// the run that follows to end.
 func tick(manual *clock.Manual, d time.Duration) {
 	manual.Advance(d)
 	manual.BlockUntilTimers(1)
@@ -133,8 +125,6 @@ func TestAnEvidenceFileThatCannotBeDeletedWaitsForTheNextDaysRun(t *testing.T) {
 	defer cleanup.Stop()
 	manual.BlockUntilTimers(1)
 
-	// No retry a minute later: the next run is the hourly one at 06:05,
-	// which enforces only the disk limit.
 	tick(manual, time.Minute)
 	expectSteps(t, fake, "days", "evidence", "disk limit")
 	tick(manual, 4*time.Minute)

@@ -1,14 +1,8 @@
 # frozen_string_literal: true
 
-# Evidence files: the screenshots and videos that an agent uploads to prove a
-# PR, one row for each file. EventStore writes the rows and keeps the bytes
-# (ADR 0001: event_store/storage/evidence_files.go writes this table, so
-# change both in the same commit). The id is a random UUID, so a link cannot
-# be guessed. agent_session_id has no foreign key: a file can arrive before
-# its Agent session. A second upload of the same bytes to the same Agent
-# session gives the same row, while it is not deleted. Evidence Retention
-# sets deleted_at and keeps the row, so that its link can say when the file
-# was deleted; an upload of the same bytes after that gets a new row.
+# EventStore writes the rows and keeps the bytes (ADR 0001:
+# event_store/storage/evidence_files.go writes this table, so change both in
+# the same commit).
 class CreateEvidenceFiles < ActiveRecord::Migration[8.1]
   def change
     create_table :evidence_files, id: :string do |t|

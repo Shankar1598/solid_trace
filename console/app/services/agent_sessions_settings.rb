@@ -34,8 +34,6 @@ class AgentSessionsSettings
     new(user: user, confirmed: confirmed).save(project, entries)
   end
 
-  # A refused save keeps the project's saved Evidence Retention, so the page
-  # shows it with the errors.
   def self.save_evidence_retention(project:, days:)
     return Result.new(project: project, errors: {}) if project.update(evidence_retention_days: days)
 

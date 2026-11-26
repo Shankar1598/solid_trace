@@ -21,8 +21,6 @@ class Project < ApplicationRecord
   # The Agent Project's confirms of the capture notice.
   has_many :capture_confirmations, dependent: :delete_all
 
-  # The most days of Evidence Retention (event_store/storage/console_settings.go
-  # has the same limit).
   EVIDENCE_RETENTION_MAX_DAYS = 3650
 
   # A captured repository: host/workspace/name, or host/workspace/* for each
@@ -48,8 +46,6 @@ class Project < ApplicationRecord
   validates :trace_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
   # What the Project holds, for agents over MCP to pick the Project to query.
   validates :description, length: { maximum: 1000 }
-  # Evidence Retention: how many whole days the Organization keeps its
-  # Evidence files. A setting of the Agent Project only.
   validates :evidence_retention_days, numericality: { only_integer: true, in: 1..EVIDENCE_RETENTION_MAX_DAYS }
   validate :evidence_retention_on_agent_project_only
 

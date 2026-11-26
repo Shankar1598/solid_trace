@@ -14,20 +14,13 @@ import { sessionRecordPath, type SessionReviewRecord } from '@/lib/reviewRecords
 import type { SharedProps } from '@/types'
 
 type EvidenceFileProps = EvidenceFile & {
-  /** The Review record of the file's Agent session, null for none. */
   review_record: SessionReviewRecord | null
-  /** False when EventStore could not say. */
   review_record_known: boolean
   list_path: string
 }
 
 const SPEED_OPTIONS = SPEEDS.map(speed => ({ value: speed, label: `${speed}x` }))
 
-/**
- * One Evidence file: the screenshot, or the video with its speed buttons,
- * then its caption, who uploaded it and when, and its Agent session and
- * Review record. The caption is an agent's text, so it shows as text.
- */
 export default function EvidenceFileShow({ evidence_file: file }: { evidence_file: EvidenceFileProps }) {
   const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const title = evidenceTitle(file)
@@ -58,7 +51,6 @@ export default function EvidenceFileShow({ evidence_file: file }: { evidence_fil
   )
 }
 
-/** The video, with speed buttons that keep the viewer's last speed. */
 function Player({ src, title }: { src: string; title: string }) {
   const video = useRef<HTMLVideoElement>(null)
   const [speed, setSpeed] = useState(() => readSpeed(browserStorage()))

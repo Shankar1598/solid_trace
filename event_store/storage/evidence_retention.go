@@ -16,25 +16,13 @@ import (
 )
 
 const (
-	// evidenceSweepBatch is how many rows or objects Evidence Retention
-	// reads, deletes and marks at a time.
 	evidenceSweepBatch = 500
-	// evidenceDeletes is how many objects Evidence Retention deletes at
-	// the same time.
-	evidenceDeletes = 16
-	// unreferencedAfter is how old an object with no row must be before
-	// Evidence Retention deletes it. An upload writes its bytes before its
-	// row, so a newer object can be an upload in progress.
-	unreferencedAfter = 24 * time.Hour
+	evidenceDeletes    = 16
+	unreferencedAfter  = 24 * time.Hour
 )
 
-// EvidenceSweep is what one run of Evidence Retention deleted.
 type EvidenceSweep struct {
-	// Deleted is the Evidence files past Evidence Retention: their bytes
-	// are deleted and their rows marked deleted.
-	Deleted int
-	// Unreferenced is the objects with no row: each from an upload that
-	// stopped after its bytes and before its row.
+	Deleted      int
 	Unreferenced int
 }
 
@@ -81,9 +69,6 @@ func (e *EvidenceFiles) DeletePastRetention(ctx context.Context, now time.Time, 
 	return sweep, errors.Join(failed...)
 }
 
-// evidenceCutoff is the time before which a file is past an Evidence
-// Retention of days at now, or false when days is not valid, as a file is
-// then kept.
 func evidenceCutoff(now time.Time, days int) (time.Time, bool) {
 	if days < 1 {
 		return time.Time{}, false
@@ -108,10 +93,6 @@ func (e *EvidenceFiles) organizationsWithFiles(ctx context.Context) ([]int64, er
 	return organizations, rows.Err()
 }
 
-// deleteCreatedBefore deletes the bytes of an Organization's Evidence files
-// created before cutoff, a batch at a time, and marks the rows of the
-// deleted bytes deleted at now. It stops at a batch with a failed delete,
-// as the next read would give the same rows again.
 func (e *EvidenceFiles) deleteCreatedBefore(ctx context.Context, organizationID int64, cutoff, now time.Time) (int, error) {
 	deleted := 0
 	for {
@@ -166,8 +147,6 @@ func (e *EvidenceFiles) markDeleted(ctx context.Context, ids []any, at time.Time
 	return err
 }
 
-// deleteObjects deletes the bytes of keys, evidenceDeletes at a time, and
-// reports which are gone. Bytes that are already gone are not an error.
 func (e *EvidenceFiles) deleteObjects(ctx context.Context, keys []string) ([]bool, error) {
 	gone := make([]bool, len(keys))
 	errs := make([]error, len(keys))
@@ -189,8 +168,6 @@ func (e *EvidenceFiles) deleteObjects(ctx context.Context, keys []string) ([]boo
 	return gone, nil
 }
 
-// deleteUnreferenced deletes each object under evidence/ modified before
-// cutoff that no row names, other than a deleted one.
 func (e *EvidenceFiles) deleteUnreferenced(ctx context.Context, cutoff time.Time) (int, error) {
 	objects, err := e.listObjects(ctx)
 	if err != nil {
@@ -226,9 +203,6 @@ func (e *EvidenceFiles) deleteUnreferenced(ctx context.Context, cutoff time.Time
 	return deleted, nil
 }
 
-// sqlList is the placeholders of an SQL list of n values: "(?, ?, ?)". It
-// panics for no values, as "()" is not valid SQL: a caller with an empty
-// list has nothing to query.
 func sqlList(n int) string {
 	if n < 1 {
 		panic("an SQL list needs at least one value")
@@ -236,8 +210,6 @@ func sqlList(n int) string {
 	return "(" + strings.Repeat("?, ", n-1) + "?)"
 }
 
-// namedKeys is the keys of batch that a row which is not deleted names.
-// The id of a row is the name of its key, without the extension.
 func (e *EvidenceFiles) namedKeys(ctx context.Context, batch []string) (map[string]bool, error) {
 	ids := make([]any, len(batch))
 	for i, key := range batch {
@@ -259,8 +231,6 @@ func (e *EvidenceFiles) namedKeys(ctx context.Context, batch []string) (map[stri
 	return named, rows.Err()
 }
 
-// listObjects lists the objects under evidence/: in the bucket, or under
-// the evidence folder.
 func (e *EvidenceFiles) listObjects(ctx context.Context) ([]StoredObject, error) {
 	if e.bucket != nil {
 		return e.bucket.List(ctx, "evidence/")
@@ -269,7 +239,6 @@ func (e *EvidenceFiles) listObjects(ctx context.Context) ([]StoredObject, error)
 	root := e.localPath("evidence")
 	err := filepath.WalkDir(root, func(file string, entry fs.DirEntry, err error) error {
 		if errors.Is(err, fs.ErrNotExist) {
-			// No evidence folder yet, or a file deleted during the walk.
 			return nil
 		}
 		if err != nil || !entry.Type().IsRegular() {

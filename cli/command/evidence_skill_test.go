@@ -20,9 +20,6 @@ var (
 	evidencePart = regexp.MustCompile("`open-pr/SKILL\\.md` › Write the PR › \\*\\*([^*]+)\\*\\*")
 )
 
-// skillEvidenceCommand is the words of the one `solidtrace evidence add`
-// line in a ```bash block of the open-pr skill, with ~ as home, and the
-// skill's text.
 func skillEvidenceCommand(t *testing.T, home string) ([]string, string) {
 	t.Helper()
 	data, err := os.ReadFile(openPRSkill)
@@ -48,9 +45,6 @@ func skillEvidenceCommand(t *testing.T, home string) ([]string, string) {
 	return shellWords(t, commands[0], home), text
 }
 
-// shellWords splits a command line as the shell does, for words with no
-// expansion other than a ~ at the start: plain words, "double-quoted"
-// words and 'single-quoted' words.
 func shellWords(t *testing.T, line, home string) []string {
 	t.Helper()
 	var words []string
@@ -90,8 +84,6 @@ func shellWords(t *testing.T, line, home string) []string {
 	return words
 }
 
-// writeNamedFiles writes a PNG at each word that is the path of an image,
-// as the files of a verify-solidtrace run.
 func writeNamedFiles(t *testing.T, words []string) {
 	t.Helper()
 	for _, word := range words {
@@ -166,8 +158,6 @@ func TestTheEvidenceCommandOfTheOpenPRSkillToAnOldServerPrintsNoLinkAndTheMessag
 	}
 }
 
-// skillStep is the text of the step of the skill at path with the heading
-// "## <n>. <heading>", up to the next ## heading.
 func skillStep(t *testing.T, path, heading string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
