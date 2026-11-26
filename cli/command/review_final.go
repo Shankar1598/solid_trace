@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/solidtrace/cli/capture"
@@ -121,12 +122,40 @@ func recordFileName(r review.Record) string {
 	return fmt.Sprintf("round-%d-%s.json", r.Round, hex.EncodeToString(sum[:])[:12])
 }
 
+// makeFolders makes each folder from base down to folder that is not
+// there. A part that is a symbolic link or not a folder is an error: the
+// capture does not walk into a link, so a record through it never uploads.
+func makeFolders(base, folder string) error {
+	rel, err := filepath.Rel(base, folder)
+	if err != nil {
+		return err
+	}
+	at := base
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		at = filepath.Join(at, part)
+		info, err := os.Lstat(at)
+		switch {
+		case os.IsNotExist(err):
+			if err := os.Mkdir(at, 0o700); err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		case info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("%s is a symbolic link: the capture does not upload a file through it", at)
+		case !info.IsDir():
+			return fmt.Errorf("%s is not a folder", at)
+		}
+	}
+	return nil
+}
+
 // writeRecord writes data to path with a rename, so that the capture never
 // reads a part of it. The temporary file is in the Claude project folder,
 // outside the Agent session's folder, so that the capture does not upload
 // it.
 func writeRecord(projectFolder, path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := makeFolders(projectFolder, filepath.Dir(path)); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(projectFolder, ".solidtrace-review-record-*")

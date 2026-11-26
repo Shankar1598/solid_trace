@@ -217,6 +217,31 @@ func TestReviewFinalSaysSoWhenItCannotWriteTheFile(t *testing.T) {
 	}
 }
 
+func TestReviewFinalRefusesAFolderOfTheRecordThatIsASymbolicLink(t *testing.T) {
+	for _, link := range []string{"", "solidtrace", "solidtrace/review-records"} {
+		t.Run("<id>/"+link, func(t *testing.T) {
+			projects, project := finalProjects(t)
+			target := t.TempDir()
+			at := filepath.Join(project, finalSession, link)
+			if err := os.MkdirAll(filepath.Dir(at), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, at); err != nil {
+				t.Fatal(err)
+			}
+
+			code, out, stderr := runFinal(t, projects, finalRecord)
+
+			if code != 1 || out != "" || !strings.Contains(stderr, at+" is a symbolic link") {
+				t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
+			}
+			if entries, err := os.ReadDir(target); err != nil || len(entries) != 0 {
+				t.Errorf("Expected nothing in the link's target, got %v, %v", entries, err)
+			}
+		})
+	}
+}
+
 func TestReviewFinalWithTwoTranscriptsOfTheSessionWritesToTheFolderOfTheNewer(t *testing.T) {
 	projects, project := finalProjects(t)
 	copied := filepath.Join(projects, "-home-ann-sh")

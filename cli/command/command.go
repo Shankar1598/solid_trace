@@ -320,9 +320,11 @@ Usage:
       session, and SolidTrace keeps the record from it. A round written
       again replaces its file. It prints the round, the counts of
       findings and fixed findings, and the path on one line. Exit 1 when
-      the file is not a record of version 2, has a field that the record
-      does not have, or is more than ` + recordLimit + `, or when the
-      Agent session has no transcript.
+      the file is more than ` + recordLimit + `, is not a record of version
+      2, has a field that the record does not have, has no sessions or no
+      findings, or has a round below 1 or above 4294967295; when there is
+      no Agent session, or it has no transcript; or when a folder of the
+      path is a symbolic link, or the write fails.
   solidtrace evidence add FILE... [--caption TEXT] [--session ID]
       Upload each FILE as an Evidence file of the Agent session: a PNG,
       JPEG, WebP or GIF image, or an MP4 or WebM video, of at most ` + evidenceLimit + `,

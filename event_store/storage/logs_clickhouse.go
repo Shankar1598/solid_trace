@@ -153,8 +153,9 @@ type LogInsert struct {
 	// parse makes into Logs.
 	Range string
 	// AgentSessions are what the range adds to agent_sessions, and
-	// ReviewRecords the Review records of its lines: set by the parse
-	// alone, and inserted after the Logs with the same dedup token.
+	// ReviewRecords the Review records of its record files and of its
+	// final-reply blocks: set by the parse alone, and inserted after the
+	// Logs with the same dedup token.
 	AgentSessions []AgentSessionDay
 	ReviewRecords []ReviewRecord
 }
