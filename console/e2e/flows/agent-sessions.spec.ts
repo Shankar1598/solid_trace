@@ -21,7 +21,9 @@ import { newContext } from '../support/video'
 // person message.
 //
 // The second test captures two open-pr Agent sessions of one PR, and checks
-// its Review record on the Review records pages and over MCP.
+// its Review record on the Review records pages and over MCP. The newer
+// session has its record as a file in its own folder, as solidtrace review
+// final writes it, and the older one in its final reply.
 //
 // OAuth needs a Console URL: the flow sets this stack's own, and puts the
 // old one back after. The flow stack's ClickHouse keeps the rows of earlier
@@ -516,7 +518,7 @@ function reviewRecord(pr: string, round: number, findings: number): string {
   })
 }
 
-test('the review final call of an open-pr Agent session, or the final reply of an older one, gives its Review record, on the Review records pages and over MCP', async ({ page, baseURL }) => {
+test('the record file of an open-pr Agent session, or the final reply of an older one, gives its Review record, on the Review records pages and over MCP', async ({ page, baseURL }) => {
   test.setTimeout(240_000)
   const errors = watchErrors(page)
   const origin = new URL(baseURL!).origin
@@ -530,6 +532,7 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   const round1 = reviewRecord(pr, 1, 6)
   const round2 = reviewRecord(pr, 2, 240)
   expect(Buffer.byteLength(round2)).toBeGreaterThan(LOG_STRING_LIMIT)
+  expect(Buffer.byteLength(round2), 'past the 128 KiB that one Bash argument can have').toBeGreaterThan(128 * 1024)
   const example = reviewRecord(examplePr, 1, 4)
   const first = openPrSession(shopDir, { exampleRecord: example, record: round1, minutesAgo: 30, inReply: true })
   const second = openPrSession(shopDir, { exampleRecord: example, record: round2, minutesAgo: 10 })
