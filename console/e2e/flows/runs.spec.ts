@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { MEMBER, ORG, PROJECT } from '../support/data'
@@ -23,7 +23,10 @@ import { factoryFlow, filesIn, signedInPage } from '../support/factoryFlow'
 // Run with the CLI, sees it on the Runs page and the Run page, and stops
 // it with the Stop button. The Execution's child token reads only its own
 // Agent session, its download for a resume is equal byte for byte to the
-// redacted upload, and it stops working after the Execution.
+// redacted upload, and it stops working after the Execution. A message to
+// a done Run starts a second Execution on another machine: its wrapper
+// restores the Agent session from SolidTrace, and its harness resumes the
+// same session id.
 
 const ENTRY = 'flows.example/flowteam/*'
 const INGEST_URL = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
@@ -205,6 +208,75 @@ test('a member starts a Run with the CLI, sees its events, and stops it; the Exe
 
   await memberPage.goto(`/${ORG}/runs`)
   await expect(memberPage.locator(`tr[data-run="${runId}"]`)).toContainText('Stopped')
+  await memberPage.context().close()
+  expect(errors).toEqual([])
+})
+
+test('a message to a done Run resumes its Agent session in a second Execution on another machine', async ({ browser }, testInfo) => {
+  test.setTimeout(240_000)
+  const memberPage = await signedInPage(browser, MEMBER)
+  const errors = watchErrors(memberPage)
+  const harnessArgs = join(work, 'second-harness-args')
+  const reply = JSON.stringify({
+    type: 'assistant', session_id: '', uuid: '', parent_tool_use_id: null,
+    message: { id: 'msg_01Resume', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_reason: 'end_turn',
+      content: [{ type: 'text', text: 'Done.' }] },
+  })
+  const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result: 'Done.',
+    stop_reason: 'end_turn', session_id: '', uuid: '', total_cost_usd: 0 })
+  const done = (summary: string) => JSON.stringify({ fake: 'run', args: ['solidtrace', 'report', '--outcome', 'done', '--summary', summary] })
+  const awaitMessage = JSON.stringify({ fake: 'await_message' })
+
+  // The first Execution does the task and is done. The second one gets the
+  // message, and records the harness' arguments (its parent's command line).
+  await control('POST', '/agent', {
+    lines: [awaitMessage,
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: '', uuid: '', cwd: '', permissionMode: '', model: 'claude-haiku-5-5', tools: ['Bash', 'Read'] }),
+      done('First'), reply, result, awaitMessage],
+  })
+  await control('POST', '/agent', {
+    lines: [awaitMessage,
+      JSON.stringify({ fake: 'run', args: ['sh', '-c', `tr '\\0' ' ' < /proc/$PPID/cmdline > ${harnessArgs}`] }),
+      done('Second'), reply, result, awaitMessage],
+  })
+
+  const started = solidtrace(member(), ['start', '--project', PROJECT, '--dispatcher', stack().dispatcher_url, `Fix the tax ${RUN}`])
+  expect(started.code, started.out + started.err + flowstackLog()).toBe(0)
+  const runId = started.out.match(/^Run (\S+) is queued\.$/m)![1]
+  const runPage = async (event: string, count: number) => {
+    await expect(async () => {
+      await memberPage.goto(`/${ORG}/runs/${runId}`)
+      await expect(memberPage.locator(`[data-section="events"] [data-event="${event}"]`)).toHaveCount(count, { timeout: 1_000 })
+    }).toPass({ timeout: 90_000, intervals: [1_000, 2_000] })
+  }
+  await runPage('report', 1)
+  await runPage('execution_ended', 1)
+  const first = (await flow.childTokens()).at(-1)!
+  const session = first.agent_session_ids[0]
+
+  // The member's message continues the Run in a new Execution.
+  const sent = solidtrace(member(), ['message', '--dispatcher', stack().dispatcher_url, runId, 'Also fix the cart'])
+  expect(sent.code, sent.out + sent.err + flowstackLog()).toBe(0)
+  await runPage('report', 2)
+  await runPage('execution_started', 2)
+
+  // The second Execution's token is for the same Agent session, its
+  // wrapper restored the transcript with no error, and its harness
+  // resumed that session.
+  const second = (await flow.childTokens()).at(-1)!
+  expect(second.secret).not.toBe(first.secret)
+  expect(second.agent_session_ids).toEqual([session])
+  // The earlier test's Execution is in the list too: this Run's second
+  // Execution is the last one.
+  const executions: string[] = (await control('GET', '/executions')).executions
+  const output = await (await fetch(`${stack().control_url}/executions/${executions.at(-1)}/output`)).text()
+  writeFileSync(testInfo.outputPath('second-execution-wrapper.log'), output)
+  expect(output).not.toMatch(/wrapper: restore:|restore the Agent session/)
+  await expect.poll(() => existsSync(harnessArgs), { message: 'the second harness records its arguments', timeout: 30_000 }).toBe(true)
+  const args = readFileSync(harnessArgs, 'utf8')
+  writeFileSync(testInfo.outputPath('second-harness-args.txt'), args)
+  expect(args).toContain(`--resume ${session}`)
+
   await memberPage.context().close()
   expect(errors).toEqual([])
 })
