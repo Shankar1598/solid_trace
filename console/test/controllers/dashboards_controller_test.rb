@@ -54,9 +54,11 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Checkout", props["dashboard"]["name"]
     assert_equal "1h", props["dashboard"]["default_range"]
     chart = props["dashboard"]["charts"].sole
-    assert_equal [ "Requests", @project.id, @chart.query, "line", 0, 0, 6, 4 ], chart.values_at("title", "project_id", "query", "viz", "x", "y", "w", "h")
+    assert_equal [ "Requests", @project.id, @chart.query, "query", "line", 0, 0, 6, 4 ],
+      chart.values_at("title", "project_id", "query", "language", "viz", "x", "y", "w", "h")
     assert_equal [ "Storefront" ], props["projects"].map { |p| p["name"] }
     assert props["projects"].first["log_retention_days"].positive?
+    assert props["sql_queries_enabled"]
   end
 
   test "a member makes a Dashboard from the page and is taken to it" do
@@ -405,6 +407,82 @@ class DashboardsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_requested run
+  end
+
+  test "a SQL Chart's data runs its SQL with the values of the Dashboard's filters, and answers the names its SQL uses" do
+    @dashboard.update!(filters: [ { name: "level", kind: "select", multiple: true, options: { from: "list", items: [ { value: "error" } ] } }, { name: "q", kind: "search" } ])
+    chart = create(:dashboard_chart, :sql, dashboard: @dashboard, project: @project)
+    table = { columns: [ { name: "level", type: "string" }, { name: "n", type: "number" } ], rows: [ [ "error", 4 ] ], truncated: false }
+    run = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+      .with(body: {
+        sql: chart.query,
+        from: "2026-10-03T09:00:00.000Z",
+        to: "2026-10-03T10:00:00.000Z",
+        timeout_seconds: DashboardChartsController::RUN_TIMEOUT_SECONDS,
+        parameters: { level: [ "error" ], q: [ "time out" ] },
+      }.to_json)
+      .to_return(status: 200, body: { table: table, parameters: [ "level" ], elapsed_ms: 12 }.to_json)
+
+    get "#{data_dashboard_chart_url(@dashboard, chart, org_slug: @organization.slug)}?#{@range.to_query}&v_level=error&v_q=time+out"
+
+    assert_response :success
+    assert_requested run
+    assert_equal [ [ "error", 4 ] ], response.parsed_body["table"]["rows"]
+    assert_equal [ "level" ], response.parsed_body["parameters"]
+  end
+
+  test "a SQL Chart's data answers EventStore's message for a filter of another type" do
+    chart = create(:dashboard_chart, :sql, dashboard: @dashboard, project: @project)
+    message = "{level:UInt8}: a Dashboard filter's type must be Array(String), String or Nullable(String)"
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql").to_return(status: 400, body: { error: message }.to_json)
+
+    get data_dashboard_chart_url(@dashboard, chart, org_slug: @organization.slug), params: @range
+
+    assert_response :bad_request
+    assert_equal message, response.parsed_body["error"]
+  end
+
+  test "while SQL queries are off a SQL Chart shows that in place of its data, keeps its SQL, and no SQL Chart is added" do
+    chart = create(:dashboard_chart, :sql, dashboard: @dashboard, project: @project)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+    run = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+
+    get data_dashboard_chart_url(@dashboard, chart, org_slug: @organization.slug), params: @range
+
+    assert_response :forbidden
+    assert_equal "SQL queries are turned off on this instance.", response.parsed_body["error"]
+    assert_not_requested run
+    assert DashboardChart.exists?(chart.id)
+
+    post dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { chart: {
+      project_id: @project.id, title: "Levels", language: "sql", query: "SELECT 1", viz: "stat",
+    } }, as: :json
+    assert_response :unprocessable_content
+    assert_includes response.parsed_body["errors"]["base"], LogMonitor::SQL_QUERIES_OFF
+  end
+
+  test "a member adds a SQL Chart, and the editor's preview runs SQL with the bar's values" do
+    @dashboard.update!(filters: [ { name: "q", kind: "search" } ])
+    sql = "SELECT count() AS n FROM logs WHERE ({q:String} = '' OR positionCaseInsensitive(message, {q:String}) > 0)"
+    run = stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
+      .with(body: {
+        sql: sql, from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
+        timeout_seconds: DashboardChartsController::RUN_TIMEOUT_SECONDS, parameters: { q: [ "time out" ] },
+      }.to_json)
+      .to_return(status: 200, body: { table: { columns: [ { name: "n", type: "number" } ], rows: [ [ 2 ] ], truncated: false }, parameters: [ "q" ] }.to_json)
+
+    post preview_dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: {
+      project_id: @project.id, language: "sql", query: sql, parameters: { q: "time out" }, **@range,
+    }, as: :json
+    assert_response :success
+    assert_requested run
+
+    post dashboard_charts_url(@dashboard, org_slug: @organization.slug), params: { chart: {
+      project_id: @project.id, title: "Time outs", language: "sql", query: sql, viz: "stat",
+    } }, as: :json
+    assert_response :created
+    assert_equal "sql", response.parsed_body["language"]
+    assert_equal [ "sql", sql ], @dashboard.charts.find(response.parsed_body["id"]).then { |c| [ c.language, c.query ] }
   end
 
   test "the editor's preview finds no Project of another Organization, and runs nothing" do

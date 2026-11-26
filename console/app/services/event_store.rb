@@ -426,11 +426,12 @@ class EventStore
     # {"table" => {"columns", "rows", "truncated"}}, shaped like a tabular
     # Query's run. Raises SQLQueriesOff while SQL queries are off.
     # timeout_seconds works as in query_logs.
-    def run_logs_sql(project_id:, sql:, from:, to:, timeout_seconds: nil)
+    def run_logs_sql(project_id:, sql:, from:, to:, timeout_seconds: nil, parameters: nil)
       CallTimings.log_read("sql", project_id: project_id, query: sql, from: from, to: to) do
         refuse_sql_unless_enabled!
         body = { sql: sql, from: utc(from), to: utc(to) }
         body[:timeout_seconds] = timeout_seconds if timeout_seconds
+        body[:parameters] = parameters if parameters.present?
         post!("#{base_url}/api/#{project_id}/logs/sql", body, sql: true, read_timeout: read_timeout(timeout_seconds))
       end
     end

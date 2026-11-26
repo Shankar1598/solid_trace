@@ -24,6 +24,7 @@ class DashboardsController < ApplicationController
     render inertia: "Dashboards/Show", props: {
       dashboard: DashboardSerializer.new(@dashboard, include_charts: true).as_json,
       projects: ProjectOptionSerializer.list(@current_org.projects.order(:name)),
+      sql_queries_enabled: InstanceSetting.current.sql_queries_enabled?,
     }
   end
 

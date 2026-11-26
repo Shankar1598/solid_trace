@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# The charts of a Dashboard, and #data, which runs a chart's saved Query
-# through EventStore over the range the page shows. The Query is read from
-# the chart, so it never travels in a URL, and runs on the chart's Project
-# only while that Project is the Organization's.
+# The charts of a Dashboard, and #data, which runs a chart's saved Query or
+# SQL through EventStore over the range the page shows. The text is read
+# from the chart, so it never travels in a URL, and runs on the chart's
+# Project only while that Project is the Organization's.
 class DashboardChartsController < ApplicationController
   include ChartRunning
   include DashboardView
@@ -53,20 +53,25 @@ class DashboardChartsController < ApplicationController
 
   # GET with from and to (ISO 8601), and the page's keys for each filter the
   # Query names that isn't All (Dashboard.filter_values_in): the chart's
-  # Query run over that range with those values.
+  # Query or SQL run over that range with those values. A SQL Chart's
+  # answer names the filters its SQL names, in "parameters".
   # A Text block runs nothing.
   def data
     return render json: { error: "A Text block runs no Query." }, status: :unprocessable_content if @chart.text?
 
-    run_chart(@current_org.projects.find(@chart.project_id), @chart.query, parameters: @dashboard.filter_values(shown_filter_values))
+    run_chart(@current_org.projects.find(@chart.project_id), @chart.query,
+              parameters: @dashboard.filter_values(shown_filter_values), language: @chart.language)
   end
 
-  # POST with project_id, query, from, to and parameters, {name => [values]}
-  # from the filter bar: the chart editor's preview of a Query not yet saved,
-  # run as a chart's is, with its timeout and in its cap.
+  # POST with project_id, query, language ("query" or "sql", default
+  # "query"), from, to and parameters, {name => [values]} from the filter
+  # bar: the chart editor's preview of a Query or SQL not yet saved, run as
+  # a chart's is, with its timeout and in its cap.
   def preview
     given = params[:parameters].respond_to?(:to_unsafe_h) ? params[:parameters].to_unsafe_h : {}
-    run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s, parameters: @dashboard.filter_values(given))
+    language = params[:language] == "sql" ? "sql" : "query"
+    run_chart(@current_org.projects.find(params[:project_id]), params[:query].to_s,
+              parameters: @dashboard.filter_values(given), language: language)
   end
 
   private
@@ -85,7 +90,7 @@ class DashboardChartsController < ApplicationController
   # block has no Query and a chart no text.
   def chart_params
     @chart_params ||= begin
-      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :text, :viz, :x, :y, :w, :h, options: [ :stacked, :unit, :decimals, { thresholds: %i[value label severity] } ])
+      permitted = params.require(:chart).permit(:project_id, :section_id, :title, :query, :language, :text, :viz, :x, :y, :w, :h, options: [ :stacked, :unit, :decimals, { thresholds: %i[value label severity] } ])
       %i[section_id query text].each { |key| permitted[key] = permitted[key].presence if permitted.key?(key) }
       permitted[:project] = @current_org.projects.find_by(id: permitted.delete(:project_id)) if permitted.key?(:project_id)
       permitted

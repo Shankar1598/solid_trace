@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
-# One chart of a Dashboard: a saved Query on a Project of the Dashboard's
-# Organization, drawn as a line, area, bar, stat or table, at a place on the
-# Dashboard's grid of COLUMNS columns. A chart in a Section has its place on
-# that Section's grid; a chart in no Section, on the grid above the Sections.
+# One chart of a Dashboard: a saved Query, or a SQL query, on a Project of
+# the Dashboard's Organization, drawn as a line, area, bar, stat or table, at
+# a place on the Dashboard's grid of COLUMNS columns. language says which; the
+# text is in query either way, as a Monitor keeps it. SQL names a Dashboard
+# filter as a ClickHouse query parameter, {region:Array(String)} (ADR 0025).
+# A chart in a Section has its place on that Section's grid; a chart in no
+# Section, on the grid above the Sections.
 # A chart of viz text is a Text block: Markdown in text, with no Project, no
-# Query and an optional title. It runs nothing.
+# Query, no language and an optional title. It runs nothing.
 class DashboardChart < ApplicationRecord
   VIZES = %w[line area bar stat table text].freeze
   MAX_TEXT = 10_000
@@ -19,11 +22,15 @@ class DashboardChart < ApplicationRecord
   # line can go.
   THRESHOLD_VIZES = %w[line area].freeze
 
+  enum :language, { query: "query", sql: "sql" }, prefix: true, validate: { allow_nil: true }
+
   belongs_to :dashboard, touch: true
   belongs_to :project, optional: true
   belongs_to :section, class_name: "DashboardSection", optional: true, inverse_of: :charts
 
   before_validation :normalize_options
+  # A Text block has no language; a Chart given none runs a Query.
+  before_validation { self.language = text? ? nil : language || "query" }
 
   validates :title, presence: true, unless: :text?
   validates :title, length: { maximum: 200 }
@@ -40,6 +47,7 @@ class DashboardChart < ApplicationRecord
   validate :project_of_the_dashboards_organization
   validate :section_of_the_dashboard, if: :section_id_changed?
   validate :options_known
+  validate :sql_queries_on, if: :language_sql?
 
   # Whether the chart is a Text block.
   def text?
@@ -67,6 +75,16 @@ class DashboardChart < ApplicationRecord
     return unless viz_changed? && (viz == "text") != (viz_was == "text")
 
     errors.add(:viz, "can not change between text and a Chart's viz: delete it and add a new one")
+  end
+
+  # A SQL Chart is saved only while SQL queries are on, when it is new or
+  # its SQL or language changes. While they are off, a saved one keeps its
+  # SQL, and its place and size can change.
+  def sql_queries_on
+    return unless new_record? || will_save_change_to_query? || will_save_change_to_language?
+    return if InstanceSetting.current.sql_queries_enabled?
+
+    errors.add(:base, LogMonitor::SQL_QUERIES_OFF)
   end
 
   # options holds stacked (true or false), unit (a short label such as ms),
