@@ -108,6 +108,19 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to evidence_file_url(org_slug: "acme", id: SHOT)
   end
 
+  test "a person who is not signed in opens the bytes and signs in on the sign-in page: the browser opens the bytes as a full page" do
+    inertia = { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+    get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+    assert_redirected_to login_path
+
+    post login_url, params: { email: @member.email, password: "password" }, headers: inertia
+    assert_redirected_to evidence_file_bytes_url(org_slug: "acme", id: SHOT)
+    get evidence_file_bytes_url(org_slug: "acme", id: SHOT), headers: inertia
+
+    assert_response :conflict
+    assert_equal evidence_file_bytes_url(org_slug: "acme", id: SHOT), response.headers["X-Inertia-Location"]
+  end
+
   test "someone who is not a member gets 404 for the page and the bytes, and EventStore is not asked" do
     bytes = stub_request(:get, %r{/evidence/.*/content})
     sign_in_as(@outsider)

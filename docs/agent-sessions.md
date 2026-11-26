@@ -200,7 +200,7 @@ Click the PR to open its record. The page shows:
 - the review runs, with the skill, the stage, the step, the reviewers with their models and efforts, and the verifier;
 - each finding with who found it (**missed** when the reviews did not), its severity, its title and place, its decisions in the order of its events (as `trivial, verifier pushed back, person asks fix, fixed`), and its outcome. **Details** shows its scenario and the words of its events: why, what the person said, what the agent found, and the files;
 - the confirmations, each **Given**, **Not given** or **Not known**;
-- the Evidence files of its Agent session, each a link to its page;
+- the Evidence files of the Agent sessions of all the rounds of the PR, each a link to its page;
 - the rounds of the PR, when it has more than one. Click a round to open it.
 
 The record is what the agent wrote, with the words of PR commenters in it, so the pages show all of it as text, never as HTML or Markdown.
@@ -252,7 +252,7 @@ The link opens `/<org>/evidence/<id>` in Console. A person who is not signed in 
 
 Console streams the bytes from EventStore with `Range`, so a video can seek. It sends the stored `Content-Type`, with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Content-Disposition: inline` and `Cache-Control: private`.
 
-**Coding agents** → **Evidence files** lists the Evidence files of the Organization, the newest first: a small image or a video mark, the caption, the type, the size, the Agent session, the uploader and the date. A deleted file shows **deleted**. The page of each Agent session and of each Review record lists the Evidence files of its Agent session.
+**Coding agents** → **Evidence files** lists the Evidence files of the Organization, the newest first: a small image or a video mark, the caption, the type, the size, the Agent session, the uploader and the date. A deleted file shows **deleted**. The page of each Agent session lists the Evidence files of that Agent session. The page of each Review record lists the Evidence files of the Agent sessions of all the rounds of its PR.
 
 ### Evidence Retention
 

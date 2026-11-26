@@ -383,6 +383,15 @@ class RunPageTest < ActionDispatch::IntegrationTest
     assert_equal "application/octet-stream", response.media_type
   end
 
+  test "an Inertia visit to an Evidence file of the report opens it as a full page" do
+    sign_in_as(@member)
+
+    get run_evidence_path(org_slug: "acme", id: "run_1", path: "evidence/cart.png"), headers: { "X-Inertia" => "true", "X-Inertia-Version" => ViteRuby.digest }
+
+    assert_response :conflict
+    assert_equal run_evidence_url(org_slug: "acme", id: "run_1", path: "evidence/cart.png"), response.headers["X-Inertia-Location"]
+  end
+
   test "each Organization with an Agent Project reads the Runs of its own, never another Organization's" do
     other = create(:organization, slug: "other")
     other_admin = create(:user)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 class EvidenceFileBytesController < ApplicationController
+  before_action :open_file_as_full_page
   before_action :set_current_org
 
   FILE_HEADERS = %w[Content-Type Content-Range Accept-Ranges Content-Disposition ETag].freeze

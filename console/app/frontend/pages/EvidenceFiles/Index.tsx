@@ -45,30 +45,28 @@ export default function EvidenceFilesIndex({ evidence_files: view }: { evidence_
                     <TableHead className="text-right max-md:hidden">Size</TableHead>
                     <TableHead className="max-md:hidden">Agent session</TableHead>
                     <TableHead className="max-md:hidden">Uploaded by</TableHead>
-                    <TableHead>Uploaded</TableHead>
+                    <TableHead className="max-md:hidden">Uploaded</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {view.rows.map(file => (
                     <TableRow key={file.id} data-evidence-file={file.id}>
                       <TableCell><EvidenceThumb file={file} className="h-10 w-16" /></TableCell>
-                      <TableCell className="max-w-56 md:max-w-md" data-cell="caption">
+                      <TableCell className="max-w-64 md:max-w-md" data-cell="caption">
                         <Link href={evidencePath(slug, file.id)} className="block truncate font-medium underline-offset-2 hover:underline" title={evidenceTitle(file)}>
                           {evidenceTitle(file)}
                         </Link>
                         {file.deleted_at && <Badge variant="neutral" data-badge="deleted">deleted</Badge>}
+                        <div className="mt-1 space-y-0.5 font-mono text-xs text-muted-foreground md:hidden" data-cell="phone-facts">
+                          <div className="flex gap-2"><UploadedAt file={file} /><SessionLink file={file} slug={slug} /></div>
+                          <div className="truncate">{file.content_type} · {bytesText(file.byte_size)}</div>
+                        </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs max-md:hidden" data-cell="type">{file.content_type}</TableCell>
                       <TableCell className="text-right font-mono text-xs tabular-nums whitespace-nowrap max-md:hidden" data-cell="size">{bytesText(file.byte_size)}</TableCell>
-                      <TableCell className="max-md:hidden">
-                        <Link href={agentSessionPath(slug, file.agent_session_id)} className="font-mono text-xs underline underline-offset-2">
-                          {file.agent_session_id.slice(0, 8)}
-                        </Link>
-                      </TableCell>
+                      <TableCell className="max-md:hidden"><SessionLink file={file} slug={slug} /></TableCell>
                       <TableCell className="text-xs max-md:hidden">{file.uploaded_by ?? <span className="text-muted-foreground">Deleted user</span>}</TableCell>
-                      <TableCell className="font-mono text-xs whitespace-nowrap">
-                        <time dateTime={file.created_at}>{format(new Date(file.created_at), 'MMM d, HH:mm')}</time>
-                      </TableCell>
+                      <TableCell className="font-mono text-xs whitespace-nowrap max-md:hidden" data-cell="uploaded"><UploadedAt file={file} /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -78,5 +76,17 @@ export default function EvidenceFilesIndex({ evidence_files: view }: { evidence_
           </div>
         )}
     </DashboardLayout>
+  )
+}
+
+function UploadedAt({ file }: { file: EvidenceFile }) {
+  return <time dateTime={file.created_at}>{format(new Date(file.created_at), 'MMM d, HH:mm')}</time>
+}
+
+function SessionLink({ file, slug }: { file: EvidenceFile; slug: string }) {
+  return (
+    <Link href={agentSessionPath(slug, file.agent_session_id)} className="font-mono text-xs text-foreground underline underline-offset-2">
+      {file.agent_session_id.slice(0, 8)}
+    </Link>
   )
 }

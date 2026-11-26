@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { shortSession } from '../support/agentTranscripts'
 import { ADMIN, MEMBER, ORG } from '../support/data'
-import { watchErrors } from '../support/screens'
+import { expectFits, watchErrors } from '../support/screens'
 import { newContext } from '../support/video'
 
 const RUN = Date.now().toString(36)
@@ -244,6 +244,36 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
     await files.scrollIntoViewIfNeeded()
     await gateShot(page, theme, 'agent-session-evidence-files')
   }
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(scheme => localStorage.setItem('theme', scheme), theme)
+    await page.goto(`/${ORG}/evidence`)
+    const phoneRow = row(image.json.id)
+    await expect(phoneRow.getByRole('link', { name: 'Screenshot: Cart page' })).toBeVisible()
+    await expect(phoneRow.locator('[data-cell="phone-facts"] time')).toBeVisible()
+    for (const line of await phoneRow.locator('[data-cell="phone-facts"] > div').all()) await expectFits(line)
+    const fits = await page.evaluate(() => {
+      const table = document.querySelector('[data-slot="table-container"]')!
+      const time = document.querySelector('[data-cell="phone-facts"] time')!.getBoundingClientRect()
+      return { page: document.documentElement.scrollWidth - document.documentElement.clientWidth, table: table.scrollWidth - table.clientWidth, timeRight: time.right }
+    })
+    writeFileSync(test.info().outputPath(`phone-fit-${theme}.json`), JSON.stringify(fits))
+    expect(fits).toEqual({ page: 0, table: 0, timeRight: expect.any(Number) })
+    expect(fits.timeRight).toBeLessThanOrEqual(390)
+    await gateShot(page, theme, 'list-phone')
+  }
+
+  const reviewer = await newContext(browser, { storageState: { cookies: [], origins: [] } })
+  const bytesPage = await reviewer.newPage()
+  await bytesPage.goto(`${imagePath}/file`)
+  await expect(bytesPage).toHaveURL(/\/login$/)
+  await signIn(bytesPage, MEMBER)
+  await expect(bytesPage).toHaveURL(`${origin}${imagePath}/file`)
+  expect(await bytesPage.evaluate(() => document.contentType)).toBe('image/png')
+  await expect.poll(() => bytesPage.locator('img').evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBeGreaterThan(0)
+  await shot(bytesPage, 'file-after-sign-in')
+  await reviewer.close()
 
   const outsider = await newContext(browser, { storageState: { cookies: [], origins: [] } })
   const other = await outsider.newPage()

@@ -42,5 +42,4 @@ Preconditions:
 - A new stack has Agent sessions off. Each upload then gets 403 with the reason. Turn them on first, as the precondition says.
 - EventStore takes the type from the bytes, not from the name. A PNG name on HTML bytes gives 415.
 - `POST /retention` is on the query port (loopback only). It runs the whole daily pass, Log Retention too. Use it only on your own stack.
-- A `--video` flow writes Chromium's shared memory to `/tmp` on the root disk, up to about 1.8 GB. Check `df -h /` before the flow.
 - Do not upload a file that has a secret on it. The agent decides what is safe to upload.
