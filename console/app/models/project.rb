@@ -21,6 +21,8 @@ class Project < ApplicationRecord
   # The Agent Project's confirms of the capture notice.
   has_many :capture_confirmations, dependent: :delete_all
 
+  EVIDENCE_RETENTION_MAX_DAYS = 3650
+
   # A captured repository: host/workspace/name, or host/workspace/* for each
   # repository of a workspace. The host is in lower case, as `capture`
   # normalises each remote's host before it matches.
@@ -44,6 +46,8 @@ class Project < ApplicationRecord
   validates :trace_retention_days, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
   # What the Project holds, for agents over MCP to pick the Project to query.
   validates :description, length: { maximum: 1000 }
+  validates :evidence_retention_days, numericality: { only_integer: true, in: 1..EVIDENCE_RETENTION_MAX_DAYS }
+  validate :evidence_retention_on_agent_project_only
 
   # A new Project with its first key, so SDKs and shippers can send to it at
   # once, as Console makes one.
@@ -84,6 +88,12 @@ class Project < ApplicationRecord
 
   def generate_slug
     self.slug ||= name.to_s.parameterize
+  end
+
+  def evidence_retention_on_agent_project_only
+    if !agent? && will_save_change_to_evidence_retention_days?
+      errors.add(:evidence_retention_days, "is a setting of the Agent Project only")
+    end
   end
 
   def captured_repositories_well_formed

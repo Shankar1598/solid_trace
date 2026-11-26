@@ -1,12 +1,12 @@
 import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle, ClipboardCheck } from 'lucide-react'
-import { AgentSessionsTabs } from '@/components/AgentSessionsTabs'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { agentSessionPath } from '@/lib/agentSessions'
 import { prHref, recordPath, type ListedReviewRecord } from '@/lib/reviewRecords'
 import type { SharedProps } from '@/types'
 
@@ -17,16 +17,14 @@ type ReviewRecordsProps =
 const DESCRIPTION = 'The newest Review record of each PR: what the reviews found, what happened to each finding, and what they missed.'
 
 /**
- * The Review records tab of Agent sessions: one row for each PR whose
+ * The Review records page of Coding agents: one row for each PR whose
  * open-pr or update-pr session uploaded with its Agent session, the PR
  * stored last first.
  */
 export default function ReviewRecordsIndex({ review_records: view }: { review_records: ReviewRecordsProps }) {
-  const { current_org } = usePage<SharedProps>().props
   return (
     <DashboardLayout>
-      <PageHeader title="Agent sessions" tabTitle="Review records" description={DESCRIPTION} />
-      <AgentSessionsTabs slug={current_org?.slug ?? ''} current="review_records" />
+      <PageHeader title="Review records" description={DESCRIPTION} />
       {view.on ? <RecordsList view={view} /> : <TurnOn canTurnOn={view.can_turn_on} settingsPath={view.settings_path} />}
     </DashboardLayout>
   )
@@ -119,7 +117,7 @@ function RecordsList({ view }: { view: Extract<ReviewRecordsProps, { on: true }>
                 <TableCell className="text-right font-mono text-xs tabular-nums" data-cell="missed">{row.missed}</TableCell>
                 <TableCell className="text-right font-mono text-xs tabular-nums max-md:hidden" data-cell="not-given">{row.confirmations_not_given}</TableCell>
                 <TableCell className="max-md:hidden">
-                  <Link href={`/${slug}/agent_sessions/${row.session_id}`} className="font-mono text-xs underline underline-offset-2">
+                  <Link href={agentSessionPath(slug, row.session_id)} className="font-mono text-xs underline underline-offset-2">
                     {row.session_id.slice(0, 8)}
                   </Link>
                 </TableCell>

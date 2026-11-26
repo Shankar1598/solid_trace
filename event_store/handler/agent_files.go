@@ -82,6 +82,14 @@ func limitHas(ids []string, sessionID uuid.UUID) bool {
 	return false
 }
 
+func limitedToARun(token auth.Token) bool {
+	return token.AgentSessionIDs != nil
+}
+
+func anotherPersonsSession(token auth.Token, session storage.AgentSession) bool {
+	return !limitedToARun(token) && session.UserID != token.UserID
+}
+
 func anotherPersons(c *fiber.Ctx, sessionID uuid.UUID) error {
 	return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 		"error": fmt.Sprintf("Agent session %s was uploaded by another person. Only its person, or a token of its Run, adds to it.", sessionID)})
@@ -106,7 +114,7 @@ func (h *AgentHandler) AgentSessionFiles(c *fiber.Ctx) error {
 	if !known {
 		return c.JSON(answer)
 	}
-	if token.AgentSessionIDs == nil && session.UserID != token.UserID {
+	if anotherPersonsSession(token, session) {
 		return anotherPersons(c, sessionID)
 	}
 	list := make([]fiber.Map, len(files))

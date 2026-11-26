@@ -29,12 +29,13 @@ type world struct {
 	stdout   *syncBuffer
 	stderr   *syncBuffer
 	// httpTimeout is the HTTP client's Timeout; 0 is 10 s.
-	httpTimeout time.Duration
-	browser     func(url string) error
-	opened      []string
-	clock       *clock
-	slept       []time.Duration
-	version     string
+	httpTimeout   time.Duration
+	browser       func(url string) error
+	opened        []string
+	clock         *clock
+	slept         []time.Duration
+	version       string
+	claudeSession string
 }
 
 type syncBuffer struct {
@@ -118,6 +119,7 @@ func (w *world) env() command.Env {
 		},
 		Version:           w.version,
 		ClaudeProjectsDir: w.projectsDir(),
+		ClaudeSessionID:   w.claudeSession,
 	}
 }
 

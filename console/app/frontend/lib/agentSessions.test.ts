@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionsSearch, agoText, costText, modelText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionPath, agentSessionsSearch, agoText, costText, modelText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
+
+describe('the page of an Agent session', () => {
+  it('is in its Organization', () => {
+    expect(agentSessionPath('acme', '0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')).toBe('/acme/agent_sessions/0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')
+  })
+})
 
 describe('the search of the Agent sessions page', () => {
   it('holds a span as a span, and only the filters that are set', () => {

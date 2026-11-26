@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,13 @@ const (
 	// MaxLocalCacheHours is the most local_cache_hours may be, 30 days, as
 	// Console's validation allows.
 	MaxLocalCacheHours = 720
+	// DefaultEvidenceRetentionDays is the Evidence Retention of an
+	// Organization that has no Agent Project:
+	// projects.evidence_retention_days' default.
+	DefaultEvidenceRetentionDays = 90
+	// MaxEvidenceRetentionDays is the most Evidence Retention may be, as
+	// Console's validation allows.
+	MaxEvidenceRetentionDays = 3650
 )
 
 // instanceSettingsID is the one instance_settings row (InstanceSetting::ID in
@@ -212,6 +220,18 @@ func (s *ConsoleSettings) ProjectSlug(projectID uint32) (string, error) {
 	return slug.String, err
 }
 
+// ConsoleURL returns the Console URL instance setting, as Console saved it
+// (PublicUrls.clean): no slash at the end. It is "" when an Instance admin
+// has set none.
+func (s *ConsoleSettings) ConsoleURL() (string, error) {
+	var url sql.NullString
+	err := s.db.QueryRow("SELECT console_url FROM instance_settings WHERE id = ?", instanceSettingsID).Scan(&url)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return url.String, err
+}
+
 // CapturedRepositories returns the captured repositories of an
 // Organization's Agent Project (projects.agent), as Console saved them
 // (Project.normalise_captured_repository). It is an empty list when the
@@ -250,6 +270,50 @@ func (s *ConsoleSettings) AgentProject(organizationID int64) (uint32, bool, erro
 		return 0, false, err
 	}
 	return id, true, nil
+}
+
+// EvidenceRetention returns the Evidence Retention, in whole days, of each
+// Organization's Agent Project (projects.agent), by Organization id. An
+// Organization with no Agent Project is not in it. A Retention outside 1 to
+// MaxEvidenceRetentionDays, which only Console's validations prevent, is 0.
+func (s *ConsoleSettings) EvidenceRetention() (map[int64]int, error) {
+	rows, err := s.db.Query("SELECT organization_id, evidence_retention_days FROM projects WHERE agent = 1")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	retention := make(map[int64]int)
+	for rows.Next() {
+		var (
+			organizationID int64
+			days           int
+		)
+		if err := rows.Scan(&organizationID, &days); err != nil {
+			return nil, err
+		}
+		retention[organizationID] = validEvidenceRetention(days)
+	}
+	return retention, rows.Err()
+}
+
+func evidenceRetentionOf(ctx context.Context, db *sql.DB, organizationID int64) (int, error) {
+	var days int
+	err := db.QueryRowContext(ctx, "SELECT evidence_retention_days FROM projects WHERE organization_id = ? AND agent = 1",
+		organizationID).Scan(&days)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DefaultEvidenceRetentionDays, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return validEvidenceRetention(days), nil
+}
+
+func validEvidenceRetention(days int) int {
+	if days < 1 || days > MaxEvidenceRetentionDays {
+		return 0
+	}
+	return days
 }
 
 // ProjectLogRetention returns the effective Retention, in whole days, of every

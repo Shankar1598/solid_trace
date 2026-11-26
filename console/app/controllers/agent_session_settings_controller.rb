@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 # Organization settings → Agent sessions: the turn-on of Agent sessions,
-# which makes the Organization's Agent Project, and its captured
-# repositories, through AgentSessionsSettings. Each member reads the page;
-# only the Organization's Admins turn on and save, and anyone else's write
-# is 403. Someone outside the Organization gets 404 (set_current_org).
+# which makes the Organization's Agent Project, its captured repositories,
+# through AgentSessionsSettings, and its Evidence Retention. Each member
+# reads the page; only the Organization's Admins turn on and save, and
+# anyone else's write is 403. Someone outside the Organization gets 404
+# (set_current_org).
 class AgentSessionSettingsController < ApplicationController
   layout "dashboard"
 
@@ -12,7 +13,8 @@ class AgentSessionSettingsController < ApplicationController
   CONFIRMATIONS_SHOWN = 20
 
   before_action :set_current_org
-  before_action :require_admin, only: [ :create, :update ]
+  before_action :require_admin, only: [ :create, :update, :evidence_retention ]
+  before_action :require_agent_project, only: [ :update, :evidence_retention ]
 
   def show
     render inertia: "Settings/AgentSessions", props: page_props
@@ -26,11 +28,13 @@ class AgentSessionSettingsController < ApplicationController
 
   # A save of the captured repositories.
   def update
-    project = @current_org.agent_project
-    return redirect_to(page_path, alert: "Turn on Agent sessions first.") unless project
+    answer AgentSessionsSettings.save(project: @current_org.agent_project, user: current_user, entries: entries,
+      confirmed: params[:confirmed]), "Captured repositories saved"
+  end
 
-    answer AgentSessionsSettings.save(project: project, user: current_user, entries: entries, confirmed: params[:confirmed]),
-      "Captured repositories saved"
+  def evidence_retention
+    answer AgentSessionsSettings.save_evidence_retention(project: @current_org.agent_project, days: params[:evidence_retention_days]),
+      "Evidence Retention saved"
   end
 
   private
@@ -55,6 +59,10 @@ class AgentSessionSettingsController < ApplicationController
     head :forbidden unless admin?
   end
 
+  def require_agent_project
+    redirect_to(page_path, alert: "Turn on Agent sessions first.") unless @current_org.agent_project
+  end
+
   def admin?
     @current_org.organization_users.find_by(user: current_user)&.admin? || false
   end
@@ -70,6 +78,7 @@ class AgentSessionSettingsController < ApplicationController
         on: project.present?,
         project: project && ProjectSerializer.new(project).as_json,
         captured_repositories: project&.captured_repositories || [],
+        evidence_retention_days: project&.evidence_retention_days,
         confirmations: project ? confirmations(project) : [],
       },
       notice_text: AgentSessionsSettings::NOTICE,

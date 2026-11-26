@@ -83,6 +83,7 @@ type TestEnv struct {
 	AgentParser *agentprocessing.Parser
 	// ConsoleSettings reads Console's settings, as Retention.
 	ConsoleSettings *storage.ConsoleSettings
+	EvidenceFiles   *storage.EvidenceFiles
 	// LogCleanup cleans up every family of day tables, Spans' too.
 	LogCleanup  *logprocessing.Cleanup
 	LogsHandler *handler.LogsHandler
@@ -96,6 +97,7 @@ type TestEnv struct {
 	// ServerVersion is the version that the agent ingest API says it is,
 	// v0.19.0 unless a test changes it.
 	ServerVersion string
+	ConsoleURL    string
 
 	// LogTransforms runs each Project's Log transform in Log processing.
 	// Restart keeps it; Reopen makes a new one.
@@ -542,7 +544,7 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
 	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
-	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock,
+	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock, nil,
 		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
 		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
 		logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})
@@ -552,6 +554,10 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Span processing Prepare failed: %v", err)
 	}
 	env.ConsoleSettings = consoleSettings
+	env.EvidenceFiles, err = storage.NewEvidenceFiles(sqliteWriter, nil, filepath.Join(env.dir, "evidence"))
+	if err != nil {
+		t.Fatalf("Failed to open the Evidence files: %v", err)
+	}
 	env.startAgentProcessing(t)
 
 	// Setup Handler
@@ -583,7 +589,8 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterAgentRoutes(env.App, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter,
 		NotifyFiles: func(projectID uint32) { env.AgentFileProcessor.Notify(projectID) },
-		Downloads:   clickHouse, RunEvents: ingestService, Totals: env.ClickHouseLogs, Clock: env.Clock, Version: env.ServerVersion,
+		Downloads:   clickHouse, RunEvents: ingestService, Totals: env.ClickHouseLogs, Evidence: env.EvidenceFiles,
+		ConsoleURL: env.ConsoleURL, Clock: env.Clock, Version: env.ServerVersion,
 	}))
 	env.QueryApp = fiber.New()
 	handler.RegisterQueryRoutes(env.QueryApp, eventsHandler, logsHandler, handler.NewLogTransformHandler(env.LogTransforms),
@@ -597,6 +604,7 @@ func (env *TestEnv) open(t *testing.T) {
 	handler.RegisterReviewRecordRoutes(env.QueryApp, handler.NewReviewRecordsHandler(env.ClickHouseLogs))
 	handler.RegisterRunsQueryRoutes(env.QueryApp, handler.NewRunsHandler(env.ClickHouseLogs, env.Clock))
 	handler.RegisterAgentEvidenceRoute(env.QueryApp, handler.NewAgentEvidenceHandler(clickHouse))
+	handler.RegisterEvidenceQueryRoutes(env.QueryApp, handler.NewEvidenceFilesHandler(env.EvidenceFiles))
 
 	env.close = func() {
 		pebbleWriter.StopWrites()

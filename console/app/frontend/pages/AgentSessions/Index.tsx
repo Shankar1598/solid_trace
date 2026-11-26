@@ -2,7 +2,6 @@ import { Link, router, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, ClipboardCheck } from 'lucide-react'
-import { AgentSessionsTabs } from '@/components/AgentSessionsTabs'
 import { AgentSessionSearch } from '@/components/AgentSessionSearch'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -73,11 +72,9 @@ const DESCRIPTION = 'Each Agent session of this Organization: the engineers\' in
  * before its limit, so that the rows are the first of all in that order.
  */
 export default function AgentSessionsIndex({ agent_sessions: view }: { agent_sessions: AgentSessionsProps }) {
-  const { current_org } = usePage<SharedProps>().props
   return (
     <DashboardLayout>
       <PageHeader title="Agent sessions" description={DESCRIPTION} />
-      <AgentSessionsTabs slug={current_org?.slug ?? ''} current="agent_sessions" />
       {view.on ? <SessionsList view={view} /> : <TurnOn canTurnOn={view.can_turn_on} settingsPath={view.settings_path} />}
     </DashboardLayout>
   )

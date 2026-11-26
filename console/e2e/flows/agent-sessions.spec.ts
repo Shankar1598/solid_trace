@@ -536,24 +536,20 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   capture(reviewer, first, shopDir)
   capture(reviewer, second, shopDir)
 
-  // The Review records tab of Agent sessions, once EventStore has parsed
-  // the uploads: one row for the PR, its newest round. The sidebar has no
-  // entry of its own for it: Agent sessions stays lit.
   const table = page.getByRole('table', { name: 'Review records' })
   const row = table.locator(`tr[data-review-record="${pr}"]`)
   const sidebar = page.getByRole('navigation', { name: 'Main' })
-  const tabs = page.getByRole('navigation', { name: 'Agent sessions tabs' })
   await expect(async () => {
     await page.goto(`/${ORG}/agent_sessions`)
-    await expect(tabs.getByRole('link', { name: 'Agent sessions' })).toHaveAttribute('aria-current', 'page', { timeout: 1_000 })
-    await tabs.getByRole('link', { name: 'Review records' }).click()
+    await expect(sidebar.getByRole('link', { name: 'Agent sessions' })).toHaveAttribute('aria-current', 'page', { timeout: 1_000 })
+    await sidebar.getByRole('link', { name: 'Review records' }).click()
     await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records$`))
     await expect(row.locator('[data-cell="round"]')).toHaveText('2(1 earlier)', { timeout: 1_000 })
   }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] })
-  await expect(tabs.getByRole('link', { name: 'Review records' })).toHaveAttribute('aria-current', 'page')
   await expect(page).toHaveTitle('Review records · SolidTrace')
-  await expect(sidebar.getByRole('link', { name: 'Review records' })).toHaveCount(0)
-  await expect(sidebar.getByRole('link', { name: 'Agent sessions' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Review records')
+  await expect(sidebar.getByRole('link', { name: 'Review records' })).toHaveAttribute('aria-current', 'page')
+  await expect(sidebar.getByRole('link', { name: 'Agent sessions' })).not.toHaveAttribute('aria-current')
   await expect(row.locator('[data-cell="findings"]')).toHaveText('240')
   await expect(row.locator('[data-cell="fixed"]')).toHaveText('238')
   await expect(row.locator('[data-cell="missed"]')).toHaveText('2')
@@ -571,7 +567,7 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records/record\\?key=`))
   await expect(page.getByRole('heading', { level: 1 })).toContainText(pr)
   const crumbs = page.getByRole('navigation', { name: 'Breadcrumb' })
-  await expect(crumbs.getByRole('link', { name: 'Agent sessions' })).toHaveAttribute('href', `/${ORG}/agent_sessions`)
+  await expect(crumbs.getByRole('link')).toHaveText(['Review records'])
   await expect(crumbs.getByRole('link', { name: 'Review records' })).toHaveAttribute('href', `/${ORG}/review_records`)
   await expect(page.locator('[data-section="review-record-header"]')).toContainText('240 (238 fixed, 2 missed by the reviews)')
   await expect(page.getByRole('region', { name: 'Story' })).toContainText('The person asked for a cart page, round 2.')

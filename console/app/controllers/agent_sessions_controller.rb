@@ -29,8 +29,9 @@ class AgentSessionsController < ApplicationController
   end
 
   # The Agent session page: the header and the first page of the timeline
-  # of one Agent session of the Agent Project. 404 when the Organization
-  # has no Agent Project or EventStore has no such Agent session.
+  # of one Agent session of the Agent Project, and its Evidence files. 404
+  # when the Organization has no Agent Project or EventStore has no such
+  # Agent session.
   def show
     view = AgentSessionView.new(organization: @current_org, id: params[:id])
     raise ActiveRecord::RecordNotFound unless view.found?
@@ -46,6 +47,7 @@ class AgentSessionsController < ApplicationController
       parent_path: parent && agent_session_path(org_slug: slug, id: parent),
       review_record: records&.dig(params[:id].downcase),
       review_record_known: !records.nil?,
+      evidence_files: EvidenceFile.of_sessions(@current_org, [ params[:id] ]),
     )
     render inertia: "AgentSessions/Show", props: { agent_session: props }
   end

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -28,12 +30,16 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 	// List returns the objects whose keys begin with prefix, by key.
 	List(ctx context.Context, prefix string) ([]StoredObject, error)
+	// Get reads length bytes of key's object from offset. The caller closes
+	// the reader. length must be more than 0.
+	Get(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error)
 }
 
 // StoredObject is one object of an ObjectStore.
 type StoredObject struct {
-	Key  string // relative to the store's prefix
-	Size int64
+	Key      string // relative to the store's prefix
+	Size     int64
+	Modified time.Time
 }
 
 // NewObjectStore returns the bucket of an object_store config, reached
@@ -171,8 +177,9 @@ func (s *s3Store) List(ctx context.Context, prefix string) ([]StoredObject, erro
 		}
 		for _, object := range page.Contents {
 			objects = append(objects, StoredObject{
-				Key:  strings.TrimPrefix(aws.ToString(object.Key), s.prefix),
-				Size: aws.ToInt64(object.Size),
+				Key:      strings.TrimPrefix(aws.ToString(object.Key), s.prefix),
+				Size:     aws.ToInt64(object.Size),
+				Modified: aws.ToTime(object.LastModified),
 			})
 		}
 		if !aws.ToBool(page.IsTruncated) || len(page.Contents) == 0 {
@@ -183,6 +190,24 @@ func (s *s3Store) List(ctx context.Context, prefix string) ([]StoredObject, erro
 	}
 	slices.SortFunc(objects, func(a, b StoredObject) int { return strings.Compare(a.Key, b.Key) })
 	return objects, nil
+}
+
+func (s *s3Store) Get(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
+	if err := checkObjectKey(key); err != nil {
+		return nil, err
+	}
+	if offset < 0 || length <= 0 {
+		return nil, fmt.Errorf("read %d bytes at %d of %s: the range is empty", length, offset, s.location(key))
+	}
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.prefix + key),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read %d bytes at %d of %s: %w", length, offset, s.location(key), err)
+	}
+	return out.Body, nil
 }
 
 // location names key's object in errors, as s3://<bucket>/<prefix><key>.

@@ -98,10 +98,11 @@ func fileProblems(path, skill, text string, headings map[string][]string) []stri
 	}
 	for i, l := range lines {
 		n := i + 1
+		bare := codeSpan.ReplaceAllString(l, "")
 		if strings.ContainsRune(l, '—') {
 			add(n, "has an em dash (U+2014)")
 		}
-		for _, m := range markdownLink.FindAllStringSubmatch(l, -1) {
+		for _, m := range markdownLink.FindAllStringSubmatch(bare, -1) {
 			target, _, _ := strings.Cut(m[1], "#")
 			if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 				continue
@@ -133,7 +134,7 @@ func fileProblems(path, skill, text string, headings map[string][]string) []stri
 			named = append(named, m[1])
 		}
 		if len(named) > 0 {
-			for _, m := range quoted.FindAllStringSubmatch(codeSpan.ReplaceAllString(l, ""), -1) {
+			for _, m := range quoted.FindAllStringSubmatch(bare, -1) {
 				if !slices.ContainsFunc(named, func(s string) bool { return slices.Contains(headings[s], m[1]) }) {
 					add(n, "%q is not a step heading of %s", m[1], strings.Join(named, " or "))
 				}
@@ -346,6 +347,30 @@ func TestTheSkillCheckNamesTheFileAndTheProblemOfEachBreak(t *testing.T) {
 				t.Fatalf("problems:\n%s\nwant one problem of %s with %q", strings.Join(problems, "\n"), path, c.want)
 			}
 		})
+	}
+}
+
+func TestTheSkillCheckDoesNotResolveALinkInACodeSpan(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "skills")
+	if err := os.CopyFS(root, os.DirFS(filepath.Join(skillsDir, "skills"))); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "open-pr", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte("\nWrite `[Video: <caption>](<link>)`, then see [the list](missing.md).\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	problems, err := skillProblems(root)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "the link missing.md does not resolve") {
+		t.Fatalf("problems:\n%s\nwant only the problem of missing.md", strings.Join(problems, "\n"))
 	}
 }
 

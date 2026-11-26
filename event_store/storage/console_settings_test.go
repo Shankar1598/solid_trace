@@ -25,7 +25,9 @@ CREATE TABLE instance_settings (
 
 CREATE TABLE projects (
 	id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+	agent BOOLEAN DEFAULT FALSE NOT NULL,
 	created_at DATETIME NOT NULL,
+	evidence_retention_days INTEGER DEFAULT 90 NOT NULL,
 	log_retention_days INTEGER,
 	name VARCHAR,
 	organization_id INTEGER NOT NULL,
@@ -346,4 +348,27 @@ func TestConsoleSettings_LocalCacheHoursOutOfRangeOrMissingAreAnError(t *testing
 		t.Errorf("LocalCacheHours() without the column = %d, want an error", got)
 	}
 	assertInstanceSettings(t, settings, InstanceSettings{SQLQueriesEnabled: true, DefaultLogRetentionDays: 14})
+}
+
+func TestConsoleSettings_EvidenceRetentionIsEachAgentProjectsByOrganization(t *testing.T) {
+	path, console := newConsoleDB(t)
+	settings := openConsoleSettings(t, path)
+	for _, project := range []struct {
+		organizationID int
+		agent          bool
+		days           any
+	}{
+		{1, true, 7}, {2, true, nil}, {3, true, 0}, {4, true, 3651}, {5, false, 30},
+	} {
+		consoleExec(t, console, `INSERT INTO projects (agent, created_at, evidence_retention_days, name, organization_id, slug, updated_at)
+			VALUES (?, datetime('now'), COALESCE(?, 90), 'Project', ?, 'project', datetime('now'))`,
+			project.agent, project.days, project.organizationID)
+	}
+	got, err := settings.EvidenceRetention()
+	if err != nil {
+		t.Fatalf("EvidenceRetention: %v", err)
+	}
+	if want := map[int64]int{1: 7, 2: 90, 3: 0, 4: 0}; !maps.Equal(got, want) {
+		t.Errorf("EvidenceRetention() = %v, want %v", got, want)
+	}
 }

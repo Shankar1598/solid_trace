@@ -17,7 +17,7 @@ class ProjectOptionSerializer
   end
 
   def as_json(*)
-    {
+    option = {
       id: @project.id,
       name: @project.name,
       slug: @project.slug,
@@ -25,6 +25,8 @@ class ProjectOptionSerializer
       log_retention_days: @project.log_retention_days || settings.default_log_retention_days,
       trace_retention_days: @project.trace_retention_days || settings.default_trace_retention_days,
     }
+    option[:evidence_retention_days] = @project.evidence_retention_days if @project.agent?
+    option
   end
 
   def to_json(*)

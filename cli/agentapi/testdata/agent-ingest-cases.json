@@ -166,6 +166,30 @@
          "body_text": "{\"n\":1}\n"},
         {"method": "GET", "path": "/agent-sessions/{session}/files", "status": 200, "body": {"agent_session": null, "files": []}}
       ]
+    },
+    {
+      "name": "an Evidence file is stored once, and a body that is not an image or a video is refused, also one with the first bytes of one",
+      "steps": [
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "status": 201,
+         "query": {"caption": "The cart page"}, "body_text": "GIF89a one frame",
+         "body": {"content_type": "image/gif", "byte_size": 16}},
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "status": 200,
+         "body_text": "GIF89a one frame", "body": {"content_type": "image/gif", "byte_size": 16}},
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "status": 415,
+         "body_text": "<html><body>A page</body></html>", "error_has": "PNG"},
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "status": 415,
+         "body_text": "RIFF$\u0000\u0000\u0000WAVEfmt  of a WAV file, not WebP", "error_has": "PNG"},
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "status": 415,
+         "body_text": "\u0000\u0000\u0000\u0014ftypqt  \u0000\u0000\u0002\u0000qt   of a QuickTime file, not MP4", "error_has": "PNG"},
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "status": 415,
+         "body_text": "GIF89a one frame", "gzip": true, "error_has": "Content-Encoding"},
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "status": 400,
+         "body_text": ""},
+        {"method": "POST", "path": "/agent-sessions/not-a-session/evidence", "status": 400,
+         "body_text": "GIF89a one frame", "error_has": "\"not-a-session\" is not an Agent session id"},
+        {"method": "POST", "path": "/agent-sessions/{session}/evidence", "token": "none", "status": 401,
+         "body_text": "GIF89a one frame"}
+      ]
     }
   ]
 }

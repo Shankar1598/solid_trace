@@ -59,7 +59,7 @@ The title is one line that says what the change does. The body is a briefing tha
 
 - **What changes**: one `##` section for each change that a user or an operator sees, from the record's `story`, with no parent heading. The heading says the point, for example "Review records moves into Agent sessions". Say what changes and why. Name the routes, the limits and the fallbacks as the code names them.
 - **Where to look**: the two to four files or functions that a reviewer reads first, and why each one.
-- **Evidence**: the tests and checks that ran, what each one covers, and their result. Name the suites that did not run.
+- **Evidence**: the tests and checks that ran, what each one covers, and their result. Name the suites that did not run. Then the links of the Evidence files (below), one on each line.
 - **Review**, in short sentences:
   - the count of reviews and of their findings, and how many of those findings are fixed, disputed, deferred or open;
   - for each review, what it found that changed the code, or that it found nothing;
@@ -69,6 +69,18 @@ The title is one line that says what the change does. The body is a briefing tha
   Do not list each finding of the reviews. End the section with one line that says the Review record has each finding and its decisions.
 
 In every section, do not quote the person's messages from the sessions: they are private, and can hold host names or secrets. Say what they asked for or decided in your own short words.
+
+**The Evidence files.** Upload the screenshots and videos that prove this PR to SolidTrace, for example the files of a verify-solidtrace run. They are in the run directory that its `up` command printed as its last line: each screenshot at `<run>/evidence/<name>.png`, and each video of a `flow --video` at `<run>/evidence/flow-<HHMMSS>/playwright/<test>/*.webm`. A reviewer who is a member of the Organization opens each link in Console after sign-in. Upload only the files that prove this PR. Look at each file before you upload it: each member of the Organization can see it, so upload only a file that shows no secret, token, password or private data. To check a video (`.webm`), read the steps of its flow, and look at the screenshots of the same pages, or at frames of the video when a tool on the machine can extract them. Upload the video only when these show no secret. You decide which files are safe, and no person confirms each file. With no such file, upload nothing.
+
+Upload each file in its own call, with a caption that says what the file proves, in at most 200 characters:
+
+```bash
+solidtrace evidence add ~/.cache/solid-trace/verify/runs/20261122T085753Z-s1/evidence/review-records-list.png --caption "The Review records list, newest PR first"
+```
+
+For each file, the command prints one line: the link, the type and the size, for example `https://console.example.com/acme/evidence/7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f image/png 84 KB`. Write one Markdown link in Evidence for each line: `[Screenshot: <caption>](<link>)` for an `image/` type, and `[Video: <caption>](<link>)` for a `video/` type.
+
+When a call exits with a code that is not 0, write no link for its file, and continue with the PR. In the final reply, give the file and the error that the command printed. For example, an old SolidTrace server says `this SolidTrace server is too old for Evidence files: ask the operator to upgrade it`.
 
 End the body with the line `<!-- solidtrace-record round 1 -->`, which `update-pr` reads. Write the body to `$dir/body.md`.
 

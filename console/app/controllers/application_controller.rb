@@ -50,6 +50,13 @@ class ApplicationController < ActionController::Base
     raise Pundit::NotAuthorizedError unless current_user.instance_admin?
   end
 
+  # For an action that sends a file, not an Inertia page. An Inertia visit to
+  # it, such as the redirect after signing in, then opens it as a full page,
+  # so the browser shows the file and not its bytes as text.
+  def open_file_as_full_page
+    inertia_location(request.url) if request.inertia?
+  end
+
   def user_not_authorized
     flash[:alert] = "You are not authorized to perform this action."
     redirect_back(fallback_location: root_path)

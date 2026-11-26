@@ -28,17 +28,18 @@ func main() {
 		os.Exit(1)
 	}
 	env := command.Env{
-		Stdin:       os.Stdin,
-		Stdout:      os.Stdout,
-		Stderr:      os.Stderr,
-		ConfigDir:   dir,
-		HTTP:        &http.Client{Timeout: 30 * time.Second},
-		OpenBrowser: browser(),
-		Now:         time.Now,
-		Sleep:       sleep,
-		Version:     version.Version,
-		Detach:      detach,
-		AgentSocket: os.Getenv(agentsocket.Env),
+		Stdin:           os.Stdin,
+		Stdout:          os.Stdout,
+		Stderr:          os.Stderr,
+		ConfigDir:       dir,
+		HTTP:            &http.Client{Timeout: 30 * time.Second},
+		OpenBrowser:     browser(),
+		Now:             time.Now,
+		Sleep:           sleep,
+		Version:         version.Version,
+		Detach:          detach,
+		AgentSocket:     os.Getenv(agentsocket.Env),
+		ClaudeSessionID: os.Getenv(command.ClaudeSessionEnv),
 	}
 	if home, err := os.UserHomeDir(); err == nil || os.Getenv("CLAUDE_CONFIG_DIR") != "" {
 		env.ClaudeProjectsDir = command.ClaudeProjectsDir(os.Getenv, home)

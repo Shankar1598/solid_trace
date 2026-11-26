@@ -39,11 +39,12 @@ type AgentTokens interface {
 
 // AgentSettings is what the agent ingest API reads of Console's settings
 // (storage.ConsoleSettings): an Organization's captured repositories and
-// its Agent Project, and the extra Redaction patterns.
+// its Agent Project, the extra Redaction patterns, and the Console URL.
 type AgentSettings interface {
 	CapturedRepositories(organizationID int64) ([]string, error)
 	AgentProject(organizationID int64) (uint32, bool, error)
 	RedactionPatterns() ([]string, error)
+	ConsoleURL() (string, error)
 }
 
 // AgentConfig is what the agent ingest API is built on.
@@ -59,8 +60,13 @@ type AgentConfig struct {
 	// RunEvents stores the Dispatcher's run events as Logs.
 	RunEvents RunEventsIngest
 	// Totals reads the totals of Agent sessions for the totals call.
-	Totals AgentTotals
-	Clock  clock.Clock
+	Totals   AgentTotals
+	Evidence EvidenceFiles
+	// ConsoleURL is Console's URL when the Console URL instance setting is
+	// not set, as CONSOLE_URL gives it. The handler cleans it as Console's
+	// PublicUrls.clean does: no spaces around it, no slash at its end.
+	ConsoleURL string
+	Clock      clock.Clock
 	// Version is the server's version, as SOLIDTRACE_VERSION gives it
 	// (v0.19.0). A version that is not a release, such as dev, accepts a
 	// client of each version.
@@ -77,6 +83,8 @@ type AgentHandler struct {
 	downloads   AgentDownloads
 	runEvents   RunEventsIngest
 	totals      AgentTotals
+	evidence    EvidenceFiles
+	consoleURL  string
 	clock       clock.Clock
 	version     string
 	minimum     *clientVersion
@@ -95,6 +103,8 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 		downloads:   cfg.Downloads,
 		runEvents:   cfg.RunEvents,
 		totals:      cfg.Totals,
+		evidence:    cfg.Evidence,
+		consoleURL:  strings.TrimRight(strings.TrimSpace(cfg.ConsoleURL), "/"),
 		clock:       cfg.Clock,
 		version:     cfg.Version,
 		minimum:     minimumClientVersion(cfg.Version),
@@ -108,6 +118,7 @@ func RegisterAgentRoutes(app *fiber.App, h *AgentHandler) {
 	api.Get("/captured-repositories", h.requireScope(ScopeSessionsWrite), h.CapturedRepositories)
 	api.Get("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.AgentSessionFiles)
 	api.Post("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.UploadAgentFile)
+	api.Post("/agent-sessions/:session_id/evidence", h.requireScope(ScopeSessionsWrite), h.UploadEvidenceFile)
 	api.Get("/agent-sessions/:session_id/download", h.requireScope(ScopeSessionsRead), h.DownloadAgentSession)
 	api.Get("/agent-session-totals", h.requireScope(ScopeSessionsRead), h.AgentSessionTotals)
 	api.Post("/run-events", h.requireScope(ScopeRunEventsWrite), h.SendRunEvents)

@@ -89,7 +89,7 @@ func TestAnotherFamilyOfDayTablesKeepsItsOwnRetentionCountsTowardTheDiskLimitAnd
 		}
 		return retention, err
 	}
-	cleanup := logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock,
+	cleanup := logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock, nil,
 		logprocessing.Family{Days: storage.LogDays, Retention: settings.ProjectLogRetention},
 		logprocessing.Family{Days: standInDays, Retention: twoDays})
 

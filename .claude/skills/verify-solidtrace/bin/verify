@@ -170,6 +170,7 @@ pebble_path: $S/pebble
 sqlite_path: $S/sqlite/solid_trace.sqlite3
 message_queue_path: $S/sqlite/message_queue.sqlite3
 logs_parquet_path: $S/logs_parquet
+evidence_path: $S/evidence
 clickhouse:
   database: $db
 EOF

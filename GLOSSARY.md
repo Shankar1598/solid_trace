@@ -296,6 +296,14 @@ _Avoid_: session (alone), conversation, thread, chat
 The record of a PR's reviews that the `open-pr` and `update-pr` skills send to `solidtrace review final` at the end of an **Agent session** (in an older Agent session, at the end of its final reply): each review run, each finding with every decision on it and its outcome, the problems that a person, an agent or a test run found and the reviews missed, and the confirmations. Each `update-pr` writes the next round of the same PR. SolidTrace keeps it from the uploaded Agent session, and the newest round is the PR's record.
 _Avoid_: PR record, review report, findings record
 
+**Evidence file**:
+One screenshot or video that an agent uploads with `solidtrace evidence add` to prove a PR: a PNG, JPEG, WebP or GIF image, or an MP4 or WebM video, of at most 32 MiB. It belongs to the **Agent session** that uploaded it. EventStore keeps it, and the PR body links to its page in **Console**, which each member of the **Organization** can open after sign-in. **Evidence Retention** deletes it.
+_Avoid_: attachment, artifact, upload, screenshot (alone), Evidence (alone), a file of a **Run**'s **Evidence**
+
+**Evidence Retention**:
+How many whole days the **Agent Project** keeps each **Evidence file**: 90 days to start, from 1 to 3650, set by an Admin. Then EventStore deletes the file, and the file's page says when and why. A change applies to the files that are already there. Separate from the Agent Project's **Retention**, which its Logs and **Agent sessions** follow.
+_Avoid_: evidence TTL, evidence expiry, file retention
+
 **Run**:
 One unit of work that the factory gives to a coding agent, from its trigger until its PR is merged or declined, or 30 days pass with no activity. It continues across stops, and records who stepped in and the outcome of its PR.
 _Avoid_: job, task, agent run
@@ -350,7 +358,7 @@ _Avoid_: webhook client, integration (alone)
 
 **Evidence**:
 What a **Run** shows to prove its work: the checks that the factory's tool ran, with their results and the end of their output, and the files that the agent attached.
-_Avoid_: proof, test results (alone)
+_Avoid_: proof, test results (alone), Evidence file (for a file that a Run's agent attached)
 
 **Cause report**:
 What a **Run** that an **Issue** or a **Monitor** started found: the cause of the problem, and the Logs, the code and the steps that prove it. The agent sends it with its done report. Such a Run opens a PR only when a check proves the fix; with no PR, its cause report is its result. The **Dispatcher** posts an Issue Run's cause report on the Issue as a comment by "Factory".
@@ -399,6 +407,8 @@ _Avoid_: command, mention, slash command
 - An **Organization** with **Require two-factor** admits only members who have **Two-factor**, with an **Authenticator app** or a **Passkey**
 - An **Agent session** belongs to its **Organization**'s **Agent Project**; an engineer's own Agent session has no **Run**, and is recorded only in a **Captured repository**
 - A **Review record** comes from the `solidtrace review final` call at the end of an **Agent session** (in an older Agent session, from its final reply), and is in the same **Agent Project**, with the same **Retention**
+- An **Agent session** has the **Evidence files** that its agent uploaded, and the PR body links to each of them
+- The **Agent Project**'s **Evidence Retention** decides when its **Evidence files** are deleted
 - The **Agent Project**'s key sends Claude Code telemetry as **Logs** of the Agent Project; only the telemetry of a **Captured repository** is kept
 - A **Run** works in the repository that its **Project**'s **Factory settings** name, and its record is in the **Agent Project**
 - A **Run** that reports done shows its **Evidence**; with no check that passed, it shows no Evidence
@@ -417,3 +427,4 @@ _Avoid_: command, mention, slash command
 - "session" was being used for a coding agent's conversation as well as a signed-in browser; resolved: **Session** stays the signed-in browser, and an agent's conversation is an **Agent session**.
 - "run" was being used for one time an agent works on a machine and for the whole piece of work across stops; resolved: the whole piece of work is a **Run**, and each time it works on a machine is an **Execution**. A **Monitor**'s run and a **Chart** run are plain verbs, not a **Run**.
 - "checkpoint" was being used for a **Processing cursor** and for the factory's save on an interval; resolved: a **Checkpoint** is only the factory's save, and EventStore's position in its stored Events stays the **Processing cursor**.
+- "evidence" was being used for what a **Run** shows to prove its work, and for the screenshots and videos that prove a PR; resolved: a Run's checks and attached files are its **Evidence**, a screenshot or a video that an agent uploads with `solidtrace evidence add` is an **Evidence file**, and the Evidence section of a PR body is a heading of the body, not a term.

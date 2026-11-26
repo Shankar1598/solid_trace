@@ -9,6 +9,7 @@
 class RunsController < ApplicationController
   layout "dashboard"
 
+  before_action :open_file_as_full_page, only: :evidence
   before_action :set_current_org
 
   def index

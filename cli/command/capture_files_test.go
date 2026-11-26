@@ -214,9 +214,9 @@ func TestCaptureWithNoSignInLogsAndExitsZero(t *testing.T) {
 func TestALineOrAFileOver32MiBIsSentAsItsFirst32MiBWithItsFullSize(t *testing.T) {
 	w := newWorld(t, acme)
 	s := w.capturedSession()
-	long := "{\"big\":\"" + strings.Repeat("y", fake.UnitLimit+100) + "\"}\n"
+	long := "{\"big\":\"" + strings.Repeat("y", fake.BodyLimit+100) + "\"}\n"
 	s.write("", "{\"n\":1}\n"+long+"{\"n\":3}\n")
-	s.write("tool-results/huge.txt", strings.Repeat("z", fake.UnitLimit+5))
+	s.write("tool-results/huge.txt", strings.Repeat("z", fake.BodyLimit+5))
 	s.stop()
 	s.stop()
 
@@ -230,7 +230,7 @@ func TestALineOrAFileOver32MiBIsSentAsItsFirst32MiBWithItsFullSize(t *testing.T)
 	if cut == nil {
 		t.Fatalf("no cut unit; log: %s", w.captureLog())
 	}
-	if len(cut.Body) != fake.UnitLimit || cut.Query.Get("size") != strconv.Itoa(len(long)) || cut.Query.Get("offset") != "8" {
+	if len(cut.Body) != fake.BodyLimit || cut.Query.Get("size") != strconv.Itoa(len(long)) || cut.Query.Get("offset") != "8" {
 		t.Errorf("cut unit: %d bytes, query %v", len(cut.Body), cut.Query)
 	}
 	f := w.agent.Stored(s.id, s.main())
@@ -241,8 +241,8 @@ func TestALineOrAFileOver32MiBIsSentAsItsFirst32MiBWithItsFullSize(t *testing.T)
 		t.Errorf("the line after the long line was not sent")
 	}
 	huge := w.agent.Stored(s.id, s.id+"/tool-results/huge.txt")
-	if huge == nil || len(huge.Bytes) != fake.UnitLimit || huge.End != fake.UnitLimit+5 ||
-		huge.ContentHash != sha256Of(strings.Repeat("z", fake.UnitLimit+5)) {
+	if huge == nil || len(huge.Bytes) != fake.BodyLimit || huge.End != fake.BodyLimit+5 ||
+		huge.ContentHash != sha256Of(strings.Repeat("z", fake.BodyLimit+5)) {
 		t.Errorf("huge file: %+v", huge)
 	}
 }

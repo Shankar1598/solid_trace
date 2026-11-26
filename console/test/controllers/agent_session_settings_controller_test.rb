@@ -153,6 +153,38 @@ class AgentSessionSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_equal 90, settings_page["agent_sessions"]["project"]["log_retention_days"]
   end
 
+  test "an Admin saves Evidence Retention, 90 days to start, from 1 to 3650 days" do
+    agent_project = turn_on_as_admin
+    sign_in_as(@admin)
+    assert_equal 90, settings_page["agent_sessions"]["evidence_retention_days"]
+
+    save_evidence_retention("7")
+    assert_redirected_to agent_session_settings_path(org_slug: @organization.slug)
+    assert_equal 7, agent_project.reload.evidence_retention_days
+    assert_equal 7, settings_page["agent_sessions"]["evidence_retention_days"]
+
+    [ "0", "3651", "2.5", "" ].each do |days|
+      save_evidence_retention(days)
+      assert inertia_errors["evidence_retention_days"].present?, days
+      assert_equal 7, JSON.parse(response.body).dig("props", "agent_sessions", "evidence_retention_days"), days
+      assert_equal 7, agent_project.reload.evidence_retention_days, days
+    end
+  end
+
+  test "a member reads Evidence Retention, and a save of theirs is 403; before the turn-on there is none" do
+    sign_in_as(@admin)
+    assert_nil settings_page["agent_sessions"]["evidence_retention_days"]
+    save_evidence_retention("7")
+    assert_redirected_to agent_session_settings_path(org_slug: @organization.slug)
+
+    agent_project = turn_on_as_admin
+    sign_in_as(@member)
+    assert_equal 90, settings_page["agent_sessions"]["evidence_retention_days"]
+    save_evidence_retention("7")
+    assert_response :forbidden
+    assert_equal 90, agent_project.reload.evidence_retention_days
+  end
+
   test "a member runs a Query on the Agent Project's Logs, as for any Project" do
     agent_project = turn_on_as_admin
     query = stub_request(:post, "#{EventStore.base_url}/api/#{agent_project.id}/logs/query")
@@ -219,6 +251,11 @@ class AgentSessionSettingsControllerTest < ActionDispatch::IntegrationTest
   def save_list(entries, confirmed: nil)
     patch agent_session_settings_path(org_slug: @organization.slug),
       params: { captured_repositories: entries.presence || [ "" ], confirmed: confirmed }.compact, headers: inertia
+  end
+
+  def save_evidence_retention(days)
+    patch evidence_retention_agent_session_settings_path(org_slug: @organization.slug),
+      params: { evidence_retention_days: days }, headers: inertia
   end
 
   def settings_page

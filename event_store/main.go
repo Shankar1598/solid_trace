@@ -70,6 +70,11 @@ func main() {
 	}
 	defer sqliteWriter.Close()
 
+	evidenceFiles, err := storage.NewEvidenceFiles(sqliteWriter, storage.NewObjectStore(cfg.ObjectStore), cfg.EvidencePath)
+	if err != nil {
+		logger.L.Fatal("Failed to open the Evidence files", "error", err)
+	}
+
 	// Initialize Message Queue Writer (for Event Store -> Rails)
 	messageQueueWriter, err := storage.NewMessageQueueWriter(cfg.MessageQueuePath)
 	if err != nil {
@@ -133,7 +138,6 @@ func main() {
 	agentFileProcessor.Start()
 	agentParser.Start()
 
-	// Retention and deleted Projects once a day, the disk limit hourly.
 	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
 	if err != nil {
 		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
@@ -141,6 +145,7 @@ func main() {
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
 	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
 	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, diskLimit, clock.System{},
+		&logprocessing.Evidence{Files: evidenceFiles, Retention: consoleSettings.EvidenceRetention},
 		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
 		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
 		// The Agent Project's Log Retention, which its derived Logs keep too.
@@ -194,7 +199,8 @@ func main() {
 	defer agentTokens.Close()
 	handler.RegisterAgentRoutes(app, handler.NewAgentHandler(handler.AgentConfig{
 		Tokens: agentTokens, Settings: consoleSettings, Files: pebbleWriter, NotifyFiles: agentFileProcessor.Notify,
-		Downloads: clickHouse, RunEvents: ingestService, Totals: clickHouseLogs, Clock: clock.System{}, Version: serverVersion(),
+		Downloads: clickHouse, RunEvents: ingestService, Totals: clickHouseLogs, Evidence: evidenceFiles,
+		ConsoleURL: os.Getenv("CONSOLE_URL"), Clock: clock.System{}, Version: serverVersion(),
 	}))
 
 	queryApp := fiber.New(fiber.Config{
@@ -207,6 +213,8 @@ func main() {
 	handler.RegisterReviewRecordRoutes(queryApp, handler.NewReviewRecordsHandler(clickHouseLogs))
 	handler.RegisterRunsQueryRoutes(queryApp, handler.NewRunsHandler(clickHouseLogs, clock.System{}))
 	handler.RegisterAgentEvidenceRoute(queryApp, handler.NewAgentEvidenceHandler(clickHouse))
+	handler.RegisterEvidenceQueryRoutes(queryApp, handler.NewEvidenceFilesHandler(evidenceFiles))
+	handler.RegisterRetentionRoute(queryApp, logCleanup)
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort

@@ -73,6 +73,7 @@ export const pageItems: PaletteSource = ({ orgSlug, factoryOn }) => {
     page('monitors', 'Monitors', 'monitors'),
     page('agent_sessions', 'Agent sessions', 'agent_sessions'),
     page('review_records', 'Review records', 'review_records'),
+    page('evidence', 'Evidence files', 'evidence'),
     ...(factoryOn ? [page('runs', 'Runs', 'runs')] : []),
     page('projects', 'Projects', 'projects'),
     page('settings', 'Settings', 'settings/organization'),

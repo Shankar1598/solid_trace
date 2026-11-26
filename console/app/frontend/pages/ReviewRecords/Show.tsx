@@ -2,11 +2,14 @@ import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { EvidenceFileList } from '@/components/EvidenceFileList'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { agentSessionPath } from '@/lib/agentSessions'
+import type { EvidenceFile } from '@/lib/evidenceFiles'
 import {
   decisionsOf,
   eventWords,
@@ -29,6 +32,7 @@ type ReviewRecordProps = {
   record: ReviewRecord | null
   rounds: ReviewRound[]
   list_path: string
+  evidence_files: EvidenceFile[]
 }
 
 const OUTCOME_BADGES: Record<string, 'ok' | 'warn' | 'error' | 'neutral' | 'info'> = {
@@ -45,11 +49,10 @@ export default function ReviewRecordShow({ review_record: view }: { review_recor
   const row = view.review_record
   const record = view.record
   const title = row ? row.pr || 'No PR' : 'Review record'
-  const { current_org } = usePage<SharedProps>().props
   return (
     <DashboardLayout>
       <PageHeader
-        breadcrumbs={[{ label: 'Agent sessions', href: `/${current_org?.slug ?? ''}/agent_sessions` }, { label: 'Review records', href: view.list_path }, { label: title }]}
+        breadcrumbs={[{ label: 'Review records', href: view.list_path }, { label: title }]}
         title={<span className="break-all" data-title>{title}</span>}
         tabTitle={`Review record ${title}`}
         badge={row && <Badge variant="count">Round {row.round}</Badge>}
@@ -66,6 +69,7 @@ export default function ReviewRecordShow({ review_record: view }: { review_recor
       {row && record && (
         <div className="space-y-6">
           <Header row={row} />
+          <EvidenceFileList files={view.evidence_files} />
           <Story record={record} />
           <Reviews record={record} />
           <Findings findings={record.findings ?? []} />
@@ -94,7 +98,7 @@ function Header({ row }: { row: ReviewRecordRow }) {
       ? <a href={href} target="_blank" rel="noreferrer noopener" className="break-all underline underline-offset-2">{row.pr}</a>
       : <span className="break-all">{row.pr || <span className="text-muted-foreground">No PR opened</span>}</span>],
     ['Stored', <time dateTime={row.stored_at}>{format(new Date(row.stored_at), 'MMM d, yyyy HH:mm')}</time>],
-    ['Agent session', <Link href={`/${current_org?.slug ?? ''}/agent_sessions/${row.session_id}`} className="font-mono text-xs underline underline-offset-2">{row.session_id}</Link>],
+    ['Agent session', <Link href={agentSessionPath(current_org?.slug ?? '', row.session_id)} className="font-mono text-xs underline underline-offset-2">{row.session_id}</Link>],
     ['Findings', `${row.findings} (${row.fixed} fixed, ${row.missed} missed by the reviews)`],
     ['Confirmations not given', String(row.confirmations_not_given)],
   ]

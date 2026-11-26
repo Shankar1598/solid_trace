@@ -38,6 +38,10 @@ logs_parquet_path: /storage/duckdb/production/logs_parquet
 # logs_heavy_read_slots: 1
 sqlite_path: /storage/sqlite/production/solid_trace.sqlite3
 message_queue_path: /storage/sqlite/production/message_queue.sqlite3
+# The screenshots and videos that agents upload to prove a PR (Evidence files),
+# when object_store below is not set. With a bucket they go under its evidence/
+# prefix, and this folder keeps only the temporary files of uploads.
+evidence_path: /storage/evidence/production
 
 # A bucket that ClickHouse moves older Logs to, and that holds the Log files a
 # DuckDB release uploaded. Without this block everything stays on local disk.

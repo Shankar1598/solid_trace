@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -61,6 +62,13 @@ func minIOStore(t *testing.T, cfg *config.ObjectStore) *s3Store {
 	return store
 }
 
+func withoutModified(objects []StoredObject) []StoredObject {
+	for i := range objects {
+		objects[i].Modified = time.Time{}
+	}
+	return objects
+}
+
 // writeFile writes a local file and returns its path.
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
@@ -93,9 +101,14 @@ func testObjectStore(t *testing.T, store ObjectStore, read func(key string) stri
 		if err != nil {
 			t.Fatalf("List %q: %v", prefix, err)
 		}
-		return objects
+		for _, object := range objects {
+			if age := time.Since(object.Modified); age < -time.Minute || age > time.Hour {
+				t.Errorf("Expected %s modified just now, got %v", object.Key, object.Modified)
+			}
+		}
+		return withoutModified(objects)
 	}
-	want := []StoredObject{{hour7, 6}, {hour8, 10}}
+	want := []StoredObject{{Key: hour7, Size: 6}, {Key: hour8, Size: 10}}
 	if got := list("project=1/"); !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected project 1's objects %v, got %v", want, got)
 	}
@@ -120,7 +133,7 @@ func testObjectStore(t *testing.T, store ObjectStore, read func(key string) stri
 			t.Errorf("Delete %s: %v", hour7, err)
 		}
 	}
-	if got, want := list(""), []StoredObject{{hour8, 10}, {other, 9}}; !reflect.DeepEqual(got, want) {
+	if got, want := list(""), []StoredObject{{Key: hour8, Size: 10}, {Key: other, Size: 9}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Expected %v after the delete, got %v", want, got)
 	}
 
@@ -162,11 +175,11 @@ func TestAnObjectStoreOnMinIOListsPastOnePage(t *testing.T) {
 			t.Fatalf("Put %s: %v", key, err)
 		}
 		if key[0] == 'a' {
-			want = append(want, StoredObject{key, 3})
+			want = append(want, StoredObject{Key: key, Size: 3})
 		}
 	}
 	got, err := store.List(ctx, "a/")
-	if err != nil || !reflect.DeepEqual(got, want) {
+	if err != nil || !reflect.DeepEqual(withoutModified(got), want) {
 		t.Errorf("Expected %v, got %v (%v)", want, got, err)
 	}
 }
@@ -286,5 +299,39 @@ func TestAnObjectStoresRequestsSignNoHeaderGCSRewrites(t *testing.T) {
 	}
 	if got := requests[1].query; !strings.Contains(got, "prefix=solidtrace%2Fproject%3D1%2F") {
 		t.Errorf("Expected the GET to keep its prefix, got the query %q", got)
+	}
+}
+
+func TestAnObjectStoreOnMinIOReadsARangeOfAnObject(t *testing.T) {
+	store := minIOStore(t, minIOConfig(t))
+	ctx := context.Background()
+	data := make([]byte, 1000)
+	for i := range data {
+		data[i] = byte(i * 7)
+	}
+	path := filepath.Join(t.TempDir(), "video.webm")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	key := "evidence/org=1/" + uuid.NewString() + ".webm"
+	if err := store.Put(ctx, key, path); err != nil {
+		t.Fatalf("Put %s: %v", key, err)
+	}
+	for _, r := range []struct{ offset, length int64 }{{0, 1000}, {100, 100}, {990, 10}, {0, 1}} {
+		body, err := store.Get(ctx, key, r.offset, r.length)
+		if err != nil {
+			t.Fatalf("Get %d bytes at %d: %v", r.length, r.offset, err)
+		}
+		got, err := io.ReadAll(body)
+		body.Close()
+		if err != nil || string(got) != string(data[r.offset:r.offset+r.length]) {
+			t.Errorf("Expected bytes %d to %d, got %d bytes (%v)", r.offset, r.offset+r.length-1, len(got), err)
+		}
+	}
+	if _, err := store.Get(ctx, key, 1000, 10); err == nil {
+		t.Error("Expected a range after the end of the object to fail")
+	}
+	if _, err := store.Get(ctx, "evidence/org=1/missing.webm", 0, 10); err == nil {
+		t.Error("Expected a read of a missing object to fail")
 	}
 }

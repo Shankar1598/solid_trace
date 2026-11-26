@@ -108,7 +108,7 @@ func (c *Client) AgentSessionFiles(ctx context.Context, sessionID string) ([]Age
 	var answer struct {
 		Files []AgentSessionFile `json:"files"`
 	}
-	err := c.call(ctx, http.MethodGet, "/agent-sessions/"+url.PathEscape(sessionID)+"/files", nil, &answer)
+	err := c.call(ctx, http.MethodGet, "/agent-sessions/"+url.PathEscape(sessionID)+"/files", &answer)
 	return answer.Files, err
 }
 
@@ -179,27 +179,67 @@ func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploa
 	if err := zw.Close(); err != nil {
 		return Uploaded{}, err
 	}
-	limit := UploadBase + time.Duration(body.Len()/UploadRate)*time.Second
-	ctx, cancel := context.WithTimeout(ctx, limit)
+	ctx, cancel, hc := c.uploadClient(ctx, body.Len())
 	defer cancel()
-	hc := *c.HTTP
-	hc.Timeout = 0
 	var answer Uploaded
-	err := c.callWith(ctx, &hc, http.MethodPost, "/agent-sessions/"+url.PathEscape(sessionID)+"/files?"+query.Encode(),
-		body.Bytes(), &answer)
+	err := c.callWith(ctx, hc, http.MethodPost, "/agent-sessions/"+url.PathEscape(sessionID)+"/files?"+query.Encode(),
+		&requestBody{data: body.Bytes(), encoding: "gzip"}, &answer)
 	return answer, err
 }
 
+func (c *Client) uploadClient(ctx context.Context, size int) (context.Context, context.CancelFunc, *http.Client) {
+	ctx, cancel := context.WithTimeout(ctx, UploadBase+time.Duration(size/UploadRate)*time.Second)
+	hc := *c.HTTP
+	hc.Timeout = 0
+	return ctx, cancel, &hc
+}
+
+const MaxEvidenceBytes = 32 << 20
+
+// MaxEvidenceCaption is the most characters (runes) of the caption of an
+// Evidence file.
+const MaxEvidenceCaption = 200
+
+// Evidence is the server's answer to an upload of an Evidence file. URL is
+// the file's page in Console. It starts with "/" when the server does not
+// know its Console URL.
+type Evidence struct {
+	ID          string `json:"id"`
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
+	ByteSize    int64  `json:"byte_size"`
+}
+
+// AddEvidence uploads one Evidence file of an Agent session, with an
+// optional caption. The server finds the type from the bytes, so they go
+// with no Content-Encoding. The same bytes again to the same Agent session
+// give the first upload's answer.
+func (c *Client) AddEvidence(ctx context.Context, sessionID, caption string, data []byte) (Evidence, error) {
+	path := "/agent-sessions/" + url.PathEscape(sessionID) + "/evidence"
+	if caption != "" {
+		path += "?" + url.Values{"caption": {caption}}.Encode()
+	}
+	ctx, cancel, hc := c.uploadClient(ctx, len(data))
+	defer cancel()
+	var answer Evidence
+	err := c.callWith(ctx, hc, http.MethodPost, path, &requestBody{data: data}, &answer)
+	return answer, err
+}
+
+type requestBody struct {
+	data     []byte
+	encoding string
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, into any) error {
-	return c.call(ctx, http.MethodGet, path, nil, into)
+	return c.call(ctx, http.MethodGet, path, into)
 }
 
-// call sends one request; body nil is a GET with no body, else a gzip body.
-func (c *Client) call(ctx context.Context, method, path string, body []byte, into any) error {
-	return c.callWith(ctx, c.HTTP, method, path, body, into)
+func (c *Client) call(ctx context.Context, method, path string, into any) error {
+	return c.callWith(ctx, c.HTTP, method, path, nil, into)
 }
 
-func (c *Client) callWith(ctx context.Context, hc *http.Client, method, path string, body []byte, into any) error {
+func (c *Client) callWith(ctx context.Context, hc *http.Client, method, path string, body *requestBody, into any) error {
 	resp, err := c.answer(ctx, hc, method, path, body)
 	if err != nil {
 		return err
@@ -216,9 +256,8 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, method, path str
 }
 
 // answer sends one request, with one refresh of the token and one more
-// try after a 401, and gives the 200 answer. Any other status is an
-// *Error.
-func (c *Client) answer(ctx context.Context, hc *http.Client, method, path string, body []byte) (*http.Response, error) {
+// try after a 401, and gives a 2xx answer. Any other status is an *Error.
+func (c *Client) answer(ctx context.Context, hc *http.Client, method, path string, body *requestBody) (*http.Response, error) {
 	token, err := c.Tokens.Token(ctx)
 	if err != nil {
 		return nil, err
@@ -236,7 +275,7 @@ func (c *Client) answer(ctx context.Context, hc *http.Client, method, path strin
 			return nil, err
 		}
 	}
-	if resp.StatusCode == http.StatusOK {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return resp, nil
 	}
 	defer resp.Body.Close()
@@ -290,13 +329,13 @@ func (c *Client) DownloadAgentSession(ctx context.Context, hc *http.Client, sess
 	return Download{Archive: resp.Body, Flags: resp.Header.Get("SolidTrace-Agent-Session-Flags")}, nil
 }
 
-func (c *Client) send(ctx context.Context, hc *http.Client, method, path string, body []byte, token string) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, hc *http.Client, method, path string, body *requestBody, token string) (*http.Response, error) {
 	if c.IngestURL == "" {
 		return nil, errors.New("no ingest URL: run 'solidtrace login' again")
 	}
 	var reader io.Reader
 	if body != nil {
-		reader = bytes.NewReader(body)
+		reader = bytes.NewReader(body.data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.IngestURL, "/")+Path+path, reader)
 	if err != nil {
@@ -307,7 +346,9 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, path string,
 	req.Header.Set("User-Agent", "solidtrace/"+c.Version)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/octet-stream")
-		req.Header.Set("Content-Encoding", "gzip")
+		if body.encoding != "" {
+			req.Header.Set("Content-Encoding", body.encoding)
+		}
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
