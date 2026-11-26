@@ -648,7 +648,7 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
       .to_return(status: 400, body: { error: "{level:UInt8}: a Dashboard filter's type must be Array(String), String or Nullable(String)" }.to_json)
     bad = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Bad", sql: "SELECT {level:UInt8}")
     assert bad.error?
-    assert_includes bad.text, "can't run: {level:UInt8}: a Dashboard filter's type must be Array(String), String or Nullable(String)"
+    assert_includes bad.text, "SQL can't run: {level:UInt8}: a Dashboard filter's type must be Array(String), String or Nullable(String)"
 
     stub_sql_check(@shop, parameters: [ "level" ])
     unknown = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, sql: CHART_SQL)

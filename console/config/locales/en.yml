@@ -34,6 +34,9 @@ en:
       monitor:
         # A SQL Monitor's errors on its text, which is in query.
         sql: "SQL"
+      dashboard_chart:
+        # A SQL Chart's errors on its text, which is in query.
+        sql: "SQL"
       instance_setting:
         # As Settings → Instance labels it, for update_instance_settings' errors.
         logs_text_match_budget_mb: "Text-match budget (MiB)"
