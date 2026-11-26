@@ -480,6 +480,11 @@ type AgentAPI struct {
 	// EvidenceLimit, when not 0, is the most bytes of an Evidence file in
 	// place of BodyLimit, as a server with a lower limit than the CLI's.
 	EvidenceLimit int
+	// DownloadNotReady is how many downloads answer 503 with Retry-After
+	// before one gives the archive.
+	DownloadNotReady int
+	// Downloads counts the downloads that gave the archive.
+	Downloads int
 
 	evidence      map[string]*EvidenceFile
 	evidenceOrder []string
@@ -499,7 +504,11 @@ type Request struct {
 type Session struct {
 	Harness, Repository, Folder string
 	Organization                string
-	Files                       map[string]*File
+	// AnotherPerson is true for an Agent session that another person of
+	// the Organization uploaded, and RunID names the Run of a Run's.
+	AnotherPerson bool
+	RunID         string
+	Files         map[string]*File
 }
 
 // File is the highest version of one path: its bytes as stored, from
@@ -511,6 +520,8 @@ type File struct {
 	ContentHash string
 	Bytes       []byte
 	Cut         bool
+	// Partial is true when Retention dropped the file's start.
+	Partial bool
 	// Versions counts the versions that the fake got.
 	Versions int
 }
@@ -572,6 +583,7 @@ func NewAgentAPI(oauth *OAuth) *AgentAPI {
 	mux.HandleFunc("GET /api/agent/v1/agent-sessions/{id}/files", f.files)
 	mux.HandleFunc("POST /api/agent/v1/agent-sessions/{id}/files", f.upload)
 	mux.HandleFunc("POST /api/agent/v1/agent-sessions/{id}/evidence", f.addEvidence)
+	mux.HandleFunc("GET /api/agent/v1/agent-sessions/{id}/download", f.download)
 	f.Server = httptest.NewServer(mux)
 	return f
 }
