@@ -1,16 +1,11 @@
 package wrapper
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"path"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/solidtrace/cli/agentapi"
@@ -98,11 +93,19 @@ func (u *uploads) download(ctx context.Context, r runUser) (found, restored bool
 			return false, false, err
 		}
 		defer download.Archive.Close()
-		written, err := extract(download.Archive, u.dir, r.giveIn, u.log)
+		files, err := agentapi.Extract(download.Archive, u.dir, func(name string) error { return r.giveIn(u.dir, name) })
 		if err != nil {
 			return false, false, err
 		}
-		if !written[u.task.SessionID+".jsonl"] {
+		transcript := false
+		for _, f := range files {
+			if f.Flags != "" {
+				fmt.Fprintf(u.log, "wrapper: restore: %s is %s in SolidTrace: it is not restored\n", f.Name, f.Flags)
+			} else if f.Name == u.task.SessionID+".jsonl" {
+				transcript = true
+			}
+		}
+		if !transcript {
 			fmt.Fprintf(u.log, "wrapper: restore: SolidTrace has no complete transcript of the Agent session %s\n",
 				u.task.SessionID)
 			return true, false, nil
@@ -113,68 +116,6 @@ func (u *uploads) download(ctx context.Context, r runUser) (found, restored bool
 
 // sessionIDShape is true for a lower-case UUID.
 func sessionIDShape(id string) bool { return sessionFile.MatchString(id + ".jsonl") }
-
-// extract writes each file of the tar archive into root, gives each file
-// and folder that it makes with give, and gives the paths that it wrote.
-// A file that is partial (Retention dropped its start) or cut (it has
-// missing ranges) is not written: its offsets would not agree with
-// SolidTrace's, and a resume from it is not promised. A path that is not
-// a plain relative path stops the restore.
-func extract(archive io.Reader, root *os.Root, give func(root *os.Root, name string) error,
-	log io.Writer) (map[string]bool, error) {
-	restored := map[string]bool{}
-	r := tar.NewReader(archive)
-	for {
-		h, err := r.Next()
-		if errors.Is(err, io.EOF) {
-			return restored, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read the download: %w", err)
-		}
-		// SolidTrace stores files only: no folder, link or device.
-		if h.Typeflag != tar.TypeReg {
-			continue
-		}
-		name := h.Name
-		if name == "" || path.IsAbs(name) || path.Clean(name) != name || name == ".." ||
-			strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
-			return nil, fmt.Errorf("the download has the path %q, which is not in the Agent session directory", name)
-		}
-		if flags := h.PAXRecords[agentapi.PAXFlags]; flags != "" {
-			fmt.Fprintf(log, "wrapper: restore: %s is %s in SolidTrace: it is not restored\n", name, flags)
-			continue
-		}
-		// Each folder of the path that is not there yet.
-		parts := strings.Split(name, "/")
-		for i := 1; i < len(parts); i++ {
-			folder := filepath.Join(parts[:i]...)
-			if err := root.Mkdir(folder, 0o700); err == nil {
-				if err := give(root, folder); err != nil {
-					return nil, err
-				}
-			} else if !errors.Is(err, os.ErrExist) {
-				return nil, fmt.Errorf("restore %s: %w", name, err)
-			}
-		}
-		file := filepath.FromSlash(name)
-		f, err := root.OpenFile(file, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-		if err != nil {
-			return nil, fmt.Errorf("restore %s: %w", name, err)
-		}
-		_, err = io.Copy(f, r)
-		if closeErr := f.Close(); err == nil {
-			err = closeErr
-		}
-		if err == nil {
-			err = give(root, file)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("restore %s: %w", name, err)
-		}
-		restored[name] = true
-	}
-}
 
 // giveIn makes the path in root the run user's.
 func (r runUser) giveIn(root *os.Root, name string) error {
