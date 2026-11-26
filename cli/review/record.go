@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -29,7 +30,8 @@ const recordVersion = 2
 
 // ReadFinal decodes data as one review record of version 2, the record
 // that open-pr and update-pr give to review final. A field that the record
-// does not have, no sessions, no findings or a round below 1 is an error.
+// does not have, no sessions, no findings, or a round below 1 or above
+// 4294967295 (the uint32 that EventStore keeps) is an error.
 func ReadFinal(data []byte) (Record, error) {
 	var v struct {
 		Version int `json:"version"`
@@ -56,6 +58,8 @@ func ReadFinal(data []byte) (Record, error) {
 		return Record{}, errors.New("no findings")
 	case r.Round < 1:
 		return Record{}, fmt.Errorf("round %d is not 1 or more", r.Round)
+	case r.Round > math.MaxUint32:
+		return Record{}, fmt.Errorf("round %d is more than %d", r.Round, uint32(math.MaxUint32))
 	}
 	return r, nil
 }

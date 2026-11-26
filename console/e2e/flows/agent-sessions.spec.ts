@@ -1,7 +1,7 @@
 import { test, expect, type Browser, type Locator, type Page } from '@playwright/test'
 import { execFileSync, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { ADMIN, MEMBER, ORG } from '../support/data'
 import { EFFORT, fakeAnthropicKey, longSession, MODEL, openPrSession, shortSession, SUBAGENT_EFFORT, SUBAGENT_MODEL, writeSession, type FixtureSession } from '../support/agentTranscripts'
@@ -21,7 +21,9 @@ import { newContext } from '../support/video'
 // person message.
 //
 // The second test captures two open-pr Agent sessions of one PR, and checks
-// its Review record on the Review records pages and over MCP.
+// its Review record on the Review records pages and over MCP. The newer
+// session has its record as a file in its own folder, as solidtrace review
+// final writes it, and the older one in its final reply.
 //
 // OAuth needs a Console URL: the flow sets this stack's own, and puts the
 // old one back after. The flow stack's ClickHouse keeps the rows of earlier
@@ -74,11 +76,21 @@ function projectDir(m: Machine, cwd: string): string {
   return join(m.claude, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'))
 }
 
-/** Runs `solidtrace capture` with the SessionEnd hook's input, as the plugin does. */
-function capture(m: Machine, session: FixtureSession, cwd: string) {
+/** Runs `solidtrace capture` with the hook's input (SessionEnd unless named), as the plugin does. */
+function capture(m: Machine, session: FixtureSession, cwd: string, event = 'SessionEnd') {
   const transcript = writeSession(projectDir(m, cwd), session)
-  const input = { session_id: session.id, transcript_path: transcript, cwd, hook_event_name: 'SessionEnd' }
+  const input = { session_id: session.id, transcript_path: transcript, cwd, hook_event_name: event }
   execFileSync(cli, ['capture'], { input: JSON.stringify(input), env: m.env, cwd, stdio: 'pipe', timeout: 60_000 })
+}
+
+/** Runs `solidtrace review final` on a file of the record in the Agent session, as open-pr does; answers its line. */
+function reviewFinal(m: Machine, session: FixtureSession, cwd: string, record: string): string {
+  writeSession(projectDir(m, cwd), session)
+  const file = join(work, `record-${randomUUID()}.json`)
+  writeFileSync(file, record)
+  return execFileSync(cli, ['review', 'final', file], {
+    env: { ...m.env, CLAUDE_CODE_SESSION_ID: session.id }, cwd, stdio: 'pipe', timeout: 60_000,
+  }).toString().trim()
 }
 
 /** `solidtrace login --device`: the flow types the CLI's code on the device page and approves. */
@@ -516,7 +528,7 @@ function reviewRecord(pr: string, round: number, findings: number): string {
   })
 }
 
-test('the review final call of an open-pr Agent session, or the final reply of an older one, gives its Review record, on the Review records pages and over MCP', async ({ page, baseURL }) => {
+test('the record file of an open-pr Agent session, or the final reply of an older one, gives its Review record, on the Review records pages and over MCP', async ({ page, baseURL }) => {
   test.setTimeout(240_000)
   const errors = watchErrors(page)
   const origin = new URL(baseURL!).origin
@@ -530,11 +542,29 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   const round1 = reviewRecord(pr, 1, 6)
   const round2 = reviewRecord(pr, 2, 240)
   expect(Buffer.byteLength(round2)).toBeGreaterThan(LOG_STRING_LIMIT)
+  expect(Buffer.byteLength(round2), 'past the 128 KiB that one Bash argument can have').toBeGreaterThan(128 * 1024)
   const example = reviewRecord(examplePr, 1, 4)
   const first = openPrSession(shopDir, { exampleRecord: example, record: round1, minutesAgo: 30, inReply: true })
   const second = openPrSession(shopDir, { exampleRecord: example, record: round2, minutesAgo: 10 })
   capture(reviewer, first, shopDir)
-  capture(reviewer, second, shopDir)
+  const draft = reviewRecord(pr, 2, 230)
+  expect(reviewFinal(reviewer, second, shopDir, draft)).toMatch(new RegExp(`^record: round 2, 230 findings, 228 fixed, kept in .*/${second.id}/solidtrace/review-records/round-2-[0-9a-f]{12}\\.json$`))
+  capture(reviewer, second, shopDir, 'Stop')
+  const captureOutsideTheCapturedRepositories = () => {
+    const elsewherePr = `https://github.example/other/notes-${RUN}/pull/1`
+    const elsewhereDir = gitRepository(`${ELSEWHERE}-records`)
+    const elsewhere = openPrSession(elsewhereDir, { exampleRecord: example, record: reviewRecord(elsewherePr, 1, 4), minutesAgo: 5 })
+    const kept = reviewFinal(reviewer, elsewhere, elsewhereDir, reviewRecord(elsewherePr, 1, 4)).split('kept in ')[1]
+    expect(existsSync(kept), kept).toBe(true)
+    capture(reviewer, elsewhere, elsewhereDir, 'Stop')
+    return elsewherePr
+  }
+  const captureTheLastRound = () => {
+    expect(reviewFinal(reviewer, second, shopDir, round2)).toMatch(/^record: round 2, 240 findings, 238 fixed, kept in /)
+    capture(reviewer, second, shopDir, 'Stop')
+  }
+  const elsewherePr = captureOutsideTheCapturedRepositories()
+  captureTheLastRound()
 
   const table = page.getByRole('table', { name: 'Review records' })
   const row = table.locator(`tr[data-review-record="${pr}"]`)
@@ -545,6 +575,7 @@ test('the review final call of an open-pr Agent session, or the final reply of a
     await sidebar.getByRole('link', { name: 'Review records' }).click()
     await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records$`))
     await expect(row.locator('[data-cell="round"]')).toHaveText('2(1 earlier)', { timeout: 1_000 })
+    await expect(row.locator('[data-cell="findings"]')).toHaveText('240', { timeout: 1_000 })
   }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] })
   await expect(page).toHaveTitle('Review records · SolidTrace')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Review records')
@@ -558,6 +589,7 @@ test('the review final call of an open-pr Agent session, or the final reply of a
   await expect(row.getByRole('link', { name: 'Open the PR' })).toHaveAttribute('href', pr)
   await expect(row.getByRole('link', { name: second.id.slice(0, 8) })).toHaveAttribute('href', `/${ORG}/agent_sessions/${second.id}`)
   await expect(table.locator(`tr[data-review-record="${examplePr}"]`)).toHaveCount(0)
+  await expect(table.locator(`tr[data-review-record="${elsewherePr}"]`)).toHaveCount(0)
   await shoot(page, 'review-records-list')
 
   // The record's page: the story, the review run, each finding with its

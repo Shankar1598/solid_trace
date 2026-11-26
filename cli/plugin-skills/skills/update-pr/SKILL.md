@@ -82,4 +82,4 @@ Write the body again as `open-pr/SKILL.md` › Write the PR says, from this roun
 
 ## 10. Final reply
 
-Set `pr` in the record as `open-pr` does, and send the record with `solidtrace review final` as `open-pr` › Final reply says. Then give the PR's URL, or in local mode the file's path, and the count of findings by decision. Do not write the record's JSON in the reply.
+Set `pr` in the record as `open-pr` does, and write the record with `solidtrace review final` as `open-pr` › Final reply says. Then give the PR's URL, or in local mode the file's path, and the count of findings by decision. Do not write the record's JSON in the reply.

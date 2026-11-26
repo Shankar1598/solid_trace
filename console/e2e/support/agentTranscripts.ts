@@ -178,10 +178,12 @@ export function longSession(cwd: string, opts: {
 
 /**
  * An open-pr Agent session: the person starts the skill, whose text comes
- * in as a user line with its own example record. The agent sends the PR's
- * Review record to solidtrace review final in a heredoc, and the final
- * reply gives only the PR. With `inReply`, the session is one from before
- * that command: the final reply ends with the record in its block.
+ * in as a user line with its own example record. The agent runs
+ * solidtrace review final on the file of the PR's Review record, and the
+ * final reply gives only the PR. The test runs that command itself, so the
+ * record file is not in the fixture. With `inReply`, the session is one
+ * from before that command: the final reply ends with the record in its
+ * block.
  */
 export function openPrSession(cwd: string, opts: { exampleRecord: string; record: string; minutesAgo: number; inReply?: boolean }): FixtureSession {
   const id = randomUUID()
@@ -191,15 +193,15 @@ export function openPrSession(cwd: string, opts: { exampleRecord: string; record
   if (opts.inReply) {
     main.person(`End the reply with the record:\n\n\`\`\`solidtrace-pr-record\n${opts.exampleRecord}\n\`\`\``)
     main.reply([{ type: 'text', text: `Opened the PR.\n\n\`\`\`solidtrace-pr-record\n${opts.record}\n\`\`\`` }], usage)
-  } else {
-    main.person(`Send the record:\n\n\`\`\`\nsolidtrace review final <<'SOLIDTRACE_RECORD_END'\n${opts.exampleRecord}\nSOLIDTRACE_RECORD_END\n\`\`\``)
-    const toolUseId = `toolu_${randomBytes(8).toString('hex')}`
-    main.reply([{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: `solidtrace review final <<'SOLIDTRACE_RECORD_END'\n${opts.record}\nSOLIDTRACE_RECORD_END`, description: 'Send the Review record' } }], usage)
-    const parsed = JSON.parse(opts.record) as { round: number; findings: { outcome: string }[] }
-    const fixed = parsed.findings.filter(f => f.outcome === 'fixed').length
-    main.toolResult(toolUseId, `record: round ${parsed.round}, ${parsed.findings.length} findings, ${fixed} fixed`)
-    main.reply([{ type: 'text', text: 'Opened the PR.' }], usage)
+    return { id, files: { [`${id}.jsonl`]: main.text() } }
   }
+  main.person(`Write the record:\n\n\`\`\`\nsolidtrace review final "$dir/record.json"\n\`\`\`\n\nAn example record:\n\n${opts.exampleRecord}`)
+  const toolUseId = `toolu_${randomBytes(8).toString('hex')}`
+  main.reply([{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: 'solidtrace review final "$dir/record.json"', description: 'Write the Review record' } }], usage)
+  const parsed = JSON.parse(opts.record) as { round: number; findings: { outcome: string }[] }
+  const fixed = parsed.findings.filter(f => f.outcome === 'fixed').length
+  main.toolResult(toolUseId, `record: round ${parsed.round}, ${parsed.findings.length} findings, ${fixed} fixed`)
+  main.reply([{ type: 'text', text: 'Opened the PR.' }], usage)
   return { id, files: { [`${id}.jsonl`]: main.text() } }
 }
 

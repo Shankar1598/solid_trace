@@ -1,6 +1,8 @@
 package main_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,10 +11,10 @@ import (
 )
 
 // The Review records of an Agent Project (ADR 0024): the parse finds the
-// record that open-pr or update-pr sends to solidtrace review final, or
-// that an older session ends its final reply with, and the read
-// API lists the newest record of each PR and gives one record whole, with
-// the rounds of its PR.
+// record file that solidtrace review final writes in the Agent session's
+// folder, or the block that an older session ends its final reply with,
+// and the read API lists the newest record of each PR and gives one record
+// whole, with the rounds of its PR.
 
 const reviewSession = "2c4e6a8b-0d1f-4e3a-9b5c-7d9f1b3d5e7a"
 
@@ -268,36 +270,42 @@ func TestAReviewRecordParsedAgainAfterACrashIsListedOnce(t *testing.T) {
 	}
 }
 
-// reviewFinalCall is an assistant line that sends the record to
-// solidtrace review final, as the skills do.
-func reviewFinalCall(record string) string {
-	line, _ := json.Marshal(map[string]any{
-		"type": "assistant", "uuid": "a8", "timestamp": "2026-10-02T11:29:00Z",
-		"message": map[string]any{"id": "msg_8", "role": "assistant", "model": "claude-opus-5-5", "content": []map[string]any{
-			{"type": "tool_use", "id": "toolu_8", "name": "Bash", "input": map[string]string{"command": "solidtrace review final <<'EOF'\n" + record + "\nEOF"}},
-		}},
-	})
-	return string(line)
-}
-
-func TestACallOfReviewFinalThatTheCLIRefusedAndItsRetryAreOneRound(t *testing.T) {
+func TestARecordFileOfAnAgentSessionIsListedWholeAndARoundWrittenAgainReplacesIt(t *testing.T) {
 	env := setupTestEnv(t)
 	defer env.Cleanup()
 	o := newAgentOrganization(t, env)
 	const pr = "https://github.com/acme/shop/pull/7"
-	good := prRecord(pr, 1, 4)
-	refused := strings.Replace(good, `"round":1`, `"round":1,"summary":"not a field"`, 1)
+	first := prRecord(pr, 1, 400)
+	if len(first) < 150<<10 {
+		t.Fatalf("Expected a record of 150 KB or more, got %d bytes", len(first))
+	}
+	again := strings.Replace(first, `"title":"Cart page, round 1"`, `"title":"Cart page, round 1 again"`, 1)
+	path := laptopSession + "/solidtrace/review-records/round-1-3f1a9c0d2e4b.json"
+	file := func(version int, body string) unitUpload {
+		sum := sha256.Sum256([]byte(body))
+		return unitUpload{path: path, version: version, contentHash: "sha256:" + hex.EncodeToString(sum[:]), body: []byte(body)}
+	}
 
-	body := jsonl(transcript[0], reviewFinalCall(refused), reviewFinalCall(good))
-	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: body}), 200)
-
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: laptopSession + ".jsonl", body: jsonl(transcript[0])}), 200)
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, file(1, first)), 200)
 	answer := listReviewRecords(t, env, o.project)
-	if len(answer.ReviewRecords) != 1 || answer.ReviewRecords[0].Earlier != 0 || answer.ReviewRecords[0].Round != 1 {
-		t.Fatalf("Expected one round 1 with no earlier round, got %+v", answer.ReviewRecords)
+	if len(answer.ReviewRecords) != 1 || answer.ReviewRecords[0].Path != path || answer.ReviewRecords[0].Offset != 0 ||
+		answer.ReviewRecords[0].Findings != 400 {
+		t.Fatalf("Expected the record of the file with 400 findings, got %+v", answer.ReviewRecords)
 	}
 	status, shown := showReviewRecord(t, env, o.project, map[string]any{"key": pr})
-	if status != 200 || shown.Record != good || len(shown.Rounds) != 1 {
-		t.Errorf("Expected the retry as the only round, got %d %+v", status, shown.Rounds)
+	if status != 200 || shown.Record != first {
+		t.Fatalf("Expected the record whole, %d bytes, got %d: %d bytes", len(first), status, len(shown.Record))
+	}
+
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, file(2, again)), 200)
+	answer = listReviewRecords(t, env, o.project)
+	if len(answer.ReviewRecords) != 1 || answer.ReviewRecords[0].Version != 2 || answer.ReviewRecords[0].Earlier != 0 ||
+		answer.ReviewRecords[0].Title != "Cart page, round 1 again" {
+		t.Fatalf("Expected version 2 of the file as the only round, got %+v", answer.ReviewRecords)
+	}
+	if status, shown := showReviewRecord(t, env, o.project, map[string]any{"key": pr}); status != 200 || shown.Record != again || len(shown.Rounds) != 1 {
+		t.Errorf("Expected version 2 whole as the only round, got %d %+v", status, shown.Rounds)
 	}
 }
 

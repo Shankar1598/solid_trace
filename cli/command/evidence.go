@@ -14,10 +14,6 @@ import (
 	"github.com/solidtrace/cli/agentapi"
 )
 
-// ClaudeSessionEnv is the environment variable in which Claude Code gives
-// its Bash tool the id of the Agent session.
-const ClaudeSessionEnv = "CLAUDE_CODE_SESSION_ID"
-
 var evidenceLimit = fmt.Sprintf("%d MiB", agentapi.MaxEvidenceBytes>>20)
 
 func evidence(ctx context.Context, args []string, env Env) int {
@@ -28,7 +24,7 @@ func evidence(ctx context.Context, args []string, env Env) int {
 	flags := flag.NewFlagSet("evidence add", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	caption := flags.String("caption", "", fmt.Sprintf("the caption of each file (at most %d characters)", agentapi.MaxEvidenceCaption))
-	session := flags.String("session", "", "the Agent session (default: "+ClaudeSessionEnv+")")
+	session := sessionFlag(flags)
 	files, ok := parseInterspersed(flags, args[1:])
 	if !ok {
 		return 2
@@ -43,12 +39,9 @@ func evidence(ctx context.Context, args []string, env Env) int {
 			agentapi.MaxEvidenceCaption, n)
 		return 2
 	}
-	sessionID := strings.TrimSpace(*session)
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(env.ClaudeSessionID)
-	}
-	if sessionID == "" {
-		fmt.Fprintln(env.Stderr, "solidtrace evidence add: no Agent session: run this from Claude Code, or give --session")
+	sessionID, ok := agentSessionID(*session, env)
+	if !ok {
+		fmt.Fprintln(env.Stderr, "solidtrace evidence add: "+noAgentSession)
 		return 1
 	}
 	source := env.Source()

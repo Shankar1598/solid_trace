@@ -2,7 +2,6 @@ package agentprocessing
 
 import (
 	"encoding/json"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,13 +10,14 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// The Review record of a PR (ADR 0024): the open-pr and update-pr skills
-// send the record to solidtrace review final in a heredoc. Before that,
-// they ended their final reply with the record in a solidtrace-pr-record
-// block. The parse keeps the last such call or block of an assistant line
+// The Review record of a PR (ADR 0024): solidtrace review final writes the
+// record to a file in the Agent session's own folder, and capture uploads
+// it. Before that, the open-pr and update-pr skills ended their final reply
+// with the record in a solidtrace-pr-record block. The parse keeps a record
+// file of the main Agent session, and the last block of an assistant line
 // of the main transcript, when it is a record of version 2 in valid JSON,
-// all of it, with the place of its line and the counts that the Review
-// records page lists.
+// all of it, with its place and the counts that the Review records page
+// lists.
 
 // reviewRecord is a record of version 2 with four findings, one by each
 // kind of finder, and three confirmations: given, not given, and with no
@@ -44,29 +44,6 @@ func reply(texts ...string) string {
 
 func finalReply(record string) string {
 	return reply("The PR is https://github.com/acme/shop/pull/7.\n\n```solidtrace-pr-record\n" + record + "\n```\n")
-}
-
-// bashCalls is an assistant line with one Bash tool use for each command,
-// after the texts.
-func bashCalls(texts []string, commands ...string) string {
-	var content []map[string]any
-	for _, t := range texts {
-		content = append(content, map[string]any{"type": "text", "text": t})
-	}
-	for i, c := range commands {
-		content = append(content, map[string]any{"type": "tool_use", "id": "toolu_" + string(rune('a'+i)), "name": "Bash", "input": map[string]string{"command": c}})
-	}
-	line, _ := json.Marshal(map[string]any{
-		"type": "assistant", "uuid": "a3", "timestamp": "2026-11-20T10:01:00Z",
-		"message": map[string]any{"id": "msg_3", "role": "assistant", "model": "claude-opus-5-5", "content": content},
-	})
-	return string(line)
-}
-
-// finalCall is the call of solidtrace review final with record in a
-// heredoc, as the skills send it.
-func finalCall(record string) string {
-	return "solidtrace review final <<'EOF'\n" + record + "\nEOF"
 }
 
 // recordsOf parses the units as one range and gives their Review records.
@@ -169,92 +146,104 @@ func TestEachFinalReplyOfAnAgentSessionIsARecordAndAParseAgainGivesTheSameRows(t
 	}
 }
 
-func TestOnlyOneCallOfReviewFinalWithAHeredocIsARecord(t *testing.T) {
-	round3 := strings.Replace(reviewRecord, `"round":2`, `"round":3`, 1)
+// recordFile is the unit of a whole file at path of the Agent session.
+func recordFile(path string, version uint32, body string) storage.AgentFileUnit {
+	return storage.AgentFileUnit{
+		SessionID: titleSession, Path: path, Version: version, ContentHash: "sha256:x", Bytes: []byte(body),
+		StoredAt: time.Date(2026, 11, 20, 10, 5, 0, 0, time.UTC),
+		Session:  storage.AgentSession{Harness: "claude-code", Repository: "github.com/acme/shop"},
+	}
+}
+
+// largeRecord is reviewRecord with findings past 150 KB.
+func largeRecord() string {
+	finding := `{"id":"F","found_by":{"kind":"reviewer"},"scenario":"` + strings.Repeat("The total is wrong with a coupon. ", 30) + `","outcome":"fixed"},`
+	return strings.Replace(reviewRecord, `"findings":[`, `"findings":[`+strings.Repeat(finding, 150), 1)
+}
+
+var recordPath = titleSession.String() + "/solidtrace/review-records/round-2-3f1a9c0d2e4b.json"
+
+func TestARecordFileOfTheAgentSessionIsItsReviewRecordWhole(t *testing.T) {
+	large := largeRecord()
+	if len(large) < 150<<10 {
+		t.Fatalf("Expected a record of 150 KB or more, got %d bytes", len(large))
+	}
+	unit := recordFile(recordPath, 3, large)
+	records := recordsOf(unitOf(titleSession.String()+".jsonl", 0, person("Open the PR")), unit)
+	if len(records) != 1 {
+		t.Fatalf("Expected one Review record, got %+v", records)
+	}
+	want := storage.ReviewRecord{
+		ID: records[0].ID, SessionID: titleSession, Path: recordPath, Version: 3, Offset: 0,
+		StoredAt: time.Date(2026, 11, 20, 10, 5, 0, 0, time.UTC), PR: "https://github.com/acme/shop/pull/7", Round: 2,
+		Title: "Cart page & <checkout>", Summary: storage.ReviewSummary{Findings: 154, Fixed: 152, Missed: 3, NotGiven: 2},
+		Record: large,
+	}
+	if !reflect.DeepEqual(records[0], want) {
+		t.Errorf("Expected %+v, got %+v", want, records[0])
+	}
+	if again := recordsOf(unit); !reflect.DeepEqual(again, records) {
+		t.Errorf("Expected a parse again to give the same row, %+v, got %+v", records, again)
+	}
+	if other := recordsOf(recordFile(recordPath, 4, large)); other[0].ID == records[0].ID {
+		t.Errorf("Expected another version of the file to have another id, got %s", other[0].ID)
+	}
+}
+
+func TestOnlyAWholeRecordFileInTheReviewRecordsFolderOfItsOwnSessionIsARecord(t *testing.T) {
+	folder := titleSession.String() + "/solidtrace/review-records/"
 	cases := []struct {
-		name  string
-		path  string
-		lines []string
-		round uint32
+		name string
+		unit storage.AgentFileUnit
 	}{
-		{"the call of the skills", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord))}, 2},
-		{"a path to solidtrace", "session.jsonl", []string{bashCalls(nil, "/home/ann/.local/bin/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF\n")}, 2},
-		{"a plain heredoc word, whose body the shell changes", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<REC\n"+reviewRecord+"\nREC")}, 0},
-		{"a word in single quotes on one side only", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF\n"+reviewRecord+"\nEOF")}, 0},
-		{"a comment line and a blank line before the call", "session.jsonl", []string{bashCalls(nil, "# Send the Review record\n\n"+finalCall(reviewRecord))}, 2},
-		{"blank lines after the end word", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord)+"\n \n\n")}, 2},
-		{"only comment lines", "session.jsonl", []string{bashCalls(nil, "# solidtrace review final <<'EOF'")}, 0},
-		{"a heredoc word in double quotes", "session.jsonl", []string{bashCalls(nil, "solidtrace  review final << \"EOF\"\n"+reviewRecord+"\nEOF")}, 2},
-		{"cat with a heredoc", "session.jsonl", []string{bashCalls(nil, "cat <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"another review command", "session.jsonl", []string{bashCalls(nil, "solidtrace review block <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"a name that only ends in solidtrace", "session.jsonl", []string{bashCalls(nil, "/bin/notsolidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"a pipe", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF' | tee out\n"+reviewRecord+"\nEOF")}, 0},
-		{"a command before it", "session.jsonl", []string{bashCalls(nil, "cd /tmp && solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"a command after it", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord)+"\necho done")}, 0},
-		{"a command after it on the first line", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF'; echo done\n"+reviewRecord+"\nEOF")}, 0},
-		{"a redirect", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF' > out.txt\n"+reviewRecord+"\nEOF")}, 0},
-		{"a command substitution", "session.jsonl", []string{bashCalls(nil, "$(pwd)/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"a command before it with no space", "session.jsonl", []string{bashCalls(nil, "cd /tmp&&/bin/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"a comment", "session.jsonl", []string{bashCalls(nil, "#/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"a variable set before another command", "session.jsonl", []string{bashCalls(nil, "X=/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 0},
-		{"quotes that do not match", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF\"\n"+reviewRecord+"\nEOF")}, 0},
-		{"a path in the home folder", "session.jsonl", []string{bashCalls(nil, "~/.local/bin/solidtrace review final <<'EOF'\n"+reviewRecord+"\nEOF")}, 2},
-		{"a heredoc with no end", "session.jsonl", []string{bashCalls(nil, "solidtrace review final <<'EOF'\n"+reviewRecord)}, 0},
-		{"a body that is not valid JSON", "session.jsonl", []string{bashCalls(nil, finalCall(reviewRecord[:len(reviewRecord)-1]))}, 0},
-		{"a body of another version", "session.jsonl", []string{bashCalls(nil, finalCall(strings.Replace(reviewRecord, `"version":2`, `"version":1`, 1)))}, 0},
-		{"a subagent's call", "subagents/agent-a1.jsonl", []string{bashCalls(nil, finalCall(reviewRecord))}, 0},
-		{"a sidechain call", "session.jsonl", []string{strings.Replace(bashCalls(nil, finalCall(reviewRecord)), `"type":"assistant"`, `"type":"assistant","isSidechain":true`, 1)}, 0},
-		{"a call after a block in one line", "session.jsonl",
-			[]string{bashCalls([]string{"```solidtrace-pr-record\n" + reviewRecord + "\n```"}, finalCall(round3))}, 3},
-		{"the last call of a line decides", "session.jsonl", []string{bashCalls(nil, finalCall(round3), finalCall(`{"version": 2, ...}`))}, 0},
-		{"a call, then a reply block on a later line", "session.jsonl",
-			[]string{bashCalls(nil, finalCall(reviewRecord)), finalReply(round3)}, 3},
-		{"a reply block, then a call on a later line", "session.jsonl",
-			[]string{finalReply(reviewRecord), bashCalls(nil, finalCall(round3))}, 3},
+		{"a file of a subagent", recordFile(titleSession.String()+"/subagents/solidtrace/review-records/round-2-a.json", 1, reviewRecord)},
+		{"a file of another Agent session's folder", recordFile("6f1e3a5c-2b4d-4f6a-8c0e-3d5b7f9a1c4e/solidtrace/review-records/round-2-a.json", 1, reviewRecord)},
+		{"a file in a folder under the folder", recordFile(folder+"old/round-2-a.json", 1, reviewRecord)},
+		{"a file that is not .json", recordFile(folder+"round-2-a.txt", 1, reviewRecord)},
+		{"a tool result", recordFile(titleSession.String()+"/tool-results/toolu_1.json", 1, reviewRecord)},
+		{"a file that is not valid JSON", recordFile(folder+"round-2-a.json", 1, reviewRecord[:len(reviewRecord)-1])},
+		{"a record of another version", recordFile(folder+"round-2-a.json", 1, strings.Replace(reviewRecord, `"version":2`, `"version":1`, 1))},
+		{"a cut file", func() storage.AgentFileUnit {
+			u := recordFile(folder+"round-2-a.json", 1, reviewRecord)
+			u.Size = uint64(len(reviewRecord)) + 1
+			return u
+		}()},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			records := recordsOf(unitOf(c.path, 0, c.lines...))
-			if c.round == 0 {
-				if len(records) != 0 {
-					t.Fatalf("Expected no Review record, got %+v", records)
-				}
-				return
-			}
-			if len(records) == 0 {
-				t.Fatal("Expected a Review record, got none")
-			}
-			last := records[len(records)-1]
-			if last.Round != c.round || last.PR != "https://github.com/acme/shop/pull/7" || last.Summary.Findings != 4 {
-				t.Fatalf("Expected the last Review record to be of round %d, got %+v", c.round, records)
+			if records := recordsOf(c.unit); len(records) != 0 {
+				t.Fatalf("Expected no Review record, got %+v", records)
 			}
 		})
 	}
 }
 
-func TestACallOfReviewFinalKeepsTheRecordAsItsBody(t *testing.T) {
-	lines := []string{person("Open the PR"), bashCalls([]string{"I send the record."}, finalCall(reviewRecord))}
-	records := recordsOf(unitOf("session.jsonl", 0, lines...))
-	if len(records) != 1 || records[0].Record != reviewRecord || records[0].Title != "Cart page & <checkout>" ||
-		records[0].Summary != (storage.ReviewSummary{Findings: 4, Fixed: 2, Missed: 3, NotGiven: 2}) {
-		t.Fatalf("Expected the record of the call, all of it, got %+v", records)
+func TestABadRecordFileStopsNoOtherRecord(t *testing.T) {
+	round3 := strings.Replace(reviewRecord, `"round":2`, `"round":3`, 1)
+	records := recordsOf(recordFile(recordPath, 1, "{"), unitOf(titleSession.String()+".jsonl", 0, finalReply(reviewRecord)),
+		recordFile(titleSession.String()+"/solidtrace/review-records/round-3-3f1a9c0d2e4b.json", 1, round3))
+	if len(records) != 2 || records[0].Round != 3 || records[1].Round != 2 {
+		t.Fatalf("Expected the records of round 3 of the file and round 2 of the block, got %+v", records)
 	}
 }
 
-func TestTheCallOfTheOpenPRSkillIsACallThatTheParseReads(t *testing.T) {
-	skill, err := os.ReadFile("../../cli/plugin-skills/skills/open-pr/SKILL.md")
-	if err != nil {
-		t.Fatal(err)
+func TestTheHighestVersionOfARecordFileIsTheRoundOnTheList(t *testing.T) {
+	again := strings.Replace(reviewRecord, `"outcome":"deferred"`, `"outcome":"fixed"`, 1)
+	records := recordsOf(recordFile(recordPath, 1, reviewRecord), recordFile(recordPath, 2, again))
+	prs := storage.ReviewRecordsByPR(records)
+	if len(prs) != 1 || len(prs[0].Records) != 1 || prs[0].Records[0].Version != 2 || prs[0].Records[0].Summary.Fixed != 3 {
+		t.Fatalf("Expected version 2 of the file as the only round, got %+v", prs)
 	}
-	_, rest, found := strings.Cut(string(skill), "## 8. Final reply")
-	_, rest, _ = strings.Cut(rest, "````\n")
-	example, _, _ := strings.Cut(rest, "\n````")
-	if !found || !strings.Contains(example, `{"version": 2, ...}`) {
-		t.Fatalf("Expected the Final reply step of open-pr to give the call with an example record, got %q", example)
-	}
-	call := strings.Replace(example, `{"version": 2, ...}`, reviewRecord, 1)
-	records := recordsOf(unitOf("session.jsonl", 0, bashCalls(nil, call)))
-	if len(records) != 1 || records[0].Record != reviewRecord {
-		t.Fatalf("Expected the skill's call to give its record, got %+v for %q", records, example)
+}
+
+func TestACallOfReviewFinalWithAHeredocIsNoRecord(t *testing.T) {
+	call, _ := json.Marshal(map[string]any{
+		"type": "assistant", "uuid": "a3", "timestamp": "2026-11-20T10:01:00Z",
+		"message": map[string]any{"id": "msg_3", "role": "assistant", "model": "claude-opus-5-5", "content": []map[string]any{
+			{"type": "tool_use", "id": "toolu_a", "name": "Bash", "input": map[string]string{"command": "solidtrace review final <<'EOF'\n" + reviewRecord + "\nEOF"}},
+		}},
+	})
+	if records := recordsOf(unitOf("session.jsonl", 0, string(call))); len(records) != 0 {
+		t.Fatalf("Expected no Review record, got %+v", records)
 	}
 }

@@ -11,15 +11,16 @@ import (
 )
 
 // reviewRecordsMigration makes review_records, the Review records that the
-// parse finds in Agent sessions (ADR 0024): one row for each assistant line
-// of a main transcript whose last solidtrace review final call or
-// solidtrace-pr-record block is a record. A row has the place of its line,
-// as the line's Log has, what the Review records page lists of the record,
-// and the record as the call or the block has it, all of it: a Log cuts a
-// string at 64 KiB. day is the UTC day on which the server stored the
-// line's unit, as in agent_session_files, so that Retention, Project
-// deletion and the disk limit drop a Review record with its Agent session.
-// A parse again of the same line replaces its row.
+// parse finds in Agent sessions (ADR 0024): one row for each record file
+// that solidtrace review final wrote in a main Agent session's folder, and
+// for each assistant line of a main transcript whose last
+// solidtrace-pr-record block is a record. A row has the place of its file
+// at offset 0, or of its line, as the line's Log has, what the Review
+// records page lists of the record, and the record as the file or the
+// block has it, all of it: a Log cuts a string at 64 KiB. day is the UTC
+// day on which the server stored the unit, as in agent_session_files, so
+// that Retention, Project deletion and the disk limit drop a Review record
+// with its Agent session. A parse again of the same unit replaces its row.
 // After the Agent session steps.
 var reviewRecordsMigration = clickHouseMigration{version: 11205, statements: []string{
 	`CREATE TABLE IF NOT EXISTS review_records (
@@ -45,10 +46,10 @@ var reviewRecordsMigration = clickHouseMigration{version: 11205, statements: []s
 	SETTINGS storage_policy = '` + ClickHouseStoragePolicy + `', non_replicated_deduplication_window = ` + fmt.Sprint(agentFilesDedupWindow),
 }}
 
-// ReviewRecord is the Review record of one line of an Agent session's main
-// transcript: a row of review_records.
+// ReviewRecord is the Review record of one record file of an Agent
+// session, or of one line of its main transcript: a row of review_records.
 type ReviewRecord struct {
-	// ID is the id of the Log of its line.
+	// ID comes from the place of the record, as the id of a line's Log.
 	ID        uuid.UUID
 	SessionID uuid.UUID
 	Path      string
@@ -62,8 +63,8 @@ type ReviewRecord struct {
 	// Title is the title of the record's first session, "" for none.
 	Title   string
 	Summary ReviewSummary
-	// Record is the JSON of the record as its block has it. A read of the
-	// list leaves it empty.
+	// Record is the JSON of the record as its file or block has it. A read
+	// of the list leaves it empty.
 	Record string
 }
 
@@ -113,9 +114,10 @@ type ReviewRecordPR struct {
 // record, the latest first (compareStores). Of the records of one path of an Agent
 // session, only those of its highest version count, as a read of the
 // session reads only that version: after a trim, the new version repeats
-// the lines of the old one. Of the records of one Agent session with the
-// same PR and round, only the last line counts: a review final call that
-// the CLI refused and the call again after it are one round.
+// the lines of the old one, and a round written again is a new version of
+// its file. Of the records of one Agent session with the same PR and
+// round, only the last counts: a final reply that gave the same round
+// again is one round.
 func ReviewRecordsByPR(records []ReviewRecord) []ReviewRecordPR {
 	type file struct {
 		session uuid.UUID

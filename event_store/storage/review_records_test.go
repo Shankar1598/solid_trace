@@ -11,10 +11,11 @@ import (
 // The rounds of a PR: the Review records of one key, newest first. The key
 // is the PR, or the Agent session id of a record with no PR. Newest is the
 // highest round, then the latest store. A trim makes a new version of a
-// path that repeats its old lines, so only the highest version counts. A
-// review final call that the CLI refused, and the call again after it, are
-// one round: of one Agent session's records with the same PR and round,
-// only the last line counts.
+// path that repeats its old lines, and solidtrace review final writes a
+// round again as a new version of its file, so only the highest version
+// counts. Of one Agent session's records with the same PR and round, only
+// the last counts: a final reply that gave the same round again is one
+// round.
 
 var (
 	sessionA = uuid.MustParse("0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41")
@@ -78,22 +79,22 @@ func TestOnlyTheHighestVersionOfAPathCounts(t *testing.T) {
 	}
 }
 
-func TestARefusedCallAndItsRetryInOneSessionAreOneRound(t *testing.T) {
+func TestTwoRecordsOfOneRoundInOneSessionAreOneRound(t *testing.T) {
 	const pr = "https://github.com/acme/shop/pull/7"
-	refused, retry := record(sessionA, 1, 100, pr, 1, 9), record(sessionA, 1, 900, pr, 1, 9)
+	earlier, later := record(sessionA, 1, 100, pr, 1, 9), record(sessionA, 1, 900, pr, 1, 9)
 	otherSession := record(sessionB, 1, 50, pr, 1, 10)
-	noPRRefused, noPRRetry := record(sessionB, 1, 300, "", 2, 11), record(sessionB, 1, 700, "", 2, 11)
+	noPREarlier, noPRLater := record(sessionB, 1, 300, "", 2, 11), record(sessionB, 1, 700, "", 2, 11)
 
-	prs := storage.ReviewRecordsByPR([]storage.ReviewRecord{retry, noPRRetry, otherSession, refused, noPRRefused})
+	prs := storage.ReviewRecordsByPR([]storage.ReviewRecord{later, noPRLater, otherSession, earlier, noPREarlier})
 
 	if len(prs) != 2 {
 		t.Fatalf("Expected two keys, got %+v", prs)
 	}
 	noPR, withPR := prs[0], prs[1]
-	if len(noPR.Records) != 1 || noPR.Records[0].ID != noPRRetry.ID {
-		t.Errorf("Expected only the retry of the record with no PR, got %+v", noPR.Records)
+	if len(noPR.Records) != 1 || noPR.Records[0].ID != noPRLater.ID {
+		t.Errorf("Expected only the later record with no PR, got %+v", noPR.Records)
 	}
-	if len(withPR.Records) != 2 || withPR.Records[0].ID != otherSession.ID || withPR.Records[1].ID != retry.ID {
-		t.Errorf("Expected round 1 of the other session, then the retry, and no refused call, got %+v", withPR.Records)
+	if len(withPR.Records) != 2 || withPR.Records[0].ID != otherSession.ID || withPR.Records[1].ID != later.ID {
+		t.Errorf("Expected round 1 of the other session, then the later record of the first, got %+v", withPR.Records)
 	}
 }
