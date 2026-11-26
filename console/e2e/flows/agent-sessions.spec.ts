@@ -693,3 +693,65 @@ test('the record file of an open-pr Agent session, or the final reply of an olde
 
   expect(errors).toEqual([])
 })
+
+// The Agent session page gives the command that continues the Agent session
+// on another machine, with Copy, at desktop and phone width, in light and
+// dark. The admin's own Agent session continues with the same id; for the
+// member it is another person's, so it continues as a new one.
+test('the Agent session page gives the command that resumes it on another machine, and Copy copies it', async ({ page, browser, baseURL }) => {
+  test.setTimeout(180_000)
+  const errors = watchErrors(page)
+  const origin = new URL(baseURL!).origin
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
+  const laptop = machine('resume')
+  await page.goto(`/${ORG}/agent_sessions`)
+  await signIn(page, laptop, origin)
+  const dir = gitRepository(`flows.example/flowteam/resume-${RUN}`)
+  const session = shortSession(dir, 'Continue the cart work on my Mac.', { input: 2, output: 3, cacheRead: 4, cacheWrite: 5 })
+  capture(laptop, session, dir)
+
+  // The list first: the Agent session page is 404 until EventStore parsed the upload.
+  await expect(async () => {
+    await page.goto(`/${ORG}/agent_sessions`)
+    expect(await rowIds(page)).toContain(session.id)
+  }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] })
+  await page.goto(`/${ORG}/agent_sessions/${session.id}`)
+  const resume = page.locator('[data-section="resume"]')
+  await expect(resume).toBeVisible()
+
+  const command = `solidtrace resume ${session.id}`
+  const isDark = () => page.evaluate(() => document.documentElement.classList.contains('dark'))
+  const shot = (name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), animations: 'disabled' })
+  for (const size of [{ name: 'desktop', width: 1440, height: 900 }, { name: 'phone', width: 390, height: 844 }]) {
+    await page.setViewportSize({ width: size.width, height: size.height })
+    for (const theme of ['light', 'dark'] as const) {
+      // The theme switch is in the sidebar, which a phone hides: set the kept choice, and reload.
+      await page.evaluate(t => localStorage.setItem('theme', t), theme)
+      await page.reload()
+      await expect.poll(isDark).toBe(theme === 'dark')
+      await expect(resume.getByRole('heading', { name: 'Resume on another machine' })).toBeVisible()
+      await expect(resume).toContainText('with the same id')
+      await expect(resume.locator('[data-command="resume"]')).toHaveText(command)
+
+      await page.evaluate(() => navigator.clipboard.writeText(''))
+      await resume.getByRole('button', { name: 'Copy the resume command' }).click()
+      await expect(page.getByText('Command copied').first()).toBeVisible()
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(command)
+
+      const across = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+      expect(across, `sideways scroll at ${size.width} px`).toBeLessThanOrEqual(0)
+      await resume.scrollIntoViewIfNeeded()
+      await shot(`resume-${size.name}-${theme}`)
+    }
+  }
+
+  // For the member, the admin's Agent session is another person's.
+  const memberPage = await signedInPage(browser, MEMBER)
+  await memberPage.goto(`/${ORG}/agent_sessions/${session.id}`)
+  const memberResume = memberPage.locator('[data-section="resume"]')
+  await expect(memberResume.locator('[data-command="resume"]')).toHaveText(command)
+  await expect(memberResume).toContainText('as a new Agent session of yours')
+  await memberPage.context().close()
+
+  expect(errors).toEqual([])
+})
