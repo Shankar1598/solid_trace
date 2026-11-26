@@ -21,8 +21,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"syscall"
 	"time"
+	"unicode/utf16"
 
 	"github.com/solidtrace/cli/agentapi"
 )
@@ -167,11 +169,36 @@ const (
 
 // StartDir is the working directory where the Agent session started: the
 // cwd of the first line of the transcript that has one. The hook's cwd
-// follows each cd of the agent, so it is used only when no line has a cwd.
+// follows each cd of the agent. A resume on another machine keeps the cwd
+// of the first machine, which is not on this machine. Then StartDir is the
+// hook's cwd or the nearest folder above it whose Claude Code project
+// folder holds the transcript. Else it is the hook's cwd.
 func StartDir(transcriptPath, hookCwd string) string {
+	if cwd := firstCwd(transcriptPath); cwd != "" {
+		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
+			return cwd
+		}
+	}
+	if filepath.IsAbs(hookCwd) {
+		project := filepath.Base(filepath.Dir(transcriptPath))
+		for dir := filepath.Clean(hookCwd); ; dir = filepath.Dir(dir) {
+			if ClaudeProjectFolder(dir) == project {
+				return dir
+			}
+			if dir == filepath.Dir(dir) {
+				break
+			}
+		}
+	}
+	return hookCwd
+}
+
+// firstCwd is the cwd of the first line of the transcript that has one, ""
+// when no line has one.
+func firstCwd(transcriptPath string) string {
 	f, err := os.Open(transcriptPath)
 	if err != nil {
-		return hookCwd
+		return ""
 	}
 	defer f.Close()
 	r := bufio.NewReader(io.LimitReader(f, startBytes))
@@ -187,7 +214,31 @@ func StartDir(transcriptPath, hookCwd string) string {
 			break
 		}
 	}
-	return hookCwd
+	return ""
+}
+
+// ClaudeProjectFolder is the name of the folder under Claude Code's
+// projects folder that holds the transcripts of the Agent sessions that
+// start in the folder at path. Claude Code changes each UTF-16 code unit
+// that is not an ASCII letter or digit to "-". A name of more than 200
+// characters keeps its first 200, then "-" and the absolute value of
+// Java's String.hashCode of path, in base 36.
+func ClaudeProjectFolder(path string) string {
+	units := utf16.Encode([]rune(path))
+	name := make([]byte, len(units))
+	var hash int32
+	for i, u := range units {
+		hash = 31*hash + int32(u)
+		if u < 128 && (u >= 'a' && u <= 'z' || u >= 'A' && u <= 'Z' || u >= '0' && u <= '9') {
+			name[i] = byte(u)
+		} else {
+			name[i] = '-'
+		}
+	}
+	if len(name) <= 200 {
+		return string(name)
+	}
+	return string(name[:200]) + "-" + strconv.FormatInt(max(int64(hash), -int64(hash)), 36)
 }
 
 // errBusy is the answer of a lock that does not wait, when another

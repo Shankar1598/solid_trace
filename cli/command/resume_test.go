@@ -9,30 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/solidtrace/cli/command"
+	"github.com/solidtrace/cli/capture"
 	"github.com/solidtrace/cli/internal/fake"
 )
-
-// The expected names come from Claude Code 2.1.326: a session in a folder
-// with ï and ü gave "-na-ve--", and a long path with 😀 gave two "-" for it
-// and the same hash as the JavaScript String hash of the path.
-func TestClaudeProjectFolderIsTheNameThatClaudeCodeGivesThePath(t *testing.T) {
-	for _, c := range []struct{ path, want string }{
-		{"/Users/ana/shop", "-Users-ana-shop"},
-		{"/home/ana/my_repo/src.v2/new folder", "-home-ana-my-repo-src-v2-new-folder"},
-		{"/Users/ana/naïve-ü", "-Users-ana-na-ve--"},
-		{"/Users/ana/😀", "-Users-ana---"},
-		// 324 characters, as the prototype's path.
-		{"/srv/checkouts/" + strings.Repeat("folder-name/", 25) + "last-more",
-			("-srv-checkouts-" + strings.Repeat("folder-name-", 25))[:200] + "-14fxei"},
-		{"/Users/zoë/" + strings.Repeat("ü😀x/", 60),
-			("-Users-zo--" + strings.Repeat("---x-", 60))[:200] + "-hm0m33"},
-	} {
-		if got := command.ClaudeProjectFolder(c.path); got != c.want {
-			t.Errorf("ClaudeProjectFolder(%q)\n got %q\nwant %q", c.path, got, c.want)
-		}
-	}
-}
 
 const (
 	resumeID         = "1b2c3d4e-5f60-4718-8a9b-0c1d2e3f4a5b"
@@ -80,7 +59,7 @@ func (w *world) resume(args ...string) int {
 
 // projectFolder is Claude Code's project folder of the folder.
 func (w *world) projectFolder(folder string) string {
-	return filepath.Join(w.projectsDir(), command.ClaudeProjectFolder(folder))
+	return filepath.Join(w.projectsDir(), capture.ClaudeProjectFolder(folder))
 }
 
 func readFile(t *testing.T, path string) string {

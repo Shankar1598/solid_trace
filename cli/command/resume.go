@@ -15,10 +15,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/solidtrace/cli/agentapi"
 	"github.com/solidtrace/cli/capture"
@@ -146,30 +144,6 @@ func decide(f resumeFacts) (resumePlan, string) {
 	}, ""
 }
 
-// ClaudeProjectFolder is the name of the folder under Claude Code's
-// projects folder that holds the transcripts of the Agent sessions that
-// start in the folder at path. Claude Code changes each UTF-16 code unit
-// that is not an ASCII letter or digit to "-". A name of more than 200
-// characters keeps its first 200, then "-" and the absolute value of
-// Java's String.hashCode of path, in base 36.
-func ClaudeProjectFolder(path string) string {
-	units := utf16.Encode([]rune(path))
-	name := make([]byte, len(units))
-	var hash int32
-	for i, u := range units {
-		hash = 31*hash + int32(u)
-		if u < 128 && (u >= 'a' && u <= 'z' || u >= 'A' && u <= 'Z' || u >= '0' && u <= '9') {
-			name[i] = byte(u)
-		} else {
-			name[i] = '-'
-		}
-	}
-	if len(name) <= 200 {
-		return string(name)
-	}
-	return string(name[:200]) + "-" + strconv.FormatInt(max(int64(hash), -int64(hash)), 36)
-}
-
 func resume(ctx context.Context, args []string, env Env) int {
 	fail := func(code int, format string, a ...any) int {
 		fmt.Fprintf(env.Stderr, "solidtrace resume: "+format+"\n", a...)
@@ -211,7 +185,7 @@ func resume(ctx context.Context, args []string, env Env) int {
 	}
 
 	target := filepath.Join(f.root, filepath.FromSlash(f.session.Folder))
-	project := filepath.Join(env.ClaudeProjectsDir, ClaudeProjectFolder(target))
+	project := filepath.Join(env.ClaudeProjectsDir, capture.ClaudeProjectFolder(target))
 	if plan.download {
 		if err := downloadSession(ctx, env, client, f.id, project); err != nil {
 			return fail(1, "%v", err)
@@ -288,7 +262,7 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 	}
 	f.remotes = remotes
 	target := filepath.Join(f.root, filepath.FromSlash(f.session.Folder))
-	transcript := filepath.Join(env.ClaudeProjectsDir, ClaudeProjectFolder(target), id+".jsonl")
+	transcript := filepath.Join(env.ClaudeProjectsDir, capture.ClaudeProjectFolder(target), id+".jsonl")
 	if info, err := os.Stat(transcript); err == nil && info.Mode().IsRegular() {
 		f.localSize, f.localHas = uint64(info.Size()), true
 	}
