@@ -1,6 +1,6 @@
 // Command releasefiles makes the files that each GitHub release gives
-// beside the binaries of cli/build: each Claude Code plugin as a zip, the
-// plugins' marketplace file, the install script, and one checksum file.
+// beside the binaries of cli/build: the Claude Code plugin as a zip, its
+// marketplace file, the install script, and one checksum file.
 // The release workflow runs it after cli/build:
 //
 //	go run ./internal/releasefiles -tag v0.19.0 -repository owner/name
@@ -31,7 +31,6 @@ import (
 // The names of the release files.
 const (
 	PluginZip   = "solidtrace-plugin.zip"
-	SkillsZip   = "solidtrace-skills.zip"
 	Marketplace = "marketplace.json"
 	Install     = "install.sh"
 	Sums        = "SHA256SUMS"
@@ -49,9 +48,7 @@ type plugin struct {
 
 var plugins = []plugin{
 	{Name: "solidtrace", Dir: "plugin", Zip: PluginZip,
-		Description: "Uploads your Agent sessions in the captured repositories to SolidTrace."},
-	{Name: "solidtrace-skills", Dir: "plugin-skills", Zip: SkillsZip,
-		Description: "Skills that review a change and open its PR, with a record of what the review found and what happened to each finding."},
+		Description: "Uploads your Agent sessions in the captured repositories to SolidTrace, and gives skills that review a change and open its PR, with a record of what the review found and what happened to each finding."},
 }
 
 type options struct {
@@ -194,7 +191,7 @@ func withVersion(manifest []byte, name, version string) ([]byte, error) {
 func writeMarketplace(path string, entries []any) error {
 	m := map[string]any{
 		"name":        "solidtrace",
-		"description": "The SolidTrace plugins for Claude Code, from one SolidTrace release.",
+		"description": "The SolidTrace plugin for Claude Code, from one SolidTrace release.",
 		"owner":       map[string]any{"name": "SolidTrace"},
 		"plugins":     entries,
 	}

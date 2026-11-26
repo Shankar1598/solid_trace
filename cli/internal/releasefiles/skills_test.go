@@ -292,7 +292,7 @@ func cutText(s string, n int) string {
 }
 
 func TestTheSkillFilesHaveTheirNamesAndNoBrokenLinkReferenceOrBlock(t *testing.T) {
-	problems, err := skillProblems(filepath.Join(skillsDir, "skills"), filepath.Join(pluginDir, "skills"))
+	problems, err := skillProblems(filepath.Join(pluginDir, "skills"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestTheSkillCheckNamesTheFileAndTheProblemOfEachBreak(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "skills")
-			if err := os.CopyFS(root, os.DirFS(filepath.Join(skillsDir, "skills"))); err != nil {
+			if err := os.CopyFS(root, os.DirFS(filepath.Join(pluginDir, "skills"))); err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(root, filepath.FromSlash(c.file))
@@ -352,7 +352,7 @@ func TestTheSkillCheckNamesTheFileAndTheProblemOfEachBreak(t *testing.T) {
 
 func TestTheSkillCheckDoesNotResolveALinkInACodeSpan(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "skills")
-	if err := os.CopyFS(root, os.DirFS(filepath.Join(skillsDir, "skills"))); err != nil {
+	if err := os.CopyFS(root, os.DirFS(filepath.Join(pluginDir, "skills"))); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "open-pr", "SKILL.md")
@@ -376,7 +376,7 @@ func TestTheSkillCheckDoesNotResolveALinkInACodeSpan(t *testing.T) {
 
 func TestTheSkillCheckNamesASkillWhoseNameIsNotItsFolder(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "skills")
-	if err := os.CopyFS(root, os.DirFS(filepath.Join(skillsDir, "skills"))); err != nil {
+	if err := os.CopyFS(root, os.DirFS(filepath.Join(pluginDir, "skills"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(filepath.Join(root, "deep-review"), filepath.Join(root, "deeper-review")); err != nil {
