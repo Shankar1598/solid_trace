@@ -12,7 +12,7 @@ A test runs the crash points that someone wrote down. This model lets TLC try **
 Use it when a change touches a file or function in the coverage record below. To see what changed since the sync commit, committed or not:
 
 ```sh
-git diff --stat 0f95dbb5 -- event_store/logprocessing/processor.go event_store/storage/pebble_logs.go event_store/storage/logs_clickhouse.go event_store/storage/logs_clickhouse_read.go event_store/handler/logs.go event_store/ingest/logs.go
+git diff --stat 89ba9d93 -- event_store/main.go event_store/clickhouse_start.go event_store/logprocessing/processor.go event_store/storage/pebble_logs.go event_store/storage/logs_clickhouse.go event_store/storage/logs_clickhouse_read.go event_store/handler/logs.go event_store/ingest/logs.go
 ```
 
 Changes to normalising, the Log transform, Attributes, the key counts and the reads other than `ScanLogsIngestedAfter` are outside the model.
@@ -97,7 +97,7 @@ L1 and D1 are accepted: they are the cost of no fsync, which the code chooses fo
 
 ## Coverage record
 
-**Sync commit:** `0f95dbb5` (2026-11-22). At that commit, each action below describes the code that it names.
+**Sync commit:** `89ba9d93` (2026-11-26). At that commit, each action below describes the code that it names.
 
 | Model action | Code |
 | --- | --- |
@@ -106,7 +106,8 @@ L1 and D1 are accepted: they are the cost of no fsync, which the code chooses fo
 | `Insert` | `ClickHouseLogs.InsertLogBatches` → `insertLogs`, with `LogInsert.token` as `insert_deduplication_token`; `processProject` / `retryLater` on an error |
 | `SetCursor` | `PebbleWriter.SetLogProcessingCursor` (`pebble.NoSync`) |
 | `Delete` | `PebbleWriter.DeleteLogBatchesUpTo` (`pebble.NoSync`) |
-| `Restart` | `Processor.Prepare` |
+| `Restart` | `main.go` `run`: Pebble and the ingest port open first, before ClickHouse |
+| `Prepare` | `Processor.Prepare`, a step of `clickHouseWork.steps` (`clickhouse_start.go`). Ingest can write before it. `Scan` waits for it, because the query port answers 503 until the start passes |
 | `Scan` | `ClickHouseLogs.ScanLogsIngestedAfter` (it answers `after` when the cursor is behind it), `handler/logs.go` (`ingest_cursor`), and Console's `MonitorEvaluation#run_match`, which keeps it |
 | `Forget` | `logsDedupWindow` (`non_replicated_deduplication_window` of `logs`) |
 | `PowerLoss`, `WritebackWal`, `WritebackPart` | Pebble's WAL replay up to the first missing record; ClickHouse's parts without `fsync_after_insert` |
