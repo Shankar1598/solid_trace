@@ -400,3 +400,45 @@ func TestResumeStartsClaudeCodeInTheFolderOfTheAgentSessionWithTheArgumentsAfter
 		t.Errorf("the transcript is not in the project folder of %s: %v", folder, err)
 	}
 }
+
+func TestResumeRefusesWhenThisMachineHasTheAgentSessionInAnotherFolder(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"yours", nil, "claude --resume " + resumeID},
+		{"with --fork", []string{"--fork"}, "claude --resume " + resumeID + " --fork-session"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t, acme)
+			w.signIn()
+			w.checkout()
+			w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript})
+			// A second checkout of the repository on this machine has the
+			// Agent session.
+			other := w.t.TempDir()
+			project := w.projectFolder(other)
+			if err := os.MkdirAll(project, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			line := `{"type":"user","cwd":"` + other + `"}` + "\n"
+			if err := os.WriteFile(filepath.Join(project, resumeID+".jsonl"), []byte(line), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if code := w.resume(append([]string{resumeID}, c.args...)...); code != 1 {
+				t.Fatalf("exit %d, want 1\nstderr: %s", code, w.stderr)
+			}
+
+			want := "solidtrace resume: This machine has the Agent session in " + other +
+				". Run this command in that folder:\n  " + c.want + "\n"
+			if got := w.stderr.String(); got != want {
+				t.Errorf("stderr %q\n  want %q", got, want)
+			}
+			if w.downloads() != 0 || len(w.started) != 0 {
+				t.Errorf("downloads %d, starts %q: want none", w.downloads(), w.started)
+			}
+		})
+	}
+}

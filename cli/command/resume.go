@@ -57,12 +57,20 @@ type resumeFacts struct {
 	// serverHas is false when SolidTrace has no transcript.
 	serverEnd uint64
 	serverHas bool
-	// root is the root of the checkout of the current folder ("" when it
-	// is not in a git repository), and remotes are its repositories as
-	// capture finds them.
-	dir     string
-	root    string
+	// dir is the current folder.
+	dir string
+	// root is the root of the checkout of dir, "" when dir is not in a git
+	// repository.
+	root string
+	// remotes are the repositories of the checkout, as capture finds them.
 	remotes []string
+	// target is the folder of the Agent session in the checkout, and
+	// project is its Claude Code project folder.
+	target  string
+	project string
+	// elsewhere is the folder of a copy of the transcript on this machine
+	// in another project folder, "" when there is none.
+	elsewhere string
 	// localSize is the size of the transcript on this machine, and
 	// localHas is false when this machine has none.
 	localSize uint64
@@ -126,6 +134,19 @@ var resumeRefusals = []resumeRefusal{
 			return fmt.Sprintf("SolidTrace has no transcript of the Agent session %s.", f.id)
 		},
 	},
+	{
+		// A second copy makes capture send the shorter copy again as a new
+		// version, and the transcript in SolidTrace goes back.
+		when: func(f resumeFacts) bool { return f.elsewhere != "" },
+		message: func(f resumeFacts) string {
+			command := "claude --resume " + f.id
+			if f.fork || !f.session.Yours {
+				command += " --fork-session"
+			}
+			return fmt.Sprintf("This machine has the Agent session in %s. Run this command in that folder:\n  %s",
+				f.elsewhere, command)
+		},
+	},
 }
 
 // decide gives the plan of resume, or the message of the first refusal. A
@@ -184,8 +205,7 @@ func resume(ctx context.Context, args []string, env Env) int {
 		return fail(1, "%s", refusal)
 	}
 
-	target := filepath.Join(f.root, filepath.FromSlash(f.session.Folder))
-	project := filepath.Join(env.ClaudeProjectsDir, capture.ClaudeProjectFolder(target))
+	target, project := f.target, f.project
 	if plan.download {
 		if err := downloadSession(ctx, env, client, f.id, project); err != nil {
 			return fail(1, "%v", err)
@@ -261,10 +281,20 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 		return f, err
 	}
 	f.remotes = remotes
-	target := filepath.Join(f.root, filepath.FromSlash(f.session.Folder))
-	transcript := filepath.Join(env.ClaudeProjectsDir, capture.ClaudeProjectFolder(target), id+".jsonl")
-	if info, err := os.Stat(transcript); err == nil && info.Mode().IsRegular() {
+	f.target = filepath.Join(f.root, filepath.FromSlash(f.session.Folder))
+	f.project = filepath.Join(env.ClaudeProjectsDir, capture.ClaudeProjectFolder(f.target))
+	if info, err := os.Stat(filepath.Join(f.project, id+".jsonl")); err == nil && info.Mode().IsRegular() {
 		f.localSize, f.localHas = uint64(info.Size()), true
+	}
+	sessions, err := capture.Sessions(env.ClaudeProjectsDir)
+	if err != nil {
+		return f, fmt.Errorf("read the Claude Code projects folder: %w", err)
+	}
+	for _, s := range sessions {
+		project := filepath.Dir(s.TranscriptPath)
+		if s.ID == id && project != f.project && !strings.HasPrefix(filepath.Base(project), resumeStaging) {
+			f.elsewhere = cmp.Or(capture.StartDir(s.TranscriptPath, ""), project)
+		}
 	}
 	return f, nil
 }
