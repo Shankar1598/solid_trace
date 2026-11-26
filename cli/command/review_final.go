@@ -1,7 +1,6 @@
 package command
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/solidtrace/cli/capture"
 	"github.com/solidtrace/cli/review"
@@ -22,7 +20,7 @@ import (
 func reviewFinal(args []string, env Env) int {
 	flags := flag.NewFlagSet("review final", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
-	session := flags.String("session", "", "the Agent session (default: "+ClaudeSessionEnv+")")
+	session := sessionFlag(flags)
 	flags.Usage = func() {
 		fmt.Fprintln(env.Stderr, "Usage: solidtrace review final FILE [--session ID]\n\nCheck the Review record in FILE and write it to the folder of the Agent session, where the capture uploads it.")
 		flags.PrintDefaults()
@@ -47,17 +45,20 @@ func reviewFinal(args []string, env Env) int {
 	if err != nil {
 		return fail(err)
 	}
-	sessionID := cmp.Or(strings.TrimSpace(*session), strings.TrimSpace(env.ClaudeSessionID))
-	if sessionID == "" {
-		return fail(errors.New("no Agent session: run this from Claude Code, or give --session"))
+	sessionID, ok := agentSessionID(*session, env)
+	if !ok {
+		return fail(errors.New(noAgentSession))
 	}
 	transcript, err := sessionTranscript(env.ClaudeProjectsDir, sessionID)
+	if errors.Is(err, errSeveralTranscripts) {
+		return fail(fmt.Errorf("%w: remove the copies that are not this Agent session's, and run this again", err))
+	}
 	if err != nil {
 		return fail(err)
 	}
-	project := filepath.Dir(transcript)
-	path := filepath.Join(project, sessionID, "solidtrace", "review-records", recordFileName(record))
-	if err := writeRecord(project, path, data); err != nil {
+	projectFolder := filepath.Dir(transcript)
+	path := filepath.Join(projectFolder, sessionID, capture.WrittenWholeFolder, "review-records", recordFileName(record))
+	if err := writeRecord(projectFolder, path, data); err != nil {
 		return fail(err)
 	}
 	fixed := 0
@@ -69,6 +70,8 @@ func reviewFinal(args []string, env Env) int {
 	fmt.Fprintf(env.Stdout, "record: round %d, %d findings, %d fixed, kept in %s\n", record.Round, len(record.Findings), fixed, path)
 	return 0
 }
+
+var recordLimit = fmt.Sprintf("%d MiB", capture.UnitLimit>>20)
 
 // readRecordFile reads a record of at most capture.UnitLimit bytes: the
 // capture cuts a larger file, and a cut file is no record.
@@ -101,18 +104,25 @@ func recordFileName(r review.Record) string {
 }
 
 // writeRecord writes data to path with a rename, so that the capture never
-// reads a part of it. The temporary file is in the project folder, outside
-// the Agent session's folder, so that the capture does not upload it.
-func writeRecord(project, path string, data []byte) error {
+// reads a part of it. The temporary file is in the Claude project folder,
+// outside the Agent session's folder, so that the capture does not upload
+// it.
+func writeRecord(projectFolder, path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(project, ".solidtrace-review-record-*")
+	tmp, err := os.CreateTemp(projectFolder, ".solidtrace-review-record-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	// The bytes go to the disk before the rename, so that a power loss
+	// leaves the old file or the whole new one, not an empty file.
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return err
 	}

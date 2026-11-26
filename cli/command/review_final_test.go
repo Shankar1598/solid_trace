@@ -191,13 +191,45 @@ func TestReviewFinalTakesOneFile(t *testing.T) {
 	}
 }
 
-func TestReviewFinalRefusesAFileThatTheCaptureWouldCut(t *testing.T) {
+func TestReviewFinalTakesAFileOfUpTo32MiBTheMostThatTheCaptureSendsWhole(t *testing.T) {
 	projects, _ := finalProjects(t)
-	pad := finalRecord + strings.Repeat(" ", capture.UnitLimit+1-len(finalRecord))
+	pad := func(n int) string { return finalRecord + strings.Repeat(" ", n-len(finalRecord)) }
 
-	code, out, stderr := runFinal(t, projects, pad)
-
+	if code, _, stderr := runFinal(t, projects, pad(capture.UnitLimit)); code != 0 {
+		t.Fatalf("32 MiB: exit %d: %s", code, stderr)
+	}
+	code, out, stderr := runFinal(t, projects, pad(capture.UnitLimit+1))
 	if code != 1 || out != "" || !strings.Contains(stderr, fmt.Sprintf("is more than %d bytes", capture.UnitLimit)) {
+		t.Fatalf("32 MiB and 1 byte: exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
+	}
+}
+
+func TestReviewFinalSaysSoWhenItCannotWriteTheFile(t *testing.T) {
+	projects, project := finalProjects(t)
+	// A file where the folder of the Agent session must be.
+	writeFile(t, filepath.Join(project, finalSession), "not a folder")
+
+	code, out, stderr := runFinal(t, projects, finalRecord)
+
+	if code != 1 || out != "" || !strings.HasPrefix(stderr, "solidtrace review final: ") {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
+	}
+}
+
+func TestReviewFinalWithTwoTranscriptsOfTheSessionNamesThemAndWritesNothing(t *testing.T) {
+	projects, project := finalProjects(t)
+	copied := filepath.Join(projects, "-home-ann-shop-old")
+	writeFile(t, filepath.Join(copied, finalSession+".jsonl"), "{}\n")
+
+	code, out, stderr := runFinal(t, projects, finalRecord)
+
+	if code != 1 || out != "" || !strings.Contains(stderr, "2 transcripts of the Agent session") ||
+		!strings.Contains(stderr, "remove the copies") || strings.Contains(stderr, "--file") {
+		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
+	}
+	for _, dir := range []string{project, copied} {
+		if _, err := os.Stat(filepath.Join(dir, finalSession)); !os.IsNotExist(err) {
+			t.Errorf("Expected no folder of the Agent session in %s, got %v", dir, err)
+		}
 	}
 }

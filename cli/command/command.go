@@ -309,9 +309,9 @@ Usage:
   solidtrace review final FILE [--session ID]
       Check the review record of a PR in FILE (version 2, as review
       record writes it), and write it to
-      <project>/<ID>/solidtrace/review-records/round-<n>-<h>.json, the
-      folder of the Agent session in CLAUDE_CONFIG_DIR (else ~/.claude),
-      with a rename. <h> is the first 12 hex characters of the SHA-256 of
+      <project folder>/<ID>/solidtrace/review-records/round-<n>-<h>.json,
+      the folder of the Agent session in CLAUDE_CONFIG_DIR (else
+      ~/.claude), with a rename. <h> is the first 12 hex characters of the SHA-256 of
       the record's pr. The Agent session is --session, else
       ` + ClaudeSessionEnv + `, which Claude Code sets. open-pr and update-pr
       end with this command. The capture uploads the file with the Agent
@@ -319,7 +319,7 @@ Usage:
       again replaces its file. It prints the round, the counts of
       findings and fixed findings, and the path on one line. Exit 1 when
       the file is not a record of version 2, has a field that the record
-      does not have, or is more than 32 MiB, or when the Agent session
+      does not have, or is more than ` + recordLimit + `, or when the Agent session
       has no transcript.
   solidtrace evidence add FILE... [--caption TEXT] [--session ID]
       Upload each FILE as an Evidence file of the Agent session: a PNG,

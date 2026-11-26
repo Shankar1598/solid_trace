@@ -552,15 +552,17 @@ test('the record file of an open-pr Agent session, or the final reply of an olde
   const draft = reviewRecord(pr, 2, 230)
   expect(reviewFinal(reviewer, second, shopDir, draft)).toMatch(new RegExp(`^record: round 2, 230 findings, 228 fixed, kept in .*/${second.id}/solidtrace/review-records/round-2-[0-9a-f]{12}\\.json$`))
   capture(reviewer, second, shopDir, 'Stop')
-  expect(reviewFinal(reviewer, second, shopDir, round2)).toMatch(/^record: round 2, 240 findings, 238 fixed, kept in /)
-  capture(reviewer, second, shopDir, 'Stop')
-  // A record in a repository that is not captured stays on the machine.
+  // A record in a repository that is not captured stays on the machine. Its
+  // capture comes before the last one, so when the last record shows, it
+  // would show too.
   const elsewherePr = `https://github.example/other/notes-${RUN}/pull/1`
   const elsewhereDir = gitRepository(`${ELSEWHERE}-records`)
   const elsewhere = openPrSession(elsewhereDir, { exampleRecord: example, record: reviewRecord(elsewherePr, 1, 4), minutesAgo: 5 })
   const kept = reviewFinal(reviewer, elsewhere, elsewhereDir, reviewRecord(elsewherePr, 1, 4)).split('kept in ')[1]
   expect(existsSync(kept), kept).toBe(true)
   capture(reviewer, elsewhere, elsewhereDir, 'Stop')
+  expect(reviewFinal(reviewer, second, shopDir, round2)).toMatch(/^record: round 2, 240 findings, 238 fixed, kept in /)
+  capture(reviewer, second, shopDir, 'Stop')
 
   const table = page.getByRole('table', { name: 'Review records' })
   const row = table.locator(`tr[data-review-record="${pr}"]`)
@@ -571,6 +573,7 @@ test('the record file of an open-pr Agent session, or the final reply of an olde
     await sidebar.getByRole('link', { name: 'Review records' }).click()
     await expect(page).toHaveURL(new RegExp(`/${ORG}/review_records$`))
     await expect(row.locator('[data-cell="round"]')).toHaveText('2(1 earlier)', { timeout: 1_000 })
+    await expect(row.locator('[data-cell="findings"]')).toHaveText('240', { timeout: 1_000 })
   }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] })
   await expect(page).toHaveTitle('Review records · SolidTrace')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Review records')

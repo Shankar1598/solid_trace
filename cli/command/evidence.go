@@ -20,6 +20,25 @@ const ClaudeSessionEnv = "CLAUDE_CODE_SESSION_ID"
 
 var evidenceLimit = fmt.Sprintf("%d MiB", agentapi.MaxEvidenceBytes>>20)
 
+// sessionFlag is the --session flag of a command that acts for an Agent
+// session.
+func sessionFlag(flags *flag.FlagSet) *string {
+	return flags.String("session", "", "the Agent session (default: "+ClaudeSessionEnv+")")
+}
+
+// agentSessionID is the --session value, else the Agent session that
+// Claude Code gives its Bash tool; false when there is none.
+func agentSessionID(flagValue string, env Env) (string, bool) {
+	id := strings.TrimSpace(flagValue)
+	if id == "" {
+		id = strings.TrimSpace(env.ClaudeSessionID)
+	}
+	return id, id != ""
+}
+
+// noAgentSession is the error of a command that found no Agent session.
+const noAgentSession = "no Agent session: run this from Claude Code, or give --session"
+
 func evidence(ctx context.Context, args []string, env Env) int {
 	if len(args) == 0 || args[0] != "add" {
 		fmt.Fprintln(env.Stderr, "solidtrace evidence: give add FILE... [--caption TEXT] [--session ID]")
@@ -28,7 +47,7 @@ func evidence(ctx context.Context, args []string, env Env) int {
 	flags := flag.NewFlagSet("evidence add", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
 	caption := flags.String("caption", "", fmt.Sprintf("the caption of each file (at most %d characters)", agentapi.MaxEvidenceCaption))
-	session := flags.String("session", "", "the Agent session (default: "+ClaudeSessionEnv+")")
+	session := sessionFlag(flags)
 	files, ok := parseInterspersed(flags, args[1:])
 	if !ok {
 		return 2
@@ -43,12 +62,9 @@ func evidence(ctx context.Context, args []string, env Env) int {
 			agentapi.MaxEvidenceCaption, n)
 		return 2
 	}
-	sessionID := strings.TrimSpace(*session)
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(env.ClaudeSessionID)
-	}
-	if sessionID == "" {
-		fmt.Fprintln(env.Stderr, "solidtrace evidence add: no Agent session: run this from Claude Code, or give --session")
+	sessionID, ok := agentSessionID(*session, env)
+	if !ok {
+		fmt.Fprintln(env.Stderr, "solidtrace evidence add: "+noAgentSession)
 		return 1
 	}
 	source := env.Source()

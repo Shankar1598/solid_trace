@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -73,6 +74,10 @@ func reviewDigest(args []string, env Env) int {
 	var sources []source
 	for _, id := range sessions {
 		path, err := sessionTranscript(env.ClaudeProjectsDir, id)
+		if errors.Is(err, errSeveralTranscripts) {
+			fmt.Fprintf(env.Stderr, "solidtrace review digest: %v: give --file with one of them\n", err)
+			return 1
+		}
 		if err != nil {
 			fmt.Fprintf(env.Stderr, "solidtrace review digest: %v\n", err)
 			return 1
@@ -132,6 +137,21 @@ func printJSON(env Env, verb string, v any) int {
 	return 0
 }
 
+// errSeveralTranscripts marks a session id with a transcript in more than
+// one Claude project folder.
+var errSeveralTranscripts = errors.New("more than one transcript")
+
+type severalTranscripts struct {
+	id, projects string
+	paths        []string
+}
+
+func (e severalTranscripts) Error() string {
+	return fmt.Sprintf("%d transcripts of the Agent session %s in %s: %v", len(e.paths), e.id, e.projects, e.paths)
+}
+
+func (e severalTranscripts) Is(target error) bool { return target == errSeveralTranscripts }
+
 // sessionTranscript is the main transcript of the Agent session id: the
 // one <projects>/<folder>/<id>.jsonl.
 func sessionTranscript(projects, id string) (string, error) {
@@ -151,7 +171,7 @@ func sessionTranscript(projects, id string) (string, error) {
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("%d transcripts of the Agent session %s in %s: give --file with one of %v", len(matches), id, projects, matches)
+		return "", severalTranscripts{id, projects, matches}
 	}
 }
 

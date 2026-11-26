@@ -20,6 +20,11 @@ import (
 	"github.com/solidtrace/cli/agentapi"
 )
 
+// WrittenWholeFolder is the folder under an Agent session's own folder
+// where solidtrace writes each file with a rename: the capture sends such a
+// file at once, as it is never half written.
+const WrittenWholeFolder = "solidtrace"
+
 // UnitLimit is the largest unit: a longer line or file is sent as its
 // first UnitLimit bytes with its full size.
 const UnitLimit = 32 << 20
@@ -244,9 +249,8 @@ func nextLines(ctx context.Context, f *os.File, offset, end uint64) (body []byte
 
 // whole sends a file that is not .jsonl with its hash, when the server
 // does not have that hash, and the file did not change since the last
-// attempt or the Agent session ends. A file under <id>/solidtrace/ goes at
-// once: solidtrace writes it with a rename, so it is never half written. A
-// new hash is a new version.
+// attempt or the Agent session ends. A file under
+// <id>/WrittenWholeFolder/ goes at once. A new hash is a new version.
 func (u *upload) whole(ctx context.Context, path string, previous, next state) error {
 	f, err := u.open(path)
 	if err != nil {
@@ -272,7 +276,7 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 		return nil
 	}
 	settled := !u.settledBefore.IsZero() && info.ModTime().Before(u.settledBefore)
-	atOnce := strings.HasPrefix(path, u.in.SessionID+"/solidtrace/")
+	atOnce := strings.HasPrefix(path, u.in.SessionID+"/"+WrittenWholeFolder+"/")
 	if previous.Seen[path] != seen && u.in.HookEventName != SessionEnd && !settled && !atOnce {
 		// It may still change: it goes at the next call if it does not.
 		u.pending = true
