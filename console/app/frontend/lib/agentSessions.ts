@@ -205,7 +205,7 @@ export function resumeCommand(id: string): string {
  */
 export function resumeText({ person, run }: Pick<AgentSessionRow, 'person' | 'run'>, viewerId: number | undefined): string {
   const where = 'Run this command in a checkout of the repository of this Agent session.'
-  if (!run && person && viewerId !== undefined && Number(person.id) === viewerId) {
+  if (!run && person && viewerId !== undefined && person.id === viewerId) {
     return `${where} It continues this Agent session with the same id. Close it on the other machine first.`
   }
   return `${where} It continues as a new Agent session of yours, and this Agent session does not change.`
