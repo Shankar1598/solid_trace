@@ -258,7 +258,7 @@ Console streams the bytes from EventStore with `Range`, so a video can seek. It 
 
 An Admin sets **Evidence Retention (days)** on **Settings** → **Agent sessions**: how many whole days the Agent Project keeps each Evidence file. The default is 90, from 1 to 3650. Each other member reads it there. Over MCP, `update_project` sets it as `evidence_retention_days` on the Agent Project. A change applies to the files that are already there.
 
-Once a day, EventStore deletes each file that is older than Evidence Retention. The link then shows "This evidence was deleted on <date>, after <N> days of Evidence Retention." Evidence Retention is separate from the Agent Project's Retention, which the Agent sessions and the Review records follow.
+Once a day, EventStore deletes each file that is older than Evidence Retention. The link then shows "This evidence was deleted on <date> by Evidence Retention, <N> days after its upload." Evidence Retention is separate from the Agent Project's Retention, which the Agent sessions and the Review records follow.
 
 EventStore keeps the bytes in the bucket of `object_store`, under the `evidence/` prefix. Without a bucket, it keeps them in `evidence_path` on its data disk (`/storage/evidence/production` in `deploy/event_store.yml`).
 

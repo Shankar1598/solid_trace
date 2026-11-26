@@ -63,11 +63,12 @@ func (e *EvidenceFiles) DeletePastRetention(ctx context.Context, now time.Time, 
 		if !ok {
 			days = DefaultEvidenceRetentionDays
 		}
-		if days < 1 {
+		cutoff, ok := evidenceCutoff(now, days)
+		if !ok {
 			logger.L.Error("Keeping the Evidence files of an Organization with no valid Evidence Retention", "organization_id", organizationID)
 			continue
 		}
-		deleted, err := e.deleteCreatedBefore(ctx, organizationID, now.Add(-time.Duration(days)*24*time.Hour), now)
+		deleted, err := e.deleteCreatedBefore(ctx, organizationID, cutoff, now)
 		sweep.Deleted += deleted
 		if err != nil {
 			failed = append(failed, fmt.Errorf("Organization %d: %w", organizationID, err))
@@ -78,6 +79,16 @@ func (e *EvidenceFiles) DeletePastRetention(ctx context.Context, now time.Time, 
 		failed = append(failed, fmt.Errorf("objects with no row: %w", err))
 	}
 	return sweep, errors.Join(failed...)
+}
+
+// evidenceCutoff is the time before which a file is past an Evidence
+// Retention of days at now, or false when days is not valid, as a file is
+// then kept.
+func evidenceCutoff(now time.Time, days int) (time.Time, bool) {
+	if days < 1 {
+		return time.Time{}, false
+	}
+	return now.Add(-time.Duration(days) * 24 * time.Hour), true
 }
 
 func (e *EvidenceFiles) organizationsWithFiles(ctx context.Context) ([]int64, error) {
@@ -150,8 +161,8 @@ func (e *EvidenceFiles) markDeleted(ctx context.Context, ids []any, at time.Time
 	if len(ids) == 0 {
 		return nil
 	}
-	_, err := e.db.ExecContext(ctx, `UPDATE evidence_files SET deleted_at = ? WHERE deleted_at IS NULL AND id IN (`+
-		strings.Repeat("?, ", len(ids)-1)+"?)", append([]any{at.UTC().Format(railsTimeLayout)}, ids...)...)
+	_, err := e.db.ExecContext(ctx, "UPDATE evidence_files SET deleted_at = ? WHERE deleted_at IS NULL AND id IN "+sqlList(len(ids)),
+		append([]any{at.UTC().Format(railsTimeLayout)}, ids...)...)
 	return err
 }
 
@@ -215,6 +226,16 @@ func (e *EvidenceFiles) deleteUnreferenced(ctx context.Context, cutoff time.Time
 	return deleted, nil
 }
 
+// sqlList is the placeholders of an SQL list of n values: "(?, ?, ?)". It
+// panics for no values, as "()" is not valid SQL: a caller with an empty
+// list has nothing to query.
+func sqlList(n int) string {
+	if n < 1 {
+		panic("an SQL list needs at least one value")
+	}
+	return "(" + strings.Repeat("?, ", n-1) + "?)"
+}
+
 // namedKeys is the keys of batch that a row which is not deleted names.
 // The id of a row is the name of its key, without the extension.
 func (e *EvidenceFiles) namedKeys(ctx context.Context, batch []string) (map[string]bool, error) {
@@ -222,8 +243,7 @@ func (e *EvidenceFiles) namedKeys(ctx context.Context, batch []string) (map[stri
 	for i, key := range batch {
 		ids[i] = strings.TrimSuffix(path.Base(key), path.Ext(key))
 	}
-	rows, err := e.db.QueryContext(ctx, `SELECT storage_key FROM evidence_files WHERE deleted_at IS NULL AND id IN (`+
-		strings.Repeat("?, ", len(ids)-1)+"?)", ids...)
+	rows, err := e.db.QueryContext(ctx, "SELECT storage_key FROM evidence_files WHERE deleted_at IS NULL AND id IN "+sqlList(len(ids)), ids...)
 	if err != nil {
 		return nil, err
 	}

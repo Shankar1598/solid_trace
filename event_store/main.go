@@ -149,11 +149,11 @@ func main() {
 	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
 	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
 	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, diskLimit, clock.System{},
+		&logprocessing.Evidence{Files: evidenceFiles, Retention: consoleSettings.EvidenceRetention},
 		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
 		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
 		// The Agent Project's Log Retention, which its derived Logs keep too.
 		logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})
-	logCleanup.Evidence = &logprocessing.Evidence{Files: evidenceFiles, Retention: consoleSettings.EvidenceRetention}
 	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.

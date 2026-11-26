@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 # An Admin's changes on Organization settings → Agent sessions: the turn-on,
-# which makes the Organization's Agent Project, and the saves of its captured
-# repositories. The turn-on needs at least one captured repository. The
+# which makes the Organization's Agent Project, the saves of its captured
+# repositories, and the saves of its Evidence Retention. The turn-on needs at least one captured repository. The
 # turn-on, and each save that adds entries, needs the Admin's confirm of
 # NOTICE, which is recorded as a CaptureConfirmation with who, when and the
 # entries it was for. A save that only removes entries needs none. The
@@ -32,6 +32,16 @@ class AgentSessionsSettings
 
   def self.save(project:, user:, entries:, confirmed:)
     new(user: user, confirmed: confirmed).save(project, entries)
+  end
+
+  # A refused save keeps the project's saved Evidence Retention, so the page
+  # shows it with the errors.
+  def self.save_evidence_retention(project:, days:)
+    return Result.new(project: project, errors: {}) if project.update(evidence_retention_days: days)
+
+    errors = project.errors.to_hash
+    project.restore_attributes
+    Result.new(project: project, errors: errors)
   end
 
   def initialize(user:, confirmed:)

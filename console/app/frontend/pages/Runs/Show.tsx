@@ -251,7 +251,7 @@ function Report({ report }: { report: RunReport }) {
         </div>
         <div>
           <h3 className="mb-1 font-medium">Evidence</h3>
-          {report.evidence.length === 0 && <None text="No Evidence files." />}
+          {report.evidence.length === 0 && <None text="No files in its Evidence." />}
           {images.map(e => (
             <figure key={e.path} className="mb-3">
               <img src={e.url} alt={e.path} className="max-h-[32rem] max-w-full border" data-evidence={e.path} />

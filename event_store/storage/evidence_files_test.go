@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,9 +51,16 @@ func TestTheTypeOfAnEvidenceFileIsFoundFromItsFirstBytes(t *testing.T) {
 }
 
 // evidenceFilesDDL copies the evidence_files table from console/db/schema.rb,
-// which owns it, without its foreign keys. Keep the unique index in step:
-// the dedup depends on it.
+// which owns it, without its foreign keys, and the columns of projects that
+// give Evidence Retention. Keep the unique index in step: the dedup depends
+// on it.
 const evidenceFilesDDL = `
+CREATE TABLE projects (
+	id INTEGER PRIMARY KEY,
+	organization_id INTEGER NOT NULL,
+	agent BOOLEAN NOT NULL DEFAULT 0,
+	evidence_retention_days INTEGER NOT NULL DEFAULT 90
+);
 CREATE TABLE evidence_files (
 	id VARCHAR NOT NULL PRIMARY KEY,
 	organization_id INTEGER NOT NULL,
@@ -236,6 +244,42 @@ func TestASecondUploadOfTheSameBytesWritesNoSecondObject(t *testing.T) {
 	}
 	if store.puts != 1 || len(store.objects) != 1 {
 		t.Errorf("Expected 1 put and 1 object, got %d puts and %d objects", store.puts, len(store.objects))
+	}
+}
+
+func TestTheSameBytesAgainAfterEvidenceRetentionGetANewRowAndNewBytes(t *testing.T) {
+	store := newMemoryStore()
+	e := newTestEvidenceFiles(t, store, t.TempDir())
+	if _, err := e.db.Exec("INSERT INTO projects (organization_id, agent, evidence_retention_days) VALUES (1, 1, 2)"); err != nil {
+		t.Fatal(err)
+	}
+	upload := evidenceUpload(evidencePNG(500))
+	first, _, err := e.Add(context.Background(), upload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upload.At = first.CreatedAt.Add(2*24*time.Hour - time.Minute)
+	if within, created, err := e.Add(context.Background(), upload); err != nil || created || within.ID != first.ID {
+		t.Fatalf("Expected the first row %s within 2 days, got %s (new %v, %v)", first.ID, within.ID, created, err)
+	}
+
+	upload.At = first.CreatedAt.Add(2*24*time.Hour + time.Minute)
+	again, created, err := e.Add(context.Background(), upload)
+	if err != nil || !created || again.ID == first.ID {
+		t.Fatalf("Expected a new row past 2 days, got %s (new %v, %v)", again.ID, created, err)
+	}
+	if old, _, err := e.EvidenceFile(context.Background(), first.ID); err != nil || old.DeletedAt == nil || !old.DeletedAt.Equal(upload.At) {
+		t.Errorf("Expected the first row deleted at %v, got %v (%v)", upload.At, old.DeletedAt, err)
+	}
+	if _, kept := store.objects[first.StorageKey]; kept || len(store.objects) != 1 {
+		t.Errorf("Expected only the new bytes, got objects %v", slices.Collect(maps.Keys(store.objects)))
+	}
+	if got := readEvidenceFile(t, e, again, 0, again.ByteSize); !bytes.Equal(got, upload.Bytes) {
+		t.Errorf("Expected the new row's %d bytes, got %d", len(upload.Bytes), len(got))
+	}
+	if got, err := e.DeletePastRetention(context.Background(), upload.At, map[int64]int{1: 2}); err != nil || got != (EvidenceSweep{}) {
+		t.Errorf("Expected the next run of Evidence Retention to delete nothing, got %+v, %v", got, err)
 	}
 }
 

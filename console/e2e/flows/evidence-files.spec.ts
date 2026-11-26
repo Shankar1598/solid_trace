@@ -244,7 +244,7 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
 
   // The deleted file's page says when, with no image.
   await page.goto(deletedPath)
-  await expect(page.locator('[data-notice="evidence-deleted"]')).toContainText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4}, after 90 days of Evidence Retention\.$/)
+  await expect(page.locator('[data-notice="evidence-deleted"]')).toContainText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4} by Evidence Retention, 90 days after its upload\.$/)
   await expect(page.locator('[data-evidence]')).toHaveCount(0)
   expect(errors).toEqual([])
 

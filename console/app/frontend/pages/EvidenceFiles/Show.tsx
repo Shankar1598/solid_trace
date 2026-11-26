@@ -45,7 +45,7 @@ export default function EvidenceFileShow({ evidence_file: file }: { evidence_fil
             <Card className="border-dashed" data-notice="evidence-deleted">
               <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
                 <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
-                {evidenceDeletedText({ ...file, deleted_at: file.deleted_at })}
+                {evidenceDeletedText(file.created_at, file.deleted_at)}
               </CardContent>
             </Card>
           )

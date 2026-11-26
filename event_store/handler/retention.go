@@ -24,8 +24,8 @@ func RegisterRetentionRoute(app *fiber.App, cleanup DailyPass) {
 	app.Post("/retention", func(c *fiber.Ctx) error {
 		pass, err := cleanup.RunDailyPass()
 		answer := fiber.Map{
-			"days_ms":                     milliseconds(pass.Days),
-			"evidence_ms":                 milliseconds(pass.Evidence),
+			"days_ms":                     milliseconds(pass.DaysTook),
+			"evidence_ms":                 milliseconds(pass.EvidenceTook),
 			"evidence_files_deleted":      pass.Deleted,
 			"objects_with_no_row_deleted": pass.Unreferenced,
 		}

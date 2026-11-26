@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -290,12 +291,34 @@ func (s *ConsoleSettings) EvidenceRetention() (map[int64]int, error) {
 		if err := rows.Scan(&organizationID, &days); err != nil {
 			return nil, err
 		}
-		if days < 1 || days > MaxEvidenceRetentionDays {
-			days = 0
-		}
-		retention[organizationID] = days
+		retention[organizationID] = validEvidenceRetention(days)
 	}
 	return retention, rows.Err()
+}
+
+// evidenceRetentionOf reads the Evidence Retention of one Organization, as
+// EvidenceRetention does, with DefaultEvidenceRetentionDays for one with no
+// Agent Project, as DeletePastRetention gives it.
+func evidenceRetentionOf(ctx context.Context, db *sql.DB, organizationID int64) (int, error) {
+	var days int
+	err := db.QueryRowContext(ctx, "SELECT evidence_retention_days FROM projects WHERE organization_id = ? AND agent = 1",
+		organizationID).Scan(&days)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DefaultEvidenceRetentionDays, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return validEvidenceRetention(days), nil
+}
+
+// validEvidenceRetention is days, or 0 when it is outside 1 to
+// MaxEvidenceRetentionDays.
+func validEvidenceRetention(days int) int {
+	if days < 1 || days > MaxEvidenceRetentionDays {
+		return 0
+	}
+	return days
 }
 
 // ProjectLogRetention returns the effective Retention, in whole days, of every

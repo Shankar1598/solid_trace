@@ -14,6 +14,7 @@ class AgentSessionSettingsController < ApplicationController
 
   before_action :set_current_org
   before_action :require_admin, only: [ :create, :update, :evidence_retention ]
+  before_action :require_agent_project, only: [ :update, :evidence_retention ]
 
   def show
     render inertia: "Settings/AgentSessions", props: page_props
@@ -27,26 +28,15 @@ class AgentSessionSettingsController < ApplicationController
 
   # A save of the captured repositories.
   def update
-    project = @current_org.agent_project
-    return redirect_to(page_path, alert: "Turn on Agent sessions first.") unless project
-
-    answer AgentSessionsSettings.save(project: project, user: current_user, entries: entries, confirmed: params[:confirmed]),
-      "Captured repositories saved"
+    answer AgentSessionsSettings.save(project: @current_org.agent_project, user: current_user, entries: entries,
+      confirmed: params[:confirmed]), "Captured repositories saved"
   end
 
   # A save of Evidence Retention, in whole days. EventStore deletes the
   # Evidence files older than it in its next daily pass.
   def evidence_retention
-    project = @current_org.agent_project
-    return redirect_to(page_path, alert: "Turn on Agent sessions first.") unless project
-
-    if project.update(evidence_retention_days: params[:evidence_retention_days])
-      redirect_to page_path, notice: "Evidence Retention saved"
-    else
-      errors = project.errors.to_hash
-      project.restore_attributes
-      render inertia: "Settings/AgentSessions", props: page_props.merge(errors: errors)
-    end
+    answer AgentSessionsSettings.save_evidence_retention(project: @current_org.agent_project, days: params[:evidence_retention_days]),
+      "Evidence Retention saved"
   end
 
   private
@@ -69,6 +59,10 @@ class AgentSessionSettingsController < ApplicationController
 
   def require_admin
     head :forbidden unless admin?
+  end
+
+  def require_agent_project
+    redirect_to(page_path, alert: "Turn on Agent sessions first.") unless @current_org.agent_project
   end
 
   def admin?

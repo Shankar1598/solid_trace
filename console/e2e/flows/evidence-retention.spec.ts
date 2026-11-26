@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { ADMIN, ORG } from '../support/data'
@@ -13,7 +13,8 @@ import { watchErrors } from '../support/screens'
 // fixture), and EventStore's daily pass runs at once through the query API's
 // POST /retention. Then the file's page says when it was deleted and after
 // how many days, its bytes get 410, and its object is gone from EventStore's
-// evidence folder. The setting goes back to 90 days after.
+// evidence folder. The setting goes back to 90 days after, and the file's
+// row and object are removed.
 
 const RUN = Date.now().toString(36)
 const ENTRY = 'flows.example/flowteam/*'
@@ -29,6 +30,8 @@ const rails = (code: string) => execFileSync('mise', ['exec', '--', 'bin/rails',
 }).toString().trim()
 
 let token = ''
+let uploadedId = ''
+let object = ''
 
 test.beforeAll(() => {
   token = rails(`
@@ -47,7 +50,9 @@ test.beforeAll(() => {
 
 test.afterAll(() => {
   rails(`ApiToken.where(name: ${JSON.stringify(TOKEN_NAME)}).delete_all
+    EvidenceFile.where(id: ${JSON.stringify(uploadedId)}).delete_all
     Organization.find_by!(slug: ${JSON.stringify(ORG)}).agent_project&.update!(evidence_retention_days: 90)`)
+  if (object) rmSync(object, { force: true })
 })
 
 const shot = (page: Page, name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), animations: 'disabled' })
@@ -64,10 +69,11 @@ test('an admin sets Evidence Retention to 1 day, and the daily pass deletes an o
   })
   const uploaded = await answer.json()
   expect(answer.status, JSON.stringify(uploaded)).toBe(201)
+  uploadedId = uploaded.id
   const filePath = `/${ORG}/evidence/${uploaded.id}`
   const storageKey = rails(`print EvidenceFile.find(${JSON.stringify(uploaded.id)}).storage_key`)
-  const object = join(STACK ?? '', 'stack', 'evidence', storageKey)
   expect(STACK, 'run the flow with verify flow, which sets SOLIDTRACE_VERIFY_RUN').toBeTruthy()
+  object = join(STACK ?? '', 'stack', 'evidence', storageKey)
   expect(existsSync(object)).toBe(true)
 
   // The admin sets Evidence Retention to 1 day on the page.
@@ -95,7 +101,7 @@ test('an admin sets Evidence Retention to 1 day, and the daily pass deletes an o
   // The page says when and after how many days; the bytes are gone.
   await page.goto(filePath)
   await expect(page.locator('[data-notice="evidence-deleted"]'))
-    .toHaveText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4}, after 2 days of Evidence Retention\.$/)
+    .toHaveText(/^This evidence was deleted on \w{3} \d{1,2}, \d{4} by Evidence Retention, 2 days after its upload\.$/)
   await expect(page.locator('[data-evidence]')).toHaveCount(0)
   expect((await page.request.get(`${baseURL}${filePath}/file`)).status()).toBe(410)
   expect(existsSync(object)).toBe(false)

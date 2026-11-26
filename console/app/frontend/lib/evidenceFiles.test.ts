@@ -64,12 +64,17 @@ describe('an Evidence file', () => {
 
 describe('the sentence of a deleted file', () => {
   it('gives the date and the whole days from the upload to the delete', () => {
-    const deleted = { ...file('image/png'), created_at: '2026-08-28T10:00:00Z', deleted_at: '2026-11-26T12:00:00Z' }
-    expect(evidenceDeletedText(deleted)).toBe('This evidence was deleted on Nov 26, 2026, after 90 days of Evidence Retention.')
+    expect(evidenceDeletedText('2026-08-28T10:00:00Z', '2026-11-26T12:00:00Z'))
+      .toBe('This evidence was deleted on Nov 26, 2026 by Evidence Retention, 90 days after its upload.')
   })
 
   it('says 1 day for one day', () => {
-    const deleted = { ...file('video/webm'), created_at: '2026-11-25T10:00:00Z', deleted_at: '2026-11-26T12:00:00Z' }
-    expect(evidenceDeletedText(deleted)).toBe('This evidence was deleted on Nov 26, 2026, after 1 day of Evidence Retention.')
+    expect(evidenceDeletedText('2026-11-25T10:00:00Z', '2026-11-26T12:00:00Z'))
+      .toBe('This evidence was deleted on Nov 26, 2026 by Evidence Retention, 1 day after its upload.')
+  })
+
+  it('gives the UTC day of the delete in each time zone', () => {
+    expect(evidenceDeletedText('2026-11-20T23:00:00Z', '2026-11-26T23:30:00Z')).toContain('deleted on Nov 26, 2026 ')
+    expect(evidenceDeletedText('2026-11-20T00:00:00Z', '2026-11-26T00:10:00Z')).toContain('deleted on Nov 26, 2026 ')
   })
 })

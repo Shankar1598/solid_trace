@@ -61,8 +61,8 @@ type Evidence struct {
 
 // RetentionPass is what one daily pass did, and how long each part took.
 type RetentionPass struct {
-	Days     time.Duration
-	Evidence time.Duration
+	DaysTook     time.Duration
+	EvidenceTook time.Duration
 	storage.EvidenceSweep
 }
 
@@ -80,16 +80,16 @@ const (
 // their family's Retention and every day of a deleted Project, then the
 // Evidence files past Evidence Retention; a few minutes past each hour
 // start, it enforces the disk limit. A failed run is tried again a minute
-// later.
+// later. A run of Evidence Retention that read the setting is not: a file
+// that it could not delete waits for the next day's run.
 type Cleanup struct {
 	store     CleanupStore
 	sqlUsers  SQLUsers
 	families  []Family
 	diskLimit storage.LogDiskLimit
 	clock     clock.Clock
-	// Evidence, when it is set before Start, has its Evidence Retention
-	// in the daily pass.
-	Evidence *Evidence
+	// evidence is nil for a cleanup with no Evidence files.
+	evidence *Evidence
 	// passLock keeps a daily pass that RunDailyPass asks for apart from
 	// the timer's runs.
 	passLock sync.Mutex
@@ -98,10 +98,12 @@ type Cleanup struct {
 }
 
 // NewCleanup constructs the cleanup of families, which drops a deleted
-// Project's SQL user with its days. It reads the time from clock.
-func NewCleanup(store CleanupStore, sqlUsers SQLUsers, diskLimit storage.LogDiskLimit, clock clock.Clock, families ...Family) *Cleanup {
+// Project's SQL user with its days, and of evidence, which is nil for none.
+// It reads the time from clock.
+func NewCleanup(store CleanupStore, sqlUsers SQLUsers, diskLimit storage.LogDiskLimit, clock clock.Clock,
+	evidence *Evidence, families ...Family) *Cleanup {
 	return &Cleanup{
-		store: store, sqlUsers: sqlUsers, families: families, diskLimit: diskLimit, clock: clock,
+		store: store, sqlUsers: sqlUsers, families: families, diskLimit: diskLimit, clock: clock, evidence: evidence,
 		worker: newWorker(),
 	}
 }
@@ -117,9 +119,9 @@ func (c *Cleanup) Stop() {
 }
 
 func (c *Cleanup) run() {
-	// The UTC days of the last whole daily passes over the days and over
-	// the Evidence files, apart, so that a failure of one does not run the
-	// other again.
+	// The UTC days of the last whole daily pass over the days, and of the
+	// last run of Evidence Retention, apart, so that a failure of one does
+	// not run the other again.
 	var lastPass, lastEvidencePass time.Time
 	for {
 		c.passLock.Lock()
@@ -134,12 +136,16 @@ func (c *Cleanup) run() {
 				lastPass = day
 			}
 		}
-		if c.Evidence != nil && !day.Equal(lastEvidencePass) {
-			if _, err := c.deleteEvidencePastRetention(now); err != nil {
-				logRetry("Deleting Evidence files past Evidence Retention failed, retrying", err)
+		if c.evidence != nil && !day.Equal(lastEvidencePass) {
+			retention, err := c.evidence.Retention()
+			if err != nil {
+				logRetry("Reading Evidence Retention failed, retrying", err)
 				failed = true
 			} else {
 				lastEvidencePass = day
+				if _, err := c.deleteEvidencePastRetention(now, retention); err != nil {
+					logger.L.Error("Deleting Evidence files past Evidence Retention failed, the next day's run tries again", "error", err)
+				}
 			}
 		}
 		if err := c.store.EnforceDiskLimit(c.diskLimit, c.days()); err != nil {
@@ -157,12 +163,10 @@ func (c *Cleanup) run() {
 			}
 			wait = next.Sub(now)
 		}
-		timer := time.NewTimer(wait)
 		select {
 		case <-c.stop:
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-c.clock.After(wait):
 		}
 	}
 }
@@ -178,24 +182,26 @@ func (c *Cleanup) RunDailyPass() (RetentionPass, error) {
 	var pass RetentionPass
 	start := time.Now()
 	daysErr := c.DeleteDaysPastRetention(now)
-	pass.Days = time.Since(start)
-	if c.Evidence == nil {
+	pass.DaysTook = time.Since(start)
+	if c.evidence == nil {
 		return pass, daysErr
 	}
 	start = time.Now()
-	sweep, evidenceErr := c.deleteEvidencePastRetention(now)
-	pass.Evidence, pass.EvidenceSweep = time.Since(start), sweep
+	retention, evidenceErr := c.evidence.Retention()
+	if evidenceErr != nil {
+		evidenceErr = fmt.Errorf("read Evidence Retention: %w", evidenceErr)
+	} else {
+		pass.EvidenceSweep, evidenceErr = c.deleteEvidencePastRetention(now, retention)
+	}
+	pass.EvidenceTook = time.Since(start)
 	return pass, errors.Join(daysErr, evidenceErr)
 }
 
-// deleteEvidencePastRetention runs Evidence Retention at now.
-func (c *Cleanup) deleteEvidencePastRetention(now time.Time) (storage.EvidenceSweep, error) {
-	retention, err := c.Evidence.Retention()
-	if err != nil {
-		return storage.EvidenceSweep{}, fmt.Errorf("read Evidence Retention: %w", err)
-	}
+// deleteEvidencePastRetention runs Evidence Retention at now, with each
+// Organization's Evidence Retention in retention.
+func (c *Cleanup) deleteEvidencePastRetention(now time.Time, retention map[int64]int) (storage.EvidenceSweep, error) {
 	start := time.Now()
-	sweep, err := c.Evidence.Files.DeletePastRetention(context.Background(), now, retention)
+	sweep, err := c.evidence.Files.DeletePastRetention(context.Background(), now, retention)
 	if sweep != (storage.EvidenceSweep{}) {
 		logger.L.Info("Deleted Evidence files past Evidence Retention", "files", sweep.Deleted,
 			"objects_with_no_row", sweep.Unreferenced, "took", time.Since(start))

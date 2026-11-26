@@ -96,6 +96,17 @@ func TestEvidenceRetentionDeletesTheBytesOfOldFilesAndMarksTheirRows(t *testing.
 	}
 }
 
+func TestEvidenceRetentionOnADataDiskWithNoEvidenceFolderDeletesNothing(t *testing.T) {
+	dir := t.TempDir()
+	e := newTestEvidenceFiles(t, nil, dir)
+	if _, err := os.Stat(filepath.Join(dir, "evidence")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Expected no evidence folder before an upload, got %v", err)
+	}
+	if got := sweep(t, e, map[int64]int{1: 2}); got != (EvidenceSweep{}) {
+		t.Errorf("Expected nothing deleted, got %+v", got)
+	}
+}
+
 func TestAShorterEvidenceRetentionAppliesToTheFilesAlreadyThere(t *testing.T) {
 	e := newTestEvidenceFiles(t, nil, t.TempDir())
 	file := addEvidenceAt(t, e, 1, 10*24*time.Hour)

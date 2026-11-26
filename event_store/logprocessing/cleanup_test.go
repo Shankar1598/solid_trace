@@ -2,6 +2,8 @@ package logprocessing
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -11,35 +13,16 @@ import (
 	"github.com/solidtrace/event_store/storage"
 )
 
-// fakeCleanupStore has one Project with Logs, and records the days it is
-// asked to delete.
-type fakeCleanupStore struct {
-	mu      sync.Mutex
-	deleted []time.Time
-}
-
-func (f *fakeCleanupStore) DayProjects(storage.DayFamily) ([]uint32, error) { return []uint32{1}, nil }
-
-func (f *fakeCleanupStore) DeleteDaysBefore(_ storage.DayFamily, _ uint32, day time.Time) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.deleted = append(f.deleted, day)
-	return nil
-}
-
-func (f *fakeCleanupStore) DeleteProjectDays(storage.DayFamily, uint32) error { return nil }
-
-func (f *fakeCleanupStore) EnforceDiskLimit(storage.LogDiskLimit, []storage.DayFamily) error {
-	return nil
-}
-
-type noSQLUsers struct{}
-
-func (noSQLUsers) DropProjectUser(uint32) error { return nil }
-
-// fakeEvidence records each run of Evidence Retention.
-type fakeEvidence struct {
-	runs chan evidenceRun
+// fakeCleanup is the stores of a cleanup: one Project with Logs, and the
+// Evidence files. It records, in order, each step that it is asked to do,
+// and gives the errors that a test sets.
+type fakeCleanup struct {
+	mu           sync.Mutex
+	steps        []string
+	evidenceRuns []evidenceRun
+	daysErr      error
+	deleteErr    error
+	retentionErr error
 }
 
 type evidenceRun struct {
@@ -47,45 +30,147 @@ type evidenceRun struct {
 	retention map[int64]int
 }
 
-func (f *fakeEvidence) DeletePastRetention(_ context.Context, now time.Time, retention map[int64]int) (storage.EvidenceSweep, error) {
-	f.runs <- evidenceRun{now, retention}
-	return storage.EvidenceSweep{Deleted: 3, Unreferenced: 1}, nil
+func (f *fakeCleanup) step(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.steps = append(f.steps, name)
 }
 
-func newTestCleanup(now time.Time) (*Cleanup, *fakeCleanupStore, *fakeEvidence) {
+// done is the steps so far.
+func (f *fakeCleanup) done() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.steps)
+}
+
+// fail sets the errors of the next steps.
+func (f *fakeCleanup) fail(days, delete, retention error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.daysErr, f.deleteErr, f.retentionErr = days, delete, retention
+}
+
+func (f *fakeCleanup) DayProjects(storage.DayFamily) ([]uint32, error) { return []uint32{1}, nil }
+
+func (f *fakeCleanup) DeleteDaysBefore(storage.DayFamily, uint32, time.Time) error {
+	f.step("days")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.daysErr
+}
+
+func (f *fakeCleanup) DeleteProjectDays(storage.DayFamily, uint32) error { return nil }
+
+func (f *fakeCleanup) EnforceDiskLimit(storage.LogDiskLimit, []storage.DayFamily) error {
+	f.step("disk limit")
+	return nil
+}
+
+func (f *fakeCleanup) DeletePastRetention(_ context.Context, now time.Time, retention map[int64]int) (storage.EvidenceSweep, error) {
+	f.step("evidence")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.evidenceRuns = append(f.evidenceRuns, evidenceRun{now, retention})
+	return storage.EvidenceSweep{Deleted: 3, Unreferenced: 1}, f.deleteErr
+}
+
+func (f *fakeCleanup) evidenceRetention() (map[int64]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.retentionErr != nil {
+		return nil, f.retentionErr
+	}
+	return map[int64]int{1: 7}, nil
+}
+
+type noSQLUsers struct{}
+
+func (noSQLUsers) DropProjectUser(uint32) error { return nil }
+
+// testStart is 06:00 UTC, so a run with no failure waits until 06:05.
+var testStart = time.Date(2026, 12, 1, 6, 0, 0, 0, time.UTC)
+
+func newTestCleanup() (*Cleanup, *fakeCleanup, *clock.Manual) {
 	logger.Init()
-	store := &fakeCleanupStore{}
-	evidence := &fakeEvidence{runs: make(chan evidenceRun, 10)}
-	cleanup := NewCleanup(store, noSQLUsers{}, storage.LogDiskLimit{}, clock.NewManual(now),
+	fake := &fakeCleanup{}
+	manual := clock.NewManual(testStart)
+	cleanup := NewCleanup(fake, noSQLUsers{}, storage.LogDiskLimit{}, manual,
+		&Evidence{Files: fake, Retention: fake.evidenceRetention},
 		Family{Days: storage.LogDays, Retention: func() (map[uint32]int, error) { return map[uint32]int{1: 30}, nil }})
-	cleanup.Evidence = &Evidence{Files: evidence, Retention: func() (map[int64]int, error) { return map[int64]int{1: 7}, nil }}
-	return cleanup, store, evidence
+	return cleanup, fake, manual
+}
+
+// tick moves the clock by d, which ends the cleanup's wait, and waits for
+// the run that follows to end.
+func tick(manual *clock.Manual, d time.Duration) {
+	manual.Advance(d)
+	manual.BlockUntilTimers(1)
+}
+
+func expectSteps(t *testing.T, fake *fakeCleanup, want ...string) {
+	t.Helper()
+	if got := fake.done(); !slices.Equal(got, want) {
+		t.Errorf("Expected the steps %q, got %q", want, got)
+	}
 }
 
 func TestTheDailyPassAtStartRunsEvidenceRetentionAfterTheDays(t *testing.T) {
-	now := time.Date(2026, 12, 1, 6, 0, 0, 0, time.UTC)
-	cleanup, store, evidence := newTestCleanup(now)
+	cleanup, fake, manual := newTestCleanup()
 	cleanup.Start()
 	defer cleanup.Stop()
+	manual.BlockUntilTimers(1)
 
-	select {
-	case run := <-evidence.runs:
-		if !run.now.Equal(now) || run.retention[1] != 7 {
-			t.Errorf("Expected Evidence Retention at %v with 7 days, got %+v", now, run)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Expected Evidence Retention in the daily pass at start")
-	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if len(store.deleted) != 1 {
-		t.Errorf("Expected the days past Retention deleted first, got %v", store.deleted)
+	expectSteps(t, fake, "days", "evidence", "disk limit")
+	if run := fake.evidenceRuns[0]; !run.now.Equal(testStart) || run.retention[1] != 7 {
+		t.Errorf("Expected Evidence Retention at %v with 7 days, got %+v", testStart, run)
 	}
 }
 
+func TestAnEvidenceFileThatCannotBeDeletedWaitsForTheNextDaysRun(t *testing.T) {
+	cleanup, fake, manual := newTestCleanup()
+	fake.fail(nil, errors.New("the bucket refused"), nil)
+	cleanup.Start()
+	defer cleanup.Stop()
+	manual.BlockUntilTimers(1)
+
+	// No retry a minute later: the next run is the hourly one at 06:05,
+	// which enforces only the disk limit.
+	tick(manual, time.Minute)
+	expectSteps(t, fake, "days", "evidence", "disk limit")
+	tick(manual, 4*time.Minute)
+	expectSteps(t, fake, "days", "evidence", "disk limit", "disk limit")
+
+	tick(manual, 24*time.Hour)
+	expectSteps(t, fake, "days", "evidence", "disk limit", "disk limit", "days", "evidence", "disk limit")
+}
+
+func TestTheDaysAndEvidenceRetentionKeepTheirOwnDays(t *testing.T) {
+	t.Run("a failed delete of days runs again a minute later, Evidence Retention does not", func(t *testing.T) {
+		cleanup, fake, manual := newTestCleanup()
+		fake.fail(errors.New("ClickHouse refused"), nil, nil)
+		cleanup.Start()
+		defer cleanup.Stop()
+		manual.BlockUntilTimers(1)
+
+		fake.fail(nil, nil, nil)
+		tick(manual, time.Minute)
+		expectSteps(t, fake, "days", "evidence", "disk limit", "days", "disk limit")
+	})
+	t.Run("a failed read of Evidence Retention runs again a minute later, the days do not", func(t *testing.T) {
+		cleanup, fake, manual := newTestCleanup()
+		fake.fail(nil, nil, errors.New("Console's database is locked"))
+		cleanup.Start()
+		defer cleanup.Stop()
+		manual.BlockUntilTimers(1)
+
+		fake.fail(nil, nil, nil)
+		tick(manual, time.Minute)
+		expectSteps(t, fake, "days", "disk limit", "evidence", "disk limit")
+	})
+}
+
 func TestRunDailyPassRunsTheDaysAndEvidenceRetentionNow(t *testing.T) {
-	now := time.Date(2026, 12, 1, 6, 0, 0, 0, time.UTC)
-	cleanup, store, evidence := newTestCleanup(now)
+	cleanup, fake, _ := newTestCleanup()
 	pass, err := cleanup.RunDailyPass()
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +178,5 @@ func TestRunDailyPassRunsTheDaysAndEvidenceRetentionNow(t *testing.T) {
 	if pass.EvidenceSweep != (storage.EvidenceSweep{Deleted: 3, Unreferenced: 1}) {
 		t.Errorf("Expected the sweep's counts, got %+v", pass.EvidenceSweep)
 	}
-	if len(store.deleted) != 1 || len(evidence.runs) != 1 {
-		t.Errorf("Expected one delete of days and one Evidence Retention, got %v and %d", store.deleted, len(evidence.runs))
-	}
+	expectSteps(t, fake, "days", "evidence")
 }

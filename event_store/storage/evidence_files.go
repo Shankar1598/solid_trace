@@ -157,13 +157,31 @@ func NewEvidenceFiles(sqlite *SQLiteWriter, bucket ObjectStore, dir string) (*Ev
 
 // Add stores an uploaded Evidence file, and reports whether it is new. The
 // same bytes again to the same Agent session give the row of the first
-// upload, and store nothing, while Evidence Retention has not deleted it.
+// upload, and store nothing, while that row is within its Organization's
+// Evidence Retention. A row past it is deleted first, as the next run of
+// Evidence Retention would delete it, and the upload gets a new row.
 // The bytes are stored before the row, so a row always has its bytes.
 func (e *EvidenceFiles) Add(ctx context.Context, upload EvidenceUpload) (EvidenceFile, bool, error) {
 	sum := sha256.Sum256(upload.Bytes)
 	hash := hex.EncodeToString(sum[:])
-	if file, found, err := e.find(ctx, upload.OrganizationID, upload.AgentSessionID, hash); err != nil || found {
-		return file, false, err
+	old, found, err := e.find(ctx, upload.OrganizationID, upload.AgentSessionID, hash)
+	if err != nil {
+		return EvidenceFile{}, false, err
+	}
+	if found {
+		past, err := e.pastRetention(ctx, old, upload.At)
+		if err != nil {
+			return EvidenceFile{}, false, err
+		}
+		if !past {
+			return old, false, nil
+		}
+		if err := e.deleteBytes(ctx, old.StorageKey); err != nil {
+			return EvidenceFile{}, false, err
+		}
+		if err := e.markDeleted(ctx, []any{old.ID.String()}, upload.At); err != nil {
+			return EvidenceFile{}, false, err
+		}
 	}
 	id := uuid.New()
 	file := EvidenceFile{
@@ -197,6 +215,17 @@ func (e *EvidenceFiles) Add(ctx context.Context, upload EvidenceUpload) (Evidenc
 		return file, false, err
 	}
 	return file, true, nil
+}
+
+// pastRetention reports whether file is past its Organization's Evidence
+// Retention at now, as DeletePastRetention finds it.
+func (e *EvidenceFiles) pastRetention(ctx context.Context, file EvidenceFile, now time.Time) (bool, error) {
+	days, err := evidenceRetentionOf(ctx, e.db, file.OrganizationID)
+	if err != nil {
+		return false, fmt.Errorf("read the Evidence Retention of Organization %d: %w", file.OrganizationID, err)
+	}
+	cutoff, ok := evidenceCutoff(now, days)
+	return ok && file.CreatedAt.Before(cutoff), nil
 }
 
 // put writes data to a temporary file, then moves it to key: into the

@@ -547,7 +547,7 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Log processing Prepare failed: %v", err)
 	}
 	env.SQL = storage.NewClickHouseSQL(clickHouse, env.SQLLimits)
-	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock,
+	env.LogCleanup = logprocessing.NewCleanup(env.ClickHouseLogs, env.SQL, storage.LogDiskLimit{}, env.Clock, nil,
 		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
 		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
 		logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})

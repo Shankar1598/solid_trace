@@ -1,4 +1,3 @@
-import { format } from 'date-fns'
 import type { StorageLike } from './recentQueries'
 
 /** An Evidence file: a screenshot or a video that an agent uploaded to prove a PR. */
@@ -29,15 +28,18 @@ export function evidenceTitle(file: EvidenceFile): string {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+const DELETED_DAY = new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+
 /**
- * The sentence of a file that Evidence Retention deleted. N is the whole
- * days from the upload to the delete: the days the file was kept, which
- * stays true after a change of the setting.
+ * The sentence of a file that Evidence Retention deleted, with the UTC day
+ * of the delete, as Evidence Retention runs on UTC days. N is the whole
+ * days from the upload to the delete, which stays true after a change of
+ * the setting.
  */
-export function evidenceDeletedText(file: EvidenceFile & { deleted_at: string }): string {
-  const deleted = new Date(file.deleted_at)
-  const days = Math.floor((deleted.getTime() - new Date(file.created_at).getTime()) / DAY_MS)
-  return `This evidence was deleted on ${format(deleted, 'MMM d, yyyy')}, after ${days} ${days === 1 ? 'day' : 'days'} of Evidence Retention.`
+export function evidenceDeletedText(createdAt: string, deletedAt: string): string {
+  const deleted = new Date(deletedAt)
+  const days = Math.floor((deleted.getTime() - new Date(createdAt).getTime()) / DAY_MS)
+  return `This evidence was deleted on ${DELETED_DAY.format(deleted)} by Evidence Retention, ${days} ${days === 1 ? 'day' : 'days'} after its upload.`
 }
 
 export const SPEEDS = ['0.25', '0.5', '1', '2'] as const
