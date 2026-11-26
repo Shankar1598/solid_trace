@@ -38,15 +38,18 @@ func (h *HealthHandler) Health(c *fiber.Ctx) error {
 
 // IngestHealth is /health on the ingest port. It answers 200 while ingest is
 // up, also while ClickHouse starts. A load balancer and deploy/install check
-// it.
+// it. Caddy serves this port to the public, so "checks" holds fixed words
+// here and never the error text, which can name hosts, paths and buckets.
 func (h *HealthHandler) IngestHealth(c *fiber.Ctx) error {
 	return h.health(c, true)
 }
 
-// health writes the same body on both ports. "ingest" is "up" while Pebble
+// health writes the body of both ports. "ingest" is "up" while Pebble
 // answers, because ingest writes only there. "clickhouse" is "starting",
-// "ready" or "down", and "checks" give the error. "status" is "healthy" only
-// when both are up. With ingestOnly, the status code follows ingest alone.
+// "ready" or "down". "status" is "healthy" only when both are up. "checks"
+// give the error on the query port, which only the loopback serves. With
+// ingestOnly, "checks" give "ok", "starting" or "unreachable" and no error,
+// and the status code follows ingest alone.
 func (h *HealthHandler) health(c *fiber.Ctx, ingestOnly bool) error {
 	checks := fiber.Map{
 		"pebble":     "ok",
@@ -62,6 +65,19 @@ func (h *HealthHandler) health(c *fiber.Ctx, ingestOnly bool) error {
 		clickhouse = "down"
 		if errors.Is(err, ErrClickHouseStarting) {
 			clickhouse = "starting"
+		}
+	}
+
+	if ingestOnly {
+		checks = fiber.Map{"pebble": "ok", "clickhouse": "ok"}
+		if ingest != "up" {
+			checks["pebble"] = "unreachable"
+		}
+		switch clickhouse {
+		case "starting":
+			checks["clickhouse"] = "starting"
+		case "down":
+			checks["clickhouse"] = "unreachable"
 		}
 	}
 

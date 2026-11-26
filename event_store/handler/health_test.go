@@ -25,18 +25,18 @@ func (f fails) Ping() error { return f.err }
 func TestHealthSaysWhichPartIsUp(t *testing.T) {
 	lastTry := errors.New("dial tcp 127.0.0.1:4200: connection refused")
 	for _, tc := range []struct {
-		name                  string
-		pebble, clickHouse    handler.Pinger
-		ingestCode, queryCode int
-		ingest, clickHouseIs  string
-		clickHouseCheckHas    string
+		name                    string
+		pebble, clickHouse      handler.Pinger
+		ingestCode, queryCode   int
+		ingest, clickHouseIs    string
+		ingestCheck, queryCheck string
 	}{
-		{"both up", answers{}, answers{}, 200, 200, "up", "ready", "ok"},
-		{"ClickHouse starts", answers{}, fails{handler.ErrClickHouseStarting}, 200, 503, "up", "starting", "ClickHouse is starting"},
+		{"both up", answers{}, answers{}, 200, 200, "up", "ready", "ok", "ok"},
+		{"ClickHouse starts", answers{}, fails{handler.ErrClickHouseStarting}, 200, 503, "up", "starting", "starting", "ClickHouse is starting"},
 		{"a step of the start fails", answers{}, fails{fmt.Errorf("%w. The last try failed: %w", handler.ErrClickHouseStarting, lastTry)},
-			200, 503, "up", "starting", lastTry.Error()},
-		{"ClickHouse fails after the start passed", answers{}, fails{lastTry}, 200, 503, "up", "down", lastTry.Error()},
-		{"Pebble fails", fails{errors.New("pebble: disk full")}, answers{}, 503, 503, "down", "ready", "ok"},
+			200, 503, "up", "starting", "starting", lastTry.Error()},
+		{"ClickHouse fails after the start passed", answers{}, fails{lastTry}, 200, 503, "up", "down", "unreachable", lastTry.Error()},
+		{"Pebble fails", fails{errors.New("pebble: disk full")}, answers{}, 503, 503, "down", "ready", "ok", "ok"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			health := handler.NewHealthHandler(tc.pebble, tc.clickHouse)
@@ -46,10 +46,11 @@ func TestHealthSaysWhichPartIsUp(t *testing.T) {
 			queryApp.Get("/health", health.Health)
 
 			for _, port := range []struct {
-				name string
-				app  *fiber.App
-				code int
-			}{{"ingest", ingestApp, tc.ingestCode}, {"query", queryApp, tc.queryCode}} {
+				name  string
+				app   *fiber.App
+				code  int
+				check string
+			}{{"ingest", ingestApp, tc.ingestCode, tc.ingestCheck}, {"query", queryApp, tc.queryCode, tc.queryCheck}} {
 				req, _ := http.NewRequest("GET", "/health", nil)
 				resp, err := port.app.Test(req)
 				if err != nil {
@@ -68,11 +69,52 @@ func TestHealthSaysWhichPartIsUp(t *testing.T) {
 					wantStatus = "healthy"
 				}
 				if resp.StatusCode != port.code || got.Status != wantStatus || got.Ingest != tc.ingest ||
-					got.ClickHouse != tc.clickHouseIs || !strings.Contains(got.Checks["clickhouse"], tc.clickHouseCheckHas) {
+					got.ClickHouse != tc.clickHouseIs || !matchesCheck(port.name, got.Checks["clickhouse"], port.check) {
 					t.Errorf("%s /health = %d %s, want %d with status %q, ingest %q, ClickHouse %q and a ClickHouse check that has %q",
-						port.name, resp.StatusCode, body, port.code, wantStatus, tc.ingest, tc.clickHouseIs, tc.clickHouseCheckHas)
+						port.name, resp.StatusCode, body, port.code, wantStatus, tc.ingest, tc.clickHouseIs, port.check)
 				}
 			}
 		})
+	}
+}
+
+// matchesCheck says whether a ClickHouse check is what a port gives. The
+// ingest port gives the fixed words alone. The query port's check has the
+// error.
+func matchesCheck(port, got, want string) bool {
+	if port == "ingest" {
+		return got == want
+	}
+	return strings.Contains(got, want)
+}
+
+// The ingest port is public, so its /health has no error text of a failed
+// start step: no host, no path. The loopback query port keeps the detail.
+func TestIngestHealthHasNoErrorTextOfAFailedStartStep(t *testing.T) {
+	lastTry := errors.New("dial tcp 10.100.0.3:4200: connection refused; config_dir /storage/clickhouse/conf.d")
+	health := handler.NewHealthHandler(
+		fails{errors.New("open /storage/pebble/production/events: disk full")},
+		fails{fmt.Errorf("%w. The last try to prepare failed: %w", handler.ErrClickHouseStarting, lastTry)})
+	ingestApp := fiber.New()
+	handler.RegisterIngestRoutes(ingestApp, nil, health)
+	queryApp := fiber.New()
+	queryApp.Get("/health", health.Health)
+
+	for _, tc := range []struct {
+		name  string
+		app   *fiber.App
+		leaks bool
+	}{{"ingest", ingestApp, false}, {"query", queryApp, true}} {
+		req, _ := http.NewRequest("GET", "/health", nil)
+		resp, err := tc.app.Test(req)
+		if err != nil {
+			t.Fatalf("%s /health: %v", tc.name, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		for _, detail := range []string{"10.100.0.3", "/storage/clickhouse/conf.d", "/storage/pebble", "disk full"} {
+			if has := strings.Contains(string(body), detail); has != tc.leaks {
+				t.Errorf("%s /health has %q = %v, want %v: %s", tc.name, detail, has, tc.leaks, body)
+			}
+		}
 	}
 }
