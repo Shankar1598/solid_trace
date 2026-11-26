@@ -35,9 +35,9 @@ It still reads only the Project's rows.
 
 ### Limits
 
-A query stops after 10 seconds, or when it needs more than 1 GiB of memory, and uses at most half of the server's CPUs. The limits are the database user's, so a query can't raise them with `SETTINGS`. They keep a slow query from holding up ingest or other members' runs for long. The explorer and the MCP server may ask for a shorter time; EventStore stops SQL at 10 seconds whatever it is asked.
+A query stops after 30 seconds, the same as a Query, or when it needs more than 1 GiB of memory, and uses at most half of the server's CPUs. The limits are the database user's, so a query can't raise them with `SETTINGS`. They keep a slow query from holding up ingest or other members' runs for long. The explorer and the MCP server may ask for a shorter time; EventStore stops SQL at 30 seconds whatever it is asked.
 
-SQL queries are on by default, and the operator can turn them off (`bin/rails instance_settings:set SQL_QUERIES_ENABLED=false`). With them on, any member can read all of their own Organization's Projects' Logs, Events and Spans, and a slow query can slow down ingest for up to 10 seconds. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
+SQL queries are on by default, and the operator can turn them off (`bin/rails instance_settings:set SQL_QUERIES_ENABLED=false`). With them on, any member can read all of their own Organization's Projects' Logs, Events and Spans, and a slow query can slow down ingest for up to 30 seconds. See [ADR 0003](../adr/0003-unrestricted-sql-queries-behind-an-instance-setting.md).
 
 ## The `logs` table
 
@@ -147,7 +147,7 @@ Rows are stored sorted by Project, `transaction` and `start`, so a condition on 
 - Times are shown in UTC.
 - A JSON value, map, array or tuple is shown as JSON.
 - If the SQL fails or is refused, you see why: ClickHouse's message. When the SQL doesn't parse, the explorer shows the line where it failed with a caret under the spot.
-- Cancelling a query in the explorer stops the wait, but the server may still run the query to its 10 seconds.
+- Cancelling a query in the explorer stops the wait, but the server may still run the query to its 30 seconds.
 
 ## From a Query to SQL
 

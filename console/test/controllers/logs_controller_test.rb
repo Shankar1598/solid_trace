@@ -323,9 +323,9 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     %w[query histogram].each do |run|
       stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/#{run}").to_return(status: 504, body: { errors: [ { message: message } ] }.to_json)
     end
-    sql_message = "the run was stopped after 10 s, its timeout: try a shorter time range or a simpler query"
+    sql_message = "the run was stopped after 30 s, its timeout: try a shorter time range or a simpler query"
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
-      .with { |request| JSON.parse(request.body)["timeout_seconds"] == 10 }
+      .with { |request| JSON.parse(request.body)["timeout_seconds"] == EventStoreProxy::SQL_TIMEOUT_SECONDS }
       .to_return(status: 504, body: { errors: [ { message: sql_message } ] }.to_json)
     range = { from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z" }
 
@@ -614,7 +614,7 @@ class LogsControllerTest < ActionDispatch::IntegrationTest
     stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/sql")
       .with(body: {
         sql: "SELECT count(*) AS n FROM logs", from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
-        timeout_seconds: 10,
+        timeout_seconds: EventStoreProxy::SQL_TIMEOUT_SECONDS,
       }.to_json)
       .to_return(status: 200, body: { table: table }.to_json)
 

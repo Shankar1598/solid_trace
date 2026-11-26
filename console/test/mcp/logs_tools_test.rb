@@ -318,7 +318,7 @@ class McpLogsToolsTest < ActiveSupport::TestCase
     travel_to NOW do
       stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
         .with(body: { sql: sql, from: "2026-10-16T10:00:00.000Z", to: "2026-10-17T10:00:00.000Z",
-                      timeout_seconds: 10 }.to_json)
+                      timeout_seconds: EventStoreProxy::SQL_TIMEOUT_SECONDS }.to_json)
         .to_return(status: 200, body: { table: { columns: [ { name: "service", type: "string" }, { name: "logs", type: "number" } ],
                                                  rows: rows, truncated: false }, elapsed_ms: 8 }.to_json)
 
