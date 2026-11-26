@@ -193,6 +193,24 @@ export function titleOf({ id, title }: Pick<AgentSessionRow, 'id' | 'title'>): {
   return text ? { text, untitled: false } : { text: id.slice(0, 8), untitled: true }
 }
 
+/** The command that continues an Agent session on another machine. */
+export function resumeCommand(id: string): string {
+  return `solidtrace resume ${id}`
+}
+
+/**
+ * What the resume command does for the viewer: the viewer's own Agent
+ * session continues with the same id; another person's, or a Run's,
+ * continues as a new Agent session of the viewer's.
+ */
+export function resumeText({ person, run }: Pick<AgentSessionRow, 'person' | 'run'>, viewerId: number | undefined): string {
+  const where = 'Run this command in a checkout of the repository of this Agent session.'
+  if (!run && person && viewerId !== undefined && Number(person.id) === viewerId) {
+    return `${where} It continues this Agent session with the same id. Close it on the other machine first.`
+  }
+  return `${where} It continues as a new Agent session of yours, and this Agent session does not change.`
+}
+
 /** Whose an Agent session is: the person, or the Run with its Project. */
 export function whoText({ person, run }: Pick<AgentSessionRow, 'person' | 'run'>): string {
   if (run) return run.project ? `Run ${run.id} (${run.project})` : `Run ${run.id}`

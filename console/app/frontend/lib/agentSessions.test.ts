@@ -1,11 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionPath, agentSessionsSearch, agoText, costText, modelText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionPath, agentSessionsSearch, agoText, costText, modelText, nextOrder, orderOf, orderText, resumeCommand, resumeText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
 
 describe('the page of an Agent session', () => {
   it('is in its Organization', () => {
     expect(agentSessionPath('acme', '0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')).toBe('/acme/agent_sessions/0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')
+  })
+})
+
+describe('the resume of an Agent session on another machine', () => {
+  const id = '0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41'
+  const mine = { person: { id: 3, name: 'Ana' }, run: null }
+
+  it('is solidtrace resume and the id', () => {
+    expect(resumeCommand(id)).toBe(`solidtrace resume ${id}`)
+  })
+
+  it('continues your own Agent session with the same id', () => {
+    expect(resumeText(mine, 3)).toContain('with the same id')
+  })
+
+  it('continues another person\'s, or a Run\'s, as a new Agent session of yours', () => {
+    expect(resumeText(mine, 4)).toContain('as a new Agent session of yours')
+    expect(resumeText({ person: { id: 3, name: 'Ana' }, run: { id: 'r1', project: null } }, 3)).toContain('as a new Agent session of yours')
+    expect(resumeText(mine, undefined)).toContain('as a new Agent session of yours')
   })
 })
 

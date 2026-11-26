@@ -1,8 +1,9 @@
 import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
-import { AlertTriangle, Bot, ChevronDown, ChevronRight, Wrench } from 'lucide-react'
+import { AlertTriangle, Bot, ChevronDown, ChevronRight, Copy, Wrench } from 'lucide-react'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { AgentSessionSearch } from '@/components/AgentSessionSearch'
+import { copyText } from '@/components/copyText'
 import { EvidenceFileList } from '@/components/EvidenceFileList'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Markdown } from '@/components/Markdown'
@@ -13,7 +14,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { costText, modelText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
+import { costText, modelText, resumeCommand, resumeText, titleOf, tokensText, totalTokens, whoText, type AgentSessionRow } from '@/lib/agentSessions'
 import {
   addPage,
   commandOutput,
@@ -154,6 +155,7 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
             </div>
           )}
           <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} record={view.review_record_known ? view.review_record : undefined} />
+          <Resume session={session} />
           <EvidenceFileList files={view.evidence_files} />
           <AgentSessionSearch
             label="Search this Agent session"
@@ -280,6 +282,24 @@ function Header({ session, costLabel, parentPath, record }: {
         ))}
       </CardContent>
     </Card>
+  )
+}
+
+/** The command that continues this Agent session on another machine, with Copy. */
+function Resume({ session }: { session: AgentSessionRow }) {
+  const viewer = usePage<SharedProps>().props.current_user
+  const command = resumeCommand(session.id)
+  return (
+    <section aria-labelledby="resume-heading" data-section="resume" className="space-y-2 border p-4">
+      <h2 id="resume-heading" className="text-sm font-semibold">Resume on another machine</h2>
+      <p className="text-sm text-muted-foreground">{resumeText(session, viewer?.id)}</p>
+      <div className="flex items-start gap-2">
+        <code className="min-w-0 flex-1 break-all border bg-muted/40 px-3 py-2 font-mono text-xs leading-5" data-command="resume">{command}</code>
+        <Button variant="outline" size="sm" onClick={() => copyText(command, 'Command')} aria-label="Copy the resume command" title="Copy">
+          <Copy className="h-3.5 w-3.5" /> Copy
+        </Button>
+      </div>
+    </section>
   )
 }
 
