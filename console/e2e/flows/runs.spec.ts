@@ -271,6 +271,8 @@ test('a message to a done Run resumes its Agent session in a second Execution on
   const executions: string[] = (await control('GET', '/executions')).executions
   const output = await (await fetch(`${stack().control_url}/executions/${executions.at(-1)}/output`)).text()
   writeFileSync(testInfo.outputPath('second-execution-wrapper.log'), output)
+  // The log is the second Execution's: its agent reported done.
+  expect(output).toMatch(/^Reported done\.$/m)
   expect(output).not.toMatch(/wrapper: restore:|restore the Agent session/)
   await expect.poll(() => existsSync(harnessArgs), { message: 'the second harness records its arguments', timeout: 30_000 }).toBe(true)
   const args = readFileSync(harnessArgs, 'utf8')

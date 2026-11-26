@@ -141,3 +141,25 @@ func TestExtractReplacesAFileThatWasThere(t *testing.T) {
 		t.Errorf("the file is %q, want the download's bytes", b)
 	}
 }
+
+func TestExtractWithNoGiveWritesTheFiles(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	files, err := agentapi.Extract(archiveOf(t, tarFile{name: "s/subagents/a.jsonl", body: "{}\n"},
+		tarFile{name: "s.jsonl", body: "{\"uuid\":\"a\"}\n"}), root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []agentapi.ExtractedFile{{Name: "s/subagents/a.jsonl"}, {Name: "s.jsonl"}}; !slices.Equal(files, want) {
+		t.Errorf("Extract gave %v, want %v", files, want)
+	}
+	for name, want := range map[string]string{"s/subagents/a.jsonl": "{}\n", "s.jsonl": "{\"uuid\":\"a\"}\n"} {
+		if b, err := os.ReadFile(filepath.Join(dir, name)); err != nil || string(b) != want {
+			t.Errorf("%s: %q %v, want %q", name, b, err, want)
+		}
+	}
+}

@@ -20,13 +20,18 @@ type ExtractedFile struct {
 	Flags string
 }
 
-// Extract writes each file of a download's tar archive into root and gives
-// what it did with each file, in the archive's sequence. It gives each
-// file and folder that it makes with give (nil: no give), for example to
-// change its owner. A file that is partial (Retention dropped its start)
-// or cut (it has missing ranges) is not written: its offsets would not
-// agree with SolidTrace's, and a resume from it is not promised. A path
-// that is not a plain relative path stops the extract.
+// Extract writes each file of a download's tar archive into root. It
+// gives what it did with each file, in the sequence of the archive.
+//
+// Extract calls give with the path of each folder and file that it makes,
+// for example to change the owner. give can be nil. Extract does not call
+// give for a partial or cut file.
+//
+// Extract does not write a partial file (Retention dropped its start) or a
+// cut file (it has missing ranges). The offsets of such a file do not
+// agree with the offsets in SolidTrace, and a resume from it is not
+// promised. A path that is not a plain relative path makes Extract return
+// an error.
 func Extract(archive io.Reader, root *os.Root, give func(name string) error) ([]ExtractedFile, error) {
 	if give == nil {
 		give = func(string) error { return nil }
