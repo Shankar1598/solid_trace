@@ -6,7 +6,8 @@ module Notifiers
 
     # +kind+ is the Notification kind and selects the message. A batched kind
     # lists every Issue in +issues+; the others describe +issues.first+. A
-    # Monitor kind sends +message+, a Notifiers::Message.
+    # Monitor kind, and a Monitor status kind, sends +message+, a
+    # Notifiers::Message.
     def initialize(integration, kind:, issues: [], message: nil, previous_assignee_name: nil, new_assignee_name: nil)
       @integration = integration
       @kind = kind
@@ -41,7 +42,7 @@ module Notifiers
       when IntegrationNotification::ISSUE_CREATED then issue_created_payload
       when IntegrationNotification::THRESHOLD_REACHED then threshold_payload
       when IntegrationNotification::ASSIGNMENT_CHANGED then assignment_payload
-      when *IntegrationNotification::MONITOR_KINDS then monitor_payload
+      when *IntegrationNotification::MONITOR_KINDS, *IntegrationNotification::MONITOR_STATUS_KINDS then monitor_payload
       else raise ArgumentError, "Unknown notification kind: #{kind.inspect}"
       end
     end
@@ -73,7 +74,7 @@ module Notifiers
         text = message.lines.map { |line| "• #{mrkdwn(line)}" }.join("\n")
         blocks << { type: "section", text: { type: "mrkdwn", text: text.truncate(MAX_SECTION) } }
       end
-      buttons = [ [ "Open in the Logs explorer", message.link ], [ "Open the Baseline", message.baseline_link ] ]
+      buttons = [ [ message.link_text, message.link ], [ "Open the Baseline", message.baseline_link ] ]
         .select { |_, url| url && url.length <= MAX_URL }
       if buttons.any?
         blocks << {

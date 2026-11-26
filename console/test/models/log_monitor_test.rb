@@ -363,6 +363,32 @@ class LogMonitorTest < ActiveSupport::TestCase
     assert_nil monitor.reload.held_since
   end
 
+  test "a Monitor moved to another Project, or given another Query, starts a new hold but is still not running" do
+    other = create(:project, organization: @organization, name: "Search")
+    stub_monitor_query_check(other)
+    since = Time.utc(2026, 10, 17, 10, 15)
+    monitor = create(:monitor, project: @project)
+    monitor.update_columns(held_since: since, not_running_since: since)
+
+    monitor.update!(project: other, query: "['search']\n| summarize count()")
+
+    monitor.reload
+    assert_nil monitor.held_since
+    assert_equal since, monitor.not_running_since
+  end
+
+  test "turning a Monitor off or on clears not_running_since" do
+    since = Time.utc(2026, 10, 17, 10, 15)
+    monitor = create(:monitor, project: @project)
+    monitor.update_columns(not_running_since: since)
+    monitor.update!(disabled_at: Time.current)
+    assert_nil monitor.reload.not_running_since
+
+    monitor.update_columns(not_running_since: since)
+    monitor.update!(disabled_at: nil)
+    assert_nil monitor.reload.not_running_since
+  end
+
   # ---------------------------------------------------------------------------
   # Deleting
   # ---------------------------------------------------------------------------

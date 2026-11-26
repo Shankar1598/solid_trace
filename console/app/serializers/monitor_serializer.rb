@@ -4,6 +4,8 @@
 # disabled when it is off, firing when any group is firing (its pages note
 # last_error or held_since beside it), held while its runs are held, error
 # when its last run failed, and ok otherwise.
+# not_running_since is when it stopped running: its runs failed, or were
+# held for LogMonitor::LONGEST_HOLD.
 # A failed run changes no state, so the groups it left firing still are. include_details adds each group's state,
 # the runs it keeps and its Integrations, for its own page.
 class MonitorSerializer
@@ -38,6 +40,7 @@ class MonitorSerializer
       last_run_at: @monitor.last_run_at&.iso8601,
       last_error: @monitor.last_error,
       held_since: @monitor.held_since&.iso8601,
+      not_running_since: @monitor.not_running_since&.iso8601,
       logs_skipped_at: @monitor.logs_skipped_at&.iso8601,
       created_at: @monitor.created_at.iso8601,
       updated_at: @monitor.updated_at.iso8601,

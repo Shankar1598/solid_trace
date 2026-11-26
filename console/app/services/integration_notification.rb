@@ -9,6 +9,8 @@
 # - issue_assignment_changed: an Issue's assignee changed
 # - monitor_changed: a Monitor's group started or stopped firing, or Logs
 #   matched a Match monitor
+# - monitor_status: an Organization's Monitors stopped running, or run
+#   again (MonitorStatusJob)
 # - deliver_pending: the per-Integration processor tick
 #
 # Triggers write Notification rows (the outbox) for every kind whose rule
@@ -30,6 +32,13 @@ module IntegrationNotification
   MONITOR_RESOLVED = "monitor_resolved"
   MONITOR_MATCHED = "monitor_matched"
   MONITOR_KINDS = [ MONITOR_FIRING, MONITOR_RESOLVED, MONITOR_MATCHED ].freeze
+  # About an Organization's Monitors, to its Monitor status Integration.
+  MONITORS_NOT_RUNNING = "monitors_not_running"
+  MONITORS_RUNNING_AGAIN = "monitors_running_again"
+  MONITOR_STATUS_KINDS = [ MONITORS_NOT_RUNNING, MONITORS_RUNNING_AGAIN ].freeze
+
+  # How long a Monitor is not running before monitor_status tells the team.
+  NOT_RUNNING_AFTER = 2.minutes
 
   # Delay between the first row for an Integration and its tick, so that Issues
   # arriving together share one message.
@@ -142,6 +151,48 @@ module IntegrationNotification
       integrations.uniq.each { |integration| schedule_tick(integration, wait: INITIAL_DELAY) }
     end
 
+    # Tells the Organization's Monitor status Integration which enabled
+    # Monitors have not run for NOT_RUNNING_AFTER (monitors_not_running), and
+    # which of those it was told about run again or were turned off
+    # (monitors_running_again): at most one row of each kind. A deleted
+    # Monitor leaves the set and sends nothing. With no Monitor status
+    # Integration, or an inactive one, it writes nothing and marks nothing.
+    #
+    # The rows and each Monitor's not_running_notified are written in one
+    # transaction, so a job that stops at any point and runs again sends
+    # each message once. The tick is scheduled once it commits.
+    def monitor_status(organization, now = Time.current)
+      integration = organization.monitor_status_integration
+      return unless integration&.active
+
+      written = ApplicationRecord.transaction do
+        monitors = organization.monitors
+        stopped = monitors.enabled.where(not_running_notified: false, not_running_since: ..(now - NOT_RUNNING_AFTER))
+          .includes(:project).order(:not_running_since, :id).to_a
+        told = monitors.where(not_running_notified: true)
+        back = told.where(not_running_since: nil).or(told.where.not(disabled_at: nil))
+          .includes(:project).order(:name, :id).to_a
+        enabled = monitors.enabled.count
+        LogMonitor.where(id: stopped.map(&:id)).update_all(not_running_notified: true) if stopped.any?
+        LogMonitor.where(id: back.map(&:id)).update_all(not_running_notified: false) if back.any?
+        still = monitors.enabled.where(not_running_notified: true).count
+        about = { "id" => organization.id, "name" => organization.name, "slug" => organization.slug }
+
+        rows = []
+        if stopped.any?
+          rows << status_row(integration, MONITORS_NOT_RUNNING, "organization" => about, "enabled" => enabled,
+            "all" => enabled > 1 && stopped.size == enabled, "monitors" => stopped.map { |monitor| not_running_fact(monitor) })
+        end
+        if back.any?
+          rows << status_row(integration, MONITORS_RUNNING_AGAIN, "organization" => about, "enabled" => enabled,
+            "all" => enabled > 1 && back.size == enabled && back.all?(&:enabled?), "still_not_running" => still,
+            "monitors" => back.map { |monitor| monitor_fact(monitor).merge("turned_off" => !monitor.enabled?) })
+        end
+        rows.any?
+      end
+      schedule_ticks([ integration ]) if written
+    end
+
     def deliver_pending(integration_id)
       row_ids = Notification.pending_for(integration_id, Time.current).pluck(:id)
       return if row_ids.empty?
@@ -197,6 +248,22 @@ module IntegrationNotification
       schedule_tick(integration, wait: INITIAL_DELAY)
     end
 
+    def status_row(integration, kind, payload)
+      Notification.create!(integration: integration, kind: kind, payload: payload, status: :pending)
+    end
+
+    def monitor_fact(monitor)
+      { "id" => monitor.id, "name" => monitor.name, "project" => monitor.project.name }
+    end
+
+    # Since when the Monitor is not running, and why: its last run's error,
+    # or the reason that its runs are held.
+    def not_running_fact(monitor)
+      held = monitor.runs.first&.held_reason if monitor.last_error.blank?
+      monitor_fact(monitor).merge("since" => monitor.not_running_since.utc.iso8601,
+        "error" => monitor.last_error.presence || (held && "Held: #{held}"))
+    end
+
     def schedule_tick(integration, **timing)
       IntegrationNotificationProcessorJob.set(**timing).perform_later(integration.id)
     end
@@ -211,13 +278,15 @@ module IntegrationNotification
     end
 
     # Rows about Issues and rows about Monitors are delivered their own ways.
+    # Monitor status rows are delivered as Monitor rows.
     def deliver_rows(integration, row_ids)
       deliver_issue_rows(integration, row_ids)
       deliver_monitor_rows(integration, row_ids)
     end
 
     def deliver_issue_rows(integration, row_ids)
-      rows = Notification.where(id: row_ids, monitor_id: nil).includes(issue: { project: :organization }).order(:created_at).to_a
+      rows = Notification.where(id: row_ids).where.not(issue_id: nil).includes(issue: { project: :organization })
+        .order(:created_at).to_a
 
       rows_without_issue, rows = rows.partition { |row| row.issue.nil? }
       Notification.mark_rows(rows_without_issue.map(&:id), :skipped, "Issue missing") if rows_without_issue.any?
@@ -237,11 +306,15 @@ module IntegrationNotification
     # for the retry. So a resolve never goes before the trigger it closes.
     # A deleted Monitor's rows go too, from what each keeps of it, so the
     # resolve written when it was deleted closes its PagerDuty incident.
+    # The Integration's Monitor status rows are one chain too, so "running
+    # again" never goes before the "not running" that it follows.
     def deliver_monitor_rows(integration, row_ids)
-      rows = Notification.where(id: row_ids).where.not(monitor_id: nil)
+      rows = Notification.where(id: row_ids, issue_id: nil)
         .includes(monitor: [ :organization, :project ]).order(:created_at, :id).to_a
 
-      rows_without_monitor, rows = rows.partition { |row| row.monitor.nil? && row.payload&.dig("monitor").nil? }
+      rows_without_monitor, rows = rows.partition do |row|
+        MONITOR_STATUS_KINDS.exclude?(row.kind) && row.monitor.nil? && row.payload&.dig("monitor").nil?
+      end
       Notification.mark_rows(rows_without_monitor.map(&:id), :skipped, "Monitor missing") if rows_without_monitor.any?
 
       rows.group_by { |row| [ row.monitor_id, row.group_key ] }.each_value do |chain|
@@ -254,7 +327,11 @@ module IntegrationNotification
 
     # Delivers one Monitor row; false when it failed and may be retried.
     def deliver_monitor_message(integration, row)
-      message = Notifiers::MonitorMessage.build(row)
+      message = if MONITOR_STATUS_KINDS.include?(row.kind)
+        Notifiers::MonitorStatusMessage.build(row)
+      else
+        Notifiers::MonitorMessage.build(row)
+      end
       adapter_for(integration).new(integration, kind: row.kind, message: message, **row_of(integration, [ row ])).call
       Notification.mark_rows([ row.id ], :sent)
       true

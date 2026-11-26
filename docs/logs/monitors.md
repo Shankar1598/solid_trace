@@ -172,6 +172,19 @@ Events go to PagerDuty's Events API v2, `https://events.pagerduty.com/v2/enqueue
 
 An email to the Integration's recipients, with the subject "[SolidTrace] " and the message's title, and the same text, fields and link.
 
+### When Monitors do not run
+
+A Monitor is **not running** from its first failed run, or from the start of a hold that lasts 10 minutes. A shorter hold does not make it not running. A run that compares makes it run again. The Monitors list shows "Not running since" and the time beside each Monitor that is on and not running.
+
+An Organization can choose one **Monitor status Integration** in Settings → Organization → Monitor status: a Slack, PagerDuty or email Integration, or None. The Factory provider is not in the list, as a message about Monitors that do not run must not start a Run. Deleting the chosen Integration sets the setting to None. Each Monitor's own Integrations get none of these messages.
+
+Every minute, Console checks the Monitors of each Organization that has a Monitor status Integration:
+
+- The Monitors that are on and not running for 2 minutes or more, and not yet told, go into one "not running" message. Each Monitor has its name, Project, since when, why (the last run's error, or why its runs are held) and a link. When every Monitor that is on stops, as in a restart, the message says "All 30 Monitors are not running" and gives the first error one time.
+- The Monitors that were told and now run again, or were turned off, go into one "running again" message. It says how many are still not running.
+
+The check is at second 30 of each minute, half a minute after the Monitors' runs start. So the Monitors that stop at one tick go into one message. During a restart that takes some minutes, the team gets one message about 2 and a half minutes after the first failed run, and one about half a minute after the runs compare again. A deleted Monitor leaves the set with no message. These messages go through the same outbox, with the same rate limit and retries. "Running again" never goes before the "not running" that it follows. On PagerDuty both use the dedup key `solid-trace-monitors-not-running-<Organization id>`. "Running again" resolves the incident when no Monitor that was told about is still not running.
+
 ## Known limits
 
 - **No message during a hold.** A held run sends nothing, also when the Logs it waits for would make it fire. A problem that starts during a hold is sent once the Logs are complete.

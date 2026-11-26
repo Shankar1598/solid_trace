@@ -1,5 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
-import { formatDistanceToNow } from 'date-fns'
+import { format, formatDistanceToNow } from 'date-fns'
 import { BellRing, Plus } from 'lucide-react'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -7,6 +7,7 @@ import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { LANGUAGE_NAMES, type Monitor } from '@/lib/monitors/monitor'
+import { notRunningSince } from '@/lib/monitors/monitorStatus'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
 
@@ -59,6 +60,7 @@ export default function MonitorsIndex({ monitors }: { monitors: Monitor[] }) {
                   </TableCell>
                   <TableCell>
                     <MonitorStatusBadge monitor={m} />
+                    <NotRunning monitor={m} />
                   </TableCell>
                   <TableCell>{m.project.name}</TableCell>
                   <TableCell>{m.kind === 'threshold' ? 'Threshold' : 'Match'}</TableCell>
@@ -73,5 +75,15 @@ export default function MonitorsIndex({ monitors }: { monitors: Monitor[] }) {
         </div>
       )}
     </DashboardLayout>
+  )
+}
+
+function NotRunning({ monitor }: { monitor: Monitor }) {
+  const since = notRunningSince(monitor)
+  if (!since) return null
+  return (
+    <span className="mt-1 block text-xs text-muted-foreground" title={monitor.last_error ?? undefined} data-monitor-not-running>
+      Not running since {format(new Date(since), 'p')}
+    </span>
   )
 }

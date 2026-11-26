@@ -19,7 +19,14 @@
 # held_since is when a Threshold monitor's runs started to be held. They
 # are held while EventStore says that the Project's Logs are not complete.
 # It is nil while its runs are not held. Turning the Monitor off or on
-# clears it.
+# clears it, and so does a change of what its runs read: its Project, its
+# Query or SQL, or its kind.
+#
+# not_running_since is when the Monitor stopped running: its first failed
+# run, or the start of a hold that lasts LONGEST_HOLD. A run that compares
+# clears it (MonitorEvaluation#finish). Turning the Monitor off or on clears
+# it too. not_running_notified says that the Organization's Monitor status
+# Integration was told (IntegrationNotification.monitor_status).
 #
 # MonitorEvaluation runs it; any member of the Organization can manage it.
 class LogMonitor < ApplicationRecord
@@ -54,6 +61,10 @@ class LogMonitor < ApplicationRecord
   # EventStore's storage.LogProcessingLag (event_store/storage/pebble_logs.go)
   # is the same 60 s: past it, a run with hold_if_incomplete is held.
   PROCESSING_LAG = 60.seconds
+  # A hold this long makes the Monitor not running. A hold after an ingest
+  # gap is at most 10 minutes, so only a long Log processing backlog gets
+  # here.
+  LONGEST_HOLD = 10.minutes
 
   def self.model_name
     @model_name ||= ActiveModel::Name.new(self, nil, "Monitor")
@@ -97,7 +108,7 @@ class LogMonitor < ApplicationRecord
   validate :query_runs_as_its_kind, if: :query_check_needed?
 
   before_save :run_at_the_next_tick, if: :schedule_changed?
-  before_save :forget_the_hold, if: :will_save_change_to_disabled_at?
+  before_save :forget_the_hold, if: :hold_out_of_date?
   after_update :resolve_groups_on_change, if: :stopped_checking_the_threshold?
   # Before the dependent deletes, which take its states and Integrations.
   before_destroy :resolve_groups_on_delete, prepend: true
@@ -371,10 +382,19 @@ class LogMonitor < ApplicationRecord
     self.next_run_at = nil
   end
 
-  # A Monitor that is off does not run, so no run would clear its hold. The
-  # first held run after it is turned on starts a new hold.
+  # A Monitor that is off does not run, so no run would clear its hold or
+  # its not_running_since. The first held run after it is turned on starts a
+  # new hold. A hold is about the Logs that the runs read, so a Monitor that
+  # reads other Logs starts a new hold too. Its not_running_since stays: it
+  # has still not run, and only a run that compares says that it runs again.
+  def hold_out_of_date?
+    will_save_change_to_disabled_at? || will_save_change_to_project_id? || will_save_change_to_query? ||
+      will_save_change_to_language? || will_save_change_to_kind?
+  end
+
   def forget_the_hold
     self.held_since = nil
+    self.not_running_since = nil if will_save_change_to_disabled_at?
   end
 
   # A Match monitor, or a Threshold monitor comparing the value, has no

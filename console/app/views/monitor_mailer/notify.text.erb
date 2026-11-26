@@ -10,7 +10,7 @@
 - <%= line %>
 <% end -%>
 <% end %>
-Open in the Logs explorer: <%= @message.link %>
+<%= @message.link_text %>: <%= @message.link %>
 <% if @message.baseline_link -%>
 Open the Baseline in the Logs explorer: <%= @message.baseline_link %>
 <% end -%>

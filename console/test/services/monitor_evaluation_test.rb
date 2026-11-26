@@ -879,6 +879,82 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------
+  # Not running
+  # ---------------------------------------------------------------------------
+
+  test "the first failed run sets not_running_since, later failed runs keep it, and a run that compares clears it" do
+    monitor = threshold_monitor
+    stub_request(:post, @query_url).to_return(status: 503, body: "starting")
+    evaluate(monitor)
+    assert_equal NOW, monitor.reload.not_running_since
+
+    travel 1.minute
+    evaluate(monitor)
+    assert_equal NOW, monitor.reload.not_running_since
+
+    travel 1.minute
+    answer_table([ [ 3 ] ])
+    assert evaluate(monitor).status_ok?
+    assert_nil monitor.reload.not_running_since
+  end
+
+  test "a held run under 10 minutes neither sets nor clears not_running_since" do
+    monitor = threshold_monitor
+    stub_request(:post, @query_url).to_return(status: 503, body: "starting")
+    evaluate(monitor)
+
+    answer_incomplete(reason: "log_processing_behind", behind_seconds: 240)
+    3.times do
+      travel 1.minute
+      assert evaluate(monitor).status_held?
+    end
+    assert_equal NOW, monitor.reload.not_running_since
+
+    travel 1.minute
+    answer_table([ [ 3 ] ])
+    evaluate(monitor)
+    assert_nil monitor.reload.not_running_since
+  end
+
+  test "a hold of 9 minutes does not make a Monitor not running" do
+    monitor = threshold_monitor
+    answer_incomplete(reason: "log_processing_behind", behind_seconds: 600)
+    evaluate(monitor)
+    9.times do
+      travel 1.minute
+      evaluate(monitor)
+    end
+
+    assert_equal NOW, monitor.reload.held_since
+    assert_nil monitor.not_running_since
+  end
+
+  test "a hold of 11 minutes makes a Monitor not running since the hold started" do
+    monitor = threshold_monitor
+    answer_incomplete(reason: "log_processing_behind", behind_seconds: 600)
+    evaluate(monitor)
+    11.times do
+      travel 1.minute
+      evaluate(monitor)
+    end
+
+    assert_equal NOW, monitor.reload.not_running_since
+  end
+
+  test "a Match run that reads clears not_running_since" do
+    monitor = match_monitor
+    stub_request(:post, @query_url).to_return(status: 503, body: "starting")
+    evaluate(monitor)
+    assert_equal NOW, monitor.reload.not_running_since
+
+    travel 1.minute
+    WebMock.reset!
+    answer_matched([], total: 0, ingest_cursor: NEXT_CURSOR)
+    evaluate(monitor)
+    assert_nil monitor.reload.not_running_since
+  end
+
+  # ---------------------------------------------------------------------------
   # Threshold: SQL
   # ---------------------------------------------------------------------------
 

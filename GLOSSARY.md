@@ -200,12 +200,16 @@ _Avoid_: query cache, result cache
 An outbound notification target owned by an organization. Its provider is Slack, PagerDuty, email, or the **Factory** provider, which starts a **Run** for each **Issue** or **Monitor** group that it is told about, through a **Webhook sender** that Console makes at the **Dispatcher**. The Factory provider has no URL field.
 _Avoid_: webhook config, notifier job
 
+**Monitor status Integration**:
+The one **Integration** that an **Organization** chooses to be told when its **Monitors** are not running, and when they run again. It is a Slack, PagerDuty or email Integration, never the **Factory** provider. A Monitor is not running from its first failed run, or from the start of a **Hold** that lasts 10 minutes. A run that compares makes it run again. After a Monitor is not running for 2 minutes, the Monitor status Integration gets one monitors not running **Notification** that lists it with the others of that minute, and later one monitors running again. A Monitor's own Integrations do not get these. With none chosen, the Monitors list still shows each Monitor that is not running.
+_Avoid_: health alert, watchdog, heartbeat channel, status page
+
 **Notification**:
-A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, refused by a receiver that will never take it (the **Factory** provider's 4xx other than 429, which is not retried), or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
+A message owed to one **Integration** about one or more **Issues**, about one group of a **Monitor**, or about an **Organization**'s Monitors that do not run, recorded in the outbox until it ends as sent, failed after the last retry, refused by a receiver that will never take it (the **Factory** provider's 4xx other than 429, which is not retried), or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched, monitors not running, monitors running again) that decides the message. The last two go only to the **Monitor status Integration**.
 _Avoid_: notification event, alert, event type
 
 **Integration notification**:
-The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches (one at a time to the **Factory** provider, which starts a **Run** for each), and each group of a Monitor in order.
+The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches (one at a time to the **Factory** provider, which starts a **Run** for each), and each group of a Monitor in order, and the messages to the **Monitor status Integration** in order too.
 _Avoid_: notifier, integration notifier
 
 **Organization**:
@@ -407,6 +411,7 @@ _Avoid_: command, mention, slash command
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
 - A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
 - A **Threshold monitor**'s run is a **Hold** while **Log processing** is behind or after an **Ingest gap**. Its groups stay as they were
+- An **Organization** has at most one **Monitor status Integration**, which is told when its **Monitors** do not run and when they run again
 - The **Bin cache** keeps a **Chart**'s bins of hours that have ended, until **Log processing** or **Retention** changes their Logs
 - The **Log file store** holds a **Project**'s **Logs** stored before the switch to ClickHouse, read with those stored since until **Retention** deletes them
 - An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password

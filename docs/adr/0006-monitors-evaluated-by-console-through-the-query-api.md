@@ -24,6 +24,13 @@ Some Monitors need a join, a subquery, a window, or a read of `events` or `spans
 - **The run counts the rows itself.** The SQL users' row limit is 100,000, so more than 10,000 rows is the same table cut as for a Query.
 - **The instance setting for SQL queries stays the one control.** While it is off, saving a Threshold monitor with SQL is refused, and each run of a saved one fails with the reason.
 
+## Amended: Monitor status rows (2026-11-26)
+
+An Organization can choose a Monitor status Integration (GLOSSARY). `MonitorStatusJob` tells it, every minute, which Monitors do not run and which run again. Its rows are of two kinds, `monitors_not_running` and `monitors_running_again`. They are about the Organization's Monitors, so they have no `issue_id`, no `monitor_id` and no `group_key`. The check constraint allows that for these two kinds only.
+
+- **They are Monitor rows for delivery.** Each Integration's Monitor status rows are one chain, oldest first, that stops at its first failure, as a Monitor group's chain does. A failed one is retried for 6 hours. So an Issue row is now a row with an `issue_id`, and every other row is a Monitor row.
+- **One transaction writes the rows and the marks.** Each Monitor's `not_running_notified` changes in the same transaction as the row that tells about it. So a job that stops and runs again writes each message once. Its tick is scheduled after the commit, as for a run.
+
 ## Considered options
 
 - **EventStore evaluates Monitors itself:** a Go scheduler beside the data, reading Monitors from Console's database as Event processing writes Issues. It would need Console's Monitor and Integration tables, message formats and outbox in Go, a second notifier for Slack, PagerDuty and email, and a second rate limit per Integration.

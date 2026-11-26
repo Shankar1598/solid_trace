@@ -47,6 +47,12 @@
 # partial data, however long it lasts. A Match run never holds. It reads
 # each Log in the first run after Log ingest stores the Log's batch.
 #
+# not_running_since is when the Monitor stopped running. The first failed
+# run sets it. A hold sets it to held_since once the hold is
+# LogMonitor::LONGEST_HOLD old, and a shorter hold keeps it as it is. A run
+# that compares clears it. MonitorStatusJob tells the Organization's Monitor
+# status Integration about it.
+#
 # One run at a time per Monitor, whether the scheduler (MonitorEvaluationJob)
 # or Run now started it: a run takes the Monitor's run_started_at as a lease
 # and lets go when it ends, and a run that finds the lease taken does nothing.
@@ -481,12 +487,24 @@ class MonitorEvaluation
   def finish(error: nil, held_reason: nil, firing: nil, matched: nil, logs_skipped: false)
     status = if error then "error" elsif held_reason then "held" else "ok" end
     next_run_in = status == "ok" ? @monitor.interval_minutes.minutes : 1.minute
-    @monitor.update_columns(last_run_at: @now, last_error: error, next_run_at: @now + next_run_in,
-      held_since: held_reason ? (@monitor.held_since || @now) : nil)
+    held_since = held_reason ? (@monitor.held_since || @now) : nil
+    columns = { last_run_at: @now, last_error: error, next_run_at: @now + next_run_in, held_since: held_since }
+    # The save during the run set not_running_since as it should be, and
+    # this run read the Monitor before that save.
+    columns[:not_running_since] = not_running_since(status, held_since) unless error == CHANGED_DURING_RUN
+    @monitor.update_columns(columns)
     @monitor.runs.create!(
       ran_at: @now, status: status, error: error, held_reason: held_reason, firing: firing, matched: matched,
       logs_skipped: logs_skipped,
       elapsed_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - @started) * 1000).round
     )
+  end
+
+  def not_running_since(status, held_since)
+    case status
+    when "ok" then nil
+    when "error" then @monitor.not_running_since || @now
+    else @monitor.not_running_since || (held_since if held_since <= @now - LogMonitor::LONGEST_HOLD)
+    end
   end
 end

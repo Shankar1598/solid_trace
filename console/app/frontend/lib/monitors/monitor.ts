@@ -94,6 +94,8 @@ export interface Monitor extends MonitorSettings {
   last_error: string | null
   /** When its runs started to be held, while they are. */
   held_since: string | null
+  /** When it stopped running: its first failed run, or the start of a hold of 10 minutes. null while it runs. */
+  not_running_since: string | null
   logs_skipped_at: string | null
   created_at: string
   updated_at: string

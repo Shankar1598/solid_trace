@@ -21,6 +21,13 @@ tasks: &tasks
     class: MonitorSchedulerJob
     schedule: every minute
 
+  # At second 30 of each minute, half a minute after the scheduler's tick:
+  # the runs of one tick have all started by then, so the Monitors that
+  # stop, or run again, at one tick go into one message.
+  monitor_status:
+    class: MonitorStatusJob
+    schedule: "30 * * * * *"
+
   maintenance_notification_cleanup:
     class: "Maintenance::NotificationCleanupJob"
     schedule: at 3am every day
