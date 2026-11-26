@@ -22,7 +22,9 @@ import (
 
 // WrittenWholeFolder is the folder under an Agent session's own folder
 // where solidtrace writes each file with a rename: the capture sends such a
-// file at once, as it is never half written.
+// file at once, as it is never half written. EventStore reads the Review
+// records in its review-records folder (reviewRecordFolder in
+// event_store/agentprocessing/review_record.go).
 const WrittenWholeFolder = "solidtrace"
 
 // UnitLimit is the largest unit: a longer line or file is sent as its

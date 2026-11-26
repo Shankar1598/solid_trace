@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/solidtrace/cli/capture"
 	"github.com/solidtrace/cli/command"
@@ -216,21 +217,22 @@ func TestReviewFinalSaysSoWhenItCannotWriteTheFile(t *testing.T) {
 	}
 }
 
-func TestReviewFinalWithTwoTranscriptsOfTheSessionNamesThemAndWritesNothing(t *testing.T) {
+func TestReviewFinalWithTwoTranscriptsOfTheSessionWritesToTheFolderOfTheNewer(t *testing.T) {
 	projects, project := finalProjects(t)
 	copied := filepath.Join(projects, "-home-ann-shop-old")
 	writeFile(t, filepath.Join(copied, finalSession+".jsonl"), "{}\n")
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(copied, finalSession+".jsonl"), old, old); err != nil {
+		t.Fatal(err)
+	}
 
 	code, out, stderr := runFinal(t, projects, finalRecord)
 
-	if code != 1 || out != "" || !strings.Contains(stderr, "2 transcripts of the Agent session") ||
-		!strings.Contains(stderr, "remove the copies") || strings.Contains(stderr, "--file") {
+	if code != 0 || !strings.HasSuffix(strings.TrimSpace(out), "kept in "+recordFile(project, 2, "local:/tmp/pr.md")) {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out, stderr)
 	}
-	for _, dir := range []string{project, copied} {
-		if _, err := os.Stat(filepath.Join(dir, finalSession)); !os.IsNotExist(err) {
-			t.Errorf("Expected no folder of the Agent session in %s, got %v", dir, err)
-		}
+	if _, err := os.Stat(filepath.Join(copied, finalSession)); !os.IsNotExist(err) {
+		t.Errorf("Expected no folder of the Agent session in the older copy, got %v", err)
 	}
 }
 
@@ -247,7 +249,7 @@ func TestTheFinalReplyOfOpenPRWritesTheRecordFile(t *testing.T) {
 		t.Fatalf("Expected the Final reply step to give the review final command on the record file, got %q", block)
 	}
 	update, err := os.ReadFile(updatePRSkill)
-	if err != nil || !strings.Contains(string(update), "with `solidtrace review final` as `open-pr` › Final reply says") {
+	if err != nil || !strings.Contains(string(update), "write the record with `solidtrace review final` as `open-pr` › Final reply says") {
 		t.Fatalf("Expected update-pr to write the record as open-pr's Final reply says: %v", err)
 	}
 

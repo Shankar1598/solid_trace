@@ -552,9 +552,9 @@ test('the record file of an open-pr Agent session, or the final reply of an olde
   const draft = reviewRecord(pr, 2, 230)
   expect(reviewFinal(reviewer, second, shopDir, draft)).toMatch(new RegExp(`^record: round 2, 230 findings, 228 fixed, kept in .*/${second.id}/solidtrace/review-records/round-2-[0-9a-f]{12}\\.json$`))
   capture(reviewer, second, shopDir, 'Stop')
-  // A record in a repository that is not captured stays on the machine. Its
-  // capture comes before the last one, so when the last record shows, it
-  // would show too.
+  // A record in a repository that is not captured stays on the machine.
+  // Capture it before the last Stop capture: when the last record shows, a
+  // record of the other repository that went up by mistake shows too.
   const elsewherePr = `https://github.example/other/notes-${RUN}/pull/1`
   const elsewhereDir = gitRepository(`${ELSEWHERE}-records`)
   const elsewhere = openPrSession(elsewhereDir, { exampleRecord: example, record: reviewRecord(elsewherePr, 1, 4), minutesAgo: 5 })

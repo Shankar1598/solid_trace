@@ -205,7 +205,7 @@ Click the PR to open its record. The page shows:
 
 The record is what the agent wrote, with the words of PR commenters in it, so the pages show all of it as text, never as HTML or Markdown.
 
-SolidTrace reads the record from the file that `solidtrace review final` writes: `<session id>/solidtrace/review-records/round-<n>-<h>.json` in the Claude project folder of the Agent session, when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). The capture uploads the file with the Agent session, so a record of any size uploads. An Agent session from before that command gives its record in a `solidtrace-pr-record` block of its final reply, and SolidTrace reads that block too. When one agent message has more than one block, the last one counts. So:
+SolidTrace reads the record from the file that `solidtrace review final` writes: `<session id>/solidtrace/review-records/round-<n>-<h>.json` in the Claude project folder of the Agent session, when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). The capture uploads the file with the Agent session, so a record of up to 32 MiB uploads. An Agent session from before that command gives its record in a `solidtrace-pr-record` block of its final reply, and SolidTrace reads that block too. When one agent message has more than one block, the last one counts. So:
 
 - A record shows when its Agent session uploads: in a captured repository, or in a Run.
 - An Agent session that SolidTrace parsed before Review records came has no Review record. SolidTrace does not read the old lines again.

@@ -74,7 +74,7 @@ func reviewDigest(args []string, env Env) int {
 	var sources []source
 	for _, id := range sessions {
 		path, err := sessionTranscript(env.ClaudeProjectsDir, id)
-		if errors.Is(err, errSeveralTranscripts) {
+		if several := (severalTranscripts{}); errors.As(err, &several) {
 			fmt.Fprintf(env.Stderr, "solidtrace review digest: %v: give --file with one of them\n", err)
 			return 1
 		}
@@ -137,10 +137,8 @@ func printJSON(env Env, verb string, v any) int {
 	return 0
 }
 
-// errSeveralTranscripts marks a session id with a transcript in more than
-// one Claude project folder.
-var errSeveralTranscripts = errors.New("more than one transcript")
-
+// severalTranscripts is a session id with a transcript in more than one
+// Claude project folder.
 type severalTranscripts struct {
 	id, projects string
 	paths        []string
@@ -149,8 +147,6 @@ type severalTranscripts struct {
 func (e severalTranscripts) Error() string {
 	return fmt.Sprintf("%d transcripts of the Agent session %s in %s: %v", len(e.paths), e.id, e.projects, e.paths)
 }
-
-func (e severalTranscripts) Is(target error) bool { return target == errSeveralTranscripts }
 
 // sessionTranscript is the main transcript of the Agent session id: the
 // one <projects>/<folder>/<id>.jsonl.

@@ -42,7 +42,7 @@ You read two other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not re
   1. Run `solidtrace review digest` with one `--session ID` for each confirmed session, `> "$dir/digest.json"`.
   2. Run `solidtrace review record --digest "$dir/digest.json" > "$dir/record0.json"`. This is the mechanical part of the record.
   3. Spawn one sub-agent with `subagent_type: "solidtrace-skills:record-writer"`, which can only read files, on the `record` role of `${CLAUDE_SKILL_DIR}/../code-review/models.md`. Its prompt is the text of [record.md](record.md), then the two paths to read: `$dir/digest.json` and `$dir/record0.json`. It replies with the notes. Write them to `$dir/notes.json`.
-  4. Run `solidtrace review record --digest "$dir/digest.json" --notes "$dir/notes.json" --round 1 > "$dir/record.json"`. When it refuses a note (exit 1), send the sub-agent the error, and wait for new notes. After two refusals, use `$dir/record0.json` with `--pr` and `--round` as the record, and say in the final reply which notes were refused.
+  4. Run `solidtrace review record --digest "$dir/digest.json" --notes "$dir/notes.json" --round 1 > "$dir/record.json"`. When it refuses a note (exit 1), send the sub-agent the error, and wait for new notes. After two refusals, write the record with no notes: `solidtrace review record --digest "$dir/digest.json" --round 1 > "$dir/record.json"`. Use this command, not the one with `--notes`, when step 8 runs the command of this step again, and say in the final reply which notes were refused.
 - **The push.** Run `git push -u origin HEAD`, and wait for its result. When it fails, stop before step 7: tell the person why, and do not open a PR on an older remote head. In local mode, skip it.
 
 ## 5. Check the record
@@ -90,7 +90,7 @@ Open the PR as [platforms.md](platforms.md) says, in Open a PR.
 
 ## 8. Final reply
 
-Run the command of step 4.4 again, with the same `--round`, and with `--pr` set to the PR's URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened). Then write the record to the Agent session with this command, as it is:
+Run the command of step 4.4 again, with the same `--round`, and with `--pr` set to the PR's URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened). Then write the record to the Agent session with this command, with `$dir` the folder of step 1:
 
 ```bash
 solidtrace review final "$dir/record.json"

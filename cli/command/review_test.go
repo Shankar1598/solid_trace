@@ -247,7 +247,8 @@ func TestReviewDigestFindsTheSessionInTheClaudeConfigDir(t *testing.T) {
 	second := filepath.Join(projects, "-work-b", "s-1.jsonl")
 	os.MkdirAll(filepath.Dir(second), 0o755)
 	os.WriteFile(second, []byte("{}\n"), 0o644)
-	if code, _, stderr := runDigest(t, env, "--session", "s-1"); code != 1 || !strings.Contains(stderr, "2 transcripts") {
+	if code, _, stderr := runDigest(t, env, "--session", "s-1"); code != 1 || !strings.Contains(stderr, "2 transcripts") ||
+		!strings.Contains(stderr, "give --file with one of them") {
 		t.Fatalf("two transcripts: exit %d\n%s", code, stderr)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/solidtrace/cli/capture"
 	"github.com/solidtrace/cli/review"
@@ -50,8 +51,8 @@ func reviewFinal(args []string, env Env) int {
 		return fail(errors.New(noAgentSession))
 	}
 	transcript, err := sessionTranscript(env.ClaudeProjectsDir, sessionID)
-	if errors.Is(err, errSeveralTranscripts) {
-		return fail(fmt.Errorf("%w: remove the copies that are not this Agent session's, and run this again", err))
+	if several := (severalTranscripts{}); errors.As(err, &several) {
+		transcript, err = newest(several.paths)
 	}
 	if err != nil {
 		return fail(err)
@@ -69,6 +70,23 @@ func reviewFinal(args []string, env Env) int {
 	}
 	fmt.Fprintf(env.Stdout, "record: round %d, %d findings, %d fixed, kept in %s\n", record.Round, len(record.Findings), fixed, path)
 	return 0
+}
+
+// newest is the path of the file that changed last: of the copies of a
+// transcript, the one that Claude Code writes now.
+func newest(paths []string) (string, error) {
+	var last string
+	var at time.Time
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			return "", err
+		}
+		if last == "" || info.ModTime().After(at) {
+			last, at = p, info.ModTime()
+		}
+	}
+	return last, nil
 }
 
 var recordLimit = fmt.Sprintf("%d MiB", capture.UnitLimit>>20)
