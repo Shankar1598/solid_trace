@@ -7,10 +7,10 @@ name: Release images and the agent CLI
 # (.github/scripts/image-tags).
 #
 # The cli job adds the agent CLI's files to the release: the solidtrace
-# binary for each OS and architecture, SHA256SUMS, install.sh, the Claude
-# Code plugin (capture and the review skills) as solidtrace-plugin.zip, and
-# its marketplace.json, whose plugin entry is the zip of the same release
-# with its SHA-256.
+# binary for each OS and architecture, SHA256SUMS and install.sh. The Claude
+# Code plugin is not a release file: Claude Code gets it from the
+# marketplace file at the repository root, at the release's tag. So the job
+# fails when the tag is not the version in cli/plugin/.claude-plugin/plugin.json.
 #
 # The Dispatcher is the factory's service (docs/factory.md). Its image is not in
 # deploy/docker-compose.yml: a SolidTrace install does not run it, and an
