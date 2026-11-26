@@ -71,6 +71,14 @@ func TestIngestTakesLogsWhileClickHouseStarts(t *testing.T) {
 	if took := time.Since(started); took > 5*time.Second {
 		t.Errorf("The first 200s of Log ingest came %v after the start, more than 5 s", took)
 	}
+	// Event ingest and Transaction ingest write only into Pebble too.
+	if status, body := postRaw(t, ingestURL+"/api/123/store?sentry_key=test_public_key", "application/json", string(getSampleEventJSON())); status != 200 {
+		t.Errorf("Event ingest with ClickHouse down: expected 200, got %d: %s", status, body)
+	}
+	transaction := sentTransaction{fixture: "sentry-ruby-6.3-rails", traceID: traceIDOf(1), at: time.Now()}.envelope(t)
+	if status, body := postRaw(t, ingestURL+"/api/123/envelope?sentry_key=test_public_key", "application/x-sentry-envelope", transaction); status != 200 {
+		t.Errorf("Transaction ingest with ClickHouse down: expected 200, got %d: %s", status, body)
+	}
 	status, body := post(t, queryURL+"/api/123/logs/query", queryRequest{From: allTime.from, To: allTime.to})
 	if status != 503 || !strings.Contains(body, "ClickHouse is starting") {
 		t.Errorf("A Query with ClickHouse down: expected 503 that says ClickHouse is starting, got %d: %s", status, body)
@@ -79,12 +87,14 @@ func TestIngestTakesLogsWhileClickHouseStarts(t *testing.T) {
 	if status != 503 {
 		t.Errorf("Fields with ClickHouse down: expected 503, got %d: %s", status, body)
 	}
-	for _, url := range []string{ingestURL + "/health", queryURL + "/health"} {
+	// The ingest port's /health answers 200, so a load balancer keeps ingest
+	// in service. The query port's answers 503.
+	for url, want := range map[string]int{ingestURL + "/health": 200, queryURL + "/health": 503} {
 		status, body = get(t, url)
 		var health struct{ Status, Ingest, ClickHouse string }
 		json.Unmarshal([]byte(body), &health)
-		if status != 503 || health.Ingest != "up" || health.ClickHouse != "starting" {
-			t.Errorf("%s with ClickHouse down: expected 503 with ingest up and ClickHouse starting, got %d: %s", url, status, body)
+		if status != want || health.Ingest != "up" || health.ClickHouse != "starting" {
+			t.Errorf("%s with ClickHouse down: expected %d with ingest up and ClickHouse starting, got %d: %s", url, want, status, body)
 		}
 	}
 
@@ -142,7 +152,12 @@ func waitForIngest(t *testing.T, ingestURL, log string) (int, string) {
 func post(t *testing.T, url string, body any) (int, string) {
 	t.Helper()
 	raw, _ := json.Marshal(body)
-	resp, err := http.Post(url, "application/json", strings.NewReader(string(raw)))
+	return postRaw(t, url, "application/json", string(raw))
+}
+
+func postRaw(t *testing.T, url, contentType, body string) (int, string) {
+	t.Helper()
+	resp, err := http.Post(url, contentType, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}

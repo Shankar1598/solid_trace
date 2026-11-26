@@ -483,7 +483,7 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create Pebble: %v", err)
 	}
 
-	clickHouse, err := storage.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
+	clickHouse, err := clickhousetest.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
 	if err != nil {
 		t.Fatalf("Failed to open ClickHouse: %v", err)
 	}

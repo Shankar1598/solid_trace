@@ -61,20 +61,6 @@ var clickHouseMigrations = []clickHouseMigration{
 // clickHousePingTimeout bounds a health check of ClickHouse.
 const clickHousePingTimeout = 3 * time.Second
 
-// OpenClickHouse is NewClickHouse and Prepare, for a caller that needs the
-// database ready before it goes on.
-func OpenClickHouse(cfg config.ClickHouse, bucket *config.ObjectStore) (*ClickHouse, error) {
-	ch, err := NewClickHouse(cfg, bucket)
-	if err != nil {
-		return nil, err
-	}
-	if err := ch.Prepare(context.Background()); err != nil {
-		ch.Close()
-		return nil, err
-	}
-	return ch, nil
-}
-
 // NewClickHouse is EventStore's database on the ClickHouse server in cfg,
 // with bucket (nil for none) as the bucket volume of its tables. It does not
 // connect, and nothing may use the database before Prepare passes. So

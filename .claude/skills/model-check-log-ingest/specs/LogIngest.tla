@@ -31,7 +31,7 @@
 (* Left out: the Log transform and content errors (storeApart), parts of   *)
 (* more than one day, the key counts and Source counts tables (each has    *)
 (* its own dedup log, with the same token), Retention, Project deletion,  *)
-(* other Projects, and the id floor (KeepLogBatchIDsAbove).                *)
+(* other Projects, and the id floor (keepBatchIDsAbove).                   *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 

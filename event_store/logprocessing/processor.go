@@ -138,20 +138,10 @@ func New(batches *storage.PebbleWriter, store Store, transform Transform, clock 
 	}
 }
 
-// Prepare runs before the worker starts, and again after an error. Log
-// ingest may write before it, as Pebble keeps new batch ids above every
-// cursor from its open. It keeps new Log batch ids above every Project's
-// cursor, also those that the Logs from before the switch load, deletes the Log
-// batches a crash left in Pebble after they were stored, and marks every
-// Project that has Log batches as pending.
+// Prepare runs before the worker starts, and again after an error. It
+// deletes the Log batches that a crash left in Pebble after they were stored.
+// Then it marks each Project with Log batches as pending.
 func (p *Processor) Prepare() error {
-	cursors, err := p.batches.LogProcessingCursors()
-	if err != nil {
-		return fmt.Errorf("read log processing cursors: %w", err)
-	}
-	for _, cursor := range cursors {
-		p.batches.KeepLogBatchIDsAbove(cursor)
-	}
 	projects, err := p.batches.ProjectsWithLogBatches()
 	if err != nil {
 		return fmt.Errorf("list projects with log batches: %w", err)

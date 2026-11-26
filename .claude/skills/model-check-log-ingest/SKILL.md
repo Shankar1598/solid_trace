@@ -121,7 +121,7 @@ The model leaves out:
 - The `log_key_counts` and Source counts tables, which have their own dedup logs with the same token.
 - Retention, Project deletion and the disk limit.
 - Other Projects.
-- The id floor (`KeepLogBatchIDsAbove`).
+- The id floor (`keepBatchIDsAbove`).
 - Console's own database on a power loss.
 
 The process-crash rule rests on the code's claim that a NoSync write survives a process crash.

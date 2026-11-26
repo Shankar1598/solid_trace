@@ -32,7 +32,7 @@ func startOn(t *testing.T, dir string) error {
 		t.Fatalf("Open Pebble: %v", err)
 	}
 	defer pebble.Close()
-	clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
+	clickHouse, err := clickhousetest.OpenClickHouse(clickhousetest.Config(), nil)
 	if err != nil {
 		t.Fatalf("Open ClickHouse: %v", err)
 	}

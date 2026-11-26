@@ -111,7 +111,7 @@ func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
 	}
 
 	w := &PebbleWriter{db: db}
-	if err := w.seedLogBatchFloor(); err != nil {
+	if err := w.keepBatchIDsAboveBatchesAndCursors(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("read newest batches and Processing cursors: %w", err)
 	}

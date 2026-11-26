@@ -49,7 +49,7 @@ func newTestAppsWithStores(t *testing.T, events []*models.Event, indexed bool) t
 	t.Cleanup(pebbleWriter.Close)
 
 	clickhousetest.Empty(t)
-	clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
+	clickHouse, err := clickhousetest.OpenClickHouse(clickhousetest.Config(), nil)
 	if err != nil {
 		t.Fatalf("Failed to open ClickHouse: %v", err)
 	}

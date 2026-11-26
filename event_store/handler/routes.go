@@ -76,7 +76,7 @@ func RefuseForwardedHTTP(c *fiber.Ctx) error {
 // RegisterIngestRoutes mounts the public routes. They authenticate with the
 // project's Sentry key and must stay reachable by SDKs from anywhere.
 func RegisterIngestRoutes(app *fiber.App, ingestHandler *IngestHandler, healthHandler *HealthHandler) {
-	app.Get("/health", healthHandler.Health)
+	app.Get("/health", healthHandler.IngestHealth)
 
 	app.Post("/api/:project_id/store", ingestHandler.Store)
 	app.Post("/api/:project_id/envelope", ingestHandler.Envelope)

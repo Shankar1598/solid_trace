@@ -55,8 +55,8 @@ func logBatchKey(projectID uint32, batchID uuid.UUID) []byte {
 // order and a reader never sees a batch before a lower one.
 //
 // The id is a UUIDv7 of receivedAt, unless that doesn't come after every id
-// written before, or seen in Pebble or a Log processing cursor
-// (KeepLogBatchIDsAbove): then it is the next id after them. So a clock that
+// written before, or seen in Pebble or a Processing cursor
+// (keepBatchIDsAbove): then it is the next id after them. So a clock that
 // steps back never puts a batch below Log processing's cursor, where it would
 // be skipped and deleted.
 func (w *PebbleWriter) WriteLogBatch(projectID uint32, logs []models.Log, receivedAt time.Time) error {
@@ -111,9 +111,8 @@ func nextLogBatchID(id uuid.UUID) uuid.UUID {
 	return id
 }
 
-// KeepLogBatchIDsAbove makes every Log batch id written from now on come
-// after id, such as a Log processing cursor read at startup.
-func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
+// keepBatchIDsAbove makes every batch id written from now on come after id.
+func (w *PebbleWriter) keepBatchIDsAbove(id uuid.UUID) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if bytes.Compare(id[:], w.logBatchFloor[:]) > 0 {
@@ -121,37 +120,31 @@ func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
 	}
 }
 
-// seedLogBatchFloor keeps new batch ids above the newest stored Log batch
-// and Transaction batch and Agent file batch of every Project, reading one key per Project,
-// and above the Processing cursor of each. Ingest writes before Log
-// processing, Span processing and Agent file processing prepare, as while
-// ClickHouse starts, and a batch id under its cursor is never processed.
-func (w *PebbleWriter) seedLogBatchFloor() error {
+// keepBatchIDsAboveBatchesAndCursors runs at the open. It keeps new batch ids
+// above the newest Log, Transaction and Agent file batch of each Project.
+// It also keeps them above each Processing cursor, because ingest writes
+// before processing prepares, as while ClickHouse starts.
+func (w *PebbleWriter) keepBatchIDsAboveBatchesAndCursors() error {
 	for _, keyspace := range [][2][]byte{
 		{logBatchKeyspace, logBatchKeyspaceEnd},
 		{transactionBatchKeyspace, transactionBatchKeyspaceEnd},
 		{agentFileBatchKeyspace, agentFileBatchKeyspaceEnd},
 	} {
-		if err := w.seedBatchFloor(keyspace[0], keyspace[1]); err != nil {
+		if err := w.keepBatchIDsAboveNewestBatches(keyspace[0], keyspace[1]); err != nil {
 			return err
 		}
 	}
-	cursors, err := w.LogProcessingCursors()
-	if err != nil {
-		return err
+	for _, cursors := range []string{"logcursor", "txncursor", "agentcursor"} {
+		if err := w.keepBatchIDsAboveCursors(cursors); err != nil {
+			return err
+		}
 	}
-	for _, cursor := range cursors {
-		w.KeepLogBatchIDsAbove(cursor)
-	}
-	if err := w.KeepBatchIDsAboveSpanCursors(); err != nil {
-		return err
-	}
-	return w.KeepBatchIDsAboveAgentFileCursors()
+	return nil
 }
 
-// seedBatchFloor keeps new batch ids above the newest batch of every Project
-// in the keyspace from lower to upper.
-func (w *PebbleWriter) seedBatchFloor(lower, upper []byte) error {
+// keepBatchIDsAboveNewestBatches keeps new batch ids above the newest batch
+// of each Project in the keyspace from lower to upper.
+func (w *PebbleWriter) keepBatchIDsAboveNewestBatches(lower, upper []byte) error {
 	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
@@ -163,11 +156,30 @@ func (w *PebbleWriter) seedBatchFloor(lower, upper []byte) error {
 		if err != nil {
 			return fmt.Errorf("batch key %x: %w", key, err)
 		}
-		if bytes.Compare(batchID[:], w.logBatchFloor[:]) > 0 {
-			w.logBatchFloor = batchID
-		}
+		w.keepBatchIDsAbove(batchID)
 		projectStart := binary.BigEndian.AppendUint32(bytes.Clone(lower), binary.BigEndian.Uint32(key[len(lower):]))
 		valid = iter.SeekLT(projectStart)
+	}
+	return iter.Error()
+}
+
+// keepBatchIDsAboveCursors keeps new batch ids above each Project's cursor
+// whose key starts with name and "/", such as "logcursor".
+func (w *PebbleWriter) keepBatchIDsAboveCursors(name string) error {
+	iter, err := w.db.NewIter(&pebble.IterOptions{
+		LowerBound: append(eventKeyPrefix(0), name+"/"...),
+		UpperBound: append(eventKeyPrefix(0), name+"0"...),
+	})
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	for valid := iter.First(); valid; valid = iter.Next() {
+		cursor, err := uuid.FromBytes(iter.Value())
+		if err != nil {
+			return fmt.Errorf("%s %x: %w", name, iter.Key(), err)
+		}
+		w.keepBatchIDsAbove(cursor)
 	}
 	return iter.Error()
 }
@@ -283,35 +295,19 @@ func (w *PebbleWriter) SetLogProcessingCursor(projectID uint32, cursor uuid.UUID
 // SetLogProcessingCursors moves several Projects' Log processing cursors at
 // once, synced, so that they are on disk before what follows records that
 // they moved, as loading the prepared cursors records its marker.
+//
+// First it keeps new batch ids above each cursor. Ingest can write while the
+// cursors move, and Log processing deletes a batch under its cursor unstored.
 func (w *PebbleWriter) SetLogProcessingCursors(cursors map[uint32]uuid.UUID) error {
 	batch := w.db.NewBatch()
 	defer batch.Close()
 	for projectID, cursor := range cursors {
+		w.keepBatchIDsAbove(cursor)
 		if err := batch.Set(logProcessingCursorKey(projectID), cursor[:], nil); err != nil {
 			return err
 		}
 	}
 	return batch.Commit(pebble.Sync)
-}
-
-// LogProcessingCursors returns the Log processing cursor of every Project
-// that has one.
-func (w *PebbleWriter) LogProcessingCursors() ([]uuid.UUID, error) {
-	prefix := append(eventKeyPrefix(0), "logcursor/"...)
-	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: append(eventKeyPrefix(0), "logcursor0"...)})
-	if err != nil {
-		return nil, err
-	}
-	defer iter.Close()
-	var cursors []uuid.UUID
-	for valid := iter.First(); valid; valid = iter.Next() {
-		cursor, err := uuid.FromBytes(iter.Value())
-		if err != nil {
-			return nil, fmt.Errorf("log processing cursor %x: %w", iter.Key(), err)
-		}
-		cursors = append(cursors, cursor)
-	}
-	return cursors, iter.Error()
 }
 
 // RecordLogInsert records, before Log processing inserts a Project's Log

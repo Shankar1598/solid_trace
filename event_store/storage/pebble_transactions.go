@@ -157,27 +157,6 @@ func (w *PebbleWriter) SetSpanProcessingCursor(projectID uint32, cursor uuid.UUI
 	return w.db.Set(spanProcessingCursorKey(projectID), cursor[:], pebble.NoSync)
 }
 
-// KeepBatchIDsAboveSpanCursors makes every batch id written from now on come
-// after every Project's Span processing cursor.
-func (w *PebbleWriter) KeepBatchIDsAboveSpanCursors() error {
-	iter, err := w.db.NewIter(&pebble.IterOptions{
-		LowerBound: append(eventKeyPrefix(0), "txncursor/"...),
-		UpperBound: append(eventKeyPrefix(0), "txncursor0"...),
-	})
-	if err != nil {
-		return err
-	}
-	defer iter.Close()
-	for valid := iter.First(); valid; valid = iter.Next() {
-		cursor, err := uuid.FromBytes(iter.Value())
-		if err != nil {
-			return fmt.Errorf("span processing cursor %x: %w", iter.Key(), err)
-		}
-		w.KeepLogBatchIDsAbove(cursor)
-	}
-	return iter.Error()
-}
-
 // RecordSpanInsert records, synced, the last batch of the range Span
 // processing is about to insert, as RecordLogInsert.
 func (w *PebbleWriter) RecordSpanInsert(projectID uint32, upTo uuid.UUID) error {

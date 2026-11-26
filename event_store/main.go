@@ -171,103 +171,25 @@ func run(ctx context.Context, cfg *config.Config) {
 		}
 	}()
 
-	var localCache *storage.LocalCacheFollower
-	var diskLimit storage.LogDiskLimit
-	var logCleanup *logprocessing.Cleanup
-	go start.run(ctx, []startStep{
-		{name: "ready EventStore's database", try: func() error { return clickHouse.Prepare(ctx) }},
-		// The Logs from before the switch, in the DuckDB release's Log files,
-		// are read in place. This loads what prepare-clickhouse wrote. On
-		// DuckDB data it didn't prepare it fails, and the start goes no
-		// further. It runs before Log processing, which reads the Processing
-		// cursors it loads.
-		{name: "ready the Logs from before the switch to ClickHouse", try: func() error {
-			return clickHouseLogs.UseOldLogFiles(storage.OldLogFiles{
-				LogsDuckDB: cfg.LogsDuckDBPath,
-				// Compose mounts logs_parquet_path at ClickHouse's
-				// user_files_path, where deploy/install finds it, and
-				// bin/clickhouse-dev the development store, so ClickHouseDir
-				// is "": file() reads each file by its path in the store.
-				LocalDir: cfg.LogsParquetPath,
-				Bucket:   cfg.ObjectStore,
-			})
-		}},
-		// With a bucket, the day tables' parts move there once as old as
-		// Settings → Instance says, read now and every minute.
-		{
-			start: func() {
-				localCache = storage.FollowLocalCacheHours(clickHouse, consoleSettings, storage.LocalCacheHoursInterval)
-			},
-			stop: func() { localCache.Stop() },
-		},
-		{name: "prepare Event processing", try: processor.Prepare, start: processor.Start, stop: processor.Stop},
-		{start: eventCleanup.Start, stop: eventCleanup.Stop},
-		{name: "prepare Log processing", try: logProcessor.Prepare, start: logProcessor.Start, stop: logProcessor.Stop},
-		{name: "prepare Span processing", try: spanProcessor.Prepare, start: spanProcessor.Start, stop: spanProcessor.Stop},
-		{name: "prepare Agent file processing", try: agentFileProcessor.Prepare},
-		{name: "prepare the parse of Agent sessions", try: agentParser.Prepare},
-		{start: agentFileProcessor.Start, stop: agentFileProcessor.Stop},
-		{start: agentParser.Start, stop: agentParser.Stop},
-		{name: "work out the Log disk limit", try: func() error {
-			limit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
-			if err != nil {
-				return err
-			}
-			diskLimit = limit
-			logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
-			return nil
-		}},
-		{
-			start: func() {
-				logCleanup = logprocessing.NewCleanup(clickHouseLogs, sqlQueries, diskLimit, clock.System{},
-					&logprocessing.Evidence{Files: evidenceFiles, Retention: consoleSettings.EvidenceRetention},
-					logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
-					logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
-					// The Agent Project's Log Retention, which its derived Logs keep too.
-					logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})
-				logCleanup.Start()
-			},
-			stop: func() { logCleanup.Stop() },
-		},
-		// Its stop is StopFlushingIngestCounts below, which also writes the
-		// last seconds' counts.
-		{start: ingestService.StartFlushingIngestCounts},
-		{start: func() {
-			queryRoutes := fiber.New(fiber.Config{
-				DisableStartupMessage: true,
-			})
-			logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
-			logsHandler.HeavyReads = handler.NewHeavyReads(cfg.LogsHeavyReadSlots)
-			overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
-				Logs: clickHouseLogs, Clock: clock.System{}, DiskLimit: diskLimit, Retention: consoleSettings,
-				LocalCacheHours: clickHouse.LocalCacheHours,
-			})
-			handler.RegisterQueryRoutes(queryRoutes, handler.NewEventsHandler(pebbleWriter, clickHouse), logsHandler,
-				handler.NewLogTransformHandler(logTransforms), overviewHandler, handler.NewTracesHandler(clickHouse),
-				healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
-			handler.RegisterPerformanceRoutes(queryRoutes, handler.NewPerformanceHandler(clickHouse))
-			handler.RegisterRedactionRoutes(queryRoutes)
-			handler.RegisterAgentQueryRoutes(queryRoutes, handler.NewAgentSessionsHandler(clickHouseLogs))
-			handler.RegisterReviewRecordRoutes(queryRoutes, handler.NewReviewRecordsHandler(clickHouseLogs))
-			handler.RegisterRunsQueryRoutes(queryRoutes, handler.NewRunsHandler(clickHouseLogs, clock.System{}))
-			handler.RegisterAgentEvidenceRoute(queryRoutes, handler.NewAgentEvidenceHandler(clickHouse))
-			handler.RegisterEvidenceQueryRoutes(queryRoutes, handler.NewEvidenceFilesHandler(evidenceFiles))
-			handler.RegisterRetentionRoute(queryRoutes, logCleanup)
-			start.serve(queryRoutes)
-		}},
-	})
+	work := &clickHouseWork{
+		cfg: cfg, pebble: pebbleWriter, clickHouse: clickHouse, logs: clickHouseLogs, sqlQueries: sqlQueries,
+		settings: consoleSettings, evidenceFiles: evidenceFiles, logTransforms: logTransforms,
+		ingest: ingestService, health: healthHandler,
+		eventProcessor: processor, eventCleanup: eventCleanup, logProcessor: logProcessor,
+		spanProcessor: spanProcessor, agentFileProcessor: agentFileProcessor, agentParser: agentParser,
+	}
+	go start.run(ctx, work.steps(ctx, start))
 
 	<-ctx.Done()
 	logger.L.Info("Shutting down...")
 
 	// Concurrent, so the whole shutdown fits Docker's 10 s stop grace period.
 	var queryErr, ingestErr error
-	var started []func()
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func() { defer wg.Done(); queryErr = queryApp.ShutdownWithTimeout(5 * time.Second) }()
 	go func() { defer wg.Done(); ingestErr = app.ShutdownWithTimeout(5 * time.Second) }()
-	go func() { defer wg.Done(); started = start.stop(5 * time.Second) }()
+	go func() { defer wg.Done(); start.stop(5 * time.Second) }()
 	wg.Wait()
 	if queryErr != nil || ingestErr != nil {
 		logger.L.Error("HTTP shutdown timed out", "query_error", queryErr, "ingest_error", ingestErr)
@@ -280,7 +202,7 @@ func run(ctx context.Context, cfg *config.Config) {
 	pebbleWriter.StopWrites()
 
 	// Then the stores close through the defers above.
-	for _, stop := range started {
+	for _, stop := range start.workerStops() {
 		stop()
 	}
 	if profiler != nil {

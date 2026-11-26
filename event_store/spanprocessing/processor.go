@@ -85,15 +85,10 @@ func New(batches *storage.PebbleWriter, store Store) *Processor {
 	}
 }
 
-// Prepare runs before the worker starts, and again after an error. Ingest
-// may write before it, as Pebble keeps new batch ids above every cursor from
-// its open. It keeps new batch ids above every Project's cursor, deletes the batches a
-// crash left in Pebble after they were stored, and marks every Project with
-// batches as pending.
+// Prepare runs before the worker starts, and again after an error. It
+// deletes the batches that a crash left in Pebble after they were stored.
+// Then it marks each Project with batches as pending.
 func (p *Processor) Prepare() error {
-	if err := p.batches.KeepBatchIDsAboveSpanCursors(); err != nil {
-		return fmt.Errorf("read span processing cursors: %w", err)
-	}
 	projects, err := p.batches.ProjectsWithTransactionBatches()
 	if err != nil {
 		return fmt.Errorf("list projects with transaction batches: %w", err)

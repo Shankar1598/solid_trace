@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/solidtrace/event_store/storage"
 )
 
 // Pinger is a store /health checks.
@@ -19,54 +18,60 @@ var ErrClickHouseStarting = errors.New("ClickHouse is starting: EventStore takes
 
 // HealthHandler handles health check endpoints
 type HealthHandler struct {
-	pebble     *storage.PebbleWriter
+	pebble     Pinger
 	clickhouse Pinger
 }
 
 // NewHealthHandler creates a new health handler
-func NewHealthHandler(pebble *storage.PebbleWriter, clickhouse Pinger) *HealthHandler {
+func NewHealthHandler(pebble, clickhouse Pinger) *HealthHandler {
 	return &HealthHandler{
 		pebble:     pebble,
 		clickhouse: clickhouse,
 	}
 }
 
-// Health returns the health status of the event store service
-// GET /health
-//
-// "ingest" is "up" while Pebble answers, as ingest writes only there.
-// "clickhouse" is "starting", "ready" or "down". The status is "healthy",
-// with 200, only when both are up: deploy/install waits for that, and
-// Console's /health reads it.
+// Health is /health on the query port. It answers 200 only when Pebble and
+// ClickHouse are both up. Console reads its "status".
 func (h *HealthHandler) Health(c *fiber.Ctx) error {
-	status := "healthy"
-	httpStatus := 200
+	return h.health(c, false)
+}
 
+// IngestHealth is /health on the ingest port. It answers 200 while ingest is
+// up, also while ClickHouse starts. A load balancer and deploy/install check
+// it.
+func (h *HealthHandler) IngestHealth(c *fiber.Ctx) error {
+	return h.health(c, true)
+}
+
+// health writes the same body on both ports. "ingest" is "up" while Pebble
+// answers, because ingest writes only there. "clickhouse" is "starting",
+// "ready" or "down", and "checks" give the error. "status" is "healthy" only
+// when both are up. With ingestOnly, the status code follows ingest alone.
+func (h *HealthHandler) health(c *fiber.Ctx, ingestOnly bool) error {
 	checks := fiber.Map{
 		"pebble":     "ok",
 		"clickhouse": "ok",
 	}
 	ingest, clickhouse := "up", "ready"
-
-	// Check Pebble
 	if err := h.pebble.Ping(); err != nil {
 		checks["pebble"] = err.Error()
 		ingest = "down"
-		status = "unhealthy"
-		httpStatus = 503
 	}
-
 	if err := h.clickhouse.Ping(); err != nil {
 		checks["clickhouse"] = err.Error()
 		clickhouse = "down"
 		if errors.Is(err, ErrClickHouseStarting) {
-			checks["clickhouse"] = "starting"
 			clickhouse = "starting"
 		}
-		status = "unhealthy"
-		httpStatus = 503
 	}
 
+	status, httpStatus := "healthy", fiber.StatusOK
+	if ingest != "up" || clickhouse != "ready" {
+		status = "unhealthy"
+	}
+	if ingest != "up" || (!ingestOnly && clickhouse != "ready") {
+		httpStatus = fiber.StatusServiceUnavailable
+	}
 	return c.Status(httpStatus).JSON(fiber.Map{
 		"status":     status,
 		"ingest":     ingest,
