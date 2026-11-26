@@ -611,6 +611,90 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
     assert_requested run, times: 1
   end
 
+  # SQL Charts
+
+  CHART_SQL = "SELECT level, count() AS n FROM logs WHERE (empty({level:Array(String)}) OR level IN {level:Array(String)}) GROUP BY level"
+
+  test "add_chart with sql adds a SQL Chart, checked by a run over no time, and get_chart_data runs it with filter values" do
+    @dashboard.update!(filters: [ { name: "level", kind: "select", multiple: true, options: { from: "list", items: [ { value: "error" }, { value: "warn" } ] } } ])
+    check = stub_sql_check(@shop, parameters: [ "level" ])
+
+    added = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Levels", sql: CHART_SQL, viz: "bar")
+
+    assert_not added.error?, added.text
+    assert_requested check
+    chart = @dashboard.charts.find(added.json["id"])
+    assert_equal [ "sql", CHART_SQL ], [ chart.language, chart.query ]
+    assert_equal "sql", call_tool(:get_dashboard, user: @user, dashboard: @dashboard.id).json["charts"].find { |c| c["id"] == chart.id }["language"]
+
+    run = stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
+      .with(body: { sql: CHART_SQL, from: "2026-10-03T09:00:00.000Z", to: "2026-10-03T10:00:00.000Z",
+                    timeout_seconds: EventStoreProxy::RUN_TIMEOUT_SECONDS, parameters: { level: [ "error" ] } }.to_json)
+      .to_return(status: 200, body: { table: { columns: [ { name: "level", type: "string" }, { name: "n", type: "number" } ], rows: [ [ "error", 3 ] ] },
+                                      parameters: [ "level" ] }.to_json)
+    answer = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: chart.id,
+      from: "2026-10-03T09:00:00Z", to: "2026-10-03T10:00:00Z", filters: { level: "error" })
+
+    assert_not answer.error?, answer.text
+    assert_requested run
+    assert_equal [ { "level" => [ "error" ] }, [ [ "error", 3 ] ] ], answer.json.values_at("filters", "rows")
+  end
+
+  test "add_chart and update_chart refuse sql with query, SQL that does not run, and SQL naming a filter the Dashboard lacks" do
+    assert_equal "Give query or sql, not both: a Chart runs one of them.",
+      call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Both", query: "summarize count()", sql: CHART_SQL).text
+
+    stub_request(:post, "#{EventStore.base_url}/api/#{@shop.id}/logs/sql")
+      .to_return(status: 400, body: { error: "{level:UInt8}: a Dashboard filter's type must be Array(String), String or Nullable(String)" }.to_json)
+    bad = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Bad", sql: "SELECT {level:UInt8}")
+    assert bad.error?
+    assert_includes bad.text, "can't run: {level:UInt8}: a Dashboard filter's type must be Array(String), String or Nullable(String)"
+
+    stub_sql_check(@shop, parameters: [ "level" ])
+    unknown = call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, sql: CHART_SQL)
+    assert unknown.error?
+    assert_includes unknown.text, "names level, which isn't one of this Dashboard's filters (it has none)"
+    assert_equal [ "query", 1 ], [ @chart.reload.language, @dashboard.charts.count ]
+  end
+
+  test "update_chart turns a Chart to SQL and back to a Query, and a new Project keeps a SQL Chart's SQL as it is" do
+    other = create(:project, organization: @acme, slug: "other")
+    stub_sql_check(@shop)
+    stub_sql_check(other)
+    stub_query_check(@shop)
+
+    assert_not call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, sql: "SELECT count() FROM logs").error?
+    assert_equal [ "sql", "SELECT count() FROM logs" ], [ @chart.reload.language, @chart.query ]
+    assert_not call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, project: "other").error?
+    assert_equal [ other, "SELECT count() FROM logs" ], [ @chart.reload.project, @chart.query ]
+
+    stub_query_check(other)
+    assert_not call_tool(:update_chart, user: @user, dashboard: @dashboard.id, chart: @chart.id, query: "summarize count()").error?
+    assert_equal [ "query", "summarize count()" ], [ @chart.reload.language, @chart.query ]
+  end
+
+  test "while SQL queries are off, add_chart and update_chart don't list sql, a SQL Chart isn't saved, and its data says so" do
+    sql_chart = create(:dashboard_chart, :sql, dashboard: @dashboard, project: @shop)
+    InstanceSetting.current.update!(sql_queries_enabled: false)
+
+    %w[add_chart update_chart].each do |name|
+      tool = listed_tools.find { |each| each[:name] == name }
+      assert_not_includes tool[:inputSchema][:properties].keys, :sql, name
+      assert_no_match(/\bsql\b/, tool[:description], name)
+    end
+    made = call_tool(:add_chart, user: @user, dashboard: @dashboard.id, project: "shop", title: "Off", sql: CHART_SQL)
+    assert made.error?
+    assert_includes made.text, LogMonitor::SQL_QUERIES_OFF
+    data = call_tool(:get_chart_data, user: @user, dashboard: @dashboard.id, chart: sql_chart.id)
+    assert data.error?
+    assert_includes data.text, "SQL queries are turned off on this instance"
+    assert_not_requested(:post, %r{/logs/sql})
+
+    InstanceSetting.current.update!(sql_queries_enabled: true)
+    add_chart = listed_tools.find { |each| each[:name] == "add_chart" }
+    assert_includes add_chart[:inputSchema][:properties].keys, :sql
+  end
+
   private
 
   # Answers EventStore's check of a Query on project, with mistakes or none,
@@ -618,6 +702,13 @@ class McpDashboardToolsTest < ActiveSupport::TestCase
   def stub_query_check(project, mistakes: [], parameters: [])
     stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/validate")
       .to_return(status: 200, body: { errors: mistakes, source: nil, chips: nil, stages: [], parameters: parameters }.to_json)
+  end
+
+  # Answers EventStore's run of a Chart's SQL on project over no time, with
+  # the names of the filters the SQL names.
+  def stub_sql_check(project, parameters: [])
+    stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/logs/sql")
+      .to_return(status: 200, body: { table: { columns: [], rows: [], truncated: false }, parameters: parameters }.to_json)
   end
 
   def holding_every_chart_run(left = ChartRuns.limit, &block)

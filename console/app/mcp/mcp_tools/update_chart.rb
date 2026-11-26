@@ -16,13 +16,18 @@ module McpTools
     takes_chart_fields
 
     def run
-      changes = given(CHART_FIELDS.keys)
+      changes = chart_fields
       if arguments.key?(:project)
         changes[:project] = project
-        changes[:query] = with_source(chart.query, project.slug) unless changes.key?(:query) || chart.query.nil?
+        # A SQL Chart's SQL reads the new Project's tables as it is.
+        changes[:query] = with_source(chart.query, project.slug) unless changes.key?(:query) || chart.query.nil? || chart.language_sql?
       end
       changes[:options] = chart.options.merge(changes[:options].stringify_keys) if changes[:options].is_a?(Hash)
-      raise ToolError, "Give at least one of project, #{CHART_FIELDS.keys.join(', ')} to change." if changes.empty?
+      if changes.empty?
+        listed = [ :project, *CHART_FIELDS.keys ]
+        listed.insert(listed.index(:query) + 1, :sql) if InstanceSetting.current.sql_queries_enabled?
+        raise ToolError, "Give at least one of #{listed.join(', ')} to change."
+      end
 
       chart.assign_attributes(changes)
       chart.y = dashboard.bottom(chart.section_id) if chart.section_id_changed? && !changes.key?(:y)

@@ -6,7 +6,7 @@ module McpTools
   class GetChartData < Base
     include DashboardTool
 
-    description "Runs a Chart's saved Query on its Project over a range and answers the table the Chart draws: " \
+    description "Runs a Chart's saved Query, or its SQL, on its Project over a range and answers the table the Chart draws: " \
                 "#{Table::SHAPE}. With filters, it runs as the Dashboard page does with those values picked in its filter bar; " \
                 "a filter not given runs with its default values, as when the page opens. " \
                 "The answer's filters are the values it ran with, {name: [values]}, and a filter not in it ran as All. " \
@@ -20,7 +20,7 @@ module McpTools
       additionalProperties: { type: %w[string array], items: { type: "string" } },
       description: "Values for the Dashboard's filters by name, as get_dashboard lists them: a string, or a list of strings " \
                    "for several, such as {\"service\": [\"api\", \"web\"], \"q\": \"timeout\"}. Where the Chart's Query names a " \
-                   "filter as $name, it runs with these values. A filter left out runs with its default values, as get_dashboard " \
+                   "filter as $name, or its SQL as {name:Type}, it runs with these values. A filter left out runs with its default values, as get_dashboard " \
                    "lists them, or as All when it has none; a filter given \"\" or [] runs as All, as if its comparisons weren't there.",
     }
 
@@ -29,7 +29,7 @@ module McpTools
 
       values = dashboard.filter_values(given_filters, defaults: true)
       answer = ChartRuns.run_chart(organization.projects.find(chart.project_id), chart.query,
-        from: time_range.from, to: time_range.to, parameters: values)
+        from: time_range.from, to: time_range.to, parameters: values, language: chart.language)
       table = answer["table"]
 
       json({ chart: chart.id, title: chart.title, viz: chart.viz,

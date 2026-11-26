@@ -19,10 +19,10 @@ module McpTools
     takes_chart_fields
 
     def run
-      fields = given(CHART_FIELDS.keys)
+      fields = chart_fields
       if fields[:viz] == "text"
         fields[:project] = project if arguments.key?(:project)
-      elsif %i[project title query].all? { |name| arguments[name].present? }
+      elsif %i[project title].all? { |name| arguments[name].present? } && fields[:query].present?
         fields[:project] = project
       else
         raise ToolError, "Give project, title and query for a Chart; only a Text block (viz text) goes without them."
