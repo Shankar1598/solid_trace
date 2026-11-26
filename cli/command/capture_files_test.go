@@ -420,3 +420,47 @@ func TestCaptureSkipsASymlinkUnderTheAgentSessionDirectory(t *testing.T) {
 		t.Errorf("the regular file did not upload; log: %s", w.captureLog())
 	}
 }
+
+func TestCaptureSendsAReviewRecordFileInTheSameHookCallAndARoundWrittenAgainAsANewVersion(t *testing.T) {
+	w := newWorld(t, acme)
+	s := w.capturedSession()
+	s.write("", "{\"main\":1}\n")
+	s.write("tool-results/t1.txt", "a tool output")
+	w.claudeSession = s.id
+	again := strings.Replace(finalRecord, `"outcome":"deferred"`, `"outcome":"fixed"`, 1)
+	final := func(record string) string {
+		w.t.Helper()
+		before := len(w.stdout.String())
+		if code := w.run("review", "final", writeText(t, "record.json", record)); code != 0 {
+			t.Fatalf("review final: exit %d: %s", code, w.stderr)
+		}
+		_, path, _ := strings.Cut(w.stdout.String()[before:], "kept in ")
+		path = strings.TrimSpace(path)
+		rel, err := filepath.Rel(w.projectsDir(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, rel, _ = strings.Cut(filepath.ToSlash(rel), "/")
+		return rel
+	}
+
+	path := final(finalRecord)
+	if !strings.HasPrefix(path, s.id+"/solidtrace/review-records/round-2-") {
+		t.Fatalf("Expected the record in the folder of the Agent session, got %s", path)
+	}
+	s.stop()
+	if f := w.agent.Stored(s.id, path); f == nil || string(f.Bytes) != finalRecord || f.Version != 1 || f.ContentHash != sha256Of(finalRecord) {
+		t.Fatalf("Expected the record at the first call, got %+v; log: %s", f, w.captureLog())
+	}
+	if got := s.stored(s.id + "/tool-results/t1.txt"); got != "" {
+		t.Errorf("Expected a new tool result to wait for the next call, got %q", got)
+	}
+
+	if final(again) != path {
+		t.Fatal("Expected the same round of the same PR in the same file")
+	}
+	s.stop()
+	if f := w.agent.Stored(s.id, path); f == nil || string(f.Bytes) != again || f.Version != 2 {
+		t.Errorf("Expected the round written again as version 2, got %+v", f)
+	}
+}

@@ -244,7 +244,9 @@ func nextLines(ctx context.Context, f *os.File, offset, end uint64) (body []byte
 
 // whole sends a file that is not .jsonl with its hash, when the server
 // does not have that hash, and the file did not change since the last
-// attempt or the Agent session ends. A new hash is a new version.
+// attempt or the Agent session ends. A file under <id>/solidtrace/ goes at
+// once: solidtrace writes it with a rename, so it is never half written. A
+// new hash is a new version.
 func (u *upload) whole(ctx context.Context, path string, previous, next state) error {
 	f, err := u.open(path)
 	if err != nil {
@@ -270,7 +272,8 @@ func (u *upload) whole(ctx context.Context, path string, previous, next state) e
 		return nil
 	}
 	settled := !u.settledBefore.IsZero() && info.ModTime().Before(u.settledBefore)
-	if previous.Seen[path] != seen && u.in.HookEventName != SessionEnd && !settled {
+	atOnce := strings.HasPrefix(path, u.in.SessionID+"/solidtrace/")
+	if previous.Seen[path] != seen && u.in.HookEventName != SessionEnd && !settled && !atOnce {
 		// It may still change: it goes at the next call if it does not.
 		u.pending = true
 		return nil

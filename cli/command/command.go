@@ -306,14 +306,21 @@ Usage:
       update block has update and findings with id and events only. A
       field that the format does not have is a problem. Exit 1 with each
       problem on stderr when the block is not valid.
-  solidtrace review final
-      Read the review record of a PR (version 2, as review record prints
-      it) as JSON on stdin, check it, and print its round and its counts
-      of findings and fixed findings on one line. open-pr and update-pr
-      end with this command in a heredoc: SolidTrace keeps the record
-      from the command in the Agent session that the capture uploads.
-      It sends nothing. Exit 1 when the JSON is not a record of version
-      2, or has a field that the record does not have.
+  solidtrace review final FILE [--session ID]
+      Check the review record of a PR in FILE (version 2, as review
+      record writes it), and write it to
+      <project>/<ID>/solidtrace/review-records/round-<n>-<h>.json, the
+      folder of the Agent session in CLAUDE_CONFIG_DIR (else ~/.claude),
+      with a rename. <h> is the first 12 hex characters of the SHA-256 of
+      the record's pr. The Agent session is --session, else
+      ` + ClaudeSessionEnv + `, which Claude Code sets. open-pr and update-pr
+      end with this command. The capture uploads the file with the Agent
+      session, and SolidTrace keeps the record from it. A round written
+      again replaces its file. It prints the round, the counts of
+      findings and fixed findings, and the path on one line. Exit 1 when
+      the file is not a record of version 2, has a field that the record
+      does not have, or is more than 32 MiB, or when the Agent session
+      has no transcript.
   solidtrace evidence add FILE... [--caption TEXT] [--session ID]
       Upload each FILE as an Evidence file of the Agent session: a PNG,
       JPEG, WebP or GIF image, or an MP4 or WebM video, of at most ` + evidenceLimit + `,

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -178,10 +178,12 @@ export function longSession(cwd: string, opts: {
 
 /**
  * An open-pr Agent session: the person starts the skill, whose text comes
- * in as a user line with its own example record. The agent sends the PR's
- * Review record to solidtrace review final in a heredoc, and the final
- * reply gives only the PR. With `inReply`, the session is one from before
- * that command: the final reply ends with the record in its block.
+ * in as a user line with its own example record. The agent runs
+ * solidtrace review final on the file of the PR's Review record, and the
+ * final reply gives only the PR. The test runs that command itself, so the
+ * record file is not in the fixture. With `inReply`, the session is one
+ * from before that command: the final reply ends with the record in its
+ * block.
  */
 export function openPrSession(cwd: string, opts: { exampleRecord: string; record: string; minutesAgo: number; inReply?: boolean }): FixtureSession {
   const id = randomUUID()
@@ -196,17 +198,11 @@ export function openPrSession(cwd: string, opts: { exampleRecord: string; record
   main.person(`Write the record:\n\n\`\`\`\nsolidtrace review final "$dir/record.json"\n\`\`\`\n\nAn example record:\n\n${opts.exampleRecord}`)
   const toolUseId = `toolu_${randomBytes(8).toString('hex')}`
   main.reply([{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: 'solidtrace review final "$dir/record.json"', description: 'Write the Review record' } }], usage)
-  const parsed = JSON.parse(opts.record) as { pr: string | null; round: number; findings: { outcome: string }[] }
+  const parsed = JSON.parse(opts.record) as { round: number; findings: { outcome: string }[] }
   const fixed = parsed.findings.filter(f => f.outcome === 'fixed').length
-  const file = `${id}/solidtrace/review-records/${recordFileName(parsed.round, parsed.pr)}`
-  main.toolResult(toolUseId, `record: round ${parsed.round}, ${parsed.findings.length} findings, ${fixed} fixed, kept in ${file}`)
+  main.toolResult(toolUseId, `record: round ${parsed.round}, ${parsed.findings.length} findings, ${fixed} fixed`)
   main.reply([{ type: 'text', text: 'Opened the PR.' }], usage)
-  return { id, files: { [`${id}.jsonl`]: main.text(), [file]: opts.record } }
-}
-
-/** The name of the file that solidtrace review final writes for a round of a PR. */
-export function recordFileName(round: number, pr: string | null): string {
-  return `round-${round}-${createHash('sha256').update(pr ?? '').digest('hex').slice(0, 12)}.json`
+  return { id, files: { [`${id}.jsonl`]: main.text() } }
 }
 
 /** Writes the session's files under the Claude project folder; answers the main transcript's path. */
