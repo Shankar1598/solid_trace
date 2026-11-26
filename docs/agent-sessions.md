@@ -177,6 +177,8 @@ Options:
 
 After a resume, capture works as before. It finds the start folder of the Agent session on this machine, also when the checkout is in another path. Capture does not send an Agent session that is not yours: `solidtrace capture status` shows it as "not yours". The fork that Claude Code made is your Agent session, and it uploads.
 
+Be careful with the Agent session of another person. The transcript of an Agent session of another member or of a Run is the text of that person or that Run. Claude Code reads it as its own history and continues from it. When you do not trust the Agent session, read it on its Agent session page first.
+
 ### The branch
 
 The command reads the git branch of the last turns of the Agent session. When the checkout is on another branch, the command tells you to run `git switch <branch>`. When the checkout does not have the branch, it tells you to run `git fetch` and then `git switch <branch>`. The command does not change the checkout.
