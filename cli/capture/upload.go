@@ -62,13 +62,22 @@ type upload struct {
 	forRun *RunUpload
 }
 
+// errNotYours is the answer of a person's upload of an Agent session that
+// SolidTrace has as another person's or a Run's.
+var errNotYours = errors.New("the Agent session is not yours")
+
 func (u *upload) run(ctx context.Context) error {
-	files, err := u.c.API.AgentSessionFiles(ctx, u.in.SessionID)
+	answer, err := u.c.API.AgentSession(ctx, u.in.SessionID)
 	if err != nil {
 		return fmt.Errorf("ask what the server has: %w", err)
 	}
+	// A transcript that resume downloaded can be another person's or a
+	// Run's. A person's capture sends none of its bytes.
+	if u.forRun == nil && answer.Session != nil && !answer.Session.Yours {
+		return errNotYours
+	}
 	u.server = map[string]agentapi.AgentSessionFile{}
-	for _, f := range files {
+	for _, f := range answer.Files {
 		u.server[f.Path] = f
 	}
 	paths, err := u.paths()

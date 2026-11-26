@@ -103,12 +103,6 @@ type AgentSessionFile struct {
 	ContentHash string `json:"content_hash"`
 }
 
-// AgentSessionFiles asks what the server has of an Agent session's files.
-func (c *Client) AgentSessionFiles(ctx context.Context, sessionID string) ([]AgentSessionFile, error) {
-	answer, err := c.AgentSession(ctx, sessionID)
-	return answer.Files, err
-}
-
 // AgentSessionAnswer is the server's answer about one Agent session.
 // Session is nil when the server does not have it in the token's
 // Organization.

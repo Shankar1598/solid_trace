@@ -20,6 +20,10 @@ const (
 	// NotInList: the Agent session's repository is not a captured
 	// repository, so no byte of it left the machine.
 	NotInList Status = "not in the list"
+	// NotYours: SolidTrace has the Agent session as another person's or a
+	// Run's (a transcript that resume downloaded), so no byte of it left
+	// the machine.
+	NotYours Status = "not yours"
 	// Failed: the last call stopped before it sent each byte.
 	Failed Status = "failed"
 )

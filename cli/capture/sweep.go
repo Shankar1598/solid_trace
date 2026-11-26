@@ -57,8 +57,7 @@ func (c *Capturer) Sweep(ctx context.Context, projectsDir string) error {
 			return ctx.Err()
 		}
 		r, seen := RecordOf(c.Dir, s.ID)
-		if seen && r.Status == Uploaded && !r.Pending &&
-			r.Fingerprint == fingerprint(filepath.Dir(s.TranscriptPath), s.ID) {
+		if seen && unchanged(r, s) {
 			continue
 		}
 		// The sweep has no hook cwd: when no line of the transcript has a
@@ -86,11 +85,18 @@ func (c *Capturer) markFailed(sessions []FoundSession, err error) {
 		if !ok || r.Status == NotInList || r.Repository == "" {
 			continue
 		}
-		if r.Status == Uploaded && !r.Pending && r.Fingerprint == fingerprint(filepath.Dir(s.TranscriptPath), s.ID) {
+		if unchanged(r, s) {
 			continue
 		}
 		c.recordFailed(s.ID, r, err)
 	}
+}
+
+// unchanged is true when the last call uploaded the Agent session or found
+// that it is not yours, and its files did not change since then.
+func unchanged(r Record, s FoundSession) bool {
+	return (r.Status == Uploaded && !r.Pending || r.Status == NotYours) &&
+		r.Fingerprint == fingerprint(filepath.Dir(s.TranscriptPath), s.ID)
 }
 
 // stopsTheSweep is true for a failure that the next Agent session would

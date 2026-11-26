@@ -2,6 +2,7 @@ package command_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -440,5 +441,30 @@ func TestResumeRefusesWhenThisMachineHasTheAgentSessionInAnotherFolder(t *testin
 				t.Errorf("downloads %d, starts %q: want none", w.downloads(), w.started)
 			}
 		})
+	}
+}
+
+func TestTheSweepSendsNothingOfAnotherPersonsResumedAgentSessionAndStatusSaysWhy(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	transcript := `{"type":"user","cwd":"` + repo + `","message":"Remember PELICAN"}` + "\n"
+	w.inSolidTrace(resumeID, fake.Session{AnotherPerson: true}, map[string]string{resumeID + ".jsonl": transcript})
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	w.startSession(t.TempDir())
+
+	for _, r := range w.agent.AllRequests() {
+		if r.SessionID == resumeID && r.Method != http.MethodGet {
+			t.Errorf("capture sent %s %v for another person's Agent session", r.Method, r.Query)
+		}
+	}
+	if line := w.statusOf(resumeID); !strings.Contains(line, "not yours") {
+		t.Errorf("status line %q, want not yours", line)
+	}
+	if out := w.status(); !strings.Contains(out, "1  not yours: you resumed another person's or a Run's") {
+		t.Errorf("capture status does not count it as not yours:\n%s", out)
 	}
 }
