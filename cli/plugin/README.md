@@ -9,12 +9,10 @@ The plugin holds no instance URL and no secret. It needs:
 1. The `solidtrace` CLI on your `PATH`, from the same SolidTrace release (its `install.sh`).
 2. `solidtrace login`, once. Console's capture setup page gives the full command.
 
-To install the plugin, download the release's `marketplace.json` into a `.claude-plugin` folder, and add it from there. Claude Code reads a `github.com` URL as a git repository, and it does not load a marketplace file that you add as a plain path. Console's capture setup page gives the commands with your instance's release:
+To install the plugin, add the marketplace at the repository root (`.claude-plugin/marketplace.json`) at your release's tag. Claude Code clones only the `.claude-plugin` and `cli/plugin` folders. Console's capture setup page gives the commands with your instance's release:
 
 ```bash
-mkdir -p ~/.local/share/solidtrace/.claude-plugin
-curl -fsSL -o ~/.local/share/solidtrace/.claude-plugin/marketplace.json https://github.com/Shankar1598/solid_trace/releases/download/<tag>/marketplace.json
-claude plugin marketplace add ~/.local/share/solidtrace/.claude-plugin/marketplace.json
+claude plugin marketplace add Shankar1598/solid_trace#<tag> --sparse .claude-plugin cli/plugin
 claude plugin install solidtrace@solidtrace
 claude plugin list
 ```

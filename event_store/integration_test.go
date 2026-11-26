@@ -378,18 +378,101 @@ func (s *flakyLogStore) Ping() error {
 	return s.ClickHouseLogs.Ping()
 }
 
+// consoleTestDir holds Console's test database: the files of config/
+// database.yml's test databases.
+const consoleTestDir = "../storage/sqlite/test"
+
+var consoleTestFiles = []string{"solid_trace.sqlite3", "message_queue.sqlite3"}
+
+// consoleTemplate is Console's test database as db:reset makes it, made once
+// for each run, in consoleTestDir/template.
+var consoleTemplate = sync.OnceValues(makeConsoleTemplate)
+
+// resetTestDB puts Console's test database as db:reset makes it in place of
+// the one the test before used.
 func resetTestDB(t *testing.T) {
+	t.Helper()
+	template, err := consoleTemplate()
+	if err != nil {
+		t.Fatalf("Failed to reset test DB: %v", err)
+	}
+	for _, name := range consoleTestFiles {
+		path := filepath.Join(consoleTestDir, name)
+		for _, file := range []string{path, path + "-wal", path + "-shm"} {
+			if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Failed to reset test DB: %v", err)
+			}
+		}
+		if err := copyFile(filepath.Join(template, name), path); err != nil {
+			t.Fatalf("Failed to reset test DB: %v", err)
+		}
+	}
+}
+
+// makeConsoleTemplate runs bin/rails db:reset (RAILS_ENV=test) and copies
+// each file it made into the template's directory, which it returns. Each
+// file is checkpointed first, so that it holds every row without its WAL.
+func makeConsoleTemplate() (string, error) {
 	cmd := exec.Command("bin/rails", "db:reset")
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatalf("Failed to locate test file path for Rails db reset")
+		return "", errors.New("can't locate the test file for Rails db:reset")
 	}
-	consoleDir := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "console"))
-	cmd.Dir = consoleDir
+	cmd.Dir = filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "console"))
 	cmd.Env = append(os.Environ(), "RAILS_ENV=test")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to reset test DB: %v\nOutput: %s", err, string(output))
+		return "", fmt.Errorf("db:reset: %v\nOutput: %s", err, output)
 	}
+	template := filepath.Join(consoleTestDir, "template")
+	if err := os.RemoveAll(template); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(template, 0o755); err != nil {
+		return "", err
+	}
+	for _, name := range consoleTestFiles {
+		path := filepath.Join(consoleTestDir, name)
+		db, err := sql.Open("sqlite3", path)
+		if err != nil {
+			return "", err
+		}
+		_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		db.Close()
+		if err != nil {
+			return "", fmt.Errorf("checkpointing %s: %w", path, err)
+		}
+		if err := copyFile(path, filepath.Join(template, name)); err != nil {
+			return "", err
+		}
+	}
+	return template, nil
+}
+
+func copyFile(from, to string) error {
+	data, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(to, data, 0o644)
+}
+
+// resetClickHouse gives the test the package's ClickHouse database migrated
+// and with no rows. A test on a storage policy of its own gets a new
+// database, as its tables are made on that policy.
+func resetClickHouse(t *testing.T, env *TestEnv) {
+	t.Helper()
+	if env.ClickHouseConfig.StoragePolicy != "" || env.BucketConfig != nil {
+		clickhousetest.Empty(t)
+		return
+	}
+	clickhousetest.Reset(t, func() error {
+		clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
+		if err != nil {
+			return err
+		}
+		clickHouse.Close()
+		return nil
+	})
 }
 
 // recordingEventWriter records the UUID of each Event written, because an
@@ -448,12 +531,11 @@ func setupTestEnv(t *testing.T) *TestEnv {
 func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 	logger.Init()
 	resetTestDB(t)
-	clickhousetest.Empty(t)
 
 	env := &TestEnv{
 		dir:              t.TempDir(),
-		SQLitePath:       "../storage/sqlite/test/solid_trace.sqlite3",
-		MQPath:           "../storage/sqlite/test/message_queue.sqlite3",
+		SQLitePath:       filepath.Join(consoleTestDir, "solid_trace.sqlite3"),
+		MQPath:           filepath.Join(consoleTestDir, "message_queue.sqlite3"),
 		BatchLock:        &sync.Mutex{},
 		EventWriter:      &recordingEventWriter{},
 		Clock:            clock.NewManual(testNow),
@@ -468,6 +550,7 @@ func newTestEnv(t *testing.T, configure func(*TestEnv)) *TestEnv {
 	if configure != nil {
 		configure(env)
 	}
+	resetClickHouse(t, env)
 	seedProjectKey(t, env.SQLitePath, 123, "test_public_key")
 	env.open(t)
 	return env

@@ -41,33 +41,31 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
     assert page["on"]
   end
 
-  # Claude Code clones a github.com URL as a git repository, and does not
-  # load a marketplace file added as a plain path: the commands download the
-  # file into a .claude-plugin folder and add it from there.
-  test "the plugin install commands download the release's marketplace file, add it and install solidtrace@solidtrace" do
+  # The marketplace file is in the repository: Claude Code clones only
+  # .claude-plugin and the plugin's folder, at the release's tag.
+  test "the plugin install commands add the repository's marketplace at the release's tag and install solidtrace@solidtrace" do
     sign_in_as(@member)
 
     page = setup_page
 
-    file = "~/.local/share/solidtrace/.claude-plugin/marketplace.json"
-    assert_equal [ "mkdir -p ~/.local/share/solidtrace/.claude-plugin",
-                   "curl -fsSL -o #{file} #{RELEASE}/marketplace.json",
-                   "claude plugin marketplace add #{file}",
+    assert_equal [ "claude plugin marketplace add Shankar1598/solid_trace#v0.19.0 --sparse .claude-plugin cli/plugin",
                    "claude plugin install solidtrace@solidtrace" ],
                  page["plugin_commands"]
     assert_equal "claude plugin list", page["plugin_check_command"]
   end
 
-  test "the managed-settings snippet registers the marketplace with a url source and force-enables the plugin" do
+  test "the managed-settings snippet registers the repository's marketplace at the release's tag and force-enables the plugin" do
     sign_in_as(@admin)
 
     snippet = JSON.parse(setup_page["managed_settings"])
 
-    assert_equal({ "extraKnownMarketplaces" => { "solidtrace" => { "source" => { "source" => "url", "url" => "#{RELEASE}/marketplace.json" } } },
+    assert_equal({ "extraKnownMarketplaces" => { "solidtrace" => { "source" => {
+                     "source" => "github", "repo" => "Shankar1598/solid_trace", "ref" => "v0.19.0",
+                     "sparsePaths" => [ ".claude-plugin", "cli/plugin" ] } } },
                    "enabledPlugins" => { "solidtrace@solidtrace" => true } }, snippet)
   end
 
-  test "an instance that runs no release gets the newest release's files" do
+  test "an instance that runs no release gets the newest release's CLI and the marketplace of main" do
     Rails.application.config.x.solidtrace_version = "dev"
     sign_in_as(@member)
 
@@ -75,7 +73,10 @@ class CaptureSetupsControllerTest < ActionDispatch::IntegrationTest
 
     latest = "https://github.com/Shankar1598/solid_trace/releases/latest/download"
     assert_equal "curl -fsSL #{latest}/install.sh | sh", page["install_command"]
-    assert_equal "#{latest}/marketplace.json", JSON.parse(page["managed_settings"]).dig("extraKnownMarketplaces", "solidtrace", "source", "url")
+    assert_equal "claude plugin marketplace add Shankar1598/solid_trace --sparse .claude-plugin cli/plugin", page["plugin_commands"].first
+    source = JSON.parse(page["managed_settings"]).dig("extraKnownMarketplaces", "solidtrace", "source")
+    assert_equal "Shankar1598/solid_trace", source["repo"]
+    assert_not source.key?("ref")
     assert page["version_note"].present?
   end
 

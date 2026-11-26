@@ -8,7 +8,8 @@
 // Its database, named after the worktree and the package's directory, is made
 // fresh before the tests and dropped after them, so packages and worktrees
 // can test at once. Config is how EventStore reaches it; Empty makes it fresh
-// again within the run, for a test that starts from nothing.
+// again within the run, for a test that starts from nothing. Reset gives each
+// test a migrated database with no rows, and runs the migrations only once.
 package clickhousetest
 
 import (
@@ -69,6 +70,7 @@ func Config() config.ClickHouse {
 // no SQL users.
 func Empty(t testing.TB) {
 	t.Helper()
+	schema = nil
 	if err := drop(Config().Database, true); err != nil {
 		t.Fatalf("Failed to empty the test database: %v", err)
 	}
@@ -86,29 +88,8 @@ func drop(db string, again bool) error {
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// Every name is plain: [a-z0-9_].
-	var statements []string
-	rows, err := conn.Query(ctx, `
-		SELECT concat('DROP ROW POLICY IF EXISTS ', short_name, ' ON ', database, '.', table)
-		FROM system.row_policies WHERE database = {db:String}
-		UNION ALL
-		SELECT concat('DROP USER IF EXISTS ', name) FROM system.users WHERE startsWith(name, {db:String} || '_sql_')
-		UNION ALL
-		SELECT concat('DROP SETTINGS PROFILE IF EXISTS ', name) FROM system.settings_profiles WHERE name = {db:String} || '_sql'`,
-		clickhouse.Named("db", db))
+	statements, err := dropSQLUsers(ctx, conn, db)
 	if err != nil {
-		return fmt.Errorf("listing %s's SQL users on %s: %w", db, devAddress, err)
-	}
-	for rows.Next() {
-		var statement string
-		if err := rows.Scan(&statement); err != nil {
-			rows.Close()
-			return err
-		}
-		statements = append(statements, statement)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	statements = append(statements, "DROP DATABASE IF EXISTS "+db+" SYNC")
@@ -121,6 +102,33 @@ func drop(db string, again bool) error {
 		}
 	}
 	return nil
+}
+
+// dropSQLUsers is the statements that drop db's SQL users, row policies and
+// settings profile.
+func dropSQLUsers(ctx context.Context, conn driver.Conn, db string) ([]string, error) {
+	// Every name is plain: [a-z0-9_].
+	var statements []string
+	rows, err := conn.Query(ctx, `
+		SELECT concat('DROP ROW POLICY IF EXISTS ', short_name, ' ON ', database, '.', table)
+		FROM system.row_policies WHERE database = {db:String}
+		UNION ALL
+		SELECT concat('DROP USER IF EXISTS ', name) FROM system.users WHERE startsWith(name, {db:String} || '_sql_')
+		UNION ALL
+		SELECT concat('DROP SETTINGS PROFILE IF EXISTS ', name) FROM system.settings_profiles WHERE name = {db:String} || '_sql'`,
+		clickhouse.Named("db", db))
+	if err != nil {
+		return nil, fmt.Errorf("listing %s's SQL users on %s: %w", db, devAddress, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var statement string
+		if err := rows.Scan(&statement); err != nil {
+			return nil, err
+		}
+		statements = append(statements, statement)
+	}
+	return statements, rows.Err()
 }
 
 // bin/clickhouse-dev's server and EventStore's user on it.

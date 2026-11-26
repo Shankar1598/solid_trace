@@ -84,7 +84,7 @@ export default function SettingsCaptureSetup(props: CaptureSetupProps) {
         description="The Claude Code plugin starts the upload when a turn or an Agent session ends. It holds no URL and no secret."
       >
         <p className="text-sm text-muted-foreground">
-          Claude Code cannot add the marketplace file from its GitHub URL, so the commands download it into a .claude-plugin folder first.
+          Claude Code adds the SolidTrace marketplace from GitHub at this instance's release, and clones only the folders of the marketplace and the plugin.
         </p>
         <Snippet code={props.plugin_commands.join('\n')} what="Plugin commands" />
         <p className="text-sm text-muted-foreground">
