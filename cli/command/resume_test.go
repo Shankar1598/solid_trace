@@ -194,10 +194,9 @@ func TestAResumeAfterACrashBeforeTheRenamesReplacesTheFolderThatTheCrashLeft(t *
 	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript})
 	// A crash after the download and before the renames left this.
 	left := filepath.Join(w.projectsDir(), ".solidtrace-resume-"+resumeID)
-	if err := os.MkdirAll(filepath.Join(left, "files", resumeID), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(left, "files", resumeID+".jsonl"), []byte(`{"half`), 0o600); err != nil {
+	// A folder where the archive has the transcript: only the clean-up of
+	// the left folder lets the download in.
+	if err := os.MkdirAll(filepath.Join(left, "files", resumeID+".jsonl", "half"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,8 +350,9 @@ func TestResumeTellsHowToGetTheBranchOfTheAgentSessionAndDoesNotChangeTheCheckou
 		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
 	}
 
-	want := "The Agent session worked on the branch feature/pelican, which this checkout does not have. To get it:\n" +
-		"  git fetch\n  git switch feature/pelican\nWork that was not pushed is not in SolidTrace.\n"
+	want := "The Agent session worked on the branch feature/pelican. This checkout does not have that branch. " +
+		"To get it, run these commands:\n  git fetch\n  git switch feature/pelican\n" +
+		"SolidTrace does not have work that was not pushed.\n"
 	if got := w.stderr.String(); got != want {
 		t.Errorf("stderr %q\n  want %q", got, want)
 	}
@@ -365,7 +365,7 @@ func TestResumeTellsHowToGetTheBranchOfTheAgentSessionAndDoesNotChangeTheCheckou
 	if code := w.resume(resumeID, "--print"); code != 0 {
 		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
 	}
-	if got := w.stderr.String(); !strings.Contains(got, "this checkout is on ") ||
+	if got := w.stderr.String(); !strings.Contains(got, "This checkout is on ") ||
 		!strings.Contains(got, "\n  git switch feature/pelican\n") || strings.Contains(got, "git fetch") {
 		t.Errorf("stderr %q, want the git switch line only", got)
 	}
@@ -466,5 +466,127 @@ func TestTheSweepSendsNothingOfAnotherPersonsResumedAgentSessionAndStatusSaysWhy
 	}
 	if out := w.status(); !strings.Contains(out, "1  not yours: you resumed another person's or a Run's") {
 		t.Errorf("capture status does not count it as not yours:\n%s", out)
+	}
+}
+
+func TestResumeStopsWhenSolidTraceIsNotReadyAfterTwoMinutes(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	w.checkout()
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript})
+	w.agent.Set(func(a *fake.AgentAPI) { a.DownloadNotReady = 1000 })
+
+	if code := w.resume(resumeID); code != 1 {
+		t.Fatalf("exit %d, want 1\nstderr: %s", code, w.stderr)
+	}
+
+	var waited time.Duration
+	for _, d := range w.slept {
+		waited += d
+	}
+	if waited < 2*time.Minute || waited > 2*time.Minute+5*time.Second {
+		t.Errorf("waited %s, want 2 minutes", waited)
+	}
+	want := "solidtrace resume: SolidTrace did not make the last uploads ready in 2 minutes. Run solidtrace resume " +
+		"again later.\n"
+	if got := w.stderr.String(); got != want {
+		t.Errorf("stderr %q\n  want %q", got, want)
+	}
+	if len(w.started) != 0 {
+		t.Errorf("started Claude Code: %q", w.started)
+	}
+}
+
+func TestResumeSkipsAFlaggedFileThatIsNotTheTranscriptAndRenamesTheRest(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	subagent := resumeID + "/subagents/agent-a1.jsonl"
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{
+		resumeID + ".jsonl":                resumeTranscript,
+		subagent:                           `{"type":"user"}` + "\n",
+		resumeID + "/tool-results/out.txt": "ok",
+	})
+	w.agent.Set(func(a *fake.AgentAPI) { a.Sessions[resumeID].Files[subagent].Partial = true })
+
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	want := "solidtrace resume: " + subagent + " is partial in SolidTrace. Resume does not download it.\n"
+	if got := w.stderr.String(); !strings.HasPrefix(got, want) {
+		t.Errorf("stderr %q\nwant it to start with %q", got, want)
+	}
+	project := w.projectFolder(repo)
+	if got := readFile(t, filepath.Join(project, resumeID+".jsonl")); got != resumeTranscript {
+		t.Errorf("transcript = %q", got)
+	}
+	if got := readFile(t, filepath.Join(project, resumeID, "tool-results", "out.txt")); got != "ok" {
+		t.Errorf("tool result = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(subagent))); !os.IsNotExist(err) {
+		t.Errorf("the partial file is in the project folder: %v", err)
+	}
+}
+
+func TestResumeRefusesADownloadWithNoTranscript(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{
+		resumeID + ".jsonl":                    resumeTranscript,
+		resumeID + "/subagents/agent-a1.jsonl": `{"type":"user"}` + "\n",
+	})
+	w.agent.Set(func(a *fake.AgentAPI) { a.DownloadLeavesOut = resumeID + ".jsonl" })
+
+	if code := w.resume(resumeID); code != 1 {
+		t.Fatalf("exit %d, want 1\nstderr: %s", code, w.stderr)
+	}
+
+	want := "solidtrace resume: the download of the Agent session " + resumeID + " has no transcript\n"
+	if got := w.stderr.String(); got != want {
+		t.Errorf("stderr %q\n  want %q", got, want)
+	}
+	if entries, _ := os.ReadDir(w.projectFolder(repo)); len(entries) != 0 {
+		t.Errorf("the project folder has %d entries, want none", len(entries))
+	}
+	if len(w.started) != 0 {
+		t.Errorf("started Claude Code: %q", w.started)
+	}
+}
+
+func TestResumePrintsNoBranchMessageWhenTheCheckoutIsOnTheBranchOfTheAgentSession(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	branch := strings.TrimSpace(w.git(repo, "branch", "--show-current"))
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{
+		resumeID + ".jsonl": `{"type":"user","gitBranch":"` + branch + `","message":"go on"}` + "\n"})
+
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	if got := w.stderr.String(); got != "" {
+		t.Errorf("stderr %q, want nothing on the branch %s", got, branch)
+	}
+}
+
+func TestResumeFindsTheBranchOfTheAgentSessionInARemote(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	w.git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	w.git(repo, "update-ref", "refs/remotes/origin/feature/pelican", "HEAD")
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript +
+		`{"type":"user","gitBranch":"feature/pelican","message":"go on"}` + "\n"})
+
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	if got := w.stderr.String(); !strings.Contains(got, "\n  git switch feature/pelican\n") ||
+		strings.Contains(got, "does not have") {
+		t.Errorf("stderr %q, want the git switch line only", got)
 	}
 }

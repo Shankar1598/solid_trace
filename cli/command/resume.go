@@ -338,8 +338,8 @@ func downloadSession(ctx context.Context, env Env, client *agentapi.Client, id, 
 			return fmt.Errorf("the transcript of the Agent session is %s in SolidTrace, so a resume is not "+
 				"promised. Start a new Agent session.", file.Flags)
 		case file.Flags != "":
-			fmt.Fprintf(env.Stderr, "solidtrace resume: %s is %s in SolidTrace: it is not downloaded\n", file.Name,
-				file.Flags)
+			fmt.Fprintf(env.Stderr, "solidtrace resume: %s is %s in SolidTrace. Resume does not download it.\n",
+				file.Name, file.Flags)
 		case file.Name != transcript:
 			names = append(names, file.Name)
 		}
@@ -369,7 +369,11 @@ func downloadWhenReady(ctx context.Context, env Env, client *agentapi.Client, id
 		download, err := client.DownloadAgentSession(ctx, hc, id)
 		var answer *agentapi.Error
 		switch {
-		case errors.As(err, &answer) && answer.Status == http.StatusServiceUnavailable && env.Now().Before(deadline):
+		case errors.As(err, &answer) && answer.Status == http.StatusServiceUnavailable && !env.Now().Before(deadline):
+			cancel()
+			return download, fmt.Errorf("SolidTrace did not make the last uploads ready in %d minutes. Run "+
+				"solidtrace resume again later.", int(resumeWait.Minutes()))
+		case errors.As(err, &answer) && answer.Status == http.StatusServiceUnavailable:
 			if err := env.Sleep(ctx, time.Duration(max(answer.RetryAfter, 1))*time.Second); err != nil {
 				cancel()
 				return download, err
@@ -377,8 +381,8 @@ func downloadWhenReady(ctx context.Context, env Env, client *agentapi.Client, id
 			continue
 		case errors.As(err, &answer) && answer.Status == http.StatusForbidden:
 			cancel()
-			return download, fmt.Errorf("SolidTrace refused the download (%s). A server older than this solidtrace "+
-				"refuses it: ask its operator to upgrade it", answer.Message)
+			return download, fmt.Errorf("SolidTrace refused the download (%s). An older server refuses downloads. "+
+				"Ask its operator to upgrade it.", answer.Message)
 		case err != nil:
 			cancel()
 			return download, fmt.Errorf("download the Agent session: %w", err)
@@ -454,12 +458,13 @@ func tellBranch(ctx context.Context, env Env, root, branch string) {
 		}
 	}
 	if has {
-		fmt.Fprintf(env.Stderr, "The Agent session worked on the branch %s, and this checkout is on %s. To work on "+
-			"its branch:\n  git switch %s\n", branch, cmp.Or(current, "no branch"), branch)
+		fmt.Fprintf(env.Stderr, "The Agent session worked on the branch %s. This checkout is on %s. To work on "+
+			"its branch, run this command:\n  git switch %s\n", branch, cmp.Or(current, "no branch"), branch)
 		return
 	}
-	fmt.Fprintf(env.Stderr, "The Agent session worked on the branch %s, which this checkout does not have. To get "+
-		"it:\n  git fetch\n  git switch %s\nWork that was not pushed is not in SolidTrace.\n", branch, branch)
+	fmt.Fprintf(env.Stderr, "The Agent session worked on the branch %s. This checkout does not have that branch. "+
+		"To get it, run these commands:\n  git fetch\n  git switch %s\nSolidTrace does not have work that was not "+
+		"pushed.\n", branch, branch)
 }
 
 // shellQuote is s as one word of a POSIX shell.

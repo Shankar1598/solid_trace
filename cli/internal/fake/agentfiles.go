@@ -77,7 +77,9 @@ func (f *AgentAPI) download(w http.ResponseWriter, r *http.Request) {
 	f.Downloads++
 	paths := make([]string, 0, len(s.Files))
 	for p := range s.Files {
-		paths = append(paths, p)
+		if p != f.DownloadLeavesOut {
+			paths = append(paths, p)
+		}
 	}
 	sort.Strings(paths)
 	w.Header().Set("Content-Type", "application/x-tar")

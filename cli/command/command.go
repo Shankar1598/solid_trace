@@ -82,20 +82,23 @@ Usage:
       Agent sessions on this machine as uploaded, not captured, failed or
       not checked yet. --all lists each Agent session.
   solidtrace resume SESSION_ID [--fork] [--print] [-- CLAUDE_ARGS...]
-      Continue an Agent session of your Organization on this machine, in a
-      checkout of its repository. It downloads the Agent session from
-      SolidTrace into Claude Code's project folder (nothing when this
-      machine has all of its transcript), and starts claude --resume in
-      the Agent session's folder. Your own Agent session continues with the
-      same id, and its uploads go on: close it on the other machine first.
+      Continue an Agent session of your Organization on this machine. Run
+      it in a checkout of the repository of the Agent session. It
+      downloads the Agent session from SolidTrace into the Claude Code
+      project folder. When this machine has all of the transcript, it
+      downloads nothing. Then it starts claude --resume in the folder of
+      the Agent session. Your own Agent session continues with the same
+      id, and its uploads continue. Close it on the other machine first.
       Another person's Agent session, a Run's, or yours with --fork
-      continues as a new Agent session of yours (--fork-session), and the
-      first one does not change. When the checkout is not on the Agent
-      session's branch, it tells you how to get the branch; work that was
-      not pushed is not in SolidTrace. Arguments after -- go to claude.
-      --print prints the command and its folder, and does not start Claude
-      Code. It needs a sign-in with sessions:download: an older sign-in
-      must run solidtrace login again.
+      continues as a new Agent session of yours (--fork-session). The
+      first Agent session does not change. When this machine has the
+      Agent session in another folder, resume tells you to continue it
+      there. When the checkout is not on the branch of the Agent session,
+      resume tells you how to get the branch. SolidTrace does not have
+      work that was not pushed. Arguments after -- go to claude. --print
+      prints the command and its folder, and does not start Claude Code.
+      Resume needs a sign-in with sessions:download. With an older
+      sign-in, run solidtrace login again.
   solidtrace start [--project PROJECT] [--branch BRANCH] [--dispatcher URL] PROMPT
       Start a Run: an agent works on PROMPT with the Factory settings of
       PROJECT. With no --project, the Project is the one whose Factory

@@ -483,6 +483,8 @@ type AgentAPI struct {
 	// DownloadNotReady is how many downloads answer 503 with Retry-After
 	// before one gives the archive.
 	DownloadNotReady int
+	// DownloadLeavesOut is a path that the download does not give.
+	DownloadLeavesOut string
 	// Downloads counts the downloads that gave the archive.
 	Downloads int
 
