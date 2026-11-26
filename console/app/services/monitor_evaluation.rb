@@ -38,14 +38,14 @@
 # runs the Monitor again.
 #
 # A Threshold run is held while the Project's Logs are not complete (ADR
-# 0027): each of its reads sends hold_if_incomplete, and when EventStore
-# answers that Log processing is behind or that it holds after an ingest
-# gap, the run compares nothing. It records a held run with the reason,
-# changes no state, sends nothing, and the next tick runs the Monitor again,
+# 0027). Each of its reads sends hold_if_incomplete. EventStore can answer
+# that Log processing is behind, or that it holds after an ingest gap. Then
+# the run compares nothing. It records a held run with the reason. It
+# changes no state and sends nothing. The next tick runs the Monitor again,
 # as after an error. held_since is when the Monitor's runs started to be
-# held, and any run that is not held clears it. A hold never compares on
-# partial data, however long it lasts. A Match run reads in Log batch order
-# from its cursor, so a late Log is read when it comes, and it never holds.
+# held. Any run that is not held clears it. A hold never compares on
+# partial data, however long it lasts. A Match run never holds. It reads
+# each Log in the first run after Log ingest stores the Log's batch.
 #
 # One run at a time per Monitor, whether the scheduler (MonitorEvaluationJob)
 # or Run now started it: a run takes the Monitor's run_started_at as a lease
@@ -102,7 +102,7 @@ class MonitorEvaluation
   # compare and for SQL while SQL queries are off (SQL_OFF), and EventStore's
   # errors. A SQL Monitor's preview reads as its run does, so comparing the
   # change, it too reads two times, at most 10 s each.
-  # The preview is not held: a member sees what the Logs give now.
+  # The preview is not held. A member sees what the Logs give now.
   def self.preview(monitor, now)
     new(monitor, now, hold_if_incomplete: false).preview
   end
@@ -450,26 +450,7 @@ class MonitorEvaluation
   end
 
   def held(incomplete)
-    record { finish(held: held_text(incomplete)) }
-  end
-
-  # Why the run is held, as the Monitor's page and MCP show it.
-  def held_text(incomplete)
-    case incomplete.reason
-    when EventStore::Incomplete::LOG_PROCESSING_BEHIND
-      "Waiting for Log processing: it is #{minutes_text(incomplete.behind_seconds.to_i)} behind."
-    when EventStore::Incomplete::INGEST_GAP
-      left = incomplete.held_until && ": #{minutes_text(incomplete.held_until - @now)} more"
-      "Waiting for the senders' Logs after EventStore's restart#{left}."
-    else
-      "Waiting until EventStore has all the Project's Logs (#{incomplete.reason})."
-    end
-  end
-
-  # seconds in whole minutes, rounded up, at least 1: "1 minute", "5 minutes".
-  def minutes_text(seconds)
-    minutes = [ (seconds / 60.0).ceil, 1 ].max
-    "#{minutes} #{'minute'.pluralize(minutes)}"
+    record { finish(held_reason: incomplete.text(@now)) }
   end
 
   # Writes what the run found in one transaction, if the Monitor is still
@@ -494,15 +475,16 @@ class MonitorEvaluation
     run
   end
 
-  # Records the run. An ok run is next due after the Monitor's interval; one
-  # with an error, or held with why, at the next tick.
-  def finish(error: nil, held: nil, firing: nil, matched: nil, logs_skipped: false)
-    status = if error then "error" elsif held then "held" else "ok" end
+  # Records the run. An ok run is next due after the Monitor's interval. A
+  # run with an error, or a held run with its reason, is due at the next
+  # tick.
+  def finish(error: nil, held_reason: nil, firing: nil, matched: nil, logs_skipped: false)
+    status = if error then "error" elsif held_reason then "held" else "ok" end
     next_run_in = status == "ok" ? @monitor.interval_minutes.minutes : 1.minute
     @monitor.update_columns(last_run_at: @now, last_error: error, next_run_at: @now + next_run_in,
-      held_since: held ? (@monitor.held_since || @now) : nil)
+      held_since: held_reason ? (@monitor.held_since || @now) : nil)
     @monitor.runs.create!(
-      ran_at: @now, status: status, error: error, held_reason: held, firing: firing, matched: matched,
+      ran_at: @now, status: status, error: error, held_reason: held_reason, firing: firing, matched: matched,
       logs_skipped: logs_skipped,
       elapsed_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - @started) * 1000).round
     )

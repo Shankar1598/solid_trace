@@ -347,6 +347,22 @@ class LogMonitorTest < ActiveSupport::TestCase
     assert_not monitor.due?(now)
   end
 
+  test "turning a Monitor off or on forgets when its runs started to be held; an edit keeps it" do
+    held_since = Time.utc(2026, 10, 17, 9, 51)
+    monitor = create(:monitor, project: @project)
+    monitor.update_columns(held_since: held_since)
+
+    monitor.update!(name: "Renamed")
+    assert_equal held_since, monitor.reload.held_since
+
+    monitor.update!(disabled_at: Time.current)
+    assert_nil monitor.reload.held_since
+
+    monitor.update_columns(held_since: held_since)
+    monitor.update!(disabled_at: nil)
+    assert_nil monitor.reload.held_since
+  end
+
   # ---------------------------------------------------------------------------
   # Deleting
   # ---------------------------------------------------------------------------

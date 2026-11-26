@@ -12,7 +12,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { valueText } from '@/lib/charts/axis'
 import { providerName } from '@/lib/integrations'
-import { LANGUAGE_NAMES, changeText, groupLabel, minutesText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
+import { LANGUAGE_NAMES, changeText, groupLabel, holdOf, minutesText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
 import { cn } from '@/lib/utils'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
@@ -32,7 +32,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
   const [deleting, setDeleting] = useState(false)
   const states = monitor.states ?? []
   const runs = monitor.runs ?? []
-  const heldReason = runs[0]?.status === 'held' ? runs[0].held_reason : null
+  const hold = holdOf(monitor)
   const integrations = monitor.integrations ?? []
   const comparesChange = monitor.kind === 'threshold' && monitor.compare === 'change'
 
@@ -80,9 +80,9 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
             The last run failed: {monitor.last_error}
           </div>
         )}
-        {monitor.held_since && (
+        {hold && (
           <div role="status" className="border bg-muted p-3 text-sm" data-monitor-held>
-            Held since {format(new Date(monitor.held_since), 'p')}: {heldReason ?? 'the Logs are not complete.'}{' '}
+            Held since {format(new Date(hold.since), 'p')}: {hold.reason}{' '}
             <span className="text-muted-foreground">Runs compare nothing and send nothing until the Logs are complete. It runs again each minute.</span>
           </div>
         )}

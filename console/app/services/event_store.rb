@@ -52,12 +52,13 @@ class EventStore
   end
 
   # EventStore did not run a Query or SQL sent with hold_if_incomplete,
-  # because the Project's Logs in ClickHouse are not complete: a 200 with
-  # "incomplete" in place of a table. reason is "log_processing_behind",
-  # with behind_seconds, the age of the Project's oldest Log batch that
-  # waits for Log processing, or "ingest_gap", with held_until, when
-  # EventStore stops holding for the Logs that senders kept while its
-  # ingest was down.
+  # because the Project's Logs in ClickHouse are not complete. Its answer is
+  # a 200 with "incomplete" in place of a table. reason is
+  # "log_processing_behind" or "ingest_gap". With log_processing_behind,
+  # behind_seconds is the age of the Project's oldest Log batch that waits
+  # for Log processing. With ingest_gap, held_until is when EventStore stops
+  # its hold. During the hold, the senders send the Logs that they kept
+  # while its ingest was down.
   class Incomplete < StandardError
     LOG_PROCESSING_BEHIND = "log_processing_behind"
     INGEST_GAP = "ingest_gap"
@@ -69,6 +70,27 @@ class EventStore
       @behind_seconds = facts["behind_seconds"]&.to_i
       @held_until = facts["until"].presence && Time.iso8601(facts["until"])
       super("The Project's Logs are not complete: #{facts.to_json}")
+    end
+
+    # Why a run is held at now, as the Monitor's page and MCP show it.
+    def text(now)
+      case reason
+      when LOG_PROCESSING_BEHIND
+        "Waiting for Log processing: it is #{minutes_text(behind_seconds.to_i)} behind."
+      when INGEST_GAP
+        left = held_until && ": #{minutes_text(held_until - now)} more"
+        "Waiting for the senders' Logs after EventStore's restart#{left}."
+      else
+        "Waiting until EventStore has all the Project's Logs (#{reason})."
+      end
+    end
+
+    private
+
+    # seconds in whole minutes, rounded up, at least 1: "1 minute", "5 minutes".
+    def minutes_text(seconds)
+      minutes = [ (seconds / 60.0).ceil, 1 ].max
+      "#{minutes} #{'minute'.pluralize(minutes)}"
     end
   end
 

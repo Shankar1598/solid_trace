@@ -98,7 +98,7 @@ class MonitorsController < ApplicationController
     elsif run.status_error?
       redirect_to monitor_page(@monitor), alert: "The run failed: #{run.error}"
     elsif run.status_held?
-      redirect_to monitor_page(@monitor), notice: "The run is held, so it compared nothing: #{run.held_reason}"
+      redirect_to monitor_page(@monitor), notice: run.held_notice
     else
       redirect_to monitor_page(@monitor), notice: "Ran the Monitor: #{run.found}."
     end

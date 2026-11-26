@@ -285,10 +285,34 @@ export function groupLabel(group: Record<string, unknown>): string {
   return entries.map(([name, value]) => `${name}: ${typeof value === 'string' ? value : JSON.stringify(value)}`).join(', ')
 }
 
+/** Why a held run compared nothing. Console gives the reason with each held run. */
+function heldReason(run: Pick<MonitorRun, 'status' | 'held_reason'> | undefined): string {
+  return (run?.status === 'held' && run.held_reason) || 'the Logs are not complete.'
+}
+
+/** Since when and why the runs of a Monitor that is on are held, for its status line. null while they are not held. */
+export function holdOf(
+  monitor: Pick<Monitor, 'enabled' | 'held_since'> & { runs?: Pick<MonitorRun, 'status' | 'held_reason'>[] },
+): { since: string; reason: string } | null {
+  if (!monitor.enabled || !monitor.held_since) return null
+  return { since: monitor.held_since, reason: heldReason(monitor.runs?.[0]) }
+}
+
+/**
+ * The note beside a firing Monitor's status: its last run failed, or its runs are held.
+ * A Monitor that is not firing shows these as its status.
+ */
+export function firingNote(monitor: Pick<Monitor, 'status' | 'last_error' | 'held_since'>): string | null {
+  if (monitor.status !== 'firing') return null
+  if (monitor.last_error) return 'Last run failed'
+  if (monitor.held_since) return 'Runs held'
+  return null
+}
+
 /** What a run found, why it failed, or why it was held, for the run history. */
 export function runText(run: Pick<MonitorRun, 'status' | 'error' | 'held_reason' | 'firing' | 'matched' | 'logs_skipped'>, kind: MonitorKind): string {
   if (run.status === 'error') return run.error ?? 'The run failed.'
-  if (run.status === 'held') return `Held: ${run.held_reason ?? 'the Logs were not complete.'}`
+  if (run.status === 'held') return `Held: ${heldReason(run)}`
   let text: string
   if (kind === 'match') {
     const matched = run.matched ?? 0

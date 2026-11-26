@@ -16,9 +16,10 @@
 # - A Match monitor reads the Logs ingested since its last run, from
 #   ingest_cursor, and sends one message when any match.
 #
-# held_since is when a Threshold monitor's runs started to be held, while
-# EventStore said that the Project's Logs were not complete; nil while its
-# runs are not held.
+# held_since is when a Threshold monitor's runs started to be held. They
+# are held while EventStore says that the Project's Logs are not complete.
+# It is nil while its runs are not held. Turning the Monitor off or on
+# clears it.
 #
 # MonitorEvaluation runs it; any member of the Organization can manage it.
 class LogMonitor < ApplicationRecord
@@ -96,6 +97,7 @@ class LogMonitor < ApplicationRecord
   validate :query_runs_as_its_kind, if: :query_check_needed?
 
   before_save :run_at_the_next_tick, if: :schedule_changed?
+  before_save :forget_the_hold, if: :will_save_change_to_disabled_at?
   after_update :resolve_groups_on_change, if: :stopped_checking_the_threshold?
   # Before the dependent deletes, which take its states and Integrations.
   before_destroy :resolve_groups_on_delete, prepend: true
@@ -367,6 +369,12 @@ class LogMonitor < ApplicationRecord
 
   def run_at_the_next_tick
     self.next_run_at = nil
+  end
+
+  # A Monitor that is off does not run, so no run would clear its hold. The
+  # first held run after it is turned on starts a new hold.
+  def forget_the_hold
+    self.held_since = nil
   end
 
   # A Match monitor, or a Threshold monitor comparing the value, has no

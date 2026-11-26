@@ -43,7 +43,7 @@ module McpTools
       ran = MonitorEvaluation.run(monitor, Time.current)
       raise ToolError, "The Monitor is running now: get_monitor shows that run when it ends." if ran.nil?
       raise ToolError, "The run failed: #{ran.error}" if ran.status_error?
-      return text("The run is held, so it compared nothing: #{ran.held_reason}", link: links.monitor(monitor)) if ran.status_held?
+      return text(ran.held_notice, link: links.monitor(monitor)) if ran.status_held?
 
       text([ "Ran the Monitor: #{ran.found}.", *changes ].join("\n"), link: links.monitor(monitor))
     end

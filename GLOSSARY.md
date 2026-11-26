@@ -181,11 +181,11 @@ The two states of a **Threshold monitor**'s group: firing while its number passe
 _Avoid_: alerting, triggered, breached, open
 
 **Hold**:
-What a **Threshold monitor**'s run does when EventStore says that the **Project**'s **Logs** are not complete: it compares nothing, changes no group's state, sends no **Notification**, and runs again at the next tick. The Logs are not complete while **Log processing** is behind, which is when the Project's oldest **Log batch** that waits for it is more than 60 seconds old, and during the hold after an **Ingest gap**. Then Logs of the Monitor's range are still in Pebble or still with their senders, so a count would read low and no data would look like a fact. A hold never compares on partial data, however long it lasts. A **Match monitor** never holds: it reads in Log batch order, so a late Log is read when it comes.
+What a **Threshold monitor**'s run does while EventStore says that the **Project**'s **Logs** are not complete. The run compares nothing. It changes no group's state and sends no **Notification**. The Monitor runs again at the next tick. The Logs are not complete while **Log processing** is behind, and during the hold after an **Ingest gap**. Log processing is behind when the Project's oldest **Log batch** that waits for it is more than 60 seconds old. Then some Logs of the Monitor's range are still in Pebble or still with their senders. A count would read low, and no data would look like a fact. A hold never compares on partial data, however long it lasts. A **Match monitor** never holds. It reads each Log in the first run after **Log ingest** stores the Log's batch.
 _Avoid_: pause, skip, suppressed run
 
 **Ingest gap**:
-The time that EventStore's Log ingest was down before its last start, measured from the last heartbeat it wrote while ingest was open. After a gap of more than 15 seconds, EventStore holds **Threshold monitor** runs for the gap's length, at least 1 minute and at most 10 minutes from when ingest opened again, so that the senders can send the **Logs** that they kept. A first start, with no heartbeat, has no gap.
+The time that EventStore's **Log ingest** was down before its last start. EventStore measures it from the last heartbeat that it wrote while ingest was open. After a gap of more than 15 seconds, EventStore holds **Threshold monitor** runs for the gap's length. The hold is at least 1 minute and at most 10 minutes from when ingest opened again. In this time, the senders can send the **Logs** that they kept. A first start has no heartbeat, so it has no gap.
 _Avoid_: downtime, outage window, restart gap
 
 **Log file store**:
@@ -406,7 +406,7 @@ _Avoid_: command, mention, slash command
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
 - A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
-- A **Threshold monitor**'s run is a **Hold** while **Log processing** is behind or after an **Ingest gap**, and its groups stay as they were
+- A **Threshold monitor**'s run is a **Hold** while **Log processing** is behind or after an **Ingest gap**. Its groups stay as they were
 - The **Bin cache** keeps a **Chart**'s bins of hours that have ended, until **Log processing** or **Retention** changes their Logs
 - The **Log file store** holds a **Project**'s **Logs** stored before the switch to ClickHouse, read with those stored since until **Retention** deletes them
 - An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password

@@ -413,6 +413,18 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "held", nil, "Waiting for Log processing: it is 5 minutes behind." ], run.values_at("status", "error", "held_reason")
   end
 
+  test "a held Monitor turned off shows as off on its page, with no held_since" do
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+      .to_return(status: 200, body: { incomplete: { reason: "log_processing_behind", behind_seconds: 300 } }.to_json)
+    post run_monitor_url(@monitor, org_slug: @organization.slug)
+    assert @monitor.reload.held_since
+
+    patch disable_monitor_url(@monitor, org_slug: @organization.slug)
+
+    monitor = inertia_page(monitor_url(@monitor, org_slug: @organization.slug), "Monitors/Show")["monitor"]
+    assert_equal [ "disabled", nil ], monitor.values_at("status", "held_since")
+  end
+
   test "a firing Monitor whose runs are held stays firing on its page, with held_since" do
     @monitor.states.create!(group_key: "", status: "firing", since: Time.utc(2026, 10, 3, 9), last_value: 14)
     @monitor.update_columns(held_since: Time.utc(2026, 10, 3, 9, 51))

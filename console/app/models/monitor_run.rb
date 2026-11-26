@@ -29,6 +29,11 @@ class MonitorRun < ApplicationRecord
     end
   end
 
+  # What Run now says of a held run.
+  def held_notice
+    "The run is held, so it compared nothing: #{held_reason}"
+  end
+
   # Deletes each Monitor's runs older than its newest KEEP.
   def self.prune
     ranked = select(:id, "ROW_NUMBER() OVER (PARTITION BY monitor_id ORDER BY ran_at DESC, id DESC) AS position")

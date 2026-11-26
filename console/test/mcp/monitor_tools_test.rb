@@ -452,9 +452,17 @@ class McpMonitorToolsTest < ActiveSupport::TestCase
     assert_equal [ "held", monitor["held_since"] ], listed.values_at("status", "held_since")
   end
 
+  test "list_monitors and get_monitor give a Monitor that is off as disabled, not held, also with held_since set" do
+    @monitor.update_columns(held_since: Time.utc(2026, 10, 3, 9, 51), disabled_at: Time.current)
+
+    listed = call_tool(:list_monitors, user: @user).json["monitors"].find { |m| m["id"] == @monitor.id }
+    assert_equal "disabled", listed["status"]
+    assert_equal "disabled", call_tool(:get_monitor, user: @user, monitor: @monitor.id).json["status"]
+  end
+
   # SQL
 
-  SQL ="SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service"
+  SQL = "SELECT service, count() AS errors FROM logs WHERE level = 'error' GROUP BY service"
 
   test "create_monitor makes a SQL Threshold monitor once EventStore has dry-run its SQL, and get_monitor and list_monitors give its language" do
     stub_monitor_sql_check(@shop)
