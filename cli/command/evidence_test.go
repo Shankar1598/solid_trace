@@ -31,7 +31,7 @@ func (w *world) lines() []string {
 	return strings.Split(strings.TrimSpace(w.stdout.String()), "\n")
 }
 
-var evidenceLine = regexp.MustCompile(`^https://console\.example\.com/acme/evidence/[0-9a-f]{32} (\S+) (.+)$`)
+var evidenceLine = regexp.MustCompile(`^https://console\.example\.com/acme/evidence/(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) ((?:image|video)/[a-z0-9]+) ([0-9]+ (?:B|KB)|[0-9]+\.[0-9] MB)$`)
 
 func TestEvidenceAddUploadsEachFileToTheSessionOfClaudeCodeAndPrintsItsLink(t *testing.T) {
 	w := newWorld(t, acme)

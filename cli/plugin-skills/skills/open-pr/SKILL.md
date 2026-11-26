@@ -70,12 +70,12 @@ The title is one line that says what the change does. The body is a briefing tha
 
 In every section, do not quote the person's messages from the sessions: they are private, and can hold host names or secrets. Say what they asked for or decided in your own short words.
 
-**The Evidence files.** Upload the screenshots and videos that prove this PR to SolidTrace, for example the `evidence/*.png` files and the `--video` `.webm` files of a verify-solidtrace run. A reviewer who is a member of the Organization opens each link in Console after sign-in. Upload only the files that prove this PR. Look at each file before you upload it: each member of the Organization can see it, so upload only a file that shows no secret, token, password or private data. You decide which files are safe, and no person confirms each file. With no such file, upload nothing.
+**The Evidence files.** Upload the screenshots and videos that prove this PR to SolidTrace, for example the files of a verify-solidtrace run. They are in the run directory that its `up` command printed as its last line: each screenshot at `<run>/evidence/<name>.png`, and each video of a `flow --video` at `<run>/evidence/flow-<HHMMSS>/playwright/<test>/*.webm`. A reviewer who is a member of the Organization opens each link in Console after sign-in. Upload only the files that prove this PR. Look at each file before you upload it: each member of the Organization can see it, so upload only a file that shows no secret, token, password or private data. You decide which files are safe, and no person confirms each file. With no such file, upload nothing.
 
 Upload each file in its own call, with a caption that says what the file proves, in at most 200 characters:
 
 ```bash
-solidtrace evidence add "evidence/review-records-list.png" --caption "The Review records list, newest PR first"
+solidtrace evidence add ~/.cache/solid-trace/verify/runs/20261122T085753Z-s1/evidence/review-records-list.png --caption "The Review records list, newest PR first"
 ```
 
 For each file, the command prints one line: the link, the type and the size, for example `https://console.example.com/acme/evidence/7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f image/png 84 KB`. Write one Markdown link in Evidence for each line: `[Screenshot: <caption>](<link>)` for an `image/` type, and `[Video: <caption>](<link>)` for a `video/` type.

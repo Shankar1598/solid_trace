@@ -9,19 +9,21 @@ import (
 	"testing"
 )
 
-const openPRSkill = "../plugin-skills/skills/open-pr/SKILL.md"
+const (
+	openPRSkill   = "../plugin-skills/skills/open-pr/SKILL.md"
+	updatePRSkill = "../plugin-skills/skills/update-pr/SKILL.md"
+)
 
 var (
-	// evidenceOutput is the line of one uploaded file, as the skill
-	// tells the agent to read it: the link, the type and the size.
-	evidenceOutput = regexp.MustCompile(`^https?://\S+/evidence/[0-9a-f-]{32,36} (image|video)/[a-z0-9]+ [0-9.]+ (B|KB|MB)$`)
-	skillExample   = regexp.MustCompile("for example `([^`]+)`")
-	oldServer      = regexp.MustCompile("an old SolidTrace server says `([^`]+)`")
+	skillExample = regexp.MustCompile("for example `([^`]+)`")
+	oldServer    = regexp.MustCompile("an old SolidTrace server says `([^`]+)`")
+	evidencePart = regexp.MustCompile("`open-pr/SKILL\\.md` › Write the PR › \\*\\*([^*]+)\\*\\*")
 )
 
 // skillEvidenceCommand is the words of the one `solidtrace evidence add`
-// line in a ```bash block of the open-pr skill, and the skill's text.
-func skillEvidenceCommand(t *testing.T) ([]string, string) {
+// line in a ```bash block of the open-pr skill, with ~ as home, and the
+// skill's text.
+func skillEvidenceCommand(t *testing.T, home string) ([]string, string) {
 	t.Helper()
 	data, err := os.ReadFile(openPRSkill)
 	if err != nil {
@@ -41,14 +43,15 @@ func skillEvidenceCommand(t *testing.T) ([]string, string) {
 		}
 	}
 	if len(commands) != 1 {
-		t.Fatalf("%s has %d `solidtrace evidence add` lines in a bash block, want 1", openPRSkill, len(commands))
+		t.Fatalf("%s has %d lines that start `solidtrace evidence add ` in a ```bash block, want 1: the test runs that line", openPRSkill, len(commands))
 	}
-	return shellWords(t, commands[0]), text
+	return shellWords(t, commands[0], home), text
 }
 
 // shellWords splits a command line as the shell does, for words with no
-// expansion: plain words, "double-quoted" words and 'single-quoted' words.
-func shellWords(t *testing.T, line string) []string {
+// expansion other than a ~ at the start: plain words, "double-quoted"
+// words and 'single-quoted' words.
+func shellWords(t *testing.T, line, home string) []string {
 	t.Helper()
 	var words []string
 	var word strings.Builder
@@ -71,6 +74,9 @@ func shellWords(t *testing.T, line string) []string {
 			}
 			word.WriteString(quoted)
 			inWord, i = true, i+1+end
+		case c == '~' && !inWord && strings.HasPrefix(line[i+1:], "/"):
+			word.WriteString(home)
+			inWord = true
 		case strings.IndexByte("$`\\|&;<>(){}*?", c) >= 0:
 			t.Fatalf("the command %q has %q, which the shell changes", line, c)
 		default:
@@ -84,8 +90,8 @@ func shellWords(t *testing.T, line string) []string {
 	return words
 }
 
-// writeNamedFiles writes a PNG in the current folder at each word that is
-// the path of an image, as the files of a verify-solidtrace run.
+// writeNamedFiles writes a PNG at each word that is the path of an image,
+// as the files of a verify-solidtrace run.
 func writeNamedFiles(t *testing.T, words []string) {
 	t.Helper()
 	for _, word := range words {
@@ -102,7 +108,7 @@ func writeNamedFiles(t *testing.T, words []string) {
 }
 
 func TestTheEvidenceCommandOfTheOpenPRSkillUploadsAndPrintsTheLineThatTheSkillReads(t *testing.T) {
-	words, text := skillEvidenceCommand(t)
+	words, text := skillEvidenceCommand(t, t.TempDir())
 	if !slices.Equal(words[:3], []string{"solidtrace", "evidence", "add"}) {
 		t.Fatalf("the command is %q, want solidtrace evidence add", words)
 	}
@@ -117,7 +123,7 @@ func TestTheEvidenceCommandOfTheOpenPRSkillUploadsAndPrintsTheLineThatTheSkillRe
 	if code := w.run(words[1:]...); code != 0 {
 		t.Fatalf("the skill's command %q: exit %d\nstderr: %s", words, code, w.stderr)
 	}
-	if lines := w.lines(); len(lines) != 1 || !evidenceOutput.MatchString(lines[0]) {
+	if lines := w.lines(); len(lines) != 1 || !evidenceLine.MatchString(lines[0]) {
 		t.Errorf("stdout: %q, want one line with the link, the type and the size", lines)
 	}
 	caption := words[slices.Index(words, "--caption")+1]
@@ -130,16 +136,16 @@ func TestTheEvidenceCommandOfTheOpenPRSkillUploadsAndPrintsTheLineThatTheSkillRe
 			examples = append(examples, m[1])
 		}
 	}
-	if len(examples) != 1 || !evidenceOutput.MatchString(examples[0]) {
-		t.Errorf("the skill's example lines of the output: %q, want one with the form of the real line", examples)
+	if len(examples) != 1 || !evidenceLine.MatchString(examples[0]) {
+		t.Errorf("%s: the example lines of the output are %q, want one with the form of the real line, in a sentence of the form \"for example `<link> <type> <size>`\": the test reads that sentence", openPRSkill, examples)
 	}
 }
 
 func TestTheEvidenceCommandOfTheOpenPRSkillToAnOldServerPrintsNoLinkAndTheMessageThatTheSkillNames(t *testing.T) {
-	words, text := skillEvidenceCommand(t)
+	words, text := skillEvidenceCommand(t, t.TempDir())
 	m := oldServer.FindStringSubmatch(text)
 	if m == nil {
-		t.Fatalf("%s does not name what an old SolidTrace server says", openPRSkill)
+		t.Fatalf("%s has no sentence of the form \"an old SolidTrace server says `<message>`\": the test reads the message from that sentence", openPRSkill)
 	}
 	t.Chdir(t.TempDir())
 	writeNamedFiles(t, words)
@@ -157,5 +163,40 @@ func TestTheEvidenceCommandOfTheOpenPRSkillToAnOldServerPrintsNoLinkAndTheMessag
 	}
 	if !strings.Contains(w.stderr.String(), m[1]) {
 		t.Errorf("stderr: %q, want the skill's message %q", w.stderr, m[1])
+	}
+}
+
+// skillStep is the text of the step of the skill at path with the heading
+// "## <n>. <heading>", up to the next ## heading.
+func skillStep(t *testing.T, path, heading string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?ms)^## [0-9]+\. ` + regexp.QuoteMeta(heading) + `\n(.*?)(?:^## |\z)`).FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatalf("%s has no step heading of the form \"## <n>. %s\"", path, heading)
+	}
+	return m[1]
+}
+
+func TestTheUpdatePRSkillKeepsOnlyTheEarlierEvidenceLinksThatStillProveThePRAndUploadsOnlyTheFilesOfItsRound(t *testing.T) {
+	step := skillStep(t, updatePRSkill, "Update the PR")
+	m := evidencePart.FindStringSubmatch(step)
+	if m == nil {
+		t.Fatalf("%s › Update the PR names no part of open-pr in the form \"`open-pr/SKILL.md` › Write the PR › **<part>**\": the test reads that form", updatePRSkill)
+	}
+	if !strings.Contains(skillStep(t, openPRSkill, "Write the PR"), "\n**"+m[1]+".**") {
+		t.Errorf("%s › Write the PR has no part that starts \"**%s.**\", which %s › Update the PR names", openPRSkill, m[1], updatePRSkill)
+	}
+	for _, sentence := range []string{
+		"Keep the link of an Evidence file of the earlier body only when its file still shows how the PR works now.",
+		"When the fixes of this round change what a file shows, remove its link, or replace it with the link of a new file.",
+		"Upload only the files that prove the fixes of this round, not the files of the earlier links",
+	} {
+		if !strings.Contains(step, sentence) {
+			t.Errorf("%s › Update the PR does not say %q", updatePRSkill, sentence)
+		}
 	}
 }

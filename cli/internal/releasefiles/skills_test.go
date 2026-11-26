@@ -98,11 +98,12 @@ func fileProblems(path, skill, text string, headings map[string][]string) []stri
 	}
 	for i, l := range lines {
 		n := i + 1
+		bare := codeSpan.ReplaceAllString(l, "")
 		if strings.ContainsRune(l, '—') {
 			add(n, "has an em dash (U+2014)")
 		}
 		// A link in a code span is an example of a link, not a link.
-		for _, m := range markdownLink.FindAllStringSubmatch(codeSpan.ReplaceAllString(l, ""), -1) {
+		for _, m := range markdownLink.FindAllStringSubmatch(bare, -1) {
 			target, _, _ := strings.Cut(m[1], "#")
 			if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 				continue
@@ -134,7 +135,7 @@ func fileProblems(path, skill, text string, headings map[string][]string) []stri
 			named = append(named, m[1])
 		}
 		if len(named) > 0 {
-			for _, m := range quoted.FindAllStringSubmatch(codeSpan.ReplaceAllString(l, ""), -1) {
+			for _, m := range quoted.FindAllStringSubmatch(bare, -1) {
 				if !slices.ContainsFunc(named, func(s string) bool { return slices.Contains(headings[s], m[1]) }) {
 					add(n, "%q is not a step heading of %s", m[1], strings.Join(named, " or "))
 				}

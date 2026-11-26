@@ -78,7 +78,7 @@ Follow three parts of `open-pr/SKILL.md`: "Find the sessions of this feature", t
 
 ## 9. Update the PR
 
-Write the body again as `open-pr/SKILL.md` › Write the PR says, from this round's record, and end it with `<!-- solidtrace-record round <N> -->`. Keep the links of the Evidence files of the earlier body. When the fixes of this round have screenshots or videos that prove them, upload them and add their links, as the Evidence files part of `open-pr/SKILL.md` › Write the PR says. A failed upload gives no link: say why in the final reply. Change the PR body (Change the PR body).
+Write the body again as `open-pr/SKILL.md` › Write the PR says, from this round's record, and end it with `<!-- solidtrace-record round <N> -->`. Keep the link of an Evidence file of the earlier body only when its file still shows how the PR works now. When the fixes of this round change what a file shows, remove its link, or replace it with the link of a new file. Upload only the files that prove the fixes of this round, not the files of the earlier links: each upload makes a new Evidence file with a new link. Upload them and write their links as `open-pr/SKILL.md` › Write the PR › **The Evidence files** says. A failed upload gives no link: say why in the final reply. Change the PR body (Change the PR body).
 
 ## 10. Final reply
 
