@@ -40,7 +40,9 @@ export default defineConfig({
     storageState: './tmp/playwright-auth/admin.json',
     trace: 'retain-on-failure',
     video,
-    launchOptions: { env: launchEnv },
+    // Playwright's --disable-dev-shm-usage puts Chromium's shared memory in
+    // /tmp, on the dev box's nearly full disk (e2e/flows/browser-shared-memory.spec.ts).
+    launchOptions: { env: launchEnv, ignoreDefaultArgs: ['--disable-dev-shm-usage'] },
   },
   webServer: {
     command: 'cd .. && PORT=4001 foreman start -f Procfile.dev',
