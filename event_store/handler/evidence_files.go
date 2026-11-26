@@ -118,25 +118,29 @@ func RegisterEvidenceQueryRoutes(app *fiber.App, h *EvidenceFilesHandler) {
 	app.Get("/evidence/:id/content", h.Content)
 }
 
-func (h *EvidenceFilesHandler) find(c *fiber.Ctx) (file storage.EvidenceFile, ok bool, err error) {
-	id, parseErr := uuid.Parse(c.Params("id"))
-	if parseErr == nil {
-		file, ok, err = h.files.EvidenceFile(c.UserContext(), id)
+func (h *EvidenceFilesHandler) find(c *fiber.Ctx) (storage.EvidenceFile, bool, error) {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return storage.EvidenceFile{}, false, nil
 	}
+	file, found, err := h.files.EvidenceFile(c.UserContext(), id)
 	if err != nil {
 		logger.L.Error("Failed to read an Evidence file", "id", id, "error", err)
-		return file, false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal error"})
 	}
-	if !ok {
-		return file, false, c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "No such Evidence file"})
+	return file, found, err
+}
+
+func answerNoEvidenceFile(c *fiber.Ctx, err error) error {
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal error"})
 	}
-	return file, true, nil
+	return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "No such Evidence file"})
 }
 
 func (h *EvidenceFilesHandler) Show(c *fiber.Ctx) error {
-	file, ok, err := h.find(c)
-	if !ok {
-		return err
+	file, found, err := h.find(c)
+	if err != nil || !found {
+		return answerNoEvidenceFile(c, err)
 	}
 	answer := fiber.Map{
 		"id":                  file.ID.String(),
@@ -163,9 +167,9 @@ func (h *EvidenceFilesHandler) Show(c *fiber.Ctx) error {
 // of them, or 206 for the one range of a Range header. 410 when Evidence
 // Retention deleted them.
 func (h *EvidenceFilesHandler) Content(c *fiber.Ctx) error {
-	file, ok, err := h.find(c)
-	if !ok {
-		return err
+	file, found, err := h.find(c)
+	if err != nil || !found {
+		return answerNoEvidenceFile(c, err)
 	}
 	if file.DeletedAt != nil {
 		return c.Status(fiber.StatusGone).JSON(fiber.Map{"error": "Evidence Retention deleted this Evidence file", "deleted_at": file.DeletedAt})

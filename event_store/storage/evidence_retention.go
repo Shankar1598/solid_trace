@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,9 +15,9 @@ import (
 )
 
 const (
-	evidenceSweepBatch = 500
-	evidenceDeletes    = 16
-	unreferencedAfter  = 24 * time.Hour
+	evidenceSweepBatch    = 500
+	evidenceDeletes       = 16
+	uploadInProgressGrace = 24 * time.Hour
 )
 
 type EvidenceSweep struct {
@@ -62,7 +61,7 @@ func (e *EvidenceFiles) DeletePastRetention(ctx context.Context, now time.Time, 
 			failed = append(failed, fmt.Errorf("Organization %d: %w", organizationID, err))
 		}
 	}
-	sweep.Unreferenced, err = e.deleteUnreferenced(ctx, now.Add(-unreferencedAfter))
+	sweep.Unreferenced, err = e.deleteUnreferenced(ctx, now.Add(-uploadInProgressGrace))
 	if err != nil {
 		failed = append(failed, fmt.Errorf("objects with no row: %w", err))
 	}
@@ -213,7 +212,7 @@ func sqlList(n int) string {
 func (e *EvidenceFiles) namedKeys(ctx context.Context, batch []string) (map[string]bool, error) {
 	ids := make([]any, len(batch))
 	for i, key := range batch {
-		ids[i] = strings.TrimSuffix(path.Base(key), path.Ext(key))
+		ids[i] = evidenceIDOfStorageKey(key)
 	}
 	rows, err := e.db.QueryContext(ctx, "SELECT storage_key FROM evidence_files WHERE deleted_at IS NULL AND id IN "+sqlList(len(ids)), ids...)
 	if err != nil {

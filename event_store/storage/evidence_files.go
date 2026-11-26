@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,17 +49,19 @@ type EvidenceUpload struct {
 	AgentSessionID uuid.UUID
 	UserID         int64
 	Caption        string
-	ContentType    string
+	ContentType    EvidenceType
 	Bytes          []byte
 	At             time.Time
 }
 
-// Console serves the bytes from its own domain, so each other type, as SVG
-// or HTML, could run script there.
-var evidenceTypes = []struct {
+type evidenceType struct {
 	contentType, extension string
 	matches                func(head []byte) bool
-}{
+}
+
+// Console serves the bytes from its own domain, so each other type, as SVG
+// or HTML, could run script there.
+var evidenceTypes = []evidenceType{
 	{"image/png", "png", prefix("\x89PNG\r\n\x1a\n")},
 	{"image/jpeg", "jpg", prefix("\xff\xd8\xff")},
 	{"image/gif", "gif", func(b []byte) bool { return prefix("GIF87a")(b) || prefix("GIF89a")(b) }},
@@ -106,22 +110,25 @@ func isWebM(b []byte) bool {
 		bytes.Contains(head[docType:min(len(head), docType+12)], []byte("webm"))
 }
 
-func EvidenceContentType(data []byte) (string, bool) {
-	for _, t := range evidenceTypes {
-		if t.matches(data) {
-			return t.contentType, true
+type EvidenceType struct{ t *evidenceType }
+
+func (t EvidenceType) String() string { return t.t.contentType }
+
+func EvidenceContentType(data []byte) (EvidenceType, bool) {
+	for i := range evidenceTypes {
+		if evidenceTypes[i].matches(data) {
+			return EvidenceType{&evidenceTypes[i]}, true
 		}
 	}
-	return "", false
+	return EvidenceType{}, false
 }
 
-func evidenceExtension(contentType string) string {
-	for _, t := range evidenceTypes {
-		if t.contentType == contentType {
-			return t.extension
-		}
-	}
-	panic("no Evidence file type " + contentType)
+func evidenceStorageKey(organizationID int64, id uuid.UUID, t EvidenceType) string {
+	return fmt.Sprintf("evidence/org=%d/%s.%s", organizationID, id, t.t.extension)
+}
+
+func evidenceIDOfStorageKey(key string) string {
+	return strings.TrimSuffix(path.Base(key), path.Ext(key))
 }
 
 type EvidenceFiles struct {
@@ -180,9 +187,9 @@ func (e *EvidenceFiles) Add(ctx context.Context, upload EvidenceUpload) (Evidenc
 		AgentSessionID:   upload.AgentSessionID,
 		SHA256:           hash,
 		Caption:          upload.Caption,
-		ContentType:      upload.ContentType,
+		ContentType:      upload.ContentType.String(),
 		ByteSize:         int64(len(upload.Bytes)),
-		StorageKey:       fmt.Sprintf("evidence/org=%d/%s.%s", upload.OrganizationID, id, evidenceExtension(upload.ContentType)),
+		StorageKey:       evidenceStorageKey(upload.OrganizationID, id, upload.ContentType),
 		UploadedByUserID: upload.UserID,
 		CreatedAt:        upload.At.UTC(),
 	}

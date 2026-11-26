@@ -82,8 +82,12 @@ func limitHas(ids []string, sessionID uuid.UUID) bool {
 	return false
 }
 
+func limitedToARun(token auth.Token) bool {
+	return token.AgentSessionIDs != nil
+}
+
 func anotherPersonsSession(token auth.Token, session storage.AgentSession) bool {
-	return token.AgentSessionIDs == nil && session.UserID != token.UserID
+	return !limitedToARun(token) && session.UserID != token.UserID
 }
 
 func anotherPersons(c *fiber.Ctx, sessionID uuid.UUID) error {

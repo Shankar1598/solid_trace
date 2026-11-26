@@ -43,9 +43,12 @@ func TestTheTypeOfAnEvidenceFileIsFoundFromItsFirstBytes(t *testing.T) {
 		{"PDF", "%PDF-1.7", ""},
 		{"empty", "", ""},
 	} {
-		got, ok := EvidenceContentType([]byte(c.head))
-		if got != c.want || ok != (c.want != "") {
-			t.Errorf("%s: expected %q, got %q (%v)", c.name, c.want, got, ok)
+		var got string
+		if contentType, ok := EvidenceContentType([]byte(c.head)); ok {
+			got = contentType.String()
+		}
+		if got != c.want {
+			t.Errorf("%s: expected %q, got %q", c.name, c.want, got)
 		}
 	}
 }
@@ -160,9 +163,10 @@ func evidencePNG(size int) []byte {
 }
 
 func evidenceUpload(data []byte) EvidenceUpload {
+	contentType, _ := EvidenceContentType(data)
 	return EvidenceUpload{
 		OrganizationID: 1, AgentSessionID: uuid.MustParse("6b1f6c4e-2a3d-4e5f-8a9b-0c1d2e3f4a5b"), UserID: 7,
-		ContentType: "image/png", Bytes: data, At: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
+		ContentType: contentType, Bytes: data, At: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
 	}
 }
 
