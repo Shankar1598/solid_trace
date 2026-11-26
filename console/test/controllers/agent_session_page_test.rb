@@ -112,6 +112,24 @@ class AgentSessionPageTest < ActionDispatch::IntegrationTest
     assert_equal record.stringify_keys, props["review_record"]
   end
 
+  test "the page lists the Agent session's Evidence files, the newest first, and not another session's or Organization's" do
+    other = create(:organization, slug: "globex")
+    [ [ "1a2b3c4d-0000-4f6a-8c0e-3d5b7f9a1c4e", @organization, CART, 1.hour.ago ], [ "2a2b3c4d-0000-4f6a-8c0e-3d5b7f9a1c4e", @organization, CART, 1.minute.ago ],
+      [ "3a2b3c4d-0000-4f6a-8c0e-3d5b7f9a1c4e", @organization, PARENT, Time.current ], [ "4a2b3c4d-0000-4f6a-8c0e-3d5b7f9a1c4e", other, CART, Time.current ] ]
+      .each do |id, organization, session, at|
+        EvidenceFile.insert!({ id: id, organization_id: organization.id, agent_session_id: session, sha256: id, content_type: "image/png",
+                               byte_size: 84, storage_key: "evidence/#{id}.png", uploaded_by_user_id: @admin.id, created_at: at })
+      end
+    stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART.upcase}")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: { agent_session: header(user_id: @admin.id), subagents: [], steps: [], next_cursor: nil }.to_json)
+    sign_in_as(@member)
+    page(CART.upcase)
+
+    assert_equal [ "2a2b3c4d-0000-4f6a-8c0e-3d5b7f9a1c4e", "1a2b3c4d-0000-4f6a-8c0e-3d5b7f9a1c4e" ], props["evidence_files"].map { |f| f["id"] }
+    assert_equal [ "image/png", "Ada" ], props["evidence_files"].first.values_at("content_type", "uploaded_by")
+  end
+
   test "an Agent session opened by its id in capitals still finds its Review record, which EventStore keys in lowercase" do
     stub_request(:post, "#{EventStore.base_url}/api/#{@project.id}/agent-sessions/#{CART.upcase}")
       .to_return(status: 200, headers: { "Content-Type" => "application/json" },

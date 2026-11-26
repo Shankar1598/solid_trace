@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
 import { Link, usePage } from '@inertiajs/react'
-import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Workflow, Check, ChevronsUpDown, Timer, ChevronRight, SquareTerminal, ClipboardCheck } from 'lucide-react'
+import { Gauge, List, GitMerge, Settings, LogOut, ScrollText, Search, LayoutDashboard, BellRing, Bot, Workflow, Check, ChevronsUpDown, Timer, ChevronRight, SquareTerminal, ClipboardCheck, Images } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { navSection, orgSwitchUrl, sidebarItems, type NavSection, type SidebarGroup, type SidebarGroupId, type SidebarLink } from '@/lib/nav'
 import { groupOpen, saveGroupOpen } from '@/lib/sidebarGroups'
@@ -15,7 +15,7 @@ import { buttonVariants } from '@/components/ui/button'
 
 const SECTION_ICONS: Record<NavSection, typeof Gauge> = {
   overview: Gauge, issues: List, logs: ScrollText, performance: Timer, dashboards: LayoutDashboard, monitors: BellRing,
-  agent_sessions: SquareTerminal, review_records: ClipboardCheck, runs: Workflow, projects: GitMerge, settings: Settings,
+  agent_sessions: SquareTerminal, review_records: ClipboardCheck, evidence: Images, runs: Workflow, projects: GitMerge, settings: Settings,
 }
 
 const GROUP_ICONS: Record<SidebarGroupId, typeof Gauge> = { coding_agents: Bot }

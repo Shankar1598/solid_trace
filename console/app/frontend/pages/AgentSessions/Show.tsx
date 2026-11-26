@@ -3,6 +3,7 @@ import { format } from 'date-fns'
 import { AlertTriangle, Bot, ChevronDown, ChevronRight, Wrench } from 'lucide-react'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { AgentSessionSearch } from '@/components/AgentSessionSearch'
+import { EvidenceFileList } from '@/components/EvidenceFileList'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { Markdown } from '@/components/Markdown'
 import { PageHeader } from '@/components/PageHeader'
@@ -42,6 +43,7 @@ import {
   type TimelineStep,
   type TimelineSubagent,
 } from '@/lib/agentSessionTimeline'
+import type { EvidenceFile } from '@/lib/evidenceFiles'
 import { sessionRecordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
 import type { SharedProps } from '@/types'
 
@@ -61,6 +63,8 @@ interface AgentSessionProps {
   review_record: SessionReviewRecord | null
   /** False when EventStore could not say whether it has one. */
   review_record_known: boolean
+  /** The Evidence files of this Agent session, the newest first. */
+  evidence_files: EvidenceFile[]
 }
 
 /** The URL of the raw lines of this Agent session, for 'Show full'. */
@@ -151,6 +155,7 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
             </div>
           )}
           <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} record={view.review_record_known ? view.review_record : undefined} />
+          <EvidenceFileList files={view.evidence_files} />
           <AgentSessionSearch
             label="Search this Agent session"
             placeholder="Search the steps of this Agent session…"

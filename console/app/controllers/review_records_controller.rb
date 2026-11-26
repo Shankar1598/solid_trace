@@ -20,14 +20,18 @@ class ReviewRecordsController < ApplicationController
   end
 
   # One record: the newest of the PR of key, or the record with id, with
-  # the rounds of its PR. 404 when the Organization has no Agent Project or
-  # EventStore has no such record.
+  # the rounds of its PR and the Evidence files of its Agent session. 404
+  # when the Organization has no Agent Project or EventStore has no such
+  # record.
   def show
     view = ReviewRecordView.new(organization: @current_org, key: params[:key], id: params[:id])
     raise ActiveRecord::RecordNotFound unless view.found?
 
     render inertia: "ReviewRecords/Show", props: {
-      review_record: view.to_h.merge(list_path: review_records_path(org_slug: @current_org.slug)),
+      review_record: view.to_h.merge(
+        list_path: review_records_path(org_slug: @current_org.slug),
+        evidence_files: EvidenceFile.of_sessions(@current_org, Array(view.review_record&.dig("session_id"))),
+      ),
     }
   end
 

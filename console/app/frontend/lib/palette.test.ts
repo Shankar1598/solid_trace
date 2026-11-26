@@ -88,11 +88,11 @@ describe('the Pages group', () => {
   const labels = (factoryOn: boolean) => pageItems({ ...context, factoryOn }).map(i => i.label)
 
   it('has no Runs page while the factory is off: no Dispatcher URL is set', () => {
-    expect(labels(false)).toEqual(['Overview', 'Issues', 'Dashboards', 'Monitors', 'Agent sessions', 'Review records', 'Projects', 'Settings'])
+    expect(labels(false)).toEqual(['Overview', 'Issues', 'Dashboards', 'Monitors', 'Agent sessions', 'Review records', 'Evidence files', 'Projects', 'Settings'])
   })
 
   it('has the Runs page, after Agent sessions, once the factory is on', () => {
-    expect(labels(true)).toEqual(['Overview', 'Issues', 'Dashboards', 'Monitors', 'Agent sessions', 'Review records', 'Runs', 'Projects', 'Settings'])
+    expect(labels(true)).toEqual(['Overview', 'Issues', 'Dashboards', 'Monitors', 'Agent sessions', 'Review records', 'Evidence files', 'Runs', 'Projects', 'Settings'])
   })
 
   it('has no pages with no Organization', () => {

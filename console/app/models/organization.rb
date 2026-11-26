@@ -13,6 +13,7 @@ class Organization < ApplicationRecord
   has_many :dashboards, dependent: :destroy
   has_many :monitors, class_name: "LogMonitor", dependent: :destroy
   has_many :oauth_grants, class_name: "Oauth::Grant", dependent: :destroy
+  has_many :evidence_files
 
   validates :name, presence: true
   validates :slug, presence: true, uniqueness: true, format: { with: /\A[a-z0-9-]+\z/, message: "only allows lowercase letters, numbers, and hyphens" }

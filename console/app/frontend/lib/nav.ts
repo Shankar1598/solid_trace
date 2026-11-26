@@ -1,7 +1,7 @@
 // Which sidebar entry a page belongs to, from its path alone: the search is
 // left out, since a Query in it can hold any text, such as "/issues".
 
-export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'agent_sessions' | 'review_records' | 'runs' | 'projects' | 'settings'
+export type NavSection = 'overview' | 'issues' | 'logs' | 'performance' | 'dashboards' | 'monitors' | 'agent_sessions' | 'review_records' | 'evidence' | 'runs' | 'projects' | 'settings'
 
 export type SidebarGroupId = 'coding_agents'
 
@@ -27,6 +27,7 @@ export function sidebarItems(slug: string, factoryOn: boolean): SidebarEntry[] {
       children: [
         link('agent_sessions', 'Agent sessions'),
         link('review_records', 'Review records'),
+        link('evidence', 'Evidence files'),
       ],
     },
     ...(factoryOn ? [link('runs', 'Runs')] : []),
@@ -52,6 +53,7 @@ export function navSection(url: string): NavSection | null {
     case 'monitors':
     case 'agent_sessions':
     case 'review_records':
+    case 'evidence':
     case 'runs':
     case 'settings':
       return first

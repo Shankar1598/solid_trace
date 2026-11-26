@@ -2,11 +2,13 @@ import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { EvidenceFileList } from '@/components/EvidenceFileList'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import type { EvidenceFile } from '@/lib/evidenceFiles'
 import {
   decisionsOf,
   eventWords,
@@ -29,6 +31,8 @@ type ReviewRecordProps = {
   record: ReviewRecord | null
   rounds: ReviewRound[]
   list_path: string
+  /** The Evidence files of the record's Agent session, the newest first. */
+  evidence_files: EvidenceFile[]
 }
 
 const OUTCOME_BADGES: Record<string, 'ok' | 'warn' | 'error' | 'neutral' | 'info'> = {
@@ -65,6 +69,7 @@ export default function ReviewRecordShow({ review_record: view }: { review_recor
       {row && record && (
         <div className="space-y-6">
           <Header row={row} />
+          <EvidenceFileList files={view.evidence_files} />
           <Story record={record} />
           <Reviews record={record} />
           <Findings findings={record.findings ?? []} />

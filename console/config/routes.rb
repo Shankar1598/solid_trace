@@ -101,6 +101,9 @@ Rails.application.routes.draw do
       constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }, defaults: { format: :json }
     get "review_records", to: "review_records#index", as: :review_records
     get "review_records/record", to: "review_records#show", as: :review_record
+    get "evidence", to: "evidence_files#index", as: :evidence_files
+    get "evidence/:id", to: "evidence_files#show", as: :evidence_file, constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }
+    get "evidence/:id/file", to: "evidence_file_bytes#show", as: :evidence_file_bytes, constraints: { id: /\h{8}-\h{4}-\h{4}-\h{4}-\h{12}/ }
     get "runs", to: "runs#index", as: :runs
     get "runs/:id", to: "runs#show", as: :run, constraints: { id: /[A-Za-z0-9_-]{1,64}/ }
     get "runs/:id/evidence", to: "runs#evidence", as: :run_evidence, constraints: { id: /[A-Za-z0-9_-]{1,64}/ }

@@ -41,6 +41,12 @@ describe('the sidebar entry of a page', () => {
     expect(orgSwitchUrl('/acme/review_records/record?id=x', 'meta')).toBe('/meta/review_records')
   })
 
+  it('is Evidence files for the list and each file', () => {
+    expect(navSection('/acme/evidence')).toBe('evidence')
+    expect(navSection('/acme/evidence/0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')).toBe('evidence')
+    expect(orgSwitchUrl('/acme/evidence/0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41', 'meta')).toBe('/meta/evidence')
+  })
+
   it('is Agent sessions or Review records alone on their pages, not the other', () => {
     expect(navSection('/acme/agent_sessions/abc')).toBe('agent_sessions')
     expect(navSection('/acme/review_records')).toBe('review_records')
@@ -132,13 +138,15 @@ describe('the sidebar entries', () => {
     expect(sidebarItems('acme', true).find(e => e.label === 'Runs')).toEqual({ section: 'runs', label: 'Runs', href: '/acme/runs' })
   })
 
-  it('group Agent sessions and Review records under Coding agents, and nowhere else', () => {
+  it('group Agent sessions, Review records and Evidence files under Coding agents, and nowhere else', () => {
     expect(codingAgents().children).toEqual([
       { section: 'agent_sessions', label: 'Agent sessions', href: '/acme/agent_sessions' },
       { section: 'review_records', label: 'Review records', href: '/acme/review_records' },
+      { section: 'evidence', label: 'Evidence files', href: '/acme/evidence' },
     ])
     expect(labels(true)).not.toContain('Agent sessions')
     expect(labels(true)).not.toContain('Review records')
+    expect(labels(true)).not.toContain('Evidence files')
   })
 
   it('light the group\'s child of each of its pages', () => {
@@ -148,6 +156,8 @@ describe('the sidebar entries', () => {
     expect(lit('/acme/agent_sessions/abc')).toEqual(['Agent sessions'])
     expect(lit('/acme/review_records')).toEqual(['Review records'])
     expect(lit('/acme/review_records/record?key=https%3A%2F%2Fgithub.com%2Facme%2Fshop%2Fpull%2F7')).toEqual(['Review records'])
+    expect(lit('/acme/evidence')).toEqual(['Evidence files'])
+    expect(lit('/acme/evidence/0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')).toEqual(['Evidence files'])
     expect(lit('/acme/issues')).toEqual([])
     expect(lit('/acme/settings/agent_sessions')).toEqual([])
   })

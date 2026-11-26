@@ -82,6 +82,21 @@ class ReviewRecordsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "fixed", view.dig("record", "findings", 0, "outcome")
     assert_equal [ 2, 1 ], view["rounds"].map { |r| r["round"] }
     assert_equal "/acme/review_records", view["list_path"]
+    assert_equal [], view["evidence_files"]
+  end
+
+  test "a record's page lists the Evidence files of its Agent session" do
+    project = turn_on
+    EvidenceFile.insert!({ id: EARLIER, organization_id: @organization.id, agent_session_id: SESSION, sha256: "a" * 64, caption: "Cart page",
+                           content_type: "video/webm", byte_size: 1000, storage_key: "evidence/#{EARLIER}.webm", created_at: Time.current })
+    stub_request(:post, "#{EventStore.base_url}/api/#{project.id}/review-records/record")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: { review_record: row, record: record_json, rounds: [] }.to_json)
+    sign_in_as(@member)
+
+    view = inertia_page(review_record_path(org_slug: "acme", id: RECORD), "ReviewRecords/Show")["review_record"]
+
+    assert_equal [ [ EARLIER, "Cart page", "video/webm", nil ] ], view["evidence_files"].map { |f| f.values_at("id", "caption", "content_type", "uploaded_by") }
   end
 
   test "an earlier round opens by its id" do
