@@ -1,0 +1,161 @@
+package command_test
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+)
+
+const openPRSkill = "../plugin-skills/skills/open-pr/SKILL.md"
+
+var (
+	// evidenceOutput is the line of one uploaded file, as the skill
+	// tells the agent to read it: the link, the type and the size.
+	evidenceOutput = regexp.MustCompile(`^https?://\S+/evidence/[0-9a-f-]{32,36} (image|video)/[a-z0-9]+ [0-9.]+ (B|KB|MB)$`)
+	skillExample   = regexp.MustCompile("for example `([^`]+)`")
+	oldServer      = regexp.MustCompile("an old SolidTrace server says `([^`]+)`")
+)
+
+// skillEvidenceCommand is the words of the one `solidtrace evidence add`
+// line in a ```bash block of the open-pr skill, and the skill's text.
+func skillEvidenceCommand(t *testing.T) ([]string, string) {
+	t.Helper()
+	data, err := os.ReadFile(openPRSkill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	var commands []string
+	inBash := false
+	for _, l := range strings.Split(text, "\n") {
+		switch trimmed := strings.TrimSpace(l); {
+		case trimmed == "```bash":
+			inBash = true
+		case trimmed == "```":
+			inBash = false
+		case inBash && strings.HasPrefix(trimmed, "solidtrace evidence add "):
+			commands = append(commands, trimmed)
+		}
+	}
+	if len(commands) != 1 {
+		t.Fatalf("%s has %d `solidtrace evidence add` lines in a bash block, want 1", openPRSkill, len(commands))
+	}
+	return shellWords(t, commands[0]), text
+}
+
+// shellWords splits a command line as the shell does, for words with no
+// expansion: plain words, "double-quoted" words and 'single-quoted' words.
+func shellWords(t *testing.T, line string) []string {
+	t.Helper()
+	var words []string
+	var word strings.Builder
+	inWord := false
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case c == ' ':
+			if inWord {
+				words, inWord = append(words, word.String()), false
+				word.Reset()
+			}
+		case c == '"' || c == '\'':
+			end := strings.IndexByte(line[i+1:], c)
+			if end < 0 {
+				t.Fatalf("the command %q has a quote that does not close", line)
+			}
+			quoted := line[i+1 : i+1+end]
+			if c == '"' && strings.ContainsAny(quoted, "$`\\") {
+				t.Fatalf("the command %q has a double-quoted word that the shell changes: %q", line, quoted)
+			}
+			word.WriteString(quoted)
+			inWord, i = true, i+1+end
+		case strings.IndexByte("$`\\|&;<>(){}*?", c) >= 0:
+			t.Fatalf("the command %q has %q, which the shell changes", line, c)
+		default:
+			word.WriteByte(c)
+			inWord = true
+		}
+	}
+	if inWord {
+		words = append(words, word.String())
+	}
+	return words
+}
+
+// writeNamedFiles writes a PNG in the current folder at each word that is
+// the path of an image, as the files of a verify-solidtrace run.
+func writeNamedFiles(t *testing.T, words []string) {
+	t.Helper()
+	for _, word := range words {
+		if filepath.Ext(word) != ".png" {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(word), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(word, []byte(pngHead+strings.Repeat("x", 86000)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestTheEvidenceCommandOfTheOpenPRSkillUploadsAndPrintsTheLineThatTheSkillReads(t *testing.T) {
+	words, text := skillEvidenceCommand(t)
+	if !slices.Equal(words[:3], []string{"solidtrace", "evidence", "add"}) {
+		t.Fatalf("the command is %q, want solidtrace evidence add", words)
+	}
+	t.Chdir(t.TempDir())
+	writeNamedFiles(t, words)
+	w := newWorld(t, acme)
+	w.agent.ConsoleURL = "https://console.example.com"
+	w.signIn()
+	w.stdout = &syncBuffer{}
+	w.claudeSession = "0b6f3c1e-8d2a-4c5b-9e7f-1a2b3c4d5e6f"
+
+	if code := w.run(words[1:]...); code != 0 {
+		t.Fatalf("the skill's command %q: exit %d\nstderr: %s", words, code, w.stderr)
+	}
+	if lines := w.lines(); len(lines) != 1 || !evidenceOutput.MatchString(lines[0]) {
+		t.Errorf("stdout: %q, want one line with the link, the type and the size", lines)
+	}
+	caption := words[slices.Index(words, "--caption")+1]
+	if stored := w.agent.StoredEvidence(); len(stored) != 1 || stored[0].Caption != caption || stored[0].SessionID != w.claudeSession {
+		t.Errorf("stored: %+v, want one file of the Claude Code session with the caption %q", stored, caption)
+	}
+	var examples []string
+	for _, m := range skillExample.FindAllStringSubmatch(text, -1) {
+		if strings.Contains(m[1], "/evidence/") {
+			examples = append(examples, m[1])
+		}
+	}
+	if len(examples) != 1 || !evidenceOutput.MatchString(examples[0]) {
+		t.Errorf("the skill's example lines of the output: %q, want one with the form of the real line", examples)
+	}
+}
+
+func TestTheEvidenceCommandOfTheOpenPRSkillToAnOldServerPrintsNoLinkAndTheMessageThatTheSkillNames(t *testing.T) {
+	words, text := skillEvidenceCommand(t)
+	m := oldServer.FindStringSubmatch(text)
+	if m == nil {
+		t.Fatalf("%s does not name what an old SolidTrace server says", openPRSkill)
+	}
+	t.Chdir(t.TempDir())
+	writeNamedFiles(t, words)
+	w := newWorld(t, acme)
+	w.agent.NoEvidence = true
+	w.signIn()
+	w.stdout = &syncBuffer{}
+	w.claudeSession = "0b6f3c1e-8d2a-4c5b-9e7f-1a2b3c4d5e6f"
+
+	if code := w.run(words[1:]...); code != 1 {
+		t.Fatalf("exit %d, want 1\nstderr: %s", code, w.stderr)
+	}
+	if out := w.stdout.String(); out != "" {
+		t.Errorf("stdout: %q, want no link", out)
+	}
+	if !strings.Contains(w.stderr.String(), m[1]) {
+		t.Errorf("stderr: %q, want the skill's message %q", w.stderr, m[1])
+	}
+}

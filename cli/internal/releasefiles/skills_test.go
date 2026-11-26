@@ -101,7 +101,8 @@ func fileProblems(path, skill, text string, headings map[string][]string) []stri
 		if strings.ContainsRune(l, '—') {
 			add(n, "has an em dash (U+2014)")
 		}
-		for _, m := range markdownLink.FindAllStringSubmatch(l, -1) {
+		// A link in a code span is an example of a link, not a link.
+		for _, m := range markdownLink.FindAllStringSubmatch(codeSpan.ReplaceAllString(l, ""), -1) {
 			target, _, _ := strings.Cut(m[1], "#")
 			if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 				continue
@@ -346,6 +347,30 @@ func TestTheSkillCheckNamesTheFileAndTheProblemOfEachBreak(t *testing.T) {
 				t.Fatalf("problems:\n%s\nwant one problem of %s with %q", strings.Join(problems, "\n"), path, c.want)
 			}
 		})
+	}
+}
+
+func TestTheSkillCheckDoesNotResolveALinkInACodeSpan(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "skills")
+	if err := os.CopyFS(root, os.DirFS(filepath.Join(skillsDir, "skills"))); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "open-pr", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte("\nWrite `[Video: <caption>](<link>)`, then see [the list](missing.md).\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	problems, err := skillProblems(root)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "the link missing.md does not resolve") {
+		t.Fatalf("problems:\n%s\nwant only the problem of missing.md", strings.Join(problems, "\n"))
 	}
 }
 
