@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -297,6 +298,7 @@ func TestAgentSessionDownloadWithSessionsDownload(t *testing.T) {
 			unitUpload{path: "session.jsonl", offset: len(mine), body: lines("More")}), 403)
 		expectStatus(t, uploadUnit(t, env, signIn, otherSession,
 			unitUpload{path: "session.jsonl", offset: len(theirs), body: lines("More")}), 403)
+		expectStatus(t, uploadEvidence(t, env, signIn, otherSession, "", evidenceOf(pngBytes, 500), nil), 403)
 		_, files := offsetsOf(t, env, download, otherSession)
 		if got := endOffsets(files)["session.jsonl"]; got != fmt.Sprintf("1 %d", len(theirs)) {
 			t.Errorf("Expected another person's Agent session to stay at %d, got %s", len(theirs), got)
@@ -304,8 +306,16 @@ func TestAgentSessionDownloadWithSessionsDownload(t *testing.T) {
 	})
 
 	t.Run("a token with sessions:write and no sessions:download does not download", func(t *testing.T) {
-		if d := downloadSession(t, env, o.secret, laptopSession); d.status != 403 || d.files != nil {
-			t.Errorf("Expected 403 and no files, got %d: %s", d.status, d.raw)
+		d := downloadSession(t, env, o.secret, laptopSession)
+		if d.status != 403 || d.files != nil {
+			t.Fatalf("Expected 403 and no files, got %d: %s", d.status, d.raw)
+		}
+		var body struct{ Scope string }
+		if err := json.Unmarshal([]byte(d.raw), &body); err != nil || body.Scope != "sessions:download" {
+			t.Errorf("Expected the 403 to ask for sessions:download, got %s", d.raw)
+		}
+		if got, want := d.header.Get("WWW-Authenticate"), `scope="sessions:download"`; !strings.Contains(got, want) {
+			t.Errorf("Expected WWW-Authenticate to have %s, got %q", want, got)
 		}
 	})
 

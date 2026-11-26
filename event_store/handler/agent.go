@@ -120,7 +120,7 @@ func RegisterAgentRoutes(app *fiber.App, h *AgentHandler) {
 	api.Get("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite, ScopeSessionsDownload), h.AgentSessionFiles)
 	api.Post("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.UploadAgentFile)
 	api.Post("/agent-sessions/:session_id/evidence", h.requireScope(ScopeSessionsWrite), h.UploadEvidenceFile)
-	api.Get("/agent-sessions/:session_id/download", h.requireScope(ScopeSessionsRead, ScopeSessionsDownload), h.DownloadAgentSession)
+	api.Get("/agent-sessions/:session_id/download", h.requireScope(ScopeSessionsDownload, ScopeSessionsRead), h.DownloadAgentSession)
 	api.Get("/agent-session-totals", h.requireScope(ScopeSessionsRead), h.AgentSessionTotals)
 	api.Post("/run-events", h.requireScope(ScopeRunEventsWrite), h.SendRunEvents)
 }

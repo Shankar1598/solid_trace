@@ -54,8 +54,8 @@ type Token struct {
 	// Scopes are the names of the Scopes the token acts with: mcp for an
 	// API token with none.
 	Scopes []string
-	// AgentSessionIDs is the list of Agent sessions that each Agent session
-	// call of the token is limited to; nil is no list.
+	// AgentSessionIDs is the list of Agent sessions that each call of the
+	// token that names an Agent session is limited to; nil is no list.
 	AgentSessionIDs []string
 	// ExpiresAt is nil for an API token that does not expire.
 	ExpiresAt *time.Time
