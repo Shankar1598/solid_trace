@@ -205,16 +205,15 @@ func resume(ctx context.Context, args []string, env Env) int {
 		return fail(1, "%s", refusal)
 	}
 
-	target, project := f.target, f.project
 	if plan.download {
-		if err := downloadSession(ctx, env, client, f.id, project); err != nil {
+		if err := downloadSession(ctx, env, client, f.id, f.project); err != nil {
 			return fail(1, "%v", err)
 		}
 	}
-	tellBranch(ctx, env, f.root, lastBranch(filepath.Join(project, f.id+".jsonl")))
-	if info, err := os.Stat(target); err != nil || !info.IsDir() {
+	tellBranch(ctx, env, f.root, lastBranch(filepath.Join(f.project, f.id+".jsonl")))
+	if info, err := os.Stat(f.target); err != nil || !info.IsDir() {
 		return fail(1, "the folder %s of the Agent session is not in this checkout. Switch to its branch, and run "+
-			"solidtrace resume again.", target)
+			"solidtrace resume again.", f.target)
 	}
 
 	claude := []string{"--resume", f.id}
@@ -223,7 +222,7 @@ func resume(ctx context.Context, args []string, env Env) int {
 	}
 	claude = append(claude, claudeArgs...)
 	if *printOnly {
-		words := []string{"cd", shellQuote(target), "&&", "claude"}
+		words := []string{"cd", shellQuote(f.target), "&&", "claude"}
 		for _, arg := range claude {
 			words = append(words, shellQuote(arg))
 		}
@@ -233,7 +232,7 @@ func resume(ctx context.Context, args []string, env Env) int {
 	if env.StartClaude == nil {
 		return fail(1, "this machine cannot start Claude Code")
 	}
-	if err := env.StartClaude(target, claude); err != nil {
+	if err := env.StartClaude(f.target, claude); err != nil {
 		return fail(1, "start Claude Code: %v", err)
 	}
 	return 0
