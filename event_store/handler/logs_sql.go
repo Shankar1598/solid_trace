@@ -82,7 +82,7 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
 	}
-	result, err := h.sql.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, maxTableRows)
+	result, err := h.sql.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, nil, maxTableRows)
 	// Stopped, the SQL fails as the context ends or ClickHouse stops it at
 	// its time limit.
 	var sqlErr *storage.SQLError
