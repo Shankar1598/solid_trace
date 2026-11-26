@@ -12,6 +12,6 @@
 
 ## Upgrading
 
-Upgrade Console and EventStore first. Then each engineer runs the setup script again, and then `solidtrace login` again, so that the sign-in has `sessions:download`. A new CLI cannot sign in to an older Console, because the older Console does not know the Scope `sessions:download`. Until an engineer signs in again, `solidtrace resume` tells them to run `solidtrace login`, and capture works as before.
+Upgrade Console and EventStore first. Then each engineer runs the setup script again, and then `solidtrace login` again, so that the sign-in has `sessions:download`. A new CLI cannot sign in to an older Console, because the older Console does not know the Scope `sessions:download`. Until an engineer signs in again, `solidtrace resume` tells them to run `solidtrace login`, and capture works as before. A new CLI with an older EventStore captures as before too: the older EventStore does not tell whose an Agent session is, so capture sends it, and the EventStore refuses another person's bytes with 403, as before. `solidtrace resume` then tells the engineer to ask the operator to upgrade.
 
 The setup script removes `solidtrace-skills@solidtrace`, so each skill does not show two times. Then restart Claude Code, and use the new names, such as `/solidtrace:open-pr`.

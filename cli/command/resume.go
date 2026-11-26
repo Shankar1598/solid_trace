@@ -140,13 +140,20 @@ var resumeRefusals = []resumeRefusal{
 		when: func(f resumeFacts) bool { return f.elsewhere != "" },
 		message: func(f resumeFacts) string {
 			command := "claude --resume " + f.id
-			if f.fork || !f.session.Yours {
+			if f.forks() {
 				command += " --fork-session"
 			}
 			return fmt.Sprintf("This machine has the Agent session in %s. Run this command in that folder:\n  %s",
 				f.elsewhere, command)
 		},
 	},
+}
+
+// forks is true when Claude Code continues the Agent session as a fork:
+// with --fork, and for an Agent session that is not yours. When an older
+// server does not say whose it is, a fork is the safe choice.
+func (f resumeFacts) forks() bool {
+	return f.fork || f.session.Yours == nil || !*f.session.Yours
 }
 
 // decide gives the plan of resume, or the message of the first refusal. A
@@ -161,7 +168,7 @@ func decide(f resumeFacts) (resumePlan, string) {
 	}
 	return resumePlan{
 		download: !f.localHas || f.localSize < f.serverEnd,
-		fork:     f.fork || !f.session.Yours,
+		fork:     f.forks(),
 	}, ""
 }
 
@@ -257,6 +264,10 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 		return f, nil
 	}
 	answer, err := client.AgentSession(ctx, id)
+	var refused *agentapi.Error
+	if errors.As(err, &refused) && refused.Status == http.StatusForbidden {
+		return f, refusedDownload(refused)
+	}
 	if err != nil {
 		return f, fmt.Errorf("ask SolidTrace for the Agent session: %w", err)
 	}
@@ -380,8 +391,7 @@ func downloadWhenReady(ctx context.Context, env Env, client *agentapi.Client, id
 			continue
 		case errors.As(err, &answer) && answer.Status == http.StatusForbidden:
 			cancel()
-			return download, fmt.Errorf("SolidTrace refused the download (%s). An older server refuses downloads. "+
-				"Ask its operator to upgrade it.", answer.Message)
+			return download, refusedDownload(answer)
 		case err != nil:
 			cancel()
 			return download, fmt.Errorf("download the Agent session: %w", err)
@@ -389,6 +399,13 @@ func downloadWhenReady(ctx context.Context, env Env, client *agentapi.Client, id
 		download.Archive = cancelOnClose{download.Archive, cancel}
 		return download, nil
 	}
+}
+
+// refusedDownload is the error of a 403 from /files or /download. An
+// older server refuses another person's Agent session on both.
+func refusedDownload(answer *agentapi.Error) error {
+	return fmt.Errorf("SolidTrace refused the download (%s). An older server refuses downloads. "+
+		"Ask its operator to upgrade it.", answer.Message)
 }
 
 // cancelOnClose ends the download's context when its archive is closed.

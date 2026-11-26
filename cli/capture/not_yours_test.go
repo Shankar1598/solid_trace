@@ -51,17 +51,20 @@ func capturedSession(t *testing.T) capture.Input {
 }
 
 // A transcript that resume downloaded can be another person's or a Run's.
-// A person's capture of it sends nothing, and the record says why.
+// A person's capture of it sends nothing, and the record says why. An
+// older server does not say whose it is, and capture sends as before.
 func TestAPersonsCaptureSendsOnlyTheirOwnAgentSessions(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		session fake.Session
+		older   bool
 		sends   bool
 		status  capture.Status
 	}{
-		{"another person's", fake.Session{AnotherPerson: true}, false, capture.NotYours},
-		{"a Run's", fake.Session{RunID: "run_7"}, false, capture.NotYours},
-		{"yours", fake.Session{}, true, capture.Uploaded},
+		{"another person's", fake.Session{AnotherPerson: true}, false, false, capture.NotYours},
+		{"a Run's", fake.Session{RunID: "run_7"}, false, false, capture.NotYours},
+		{"yours", fake.Session{}, false, true, capture.Uploaded},
+		{"yours, on an older server", fake.Session{}, true, true, capture.Uploaded},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			oauth := fake.NewOAuth(fake.Organization{Name: "Acme", Slug: "acme",
@@ -73,7 +76,10 @@ func TestAPersonsCaptureSendsOnlyTheirOwnAgentSessions(t *testing.T) {
 			s.Harness, s.Repository, s.Organization = capture.Harness, "bitbucket.org/acme/shop", "acme"
 			s.Files = map[string]*fake.File{sessionID + ".jsonl": {Version: 1, End: uint64(len(firstLine)),
 				Bytes: []byte(firstLine)}}
-			api.Set(func(a *fake.AgentAPI) { a.Sessions = map[string]*fake.Session{sessionID: &s} })
+			api.Set(func(a *fake.AgentAPI) {
+				a.Sessions = map[string]*fake.Session{sessionID: &s}
+				a.OlderServer = c.older
+			})
 			dir := t.TempDir()
 			capturer := &capture.Capturer{Dir: dir, Signin: "acme", Now: time.Now, Log: func(string, ...any) {},
 				API: &agentapi.Client{IngestURL: api.URL(), HTTP: http.DefaultClient,

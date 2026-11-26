@@ -36,6 +36,12 @@ func (f *AgentAPI) files(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "Another Organization's Agent session."})
 		return
 	}
+	if f.OlderServer && s.AnotherPerson {
+		request.Status = http.StatusForbidden
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "Agent session " + request.SessionID +
+			" was uploaded by another person. Only its person, or a token of its Run, adds to it."})
+		return
+	}
 	paths := make([]string, 0, len(s.Files))
 	for p := range s.Files {
 		paths = append(paths, p)
@@ -47,11 +53,12 @@ func (f *AgentAPI) files(w http.ResponseWriter, r *http.Request) {
 		list = append(list, map[string]any{"path": p, "version": file.Version, "end_offset": file.End,
 			"content_hash": file.ContentHash})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"agent_session": map[string]any{"id": request.SessionID, "harness": s.Harness, "repository": s.Repository,
-			"folder": s.Folder, "run_id": s.RunID, "yours": !s.AnotherPerson && s.RunID == ""},
-		"files": list,
-	})
+	session := map[string]any{"id": request.SessionID, "harness": s.Harness, "repository": s.Repository,
+		"folder": s.Folder, "run_id": s.RunID, "yours": !s.AnotherPerson && s.RunID == ""}
+	if f.OlderServer {
+		delete(session, "yours")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agent_session": session, "files": list})
 }
 
 // download answers the Agent session directory as a tar archive, as the

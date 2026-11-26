@@ -72,8 +72,9 @@ func (u *upload) run(ctx context.Context) error {
 		return fmt.Errorf("ask what the server has: %w", err)
 	}
 	// A transcript that resume downloaded can be another person's or a
-	// Run's. A person's capture sends none of its bytes.
-	if u.forRun == nil && answer.Session != nil && !answer.Session.Yours {
+	// Run's. A person's capture sends none of its bytes. An older server
+	// does not say, and refuses another person's bytes with 403.
+	if u.forRun == nil && answer.Session != nil && answer.Session.Yours != nil && !*answer.Session.Yours {
 		return errNotYours
 	}
 	u.server = map[string]agentapi.AgentSessionFile{}

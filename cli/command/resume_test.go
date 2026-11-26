@@ -110,19 +110,23 @@ func TestResumeForksAnotherPersonsARunsOrWithForkAndElseKeepsTheID(t *testing.T)
 	for _, c := range []struct {
 		name    string
 		session fake.Session
+		older   bool
 		args    []string
 		fork    bool
 	}{
-		{"yours", fake.Session{}, nil, false},
-		{"another person's", fake.Session{AnotherPerson: true}, nil, true},
-		{"a Run's", fake.Session{RunID: "run_7"}, nil, true},
-		{"yours with --fork", fake.Session{}, []string{"--fork"}, true},
+		{"yours", fake.Session{}, false, nil, false},
+		{"another person's", fake.Session{AnotherPerson: true}, false, nil, true},
+		{"a Run's", fake.Session{RunID: "run_7"}, false, nil, true},
+		{"yours with --fork", fake.Session{}, false, []string{"--fork"}, true},
+		// An older server does not say whose it is.
+		{"yours, on an older server", fake.Session{}, true, nil, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWorld(t, acme)
 			w.signIn()
 			repo := w.checkout()
 			w.inSolidTrace(resumeID, c.session, map[string]string{resumeID + ".jsonl": resumeTranscript})
+			w.agent.Set(func(a *fake.AgentAPI) { a.OlderServer = c.older })
 
 			if code := w.resume(append([]string{resumeID, "--print"}, c.args...)...); code != 0 {
 				t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
@@ -284,6 +288,15 @@ func TestResumeRefusesWithWhatToDo(t *testing.T) {
 			w.checkout()
 			w.agent.Set(func(a *fake.AgentAPI) { delete(a.Sessions, resumeID) })
 		}, "SolidTrace has no Agent session " + resumeID + " in Acme."},
+		{"another person's, on an older server", func(w *world) {
+			w.checkout()
+			w.agent.Set(func(a *fake.AgentAPI) {
+				a.OlderServer = true
+				a.Sessions[resumeID].AnotherPerson = true
+			})
+		}, "SolidTrace refused the download (Agent session " + resumeID + " was uploaded by another person. Only " +
+			"its person, or a token of its Run, adds to it.). An older server refuses downloads. Ask its operator " +
+			"to upgrade it."},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWorld(t, acme)
