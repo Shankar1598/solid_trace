@@ -109,7 +109,10 @@ class NotificationTest < ActiveSupport::TestCase
     row.update_columns(status: Notification.statuses[:failed], attempts: Notification::MAX_ATTEMPTS)
 
     assert row.retried?
+    assert_not Notification.exhausted.exists?(row.id)
     travel Notification::MONITOR_RETRY_FOR + 1.minute
     assert_not row.retried?
+    assert Notification.exhausted.exists?(row.id)
+    assert Notification.undelivered.exists?(row.id)
   end
 end

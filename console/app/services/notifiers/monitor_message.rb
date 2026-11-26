@@ -238,7 +238,6 @@ module Notifiers
         logs = Array(payload["logs"])
         total = payload["total"].to_i
         lines = logs.map { |log| log_line(log) }
-        lines << "and #{total - logs.size} more" if total > logs.size
 
         text = "#{total} #{'Log'.pluralize(total)} matched since the last run."
         if payload["logs_skipped_at"].present?
@@ -251,6 +250,7 @@ module Notifiers
           text: text,
           fields: [ [ "Project", monitor["project"] ], [ "Matched", total.to_s ] ],
           lines: lines,
+          more: [ total - logs.size, 0 ].max,
           link: explorer_url(monitor, payload["from"], payload["to"]),
           severity: "warning",
           dedup_key: matched_dedup_key(monitor["id"]),

@@ -6,7 +6,7 @@ module Notifiers
 
     # +kind+ is the Notification kind and selects the message. A batched kind
     # lists every Issue in +issues+; the others describe +issues.first+. A
-    # Monitor kind, and a Monitor status kind, sends +message+, a
+    # kind of IntegrationNotification::MESSAGE_KINDS sends +message+, a
     # Notifiers::Message.
     def initialize(integration, kind:, issues: [], message: nil, previous_assignee_name: nil, new_assignee_name: nil)
       @integration = integration
@@ -42,7 +42,7 @@ module Notifiers
       when IntegrationNotification::ISSUE_CREATED then issue_created_payload
       when IntegrationNotification::THRESHOLD_REACHED then threshold_payload
       when IntegrationNotification::ASSIGNMENT_CHANGED then assignment_payload
-      when *IntegrationNotification::MONITOR_KINDS, *IntegrationNotification::MONITOR_STATUS_KINDS then monitor_payload
+      when *IntegrationNotification::MESSAGE_KINDS then monitor_payload
       else raise ArgumentError, "Unknown notification kind: #{kind.inspect}"
       end
     end
@@ -55,6 +55,9 @@ module Notifiers
     MAX_FIELD = 2000
     MAX_FIELDS = 10
     MAX_URL = 3000
+    # The most characters of one line in a section, so that one long line
+    # leaves room for the others.
+    MAX_LINE = 500
 
     # A Monitor's message: its title, what happened, the value against the
     # threshold (or the Logs that matched) and a button to the explorer.
@@ -70,9 +73,8 @@ module Notifiers
           end,
         }
       ]
-      if message.lines.any?
-        text = message.lines.map { |line| "• #{mrkdwn(line)}" }.join("\n")
-        blocks << { type: "section", text: { type: "mrkdwn", text: text.truncate(MAX_SECTION) } }
+      if message.listed_lines.any?
+        blocks << { type: "section", text: { type: "mrkdwn", text: lines_text(message) } }
       end
       buttons = [ [ message.link_text, message.link ], [ "Open the Baseline", message.baseline_link ] ]
         .select { |_, url| url && url.length <= MAX_URL }
@@ -85,6 +87,19 @@ module Notifiers
 
       # The top-level text is mrkdwn, and the title holds Log values.
       { text: mrkdwn(title), blocks: blocks }
+    end
+
+    # As many whole lines as fit in a section, then "and N more" for the
+    # lines left out and the message's own more.
+    def lines_text(message)
+      lines = message.lines.map { |line| "• #{mrkdwn(line)}".truncate(MAX_LINE) }
+      shown = lines.size
+      text = ->(count) {
+        more = message.more + lines.size - count
+        [ *lines.first(count), ("• #{message.more_line(more)}" if more.positive?) ].compact.join("\n")
+      }
+      shown -= 1 while text.call(shown).length > MAX_SECTION
+      text.call(shown)
     end
 
     # Text as Slack's mrkdwn shows it as written.

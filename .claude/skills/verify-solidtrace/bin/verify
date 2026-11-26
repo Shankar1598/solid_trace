@@ -16,6 +16,9 @@
 #   verify prune [--days N]              delete stopped runs older than N days (7) and all but
 #                                        the 2 newest EventStore builds; up runs it first
 #
+# VERIFY_EVENT_STORE_URL, set at up, is where Console reaches EventStore's
+# query API, such as a switch that a flow turns off (docs/agents/testing.md).
+#
 # --run defaults to $SOLIDTRACE_VERIFY_RUN, then to the newest run of this
 # checkout whose stack is up. Each run is $VERIFY_HOME/runs/<id>, with
 # stack/ (data and logs, deleted by down) and evidence/ (kept).
@@ -154,7 +157,7 @@ export QUEUE_DATABASE_URL=sqlite3:$S/sqlite/queue.sqlite3
 export CACHE_DATABASE_URL=sqlite3:$S/sqlite/cache.sqlite3
 export MESSAGE_QUEUE_DATABASE_URL=sqlite3:$S/sqlite/message_queue.sqlite3
 export VITE_RUBY_PORT=$VITE_PORT
-export EVENT_STORE_URL=http://127.0.0.1:$QUERY_PORT
+export EVENT_STORE_URL=${VERIFY_EVENT_STORE_URL:-http://127.0.0.1:$QUERY_PORT}
 export EVENT_STORE_INGEST_URL=http://127.0.0.1:$INGEST_PORT
 export INGEST_URL=http://localhost:$INGEST_PORT
 export E2E_BASE_URL=http://localhost:$CONSOLE_PORT
@@ -371,5 +374,5 @@ case ${1:-} in
   snap) shift; cmd_snap "$@" ;;
   down) shift; parse_run_flag "$@"; cmd_down "$RUN_ARG" ;;
   list) cmd_list ;;
-  *) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

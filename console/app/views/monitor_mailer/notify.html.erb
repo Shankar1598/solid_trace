@@ -6,9 +6,9 @@
   <p><strong><%= label %>:</strong> <%= value %></p>
 <% end %>
 
-<% if @message.lines.any? %>
+<% if @message.listed_lines.any? %>
   <ul>
-    <% @message.lines.each do |line| %>
+    <% @message.listed_lines.each do |line| %>
       <li><code><%= line %></code></li>
     <% end %>
   </ul>

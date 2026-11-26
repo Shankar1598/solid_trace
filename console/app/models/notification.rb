@@ -7,8 +7,9 @@
 # about the Organization's Monitors, and has neither. The
 # IntegrationNotification module writes, delivers and closes these rows.
 #
-# Issue rows are retried MAX_ATTEMPTS times. Every other row is a Monitor
-# row, retried for MONITOR_RETRY_FOR.
+# A row with an Issue is retried MAX_ATTEMPTS times. A row with no Issue is
+# a Monitor row for delivery, and is retried for MONITOR_RETRY_FOR. A
+# Monitor status row is one of these, with no monitor_id.
 class Notification < ApplicationRecord
   belongs_to :integration
   belongs_to :issue, optional: true
@@ -49,6 +50,10 @@ class Notification < ApplicationRecord
       .or(where(status: :failed, issue_id: nil, created_at: ...MONITOR_RETRY_FOR.ago))
       .or(where(status: :refused))
   }
+
+  # Rows whose outcome is final with nothing sent: skipped, refused, or
+  # exhausted.
+  scope :undelivered, -> { exhausted.or(where(status: :skipped)) }
 
   validate :one_subject
 

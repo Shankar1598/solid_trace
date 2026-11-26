@@ -26,10 +26,10 @@ Some Monitors need a join, a subquery, a window, or a read of `events` or `spans
 
 ## Amended: Monitor status rows (2026-11-26)
 
-An Organization can choose a Monitor status Integration (GLOSSARY). `MonitorStatusJob` tells it, every minute, which Monitors do not run and which run again. Its rows are of two kinds, `monitors_not_running` and `monitors_running_again`. They are about the Organization's Monitors, so they have no `issue_id`, no `monitor_id` and no `group_key`. The check constraint allows that for these two kinds only.
+An Organization can choose a Monitor status Integration (GLOSSARY). Every minute, `MonitorStatusJob` tells it which Monitors do not run. It also tells it which Monitors run again. These rows have two kinds, `monitors_not_running` and `monitors_running_again`. They are about the Organization's Monitors. So they have no `issue_id`, no `monitor_id` and no `group_key`. The check constraint allows that for these two kinds only.
 
-- **They are Monitor rows for delivery.** Each Integration's Monitor status rows are one chain, oldest first, that stops at its first failure, as a Monitor group's chain does. A failed one is retried for 6 hours. So an Issue row is now a row with an `issue_id`, and every other row is a Monitor row.
-- **One transaction writes the rows and the marks.** Each Monitor's `not_running_notified` changes in the same transaction as the row that tells about it. So a job that stops and runs again writes each message once. Its tick is scheduled after the commit, as for a run.
+- **They are delivered as Monitor rows.** A row with an `issue_id` is an Issue row. A row with no `issue_id` is delivered as a Monitor row, and is retried for 6 hours. A status row has no `monitor_id` too. The status rows of one Integration are one chain, oldest first. The chain stops at its first failure, as the chain of a Monitor group does.
+- **Each Monitor keeps the Integration that was told.** `not_running_told_integration_id` names it. It changes in the same transaction as the row that tells. So a job that stops and runs again writes each message one time. The tick is scheduled after the commit, as for a run. A changed setting, or a "not running" row that was never delivered, clears the mark with no message. Then the next job tells the Monitor status Integration again.
 
 ## Considered options
 

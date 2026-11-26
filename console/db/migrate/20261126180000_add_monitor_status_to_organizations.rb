@@ -2,7 +2,7 @@
 
 # An Organization can choose one Integration that is told when its Monitors
 # are not running, and when they run again. Each Monitor keeps since when it
-# has not run, and whether that Integration was told. These messages are
+# has not run, and the Integration that was told about it. These messages are
 # about an Organization's Monitors, not about one Issue or one Monitor
 # group. So a Notification of those two kinds has neither subject.
 class AddMonitorStatusToOrganizations < ActiveRecord::Migration[8.1]
@@ -15,7 +15,8 @@ class AddMonitorStatusToOrganizations < ActiveRecord::Migration[8.1]
     add_reference :organizations, :monitor_status_integration,
       foreign_key: { to_table: :integrations, on_delete: :nullify }, index: true
     add_column :monitors, :not_running_since, :datetime
-    add_column :monitors, :not_running_notified, :boolean, default: false, null: false
+    add_reference :monitors, :not_running_told_integration,
+      foreign_key: { to_table: :integrations, on_delete: :nullify }, index: true
 
     remove_check_constraint :notifications, ONE_SUBJECT, name: "notifications_one_subject"
     add_check_constraint :notifications, "#{ONE_SUBJECT} OR #{STATUS_SUBJECT}", name: "notifications_one_subject"

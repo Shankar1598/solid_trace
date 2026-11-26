@@ -290,7 +290,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_180000) do
     t.float "minimum"
     t.datetime "held_since"
     t.datetime "not_running_since"
-    t.boolean "not_running_notified", default: false, null: false
+    t.integer "not_running_told_integration_id"
+    t.index ["not_running_told_integration_id"], name: "index_monitors_on_not_running_told_integration_id"
     t.index ["organization_id"], name: "index_monitors_on_organization_id"
     t.index ["project_id"], name: "index_monitors_on_project_id"
   end
@@ -558,6 +559,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_180000) do
   add_foreign_key "monitor_integrations", "monitors", on_delete: :cascade
   add_foreign_key "monitor_runs", "monitors", on_delete: :cascade
   add_foreign_key "monitor_states", "monitors", on_delete: :cascade
+  add_foreign_key "monitors", "integrations", column: "not_running_told_integration_id", on_delete: :nullify
   add_foreign_key "monitors", "organizations"
   add_foreign_key "monitors", "projects"
   add_foreign_key "notifications", "integrations"

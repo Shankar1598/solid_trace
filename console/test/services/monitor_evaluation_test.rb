@@ -941,6 +941,20 @@ class MonitorEvaluationTest < ActiveSupport::TestCase
     assert_equal NOW, monitor.reload.not_running_since
   end
 
+  test "a run that its Monitor was changed under keeps the not_running_since that the save set" do
+    monitor = threshold_monitor
+    stub_request(:post, @query_url).to_return(status: 503, body: "starting")
+    evaluate(monitor)
+    assert_equal NOW, monitor.reload.not_running_since
+
+    travel 1.minute
+    answer_table_while([ [ 3 ] ]) { LogMonitor.find(monitor.id).update!(disabled_at: Time.current) }
+    run = evaluate(monitor)
+
+    assert_equal MonitorEvaluation::CHANGED_DURING_RUN, run.error
+    assert_nil monitor.reload.not_running_since, "turning it off cleared it, and the run read it before that"
+  end
+
   test "a Match run that reads clears not_running_since" do
     monitor = match_monitor
     stub_request(:post, @query_url).to_return(status: 503, body: "starting")

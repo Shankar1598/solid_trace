@@ -5,7 +5,7 @@
 # last_error or held_since beside it), held while its runs are held, error
 # when its last run failed, and ok otherwise.
 # not_running_since is when it stopped running: its runs failed, or were
-# held for LogMonitor::LONGEST_HOLD.
+# held for LogMonitor::HOLD_MEANS_NOT_RUNNING_AFTER.
 # A failed run changes no state, so the groups it left firing still are. include_details adds each group's state,
 # the runs it keeps and its Integrations, for its own page.
 class MonitorSerializer

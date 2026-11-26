@@ -63,6 +63,17 @@ Day to day, run the tests for what you changed. Before a release, run all three 
      RAILS_ENV=test bin/rails db:test:prepare && bin/rails test
      ```
 
+`e2e/flows/monitor-status.spec.ts` has a second test, which cuts EventStore's query port for 3 minutes and takes about 9 minutes. The usual run skips it. Run it on its own verify stack (the verify-solidtrace skill), from the repo root. It needs `socat`. Console reaches EventStore through `console/e2e/query-port-switch`, a proxy that the test turns off and on. Slot 1's query port is 4512:
+
+```bash
+export EVENT_STORE_URL=http://127.0.0.1:4296 QUERY_PORT_TARGET=4512
+console/e2e/query-port-switch on
+VERIFY_EVENT_STORE_URL=$EVENT_STORE_URL .claude/skills/verify-solidtrace/bin/verify up --slot 1
+E2E_QUERY_PORT_SWITCH=$PWD/console/e2e/query-port-switch .claude/skills/verify-solidtrace/bin/verify flow -- e2e/flows/monitor-status.spec.ts
+.claude/skills/verify-solidtrace/bin/verify down
+console/e2e/query-port-switch off
+```
+
 If Vite stops with `ENOSPC` on a `watch`, the inotify watch limit is used up, not the disk. Restart Vite with `CHOKIDAR_USEPOLLING=1` set, and it polls instead of watching.
 
 Each release has its changelog, `docs/changelogs/<tag>.md`: the GitHub release's notes, then a "Release record" section saying what was tagged, the migrations and config changes, and the tests run. Before tagging, record each suite's result (exit, time, counts) there. The release commit also sets `version` in `cli/plugin/.claude-plugin/plugin.json` to the tag without its `v`, such as `0.25.0`. A Go test fails when that version is not the newest changelog's, and the release job fails when it is not the tag's.

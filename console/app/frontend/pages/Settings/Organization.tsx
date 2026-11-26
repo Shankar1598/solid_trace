@@ -23,10 +23,12 @@ interface RequireTwoFactor {
 }
 
 // The Monitor status Integration (OrganizationSettingsController): the one
-// chosen, or null, and those that can be chosen. The Factory provider is not one.
+// chosen, or null, and those that can be chosen. The Factory provider is not
+// one. after_minutes: how long a Monitor is not running before it is told.
 interface MonitorStatusSetting {
   integration_id: number | null
   options: IntegrationOption[]
+  after_minutes: number
 }
 
 interface SettingsOrganizationProps {
@@ -122,7 +124,7 @@ function MonitorStatusCard({ organization, setting }: { organization: Organizati
       </CardHeader>
       <CardContent className="space-y-2 pb-6 text-sm">
         <p>
-          The Integration that is told when Monitors do not run for 2 minutes, and when they run again.
+          The Integration that is told when Monitors do not run for {setting.after_minutes} minutes, and when they run again.
           Each Monitor’s own Integrations are not told.
         </p>
         <div className="max-w-sm space-y-2">

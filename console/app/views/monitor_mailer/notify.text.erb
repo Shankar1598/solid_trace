@@ -5,8 +5,8 @@
 <% @message.fields.each do |label, value| -%>
 <%= label %>: <%= value %>
 <% end -%>
-<% if @message.lines.any? %>
-<% @message.lines.each do |line| -%>
+<% if @message.listed_lines.any? %>
+<% @message.listed_lines.each do |line| -%>
 - <%= line %>
 <% end -%>
 <% end %>

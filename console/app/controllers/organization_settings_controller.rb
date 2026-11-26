@@ -22,6 +22,7 @@ class OrganizationSettingsController < ApplicationController
       monitor_status: {
         integration_id: @current_org.monitor_status_integration_id,
         options: IntegrationOptionSerializer.list(@current_org.monitor_status_integration_options),
+        after_minutes: IntegrationNotification::NOT_RUNNING_AFTER.in_minutes.to_i,
       },
     }
   end

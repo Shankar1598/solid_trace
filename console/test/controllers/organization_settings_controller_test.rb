@@ -45,6 +45,7 @@ class OrganizationSettingsControllerTest < ActionDispatch::IntegrationTest
     setting = inertia_props["monitor_status"]
     assert_nil setting["integration_id"]
     assert_equal [ "Ops" ], setting["options"].map { |option| option["name"] }
+    assert_equal 2, setting["after_minutes"], "the card says how long a Monitor does not run before it is told"
 
     patch organization_path(org_slug: @organization.slug), params: { organization: { monitor_status_integration_id: slack.id } }
     assert_equal slack, @organization.reload.monitor_status_integration

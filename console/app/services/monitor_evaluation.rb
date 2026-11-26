@@ -49,9 +49,9 @@
 #
 # not_running_since is when the Monitor stopped running. The first failed
 # run sets it. A hold sets it to held_since once the hold is
-# LogMonitor::LONGEST_HOLD old, and a shorter hold keeps it as it is. A run
-# that compares clears it. MonitorStatusJob tells the Organization's Monitor
-# status Integration about it.
+# LogMonitor::HOLD_MEANS_NOT_RUNNING_AFTER old, and a shorter hold keeps it
+# as it is. A run that compares clears it. MonitorStatusJob tells the
+# Organization's Monitor status Integration about it.
 #
 # One run at a time per Monitor, whether the scheduler (MonitorEvaluationJob)
 # or Run now started it: a run takes the Monitor's run_started_at as a lease
@@ -504,7 +504,7 @@ class MonitorEvaluation
     case status
     when "ok" then nil
     when "error" then @monitor.not_running_since || @now
-    else @monitor.not_running_since || (held_since if held_since <= @now - LogMonitor::LONGEST_HOLD)
+    else @monitor.not_running_since || (held_since if held_since <= @now - LogMonitor::HOLD_MEANS_NOT_RUNNING_AFTER)
     end
   end
 end

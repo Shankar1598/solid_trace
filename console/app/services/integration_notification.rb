@@ -36,9 +36,17 @@ module IntegrationNotification
   MONITORS_NOT_RUNNING = "monitors_not_running"
   MONITORS_RUNNING_AGAIN = "monitors_running_again"
   MONITOR_STATUS_KINDS = [ MONITORS_NOT_RUNNING, MONITORS_RUNNING_AGAIN ].freeze
+  # The kinds whose adapter sends a Notifiers::Message.
+  MESSAGE_KINDS = (MONITOR_KINDS + MONITOR_STATUS_KINDS).freeze
 
   # How long a Monitor is not running before monitor_status tells the team.
   NOT_RUNNING_AFTER = 2.minutes
+  # How far back a "not running" row is read to see whether it was
+  # delivered. A newer row that told a Monitor again is younger, and a
+  # sent row is deleted only a day after it was sent
+  # (Maintenance::NotificationCleanupJob), so the newest row that names
+  # a Monitor is always read.
+  UNDELIVERED_LOOKBACK = 1.day
 
   # Delay between the first row for an Integration and its tick, so that Issues
   # arriving together share one message.
@@ -151,46 +159,55 @@ module IntegrationNotification
       integrations.uniq.each { |integration| schedule_tick(integration, wait: INITIAL_DELAY) }
     end
 
-    # Tells the Organization's Monitor status Integration which enabled
+    # Tells the Organization's Monitor status Integration I which enabled
     # Monitors have not run for NOT_RUNNING_AFTER (monitors_not_running), and
     # which of those it was told about run again or were turned off
-    # (monitors_running_again): at most one row of each kind. A deleted
-    # Monitor leaves the set and sends nothing. With no Monitor status
-    # Integration, or an inactive one, it writes nothing and marks nothing.
+    # (monitors_running_again): at most one row of each kind. Each Monitor's
+    # not_running_told_integration_id names the Integration that was told:
+    # - a Monitor that is not running and was not told to I goes into
+    #   "not running", and is told to I
+    # - a Monitor told to I that runs again, or is off, goes into
+    #   "running again", and is told to none
+    # - a Monitor told to another Integration, or to I by a "not running"
+    #   that was never delivered (forget_undelivered), is told to none with
+    #   no message. If it is still not running, the next call tells I.
+    # With no Monitor status Integration, every mark is cleared. With an
+    # inactive one, nothing changes.
     #
-    # The rows and each Monitor's not_running_notified are written in one
-    # transaction, so a job that stops at any point and runs again sends
-    # each message once. The tick is scheduled once it commits.
+    # The rows and the marks are written in one transaction, so a job that
+    # stops at any point and runs again sends each message once. Once it
+    # commits, a tick is scheduled while I has status rows to deliver, also
+    # when this call wrote none: so a tick that was not scheduled is.
     def monitor_status(organization, now = Time.current)
+      integration = organization.monitor_status_integration
+      return if integration && !integration.active
+
+      ApplicationRecord.transaction do
+        tell_monitor_status(organization, integration, now) if integration
+        forget_other_marks(organization.monitors, integration)
+      end
+      return unless integration
+
+      schedule_ticks([ integration ]) if Notification.deliverable.where(integration: integration, kind: MONITOR_STATUS_KINDS).exists?
+    end
+
+    # A deleted Monitor that was told to the Monitor status Integration, the
+    # last one told: a "running again" that lists it as deleted, so the
+    # PagerDuty incident is resolved. While others told are still not
+    # running, it leaves the set with no message. It reads the mark in the
+    # delete's transaction, as the job may have changed it.
+    def monitor_deleted(monitor)
+      organization = monitor.organization
       integration = organization.monitor_status_integration
       return unless integration&.active
 
-      written = ApplicationRecord.transaction do
-        monitors = organization.monitors
-        stopped = monitors.enabled.where(not_running_notified: false, not_running_since: ..(now - NOT_RUNNING_AFTER))
-          .includes(:project).order(:not_running_since, :id).to_a
-        told = monitors.where(not_running_notified: true)
-        back = told.where(not_running_since: nil).or(told.where.not(disabled_at: nil))
-          .includes(:project).order(:name, :id).to_a
-        enabled = monitors.enabled.count
-        LogMonitor.where(id: stopped.map(&:id)).update_all(not_running_notified: true) if stopped.any?
-        LogMonitor.where(id: back.map(&:id)).update_all(not_running_notified: false) if back.any?
-        still = monitors.enabled.where(not_running_notified: true).count
-        about = { "id" => organization.id, "name" => organization.name, "slug" => organization.slug }
+      told = organization.monitors.where(not_running_told_integration_id: integration.id)
+      return unless told.exists?(id: monitor.id) && !told.where.not(id: monitor.id).exists?
 
-        rows = []
-        if stopped.any?
-          rows << status_row(integration, MONITORS_NOT_RUNNING, "organization" => about, "enabled" => enabled,
-            "all" => enabled > 1 && stopped.size == enabled, "monitors" => stopped.map { |monitor| not_running_fact(monitor) })
-        end
-        if back.any?
-          rows << status_row(integration, MONITORS_RUNNING_AGAIN, "organization" => about, "enabled" => enabled,
-            "all" => enabled > 1 && back.size == enabled && back.all?(&:enabled?), "still_not_running" => still,
-            "monitors" => back.map { |monitor| monitor_fact(monitor).merge("turned_off" => !monitor.enabled?) })
-        end
-        rows.any?
-      end
-      schedule_ticks([ integration ]) if written
+      enabled = organization.monitors.enabled.where.not(id: monitor.id).count
+      status_row(integration, MONITORS_RUNNING_AGAIN, Notifiers::MonitorStatusMessage.facts(organization,
+        enabled: enabled, all: false, monitors: [ listed(monitor, left: Notifiers::MonitorStatusMessage::DELETED) ]))
+      schedule_ticks([ integration ])
     end
 
     def deliver_pending(integration_id)
@@ -248,20 +265,77 @@ module IntegrationNotification
       schedule_tick(integration, wait: INITIAL_DELAY)
     end
 
-    def status_row(integration, kind, payload)
-      Notification.create!(integration: integration, kind: kind, payload: payload, status: :pending)
+    def tell_monitor_status(organization, integration, now)
+      monitors = organization.monitors
+      forget_undelivered(integration, monitors)
+      told = monitors.where(not_running_told_integration_id: integration.id)
+      # where.not leaves out NULL, so the Monitors told to none are asked for apart.
+      untold = monitors.where(not_running_told_integration_id: nil)
+        .or(monitors.where.not(not_running_told_integration_id: integration.id))
+      stopped = untold.enabled.where(not_running_since: ..(now - NOT_RUNNING_AFTER))
+        .includes(:project).order(:not_running_since, :id).to_a
+      back = told.where(not_running_since: nil).or(told.where.not(disabled_at: nil)).includes(:project).order(:name, :id).to_a
+
+      LogMonitor.where(id: stopped.map(&:id)).update_all(not_running_told_integration_id: integration.id)
+      LogMonitor.where(id: back.map(&:id)).update_all(not_running_told_integration_id: nil)
+      LogMonitor.where(id: back.map(&:id)).where.not(disabled_at: nil).update_all(not_running_since: nil)
+      enabled = monitors.enabled.count
+
+      if stopped.any?
+        status_row(integration, MONITORS_NOT_RUNNING, Notifiers::MonitorStatusMessage.facts(organization,
+          enabled: enabled, all: enabled > 1 && stopped.size == enabled,
+          monitors: stopped.map { |monitor| listed(monitor, not_running: true) }))
+      end
+      if back.any?
+        left = Notifiers::MonitorStatusMessage::TURNED_OFF
+        status_row(integration, MONITORS_RUNNING_AGAIN, Notifiers::MonitorStatusMessage.facts(organization,
+          enabled: enabled, all: enabled > 1 && back.size == enabled && back.all?(&:enabled?),
+          still_not_running: monitors.enabled.where(not_running_told_integration_id: integration.id).count,
+          monitors: back.map { |monitor| listed(monitor, left: (left unless monitor.enabled?)) }))
+      end
     end
 
-    def monitor_fact(monitor)
-      { "id" => monitor.id, "name" => monitor.name, "project" => monitor.project.name }
+    # A Monitor told to the Integration by a "not running" that ended
+    # skipped, refused or exhausted was never told: it is told to none, so
+    # that the next call tells it again while it still does not run.
+    def forget_undelivered(integration, monitors)
+      told = monitors.where(not_running_told_integration_id: integration.id).pluck(:id)
+      return if told.empty?
+
+      rows = Notification.where(integration: integration, kind: MONITORS_NOT_RUNNING,
+        created_at: UNDELIVERED_LOOKBACK.ago..).order(:created_at, :id).to_a
+      undelivered = Notification.undelivered.where(id: rows.map(&:id)).pluck(:id).to_set
+      newest = {}
+      rows.each { |row| Notifiers::MonitorStatusMessage.read(row.payload).monitors.each { |m| newest[m.id] = row.id } }
+      lost = told.select { |id| undelivered.include?(newest[id]) }
+      LogMonitor.where(id: lost).update_all(not_running_told_integration_id: nil) if lost.any?
     end
 
-    # Since when the Monitor is not running, and why: its last run's error,
-    # or the reason that its runs are held.
-    def not_running_fact(monitor)
-      held = monitor.runs.first&.held_reason if monitor.last_error.blank?
-      monitor_fact(monitor).merge("since" => monitor.not_running_since.utc.iso8601,
-        "error" => monitor.last_error.presence || (held && "Held: #{held}"))
+    # The marks of an Integration that is no longer the Monitor status
+    # Integration, with no message: the Integration that is tells the
+    # Monitors that still do not run.
+    def forget_other_marks(monitors, integration)
+      others = monitors.where.not(not_running_told_integration_id: nil)
+      others = others.where.not(not_running_told_integration_id: integration.id) if integration
+      others.where.not(disabled_at: nil).update_all(not_running_since: nil, not_running_told_integration_id: nil)
+      others.update_all(not_running_told_integration_id: nil)
+    end
+
+    def status_row(integration, kind, facts)
+      Notification.create!(integration: integration, kind: kind, payload: Notifiers::MonitorStatusMessage.payload(facts),
+        status: :pending)
+    end
+
+    # A Monitor as a status row lists it. One that is not running has since
+    # when, and why: its last run's error, or the reason that its runs are
+    # held.
+    def listed(monitor, not_running: false, left: nil)
+      facts = { id: monitor.id, name: monitor.name, project: monitor.project.name, left: left }
+      if not_running
+        held = monitor.runs.first&.held_reason if monitor.last_error.blank?
+        facts.merge!(since: monitor.not_running_since.utc.iso8601, error: monitor.last_error.presence || (held && "Held: #{held}"))
+      end
+      Notifiers::MonitorStatusMessage::Listed.new(**facts)
     end
 
     def schedule_tick(integration, **timing)
@@ -277,8 +351,9 @@ module IntegrationNotification
       opens_at if Time.current < opens_at
     end
 
-    # Rows about Issues and rows about Monitors are delivered their own ways.
-    # Monitor status rows are delivered as Monitor rows.
+    # Rows about Issues and the other rows are delivered their own ways. A
+    # row with no Issue is delivered as a Monitor row, and so is a Monitor
+    # status row, which has no Monitor either.
     def deliver_rows(integration, row_ids)
       deliver_issue_rows(integration, row_ids)
       deliver_monitor_rows(integration, row_ids)
