@@ -1,7 +1,8 @@
 // Package signin signs the CLI in through SolidTrace OAuth as the
 // first-party client solidtrace-cli: the browser grant with a loopback
 // redirect and PKCE, or the device flow (RFC 8628) on a machine with no
-// browser. It asks for the factory's Scopes, sessions:write and factory.
+// browser. It asks for the factory's Scopes: sessions:write,
+// sessions:download and factory.
 //
 // Source gives a live access token from the stored sign-in, and refreshes
 // it with the rotating refresh token when it expires.
@@ -27,7 +28,10 @@ const (
 	// ClientID is the first-party OAuth client of the CLI in Console.
 	ClientID = "solidtrace-cli"
 	// Scope is what `solidtrace login` asks for.
-	Scope = "sessions:write factory"
+	Scope = "sessions:write " + ScopeSessionsDownload + " factory"
+	// ScopeSessionsDownload downloads the Agent sessions of the
+	// Organization, for `solidtrace resume`.
+	ScopeSessionsDownload = "sessions:download"
 	// ResourcePath is the resource of the factory's Scopes, under the
 	// issuer: the agent ingest API and the Dispatcher.
 	ResourcePath = "/factory"

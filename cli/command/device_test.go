@@ -22,7 +22,7 @@ func TestLoginWithDevicePrintsACodeAndFinishesWhenThePersonApproves(t *testing.T
 		t.Fatalf("device codes asked: %d", len(w.oauth.DeviceRequests))
 	}
 	form := w.oauth.DeviceRequests[0]
-	if form.Get("client_id") != "solidtrace-cli" || form.Get("scope") != "sessions:write factory" ||
+	if form.Get("client_id") != "solidtrace-cli" || form.Get("scope") != "sessions:write sessions:download factory" ||
 		form.Get("resource") != w.oauth.Resource() {
 		t.Errorf("device authorization form: %v", form)
 	}

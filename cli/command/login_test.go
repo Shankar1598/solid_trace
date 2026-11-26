@@ -156,7 +156,7 @@ func TestLoginWithABrowserStoresTheSignInAndPrintsTheNotice(t *testing.T) {
 	q := w.oauth.Authorizations[0].Query
 	for key, want := range map[string]string{
 		"client_id":             "solidtrace-cli",
-		"scope":                 "sessions:write factory",
+		"scope":                 "sessions:write sessions:download factory",
 		"resource":              w.oauth.Resource(),
 		"response_type":         "code",
 		"code_challenge_method": "S256",

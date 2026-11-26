@@ -46,7 +46,10 @@ type AuthorizeRequest struct {
 }
 
 type grant struct {
-	org     string
+	org string
+	// scope is what the client asked for: Console gives each Scope that
+	// the client asks for.
+	scope   string
 	revoked bool
 }
 
@@ -65,7 +68,7 @@ type refreshToken struct {
 }
 
 type pair struct {
-	access, refresh string
+	access, refresh, scope string
 }
 
 type authCode struct {
@@ -79,6 +82,7 @@ type authCode struct {
 type deviceCode struct {
 	userCode string
 	resource string
+	scope    string
 	grant    *grant
 	denied   bool
 	expires  time.Time
@@ -295,7 +299,7 @@ func (f *OAuth) authorize(w http.ResponseWriter, r *http.Request) {
 	} else if f.Deny {
 		answer.Set("error", "access_denied")
 	} else {
-		g := &grant{org: f.Pick}
+		g := &grant{org: f.Pick, scope: q.Get("scope")}
 		f.grants = append(f.grants, g)
 		code := random()
 		f.codes[code] = &authCode{grant: g, challenge: q.Get("code_challenge"), redirect: q.Get("redirect_uri"),
@@ -317,7 +321,7 @@ func (f *OAuth) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 	code := random()
 	userCode := fmt.Sprintf("WDJB-%04d", len(f.devices)+1)
-	f.devices[code] = &deviceCode{userCode: userCode, resource: r.PostForm.Get("resource"),
+	f.devices[code] = &deviceCode{userCode: userCode, resource: r.PostForm.Get("resource"), scope: r.PostForm.Get("scope"),
 		expires: f.Now().Add(time.Duration(f.DeviceExpiresIn) * time.Second)}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"device_code":      code,
@@ -411,7 +415,7 @@ func (f *OAuth) token(w http.ResponseWriter, r *http.Request) {
 		case device.grant != nil:
 			oauthError(w, http.StatusBadRequest, "invalid_grant")
 		default:
-			device.grant = &grant{org: f.Pick}
+			device.grant = &grant{org: f.Pick, scope: device.scope}
 			f.grants = append(f.grants, device.grant)
 			f.issue(w, device.grant, device.resource)
 		}
@@ -425,7 +429,7 @@ func (f *OAuth) issue(w http.ResponseWriter, g *grant, resource string) {
 }
 
 func (f *OAuth) newPair(g *grant, resource string) pair {
-	p := pair{access: "sto_" + random(), refresh: "str_" + random()}
+	p := pair{access: "sto_" + random(), refresh: "str_" + random(), scope: g.scope}
 	f.access[p.access] = &accessToken{grant: g, expires: f.Now().Add(AccessTokenLasts)}
 	f.refresh[p.refresh] = &refreshToken{grant: g, resource: resource}
 	return p
@@ -437,7 +441,7 @@ func (f *OAuth) answer(w http.ResponseWriter, p pair) {
 		"token_type":    "Bearer",
 		"expires_in":    int(AccessTokenLasts / time.Second),
 		"refresh_token": p.refresh,
-		"scope":         "sessions:write factory",
+		"scope":         p.scope,
 	})
 }
 
