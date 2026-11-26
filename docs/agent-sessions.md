@@ -38,11 +38,13 @@ Step 5 of the Capture setup page gives a managed-settings block that also sends 
 
 **Settings → Agent sessions → Capture setup** in Console gives each command with your instance's version and addresses filled in. Each member of the Organization can open it. The CLI sends tokens only over HTTPS, or to a loopback address. So when the Ingest URL is `http://` and Console is on `https://`, the page gives ingest's HTTPS address, `https://<ingest host>:4443`, where Caddy serves ingest.
 
-Or run the setup wizard. It does steps 1 to 3, and it can also install the review plugin ([the skills plugin](#record-what-each-review-found-the-skills-plugin)). It asks for the release, and it uses the newest release when you do not give one:
+Or run the setup script. It asks no questions. It installs or upgrades the CLI and the capture plugin, and also the review plugin ([the skills plugin](#record-what-each-review-found-the-skills-plugin)). Run it again to upgrade. It uses the newest release, or the release in `SOLIDTRACE_VERSION`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Shankar1598/solid_trace/main/cli/setup-claude-code.sh | sh
 ```
+
+When the machine has no sign-in, the script signs in if you give `SOLIDTRACE_CONSOLE_URL` and `SOLIDTRACE_INGEST_URL` (from the Capture setup page). If you do not give them, it tells you to do step 3. `SOLIDTRACE_REVIEW_PLUGIN=no` does not install the review plugin. The script does not set the Bitbucket token. If the token is not set, the script tells you how to set it.
 
 1. Install the `solidtrace` CLI. The script checks the SHA-256 of the file before it installs it in `~/.local/bin`:
 
