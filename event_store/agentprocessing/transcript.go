@@ -161,10 +161,16 @@ type parsedLine struct {
 // same Log.
 var agentLogIDs = uuid.MustParse("5b0f3c1e-8f53-4d0e-9a52-6c1d2b7e4a90")
 
+// placeID is the id of what the parse makes at offset of unit: the Log of
+// a line, or the Review record of a record file.
+func placeID(unit storage.AgentFileUnit, offset uint64) uuid.UUID {
+	return uuid.NewSHA1(agentLogIDs, fmt.Appendf(nil, "%s/%d/%d/%s", unit.SessionID, unit.Version, offset, unit.Path))
+}
+
 // parseUnits makes one Log for each line of the units of .jsonl files in a
 // range of the parse, by Log ingest's normalise, at the Agent Project's
 // Retention: the Logs of units[i] are logs[i]. A unit of another file has
-// no Logs. It reads the parse state that the range before left, and gives
+// no Logs, and a record file gives its Review record. It reads the parse state that the range before left, and gives
 // the state after this range.
 //
 // Some rules read more than one line, so the parse reads the whole range
@@ -191,7 +197,11 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 	lastLineOfReply := map[string]int{}
 	deliveredAt := map[string]json.RawMessage{}
 	toolNames := map[string]map[string]string{}
+	var records []storage.ReviewRecord
 	for i, unit := range units {
+		if r := reviewRecordOfFile(unit); r != nil {
+			records = append(records, *r)
+		}
 		if !strings.HasSuffix(unit.Path, ".jsonl") {
 			continue
 		}
@@ -226,7 +236,6 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 	}
 
 	logs := make([][]models.Log, len(units))
-	var records []storage.ReviewRecord
 	var previous json.RawMessage
 	for i, line := range lines {
 		unit := units[line.unit]
@@ -261,7 +270,7 @@ func parseUnits(units []storage.AgentFileUnit, retentionDays int, state parseSta
 		totals.addLine(unit, line.offset+uint64(line.length), object, timed, f, receipt)
 		keepOnStoredDay(object, receipt.At)
 		addSource(object, unit, line.offset, line.length)
-		id := uuid.NewSHA1(agentLogIDs, fmt.Appendf(nil, "%s/%d/%d/%s", unit.SessionID, unit.Version, line.offset, unit.Path))
+		id := placeID(unit, line.offset)
 		if r := f.reviewRecord; r != nil {
 			r.ID, r.SessionID, r.Path, r.Version, r.Offset, r.StoredAt = id, unit.SessionID, unit.Path, unit.Version, line.offset, unit.StoredAt.UTC()
 			records = append(records, *r)
@@ -408,11 +417,6 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 					set("agent.tool_name", b.Name)
 					set("agent.tool_use_id", b.ID)
 					toolNames[b.ID] = b.Name
-					if b.Type == "tool_use" && b.Name == "Bash" {
-						if body, ok := reviewFinalBody(b.Input); ok {
-							recordBodies = append(recordBodies, body)
-						}
-					}
 				case "tool_result":
 					role = "tool"
 					rs, rb := contentOf(b.Content)
@@ -437,7 +441,7 @@ func lineObject(raw []byte, toolNames map[string]string, subagent bool) (map[str
 					kind = line.Type + "/" + b.Type
 				}
 			}
-			// The skill's own text has an example block and call, but on a user line.
+			// The skill's own text has an example block, but on a user line.
 			if line.Type == "assistant" && !subagent && !line.IsSidechain && len(recordBodies) > 0 {
 				facts.reviewRecord = reviewRecordOf(recordBodies[len(recordBodies)-1])
 			}

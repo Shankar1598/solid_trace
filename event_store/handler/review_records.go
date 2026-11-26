@@ -84,7 +84,7 @@ type (
 	}
 	reviewRecordAnswer struct {
 		ReviewRecord reviewRecordRow `json:"review_record"`
-		// Record is the JSON of the record as its block has it.
+		// Record is the JSON of the record as its file or block has it.
 		Record string `json:"record"`
 		// Rounds are all the records of the PR, newest first, this one
 		// too.

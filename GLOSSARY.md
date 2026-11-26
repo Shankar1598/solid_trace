@@ -293,7 +293,7 @@ One conversation of one coding agent, kept as its transcript. A resume continues
 _Avoid_: session (alone), conversation, thread, chat
 
 **Review record**:
-The record of a PR's reviews that the `open-pr` and `update-pr` skills send to `solidtrace review final` at the end of an **Agent session** (in an older Agent session, at the end of its final reply): each review run, each finding with every decision on it and its outcome, the problems that a person, an agent or a test run found and the reviews missed, and the confirmations. Each `update-pr` writes the next round of the same PR. SolidTrace keeps it from the uploaded Agent session, and the newest round is the PR's record.
+The record of a PR's reviews that the `open-pr` and `update-pr` skills write to a file in the folder of the **Agent session** with `solidtrace review final`, at the end of the Agent session (in an older Agent session, at the end of its final reply): each review run, each finding with every decision on it and its outcome, the problems that a person, an agent or a test run found and the reviews missed, and the confirmations. Each `update-pr` writes the next round of the same PR. SolidTrace keeps it from the uploaded Agent session, and the newest round is the PR's record.
 _Avoid_: PR record, review report, findings record
 
 **Evidence file**:
@@ -406,7 +406,7 @@ _Avoid_: command, mention, slash command
 - An **Instance admin** sets the install's email, which every **Organization**'s mail is sent with
 - An **Organization** with **Require two-factor** admits only members who have **Two-factor**, with an **Authenticator app** or a **Passkey**
 - An **Agent session** belongs to its **Organization**'s **Agent Project**; an engineer's own Agent session has no **Run**, and is recorded only in a **Captured repository**
-- A **Review record** comes from the `solidtrace review final` call at the end of an **Agent session** (in an older Agent session, from its final reply), and is in the same **Agent Project**, with the same **Retention**
+- A **Review record** comes from the file that `solidtrace review final` writes in the folder of an **Agent session** (in an older Agent session, from its final reply), uploads with the Agent session, and is in the same **Agent Project**, with the same **Retention**
 - An **Agent session** has the **Evidence files** that its agent uploaded, and the PR body links to each of them
 - The **Agent Project**'s **Evidence Retention** decides when its **Evidence files** are deleted
 - The **Agent Project**'s key sends Claude Code telemetry as **Logs** of the Agent Project; only the telemetry of a **Captured repository** is kept

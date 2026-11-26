@@ -2,22 +2,21 @@ package agentprocessing
 
 import (
 	"encoding/json"
-	"regexp"
 	"strings"
 
 	"github.com/solidtrace/event_store/storage"
 )
 
 // reviewRecordFence opens the block with which the open-pr and update-pr
-// skills ended their final reply before they sent the Review record of the
-// PR to solidtrace review final. Sessions of that time keep their records.
+// skills ended their final reply before solidtrace review final wrote the
+// Review record of the PR to a file. Sessions of that time keep their
+// records.
 const reviewRecordFence = "```solidtrace-pr-record"
 
-// reviewFinalCall is the first line of a Bash command that runs only
-// solidtrace review final, by its name or by a path, with its stdin from a
-// heredoc whose word is in quotes, so that the shell does not change the
-// body (cli/plugin-skills/skills/open-pr/SKILL.md).
-var reviewFinalCall = regexp.MustCompile(`^[ \t]*(?:[\w.~/-]*/)?solidtrace[ \t]+review[ \t]+final[ \t]*<<[ \t]*(['"])(\w+)(['"])[ \t]*$`)
+// reviewRecordFolder is the folder of an Agent session's own folder where
+// solidtrace review final writes the session's Review records
+// (cli/command/review_final.go).
+const reviewRecordFolder = "/solidtrace/review-records/"
 
 // reviewRecordVersion is the version of the record (cli/review.Record) that
 // the parse reads.
@@ -78,6 +77,23 @@ func reviewRecordOf(body string) *storage.ReviewRecord {
 	return r
 }
 
+// reviewRecordOfFile is the Review record of unit when it is a whole file
+// <session id>/solidtrace/review-records/<name>.json of its own Agent
+// session, with the place of the file at offset 0; nil for another unit, a
+// cut file, or a file that is not a record. A subagent's file is under
+// subagents/, so it is not in that folder.
+func reviewRecordOfFile(unit storage.AgentFileUnit) *storage.ReviewRecord {
+	name, ok := strings.CutPrefix(unit.Path, unit.SessionID.String()+reviewRecordFolder)
+	if !ok || !strings.HasSuffix(name, ".json") || strings.Contains(name, "/") || unit.Size > uint64(len(unit.Bytes)) {
+		return nil
+	}
+	r := reviewRecordOf(string(unit.Bytes))
+	if r != nil {
+		r.ID, r.SessionID, r.Path, r.Version, r.StoredAt = placeID(unit, 0), unit.SessionID, unit.Path, unit.Version, unit.StoredAt.UTC()
+	}
+	return r
+}
+
 // lastReviewRecordBlock is the text in the last block of text that a line
 // with only the fence opens, up to the line that closes it or the end of
 // the text, trimmed.
@@ -99,50 +115,4 @@ func lastReviewRecordBlock(text string) (string, bool) {
 		body, _, _ = strings.Cut(body, "\n```")
 		return strings.TrimSpace(body), true
 	}
-}
-
-// reviewFinalBody is the heredoc of input, the input of a Bash tool use,
-// when its command is one call of solidtrace review final and nothing
-// more: blank or comment lines, the line of reviewFinalCall, the body, the
-// line with only the heredoc's word, and blank lines.
-func reviewFinalBody(input json.RawMessage) (string, bool) {
-	var bash struct {
-		Command string `json:"command"`
-	}
-	if json.Unmarshal(input, &bash) != nil {
-		return "", false
-	}
-	lines := strings.Split(bash.Command, "\n")
-	for len(lines) > 0 && blankOrComment(lines[0]) {
-		lines = lines[1:]
-	}
-	if len(lines) == 0 {
-		return "", false
-	}
-	m := reviewFinalCall.FindStringSubmatch(lines[0])
-	if m == nil {
-		return "", false
-	}
-	openQuote, word, closeQuote := m[1], m[2], m[3]
-	if openQuote != closeQuote {
-		return "", false
-	}
-	body := lines[1:]
-	for i, l := range body {
-		if l == word {
-			for _, after := range body[i+1:] {
-				if strings.TrimSpace(after) != "" {
-					return "", false
-				}
-			}
-			return strings.TrimSpace(strings.Join(body[:i], "\n")), true
-		}
-	}
-	return "", false
-}
-
-// blankOrComment is true for a line that bash runs as nothing.
-func blankOrComment(line string) bool {
-	line = strings.TrimSpace(line)
-	return line == "" || strings.HasPrefix(line, "#")
 }
