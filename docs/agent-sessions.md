@@ -179,6 +179,8 @@ After a resume, capture works as before. It finds the start folder of the Agent 
 
 The command reads the git branch of the last turns of the Agent session. When the checkout is on another branch, the command tells you to run `git switch <branch>`. When the checkout does not have the branch, it tells you to run `git fetch` and then `git switch <branch>`. The command does not change the checkout.
 
+When the folder of the Agent session is not in this checkout, for example because the Agent session made it on its branch, the command downloads the Agent session and then stops. Switch to its branch, and run `solidtrace resume` again. The second run downloads nothing.
+
 SolidTrace has only the transcript. Changes that the Agent session did not commit and push are not in SolidTrace, and they are not on this machine.
 
 ### Two machines at the same time
@@ -197,6 +199,7 @@ The command stops with exit code 1 and tells you what to do when:
 - The transcript is **partial** or **cut** in SolidTrace. Then a resume is not promised: start a new Agent session.
 - This machine already has the Agent session in another folder. A second copy makes capture send the shorter copy again. The message gives the `claude --resume` command to run in that folder.
 - SolidTrace did not make the last uploads ready in 2 minutes. Run the command again later.
+- The folder of the Agent session is not in this checkout. Switch to its branch, and run `solidtrace resume` again (see [The branch](#the-branch)).
 - The server answers 403 because it is older than the CLI. Ask the operator to upgrade Console and EventStore.
 
 ### The Scope and the sign-in
