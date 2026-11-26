@@ -66,6 +66,8 @@ const (
 	retryCleanupAfter = time.Minute
 )
 
+var evidencePassTimeout = 30 * time.Minute
+
 // Cleanup is the timer inside EventStore that keeps each family's days, as
 // Logs, from outliving their Retention or their Project, and from passing
 // the disk limit, and Evidence files from outliving Evidence Retention.
@@ -186,7 +188,9 @@ func (c *Cleanup) RunDailyPass() (RetentionPass, error) {
 
 func (c *Cleanup) deleteEvidencePastRetention(now time.Time, retention map[int64]int) (storage.EvidenceSweep, error) {
 	start := time.Now()
-	sweep, err := c.evidence.Files.DeletePastRetention(context.Background(), now, retention)
+	ctx, cancel := context.WithTimeout(context.Background(), evidencePassTimeout)
+	defer cancel()
+	sweep, err := c.evidence.Files.DeletePastRetention(ctx, now, retention)
 	if sweep != (storage.EvidenceSweep{}) {
 		logger.L.Info("Deleted Evidence files past Evidence Retention", "files", sweep.Deleted,
 			"objects_with_no_row", sweep.Unreferenced, "took", time.Since(start))

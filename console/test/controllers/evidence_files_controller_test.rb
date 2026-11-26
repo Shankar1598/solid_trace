@@ -2,6 +2,7 @@
 
 require "test_helper"
 require "webmock/minitest"
+require "socket"
 
 class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
   include IntegrationTestHelper
@@ -149,6 +150,7 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "sandbox", response.headers["Content-Security-Policy"]
     assert_equal "inline", response.headers["Content-Disposition"]
     assert_equal "bytes", response.headers["Accept-Ranges"]
+    assert_equal "84", response.headers["Content-Length"]
   end
 
   test "the browser keeps the bytes, and gets 304 for its ETag without a read from EventStore" do
@@ -174,7 +176,7 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
 
   test "the browser's Range goes to EventStore, and its 206 comes back with its range" do
     asked = stub_request(:get, content_url(VIDEO)).with(headers: { "Range" => "bytes=100-199" })
-      .to_return(status: 206, headers: { "Content-Range" => "bytes 100-199/1000", "Content-Type" => "video/webm" }, body: "v" * 100)
+      .to_return(status: 206, headers: { "Content-Range" => "bytes 100-199/1000", "Content-Length" => "100", "Content-Type" => "video/webm" }, body: "v" * 100)
     sign_in_as(@member)
 
     get evidence_file_bytes_path(org_slug: "acme", id: VIDEO), headers: { "Range" => "bytes=100-199" }
@@ -182,6 +184,7 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_requested asked
     assert_response :partial_content
     assert_equal "bytes 100-199/1000", response.headers["Content-Range"]
+    assert_equal "100", response.headers["Content-Length"]
     assert_equal "video/webm", response.media_type
     assert_equal "v" * 100, response.body
   end
@@ -251,7 +254,100 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     assert_bad_gateway
   end
 
+  test "a body that EventStore cuts short ends before the Content-Length that the answer gives" do
+    sign_in_as(@member)
+
+    with_eventstore_that_sends(10, of: 84) { get evidence_file_bytes_path(org_slug: "acme", id: SHOT) }
+
+    assert_response :ok
+    assert_equal "84", response.headers["Content-Length"]
+    assert_equal "p" * 10, response.body
+  end
+
+  test "a read that fails after the first chunk ends the answer before its Content-Length" do
+    answer = Net::HTTPOK.new("1.1", "200", "OK")
+    answer["Content-Length"] = "84"
+    answer.define_singleton_method(:read_body) do |&chunk|
+      chunk.call("p" * 10)
+      raise EventStore::Unavailable, "EventStore connection error: read timeout"
+    end
+    sign_in_as(@member)
+
+    EventStore.stub(:evidence_content, ->(**, &block) { block.call(answer) }) do
+      get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+    end
+
+    assert_response :ok
+    assert_equal "84", response.headers["Content-Length"]
+    assert_equal "p" * 10, response.body
+  end
+
+  test "an answer of EventStore with no Content-Length gets 502, so a short body cannot look whole" do
+    stub_request(:get, content_url(SHOT)).to_return(status: 200, body: "p" * 84)
+    sign_in_as(@member)
+
+    get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+
+    assert_bad_gateway
+  end
+
+  test "past the streams that may run at once, the bytes get 503 with Retry-After and no headers of the file" do
+    stub_request(:get, content_url(SHOT)).to_return(status: 200, headers: { "Content-Length" => "84" }, body: "p" * 84)
+    sign_in_as(@member)
+
+    stub_const(EvidenceFileStream, :AT_ONCE, 1) do
+      stub_const(EvidenceFileStream, :SLOT_WAIT_SECONDS, 0.05) do
+        held = EvidenceFileStream.open(id: SHOT)
+        get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+
+        assert_response :service_unavailable
+        assert_equal "1", response.headers["Retry-After"]
+        assert_plain_answer
+
+        held.close
+        get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+        assert_response :ok
+      end
+    end
+  end
+
+  test "each answer of the bytes gives back its stream, so the next one runs" do
+    stub_request(:get, content_url(SHOT)).to_return(status: 200, headers: { "Content-Length" => "84" }, body: "p" * 84)
+    stub_request(:get, content_url(VIDEO)).to_return(status: 416, headers: { "Content-Range" => "bytes */1000" }, body: "{}")
+    sign_in_as(@member)
+
+    stub_const(EvidenceFileStream, :AT_ONCE, 1) do
+      stub_const(EvidenceFileStream, :SLOT_WAIT_SECONDS, 0.05) do
+        head evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+        assert_response :ok
+        get evidence_file_bytes_path(org_slug: "acme", id: VIDEO), headers: { "Range" => "bytes=5000-" }
+        assert_response :range_not_satisfiable
+        with_eventstore_that_sends(10, of: 84) { get evidence_file_bytes_path(org_slug: "acme", id: SHOT) }
+        assert_equal 10, response.body.bytesize
+        get evidence_file_bytes_path(org_slug: "acme", id: SHOT)
+        assert_response :ok
+        assert_equal "p" * 84, response.body
+      end
+    end
+  end
+
   private
+
+  def with_eventstore_that_sends(sent, of:)
+    server = TCPServer.new("127.0.0.1", 0)
+    eventstore = Thread.new do
+      client = server.accept
+      while (line = client.gets) && line != "\r\n"; end
+      client.write("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: #{of}\r\n\r\n#{'p' * sent}")
+      client.close
+    end
+    WebMock.disable!
+    EventStore.stub(:base_url, "http://127.0.0.1:#{server.addr[1]}") { yield }
+  ensure
+    WebMock.enable!
+    eventstore&.join(2)
+    server&.close
+  end
 
   def assert_bad_gateway
     assert_response :bad_gateway

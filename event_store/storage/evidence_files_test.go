@@ -241,6 +241,23 @@ func TestASecondUploadOfTheSameBytesWritesNoSecondObject(t *testing.T) {
 	}
 }
 
+func TestTheSameBytesInALaterRoundWithANewCaptionKeepTheFirstLinkAndTheFirstCaption(t *testing.T) {
+	e := newTestEvidenceFiles(t, newMemoryStore(), t.TempDir())
+	round1 := evidenceUpload(evidencePNG(500))
+	round1.Caption = "Round 1: the list, newest first"
+	first, _, err := e.Add(context.Background(), round1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	round2 := round1
+	round2.Caption = "Round 2: the list after the fix of the sort"
+	round2.At = round1.At.Add(26 * time.Hour)
+	again, created, err := e.Add(context.Background(), round2)
+	if err != nil || created || again.ID != first.ID || again.Caption != round1.Caption {
+		t.Errorf("Expected the first row %s with the caption %q, got %s with %q (new %v, %v)", first.ID, round1.Caption, again.ID, again.Caption, created, err)
+	}
+}
+
 func TestTheSameBytesAgainAfterEvidenceRetentionGetANewRowAndNewBytes(t *testing.T) {
 	store := newMemoryStore()
 	e := newTestEvidenceFiles(t, store, t.TempDir())

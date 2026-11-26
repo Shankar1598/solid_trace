@@ -1,10 +1,6 @@
 # frozen_string_literal: true
 
-# Live streams the answer, and runs each action in a thread of its own,
-# so the pages of Evidence files are in EvidenceFilesController.
 class EvidenceFileBytesController < ApplicationController
-  include ActionController::Live
-
   before_action :set_current_org
 
   FILE_HEADERS = %w[Content-Type Content-Range Accept-Ranges Content-Disposition ETag].freeze
@@ -28,26 +24,17 @@ class EvidenceFileBytesController < ApplicationController
   end
 
   def stream_bytes(file)
-    EventStore.evidence_content(id: file.id, range: request.headers["Range"]) do |answer|
-      case answer.code.to_i
-      when 200, 206 then stream_file(file, answer)
-      when 416 then plain_answer("Range Not Satisfiable", :range_not_satisfiable, "Content-Range" => answer["Content-Range"])
-      else raise EventStore::Unavailable, "EventStore answered #{answer.code} for Evidence file #{file.id}"
-      end
-    end
+    stream = EvidenceFileStream.open(id: file.id, range: request.headers["Range"])
+    response.status = stream.status
+    response.headers.merge!("Content-Type" => file.content_type, "Content-Disposition" => "inline", **stream.headers)
+    self.response_body = stream
+  rescue EvidenceFileStream::OutsideTheFile => e
+    plain_answer("Range Not Satisfiable", :range_not_satisfiable, "Content-Range" => e.content_range)
+  rescue EvidenceFileStream::Busy
+    plain_answer("Too many Evidence files are loading at once. Try again shortly.", :service_unavailable, "Retry-After" => "1")
   rescue EventStore::Unavailable => e
     Rails.logger.error("Evidence file bytes: #{e.message}")
-    plain_answer("EventStore can't read the Evidence file. Try again shortly.", :bad_gateway) unless response.committed?
-  ensure
-    response.stream.close
-  end
-
-  def stream_file(file, answer)
-    response.status = answer.code.to_i
-    response.headers["Content-Type"] = file.content_type
-    response.headers["Content-Disposition"] = "inline"
-    %w[Content-Range Accept-Ranges].each { |name| response.headers[name] = answer[name] if answer[name] }
-    answer.read_body { |chunk| response.stream.write(chunk) }
+    plain_answer("EventStore can't read the Evidence file. Try again shortly.", :bad_gateway)
   end
 
   def plain_answer(text, status, headers = {})

@@ -184,6 +184,7 @@ func TestTheUpdatePRSkillKeepsOnlyTheEarlierEvidenceLinksThatStillProveThePRAndU
 		"Keep the link of an Evidence file of the earlier body only when its file still shows how the PR works now.",
 		"When the fixes of this round change what a file shows, remove its link, or replace it with the link of a new file.",
 		"Upload only the files that prove the fixes of this round, not the files of the earlier links",
+		"An upload of the same file in the same Agent session gives its earlier link, and keeps the caption of its first upload",
 	} {
 		if !strings.Contains(step, sentence) {
 			t.Errorf("%s › Update the PR does not say %q", updatePRSkill, sentence)

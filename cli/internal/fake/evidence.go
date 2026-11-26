@@ -20,21 +20,57 @@ type EvidenceFile struct {
 	Bytes       []byte
 }
 
-var evidenceTypes = []struct{ contentType, magic string }{
-	{"image/png", "\x89PNG\r\n\x1a\n"},
-	{"image/jpeg", "\xff\xd8\xff"},
-	{"image/gif", "GIF87a"},
-	{"image/gif", "GIF89a"},
-	{"image/webp", "RIFF"},
-	{"video/webm", "\x1a\x45\xdf\xa3"},
+var evidenceTypes = []struct {
+	contentType string
+	matches     func([]byte) bool
+}{
+	{"image/png", prefix("\x89PNG\r\n\x1a\n")},
+	{"image/jpeg", prefix("\xff\xd8\xff")},
+	{"image/gif", func(b []byte) bool { return prefix("GIF87a")(b) || prefix("GIF89a")(b) }},
+	{"image/webp", func(b []byte) bool { return len(b) >= 12 && prefix("RIFF")(b) && string(b[8:12]) == "WEBP" }},
+	{"video/mp4", isMP4},
+	{"video/webm", isWebM},
+}
+
+func prefix(magic string) func([]byte) bool {
+	return func(b []byte) bool { return bytes.HasPrefix(b, []byte(magic)) }
+}
+
+var mp4Brands = map[string]bool{
+	"isom": true, "iso2": true, "iso4": true, "iso5": true, "iso6": true,
+	"mp41": true, "mp42": true, "avc1": true, "dash": true, "M4V ": true,
+}
+
+func isMP4(b []byte) bool {
+	if len(b) < 12 || string(b[4:8]) != "ftyp" {
+		return false
+	}
+	size := int(b[0])<<24 | int(b[1])<<16 | int(b[2])<<8 | int(b[3])
+	if size < 12 || size > len(b) {
+		return false
+	}
+	if mp4Brands[string(b[8:12])] {
+		return true
+	}
+	compatibleBrands := b[min(16, size):size]
+	for i := 0; i+4 <= len(compatibleBrands); i += 4 {
+		if mp4Brands[string(compatibleBrands[i:i+4])] {
+			return true
+		}
+	}
+	return false
+}
+
+func isWebM(b []byte) bool {
+	head := b[:min(len(b), 64)]
+	docType := bytes.Index(head, []byte("\x42\x82"))
+	return prefix("\x1a\x45\xdf\xa3")(head) && docType > 0 &&
+		bytes.Contains(head[docType:min(len(head), docType+12)], []byte("webm"))
 }
 
 func evidenceType(body []byte) (string, bool) {
-	if len(body) >= 12 && string(body[4:8]) == "ftyp" {
-		return "video/mp4", true
-	}
 	for _, t := range evidenceTypes {
-		if bytes.HasPrefix(body, []byte(t.magic)) {
+		if t.matches(body) {
 			return t.contentType, true
 		}
 	}
@@ -92,7 +128,7 @@ func (f *AgentAPI) addEvidence(w http.ResponseWriter, r *http.Request) {
 			"error": "An Evidence file is a PNG, JPEG, WebP or GIF image, or an MP4 or WebM video, sent as its bytes with no Content-Encoding."})
 		return
 	}
-	id := fmt.Sprintf("%x", sha256.Sum256([]byte(sessionID+"\x00"+string(body))))[:32]
+	id := evidenceID(sessionID, body)
 	status := http.StatusCreated
 	file := f.evidence[id]
 	if file == nil {
@@ -111,6 +147,11 @@ func (f *AgentAPI) addEvidence(w http.ResponseWriter, r *http.Request) {
 		"content_type": file.ContentType,
 		"byte_size":    len(file.Bytes),
 	})
+}
+
+func evidenceID(sessionID string, body []byte) string {
+	sum := sha256.Sum256([]byte(sessionID + "\x00" + string(body)))
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // StoredEvidence are copies of the stored Evidence files, in the order of

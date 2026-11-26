@@ -266,13 +266,14 @@ class EventStore
     # The bytes of the Evidence file id, from GET /evidence/:id/content with
     # range as its Range header: yields EventStore's answer while its body
     # is still to read, so that the block can stream it with read_body.
-    # Raises Unavailable when EventStore cannot be reached.
+    # Raises Unavailable when EventStore cannot be reached, or when its body
+    # stops before its end.
     def evidence_content(id:, range: nil, &block)
       uri = URI("#{base_url}/evidence/#{ERB::Util.url_encode(id)}/content")
       request = Net::HTTP::Get.new(uri, "Accept-Encoding" => "identity")
       request["Range"] = range if range.present?
-      Net::HTTP.start(uri.host, uri.port, open_timeout: 3, read_timeout: 30) { |http| http.request(request, &block) }
-    rescue SocketError, SystemCallError, Net::OpenTimeout, Net::ReadTimeout => e
+      Net::HTTP.start(uri.host, uri.port, open_timeout: 3, read_timeout: 30, ignore_eof: false) { |http| http.request(request, &block) }
+    rescue SocketError, SystemCallError, IOError, Net::OpenTimeout, Net::ReadTimeout => e
       raise Unavailable, "EventStore connection error: #{e.message}"
     end
 

@@ -18,7 +18,8 @@ The notes of the next release, for the changes since v0.24.2 on this file. At th
 
 Upgrade EventStore and Console before the plugin. The new `open-pr` and `update-pr` skills call `solidtrace evidence add`, and an older EventStore answers it with 404. The skills then write no Evidence links.
 
-1. Upgrade the install. Console runs its two new migrations (`evidence_files`, and `projects.evidence_retention_days`) when it starts.
-2. With no bucket, EventStore keeps the files in `evidence_path` (`/storage/evidence/production` in `deploy/event_store.yml`), on the data disk. With a bucket, they go under its `evidence/` prefix, and no new bucket is needed.
-3. Optional: `deploy/docker-compose.yml` gives EventStore `CONSOLE_URL`, for the links when the Console URL instance setting is not set.
-4. Then each engineer runs the setup wizard again, which updates the plugins and the CLI.
+1. Add the line `evidence_path: /storage/evidence/production` to `deploy/config/event_store.yml`. `deploy/install` keeps the config of an earlier install, which has no `evidence_path`, and EventStore then uses its default folder, `/storage/evidence/development`. A new install gets the line from `deploy/event_store.yml`.
+2. Then upgrade the install. Console runs its two new migrations (`evidence_files`, and `projects.evidence_retention_days`) when it starts.
+3. With no bucket, EventStore keeps the files in `evidence_path`, on the data disk, and only Evidence Retention limits them: `logs_disk_limit_gb` does not count them. With a bucket, they go under its `evidence/` prefix, no new bucket is needed, and `evidence_path` keeps only the temporary files of uploads.
+4. Optional: `deploy/docker-compose.yml` gives EventStore `CONSOLE_URL`, for the links when the Console URL instance setting is not set.
+5. Then each engineer runs the setup wizard again, which updates the plugins and the CLI.

@@ -170,3 +170,34 @@ func TestRunDailyPassRunsTheDaysAndEvidenceRetentionNow(t *testing.T) {
 	}
 	expectSteps(t, fake, "days", "evidence")
 }
+
+type stuckEvidence struct{}
+
+func (stuckEvidence) DeletePastRetention(ctx context.Context, _ time.Time, _ map[int64]int) (storage.EvidenceSweep, error) {
+	<-ctx.Done()
+	return storage.EvidenceSweep{}, ctx.Err()
+}
+
+func TestAnEvidenceRetentionThatHangsEndsAtItsTimeoutAndFreesTheNextPass(t *testing.T) {
+	timeout := evidencePassTimeout
+	evidencePassTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { evidencePassTimeout = timeout })
+	cleanup, _, _ := newTestCleanup()
+	cleanup.evidence.Files = stuckEvidence{}
+
+	for pass := 1; pass <= 2; pass++ {
+		ended := make(chan error, 1)
+		go func() {
+			_, err := cleanup.RunDailyPass()
+			ended <- err
+		}()
+		select {
+		case err := <-ended:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("pass %d: Expected the Evidence part's deadline error, got %v", pass, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("pass %d did not end at the Evidence part's timeout", pass)
+		}
+	}
+}
