@@ -65,10 +65,10 @@ type AgentDownloads interface {
 // archive, for a resume on another machine: for each path its highest
 // version, as the server stored it (after Redaction). Only a token with
 // sessions:read that lists the Agent session, or with sessions:download,
-// gets it. A file whose start
-// Retention dropped is marked partial with the offset where it starts; a
-// file with a cut unit is marked cut with its missing ranges. The server
-// does not promise a resume from a partial or cut file.
+// gets it. A file whose start Retention dropped is marked partial with the
+// offset where it starts; a file with a cut unit is marked cut with its
+// missing ranges. The server does not promise a resume from a partial or
+// cut file.
 //
 // Until Agent file processing has inserted each stored unit of the Agent
 // session, it answers 503 with Retry-After: a 200 of an upload means that
