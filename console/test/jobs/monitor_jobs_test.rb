@@ -31,6 +31,17 @@ class MonitorJobsTest < ActiveSupport::TestCase
     assert_equal({ class: "MonitorSchedulerJob", schedule: "every minute" }, task)
   end
 
+  test "a Monitor run starts after the quick jobs, so the Monitor status message is not late behind slow runs" do
+    run = MonitorEvaluationJob.new(1).priority
+    [ MonitorStatusJob.new, IntegrationNotificationProcessorJob.new(1), MonitorSchedulerJob.new, EventStoreMessageProcessorJob.new ].each do |job|
+      # Solid Queue stores no priority as 0.
+      assert_operator job.priority.to_i, :<, run, "#{job.class} starts before a Monitor run"
+    end
+
+    MonitorEvaluationJob.perform_later(1)
+    assert_enqueued_with(job: MonitorEvaluationJob, priority: run)
+  end
+
   test "the scheduler enqueues each enabled Monitor that is due, give or take the tick" do
     new_monitor = create(:monitor, project: @project)
     due = create(:monitor, project: @project).tap { |m| m.update_columns(next_run_at: NOW - 1.minute) }

@@ -13,6 +13,8 @@ class OrganizationTest < ActiveSupport::TestCase
     assert_not organization.update(monitor_status_integration_id: factory.id)
     assert_includes organization.errors[:monitor_status_integration], "must be a Slack, PagerDuty or email Integration of this Organization"
     assert_not organization.update(monitor_status_integration_id: foreign.id)
+    assert_not organization.update(monitor_status_integration_id: "0"), "an id that casts to 0 names no Integration"
+    assert_not organization.update(monitor_status_integration_id: "abc")
     assert_equal [ slack ], organization.monitor_status_integration_options.to_a
   end
 

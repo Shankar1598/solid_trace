@@ -18,6 +18,11 @@ Delivery            TypeOK               holds
 Delivery            SentAtMostOnce       holds
 Delivery            ResolveAfterTrigger  holds
 Delivery            NoRowLeftBehind      holds
+DeliveryStatus      TypeOK               holds
+DeliveryStatus      SentAtMostOnce       holds
+DeliveryStatus      ResolveAfterTrigger  holds
+DeliveryStatus      NoRowLeftBehind      holds
+DeliveryStatus      NoResolveAlone       holds
 DeliveryLong        TypeOK               holds
 DeliveryLong        SentAtMostOnce       breaks  F2
 DeliveryLong        ResolveAfterTrigger  breaks  F2

@@ -47,6 +47,8 @@ module IntegrationNotification
   # (Maintenance::NotificationCleanupJob), so the newest row that names
   # a Monitor is always read.
   UNDELIVERED_LOOKBACK = 1.day
+  # Why a "running again" is skipped when its "not running" never went.
+  NEVER_TOLD = "Never told that these Monitors were not running"
 
   # Delay between the first row for an Integration and its tick, so that Issues
   # arriving together share one message.
@@ -174,19 +176,22 @@ module IntegrationNotification
     # With no Monitor status Integration, every mark is cleared. With an
     # inactive one, nothing changes.
     #
-    # The rows and the marks are written in one transaction, so a job that
-    # stops at any point and runs again sends each message once. Once it
-    # commits, a tick is scheduled while I has status rows to deliver, also
-    # when this call wrote none: so a tick that was not scheduled is.
+    # The setting is read, and the rows and the marks are written, in one
+    # transaction. So the rows go to the Integration that the setting names
+    # when they are written, and a job that stops at any point and runs
+    # again sends each message once. Once it commits, a tick is scheduled
+    # while I has status rows to deliver, also when this call wrote none: so
+    # a tick that was not scheduled is.
     def monitor_status(organization, now = Time.current)
-      integration = organization.monitor_status_integration
-      return if integration && !integration.active
+      integration = ApplicationRecord.transaction do
+        current = Integration.find_by(id: Organization.where(id: organization.id).select(:monitor_status_integration_id))
+        next current if current && !current.active
 
-      ApplicationRecord.transaction do
-        tell_monitor_status(organization, integration, now) if integration
-        forget_other_marks(organization.monitors, integration)
+        tell_monitor_status(organization, current, now) if current
+        forget_other_marks(organization.monitors, current)
+        current
       end
-      return unless integration
+      return unless integration&.active
 
       schedule_ticks([ integration ]) if Notification.deliverable.where(integration: integration, kind: MONITOR_STATUS_KINDS).exists?
     end
@@ -382,7 +387,8 @@ module IntegrationNotification
     # A deleted Monitor's rows go too, from what each keeps of it, so the
     # resolve written when it was deleted closes its PagerDuty incident.
     # The Integration's Monitor status rows are one chain too, so "running
-    # again" never goes before the "not running" that it follows.
+    # again" never goes before the "not running" that it follows. A "running
+    # again" whose "not running" was never delivered is skipped.
     def deliver_monitor_rows(integration, row_ids)
       rows = Notification.where(id: row_ids, issue_id: nil)
         .includes(monitor: [ :organization, :project ]).order(:created_at, :id).to_a
@@ -394,10 +400,28 @@ module IntegrationNotification
 
       rows.group_by { |row| [ row.monitor_id, row.group_key ] }.each_value do |chain|
         chain.each do |row|
+          next Notification.mark_rows([ row.id ], :skipped, NEVER_TOLD) if never_told?(integration, row)
+
           Notification.mark_rows([ row.id ], :processing)
           break unless deliver_monitor_message(integration, row)
         end
       end
+    end
+
+    # Whether a "running again" is only about Monitors whose newest "not
+    # running" before it ended with nothing sent. The Integration was then
+    # never told that they stopped. A Monitor with no such row read was told
+    # by a row that was sent and then cleaned up.
+    def never_told?(integration, row)
+      return false unless row.kind == MONITORS_RUNNING_AGAIN
+
+      ids = Notifiers::MonitorStatusMessage.read(row.payload).monitors.map(&:id)
+      earlier = Notification.where(integration: integration, kind: MONITORS_NOT_RUNNING,
+        created_at: UNDELIVERED_LOOKBACK.ago..).where(id: ...row.id).order(:id).to_a
+      newest = {}
+      earlier.each { |r| Notifiers::MonitorStatusMessage.read(r.payload).monitors.each { |m| newest[m.id] = r.id } }
+      undelivered = Notification.undelivered.where(id: newest.values).pluck(:id).to_set
+      ids.any? && ids.all? { |id| undelivered.include?(newest[id]) }
     end
 
     # Delivers one Monitor row; false when it failed and may be retried.

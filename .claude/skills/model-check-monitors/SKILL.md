@@ -32,7 +32,7 @@ From the repo root:
   - Exit 2: TLC could not run, or the model has an error.
   - TLC's output for each rule is in `~/.cache/solid-trace/model-check-monitors/<time>/<config>-<rule>/tlc.out`. The last line of the run gives that folder.
   - `bin/check DeliveryLong` checks only that config.
-- **`bin/mutants`:** for 7 broken variants of the code, it changes a copy of the model in the same way. Each variant must break its rule, or the rule checks nothing. Run it after each change to a model or a rule.
+- **`bin/mutants`:** for 8 broken variants of the code, it changes a copy of the model in the same way. Each variant must break its rule, or the rule checks nothing. Run it after each change to a model or a rule.
 - **`COVERAGE=1 bin/check`:** also names each action that TLC never takes in a config. Only an action that the config turns off may be in that list, such as `Expire` where nothing can expire. Any other action in it is a model error, such as an `UNCHANGED` that conflicts with the action's own change. Run it after each change to a model.
 
 The first run installs Java (`java@temurin-25`) and TLC (`tla2tools.jar` 1.7.4, pinned by its sha256) with mise. Only that first run needs the network.
@@ -53,6 +53,7 @@ Each rule is an INVARIANT. The harm follows each one.
 | Delivery | `SentAtMostOnce` | The provider gets each Notification once. | A duplicate Slack message, email or PagerDuty event. |
 | Delivery | `ResolveAfterTrigger` | A resolve never goes before the trigger that it closes, while that trigger can still go. | PagerDuty gets a resolve, and then a trigger that stays open. |
 | Delivery | `NoRowLeftBehind` | When no run and no tick has work left, each row has its outcome: sent, skipped, or failed for the last time. | A page waits for ever. |
+| Delivery | `NoResolveAlone` | In the Monitor status chain, a "running again" never goes after the "not running" before it was given up. | The team is told that Monitors run again, but was never told that they stopped. |
 | EventThreshold | `OneThresholdRow` | An Integration gets one threshold reached Notification for an Issue in a window. | One message for each Event that arrived together. |
 
 Each config sets the environment that the code can meet:
@@ -62,6 +63,7 @@ Each config sets the environment that the code can meet:
 | `MonitorRuns` | Runs end within `RUN_LEASE` (5 minutes), as the code assumes. |
 | `MonitorRunsSlow` | A run can take longer than `RUN_LEASE`, and another run then takes the Monitor. |
 | `Delivery` | Each tick ends within 2 minutes of its dispatch, and no process dies. |
+| `DeliveryStatus` | As `Delivery`, for the Monitor status chain: a "not running", then a "running again", with `never_told?`. |
 | `DeliveryLong` | A tick can wait or run longer than 2 minutes, which `limits_concurrency duration:` allows. |
 | `DeliveryTickDies` | A tick's process can die while it delivers. |
 | `DeliveryWriterDies` | A Monitor run's process can die after its commit, before `schedule_ticks`. |
@@ -132,7 +134,7 @@ Each config sets the environment that the code can meet:
 | Delivery `Write`, `ScheduleAfterWrite`, `WriterDies` | `MonitorEvaluation#record`: `IntegrationNotification.monitor_changes`, then `.schedule_ticks` |
 | Delivery `Dispatch`, `Expire`, `TickDies` | `IntegrationNotificationProcessorJob` `limits_concurrency` (to: 1, duration: 2 minutes, on_conflict: :discard); Solid Queue 1.3.1 `Semaphore`, `Dispatcher::ConcurrencyMaintenance`, `ClaimedExecution.fail_all_with` |
 | Delivery `Pluck` | `IntegrationNotification.deliver_pending`: `Notification.pending_for(...).pluck(:id)`; `Notification.deliverable` |
-| Delivery `Mark`, `Send` | `IntegrationNotification#deliver_monitor_rows`, `#deliver_monitor_message`; `Notification.mark_rows` |
+| Delivery `Mark`, `Send` | `IntegrationNotification#deliver_monitor_rows`, `#never_told?` (with `StatusChain`), `#deliver_monitor_message`; `Notification.mark_rows` |
 | Delivery `Follow` | the end of `deliver_pending`: `deliverable.exists?`, then `schedule_tick(wait: RATE_LIMIT_WINDOW)` |
 | EventThreshold `Dispatch`, `Unblock`, `Expire` | `EventThresholdJob` `limits_concurrency` (key: the Issue, duration: 2 minutes, on_conflict: block); Solid Queue 1.3.1 `BlockedExecution` |
 | EventThreshold `Check`, `Count`, `Insert` | `IntegrationNotification.check_event_threshold`, `#apply_rules`, `#event_threshold_reached?`, `#threshold_reached_since?`, `#record`; `EventThresholdJob`'s `retry_on` |
@@ -141,7 +143,7 @@ Each config sets the environment that the code can meet:
 
 The checks cover the models in these bounds:
 - **MonitorRuns:** 2 runs (a scheduler job and Run now), 2 Log batches, 1 save.
-- **Delivery:** one group's chain of 2 rows (firing, then resolved), 4 ticks, 2 tries.
+- **Delivery:** one group's chain of 2 rows (firing, then resolved), or the Monitor status chain (not running, then running again), 4 ticks, 2 tries.
 - **EventThreshold:** 2 Events.
 
 A pass covers only these bounds, not every size.

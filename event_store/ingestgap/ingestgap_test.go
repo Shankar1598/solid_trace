@@ -183,3 +183,27 @@ func waitForLastBeat(t *testing.T, pebble *storage.PebbleWriter, want time.Time)
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// With the system clock, the end of the hold keeps the monotonic reading of
+// the open. So the hold ends on the monotonic clock: at most its length
+// after the open in real time, also when the wall clock is set back after a
+// boot with a clock that was ahead.
+func TestTheHoldEndsOnTheMonotonicClock(t *testing.T) {
+	logger.Init()
+	pebble := openPebble(t, filepath.Join(t.TempDir(), "pebble"))
+	defer pebble.Close()
+	if err := pebble.WriteIngestBeat(time.Now().Add(-2 * time.Minute)); err != nil {
+		t.Fatalf("Write a heartbeat: %v", err)
+	}
+	gap, stop, err := ingestgap.Open(pebble, clock.System{})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer stop()
+	if !gap.Holds(time.Now()) {
+		t.Fatalf("Expected a 2 min gap to hold, got one until %v", gap.Until)
+	}
+	if gap.Until == gap.Until.Round(0) {
+		t.Fatalf("Expected the end of the hold to keep the monotonic reading of the open, got %v", gap.Until)
+	}
+}

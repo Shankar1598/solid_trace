@@ -2,12 +2,15 @@ package main_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"testing"
 	"time"
 
+	eventstore "github.com/solidtrace/event_store"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/pkg/clickhousetest"
 	"github.com/solidtrace/event_store/pkg/logger"
@@ -93,5 +96,73 @@ func TestAStartAfterAnIngestGapHoldsARunThatAsks(t *testing.T) {
 	}
 	if until := *got.Incomplete.Until; until.Before(started.Add(gap)) || until.After(time.Now().Add(gap+5*time.Second)) {
 		t.Fatalf("Expected the gap to hold until about %v after the start at %v, got until %v", gap, started, until)
+	}
+}
+
+// TestTheLastIngestHeartbeatIsWrittenAsIngestCloses stops EventStore while
+// its start waits for a ClickHouse that takes connections and never
+// answers, so the rest of the shutdown takes seconds. The last ingest
+// heartbeat is about the time that ingest closed, not the end of the
+// shutdown: so the next start measures its gap from the close. The whole
+// shutdown fits Docker's 10 s stop grace period.
+func TestTheLastIngestHeartbeatIsWrittenAsIngestCloses(t *testing.T) {
+	logger.Init()
+	resetTestDB(t)
+	sqlitePath := "../storage/sqlite/test/solid_trace.sqlite3"
+	seedProjectKey(t, sqlitePath, 123, "test_public_key")
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer silent.Close()
+	go func() {
+		var conns []net.Conn
+		defer func() {
+			for _, c := range conns {
+				c.Close()
+			}
+		}()
+		for {
+			c, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			conns = append(conns, c)
+		}
+	}()
+	clickHouse := clickhousetest.Config()
+	clickHouse.Address = silent.Addr().String()
+	cfg := startConfig(t, sqlitePath, clickHouse)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); eventstore.Run(ctx, cfg) }()
+	if status, body := waitForIngest(t, "http://127.0.0.1:"+cfg.Port, `{"message": "before the shutdown"}`); status != 200 {
+		t.Fatalf("Log ingest: expected 200, got %d: %s", status, body)
+	}
+	time.Sleep(2 * time.Second)
+	cancelled := time.Now()
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(60 * time.Second):
+		t.Fatalf("EventStore did not stop within 60 s")
+	}
+	took := time.Since(cancelled)
+
+	pebble, err := storage.NewPebbleWriter(cfg)
+	if err != nil {
+		t.Fatalf("Open Pebble: %v", err)
+	}
+	defer pebble.Close()
+	beat, ok, err := pebble.LastIngestBeat()
+	if err != nil || !ok {
+		t.Fatalf("Expected a last ingest heartbeat, got %v (%v)", ok, err)
+	}
+	if after := beat.Sub(cancelled); after < -time.Millisecond || after > time.Second {
+		t.Errorf("Expected the last heartbeat within 1 s of the stop, as ingest closed, got %v after it (the shutdown took %v)", after, took)
+	}
+	if took > 10*time.Second {
+		t.Errorf("The shutdown took %v, more than Docker's 10 s grace period", took)
 	}
 }

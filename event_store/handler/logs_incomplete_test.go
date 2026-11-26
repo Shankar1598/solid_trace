@@ -52,7 +52,13 @@ func newIncompleteApp(t *testing.T, now time.Time, batchAge time.Duration, gap i
 	if err := pebble.WriteLogBatch(waitingProject, []models.Log{log}, written); err != nil {
 		t.Fatalf("Write a Log batch: %v", err)
 	}
+	return incompleteApp(t, pebble, clock.NewManual(now), gap)
+}
 
+// incompleteApp is a query app on pebble, at clk's time, whose start had gap,
+// and its Logs handler.
+func incompleteApp(t *testing.T, pebble *storage.PebbleWriter, clk clock.Clock, gap ingestgap.Gap) (*fiber.App, *handler.LogsHandler) {
+	t.Helper()
 	clickhousetest.Empty(t)
 	clickHouse, err := clickhousetest.OpenClickHouse(clickhousetest.Config(), nil)
 	if err != nil {
@@ -61,7 +67,7 @@ func newIncompleteApp(t *testing.T, now time.Time, batchAge time.Duration, gap i
 	t.Cleanup(func() { clickHouse.Close() })
 	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebble)
 
-	logs := handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), sqlOn{}, clock.NewManual(now))
+	logs := handler.NewLogsHandler(clickHouseLogs, storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits()), sqlOn{}, clk)
 	logs.IngestGap = gap
 	health := handler.NewHealthHandler(pebble, answers{})
 	app := fiber.New()
@@ -137,6 +143,52 @@ func TestARunThatAsksIsHeldWhileItsProjectsLogProcessingIsBehind(t *testing.T) {
 		if got := runOn(t, app, now, "7", sql, false); got.Incomplete != nil || got.Table == nil {
 			t.Fatalf("SQL %v: expected the table without hold_if_incomplete, got %+v", sql, got)
 		}
+	}
+}
+
+// The clock was 10 min ahead for one batch, which Log processing stored.
+// The batch id floor keeps the ids of the batches after it at that time.
+// Then Log processing stops, and those batches wait: a run that asks is
+// held once they have waited a minute since EventStore first read them,
+// although their ids are after now.
+func TestARunThatAsksIsHeldWhenLogProcessingStopsAfterTheClockWasAhead(t *testing.T) {
+	logger.Init()
+	pebble, err := storage.NewPebbleWriter(&config.Config{PebblePath: filepath.Join(t.TempDir(), "pebble")})
+	if err != nil {
+		t.Fatalf("Open Pebble: %v", err)
+	}
+	t.Cleanup(pebble.Close)
+	now := time.Now().UTC()
+	ahead := now.Add(-6 * time.Minute).Add(10 * time.Minute)
+	if err := pebble.WriteLogBatch(waitingProject, []models.Log{{Time: ahead, Message: "clock ahead"}}, ahead); err != nil {
+		t.Fatalf("Write a Log batch: %v", err)
+	}
+	stored, _, err := pebble.OldestWaitingLogBatch(waitingProject)
+	if err != nil {
+		t.Fatalf("Read the oldest waiting batch: %v", err)
+	}
+	if err := pebble.SetLogProcessingCursor(waitingProject, stored); err != nil {
+		t.Fatalf("Move the cursor: %v", err)
+	}
+	for age := 5 * time.Minute; age > 0; age -= time.Minute {
+		at := now.Add(-age)
+		if err := pebble.WriteLogBatch(waitingProject, []models.Log{{Time: at, Message: "waits"}}, at); err != nil {
+			t.Fatalf("Write a Log batch: %v", err)
+		}
+	}
+	clk := clock.NewManual(now)
+	app, _ := incompleteApp(t, pebble, clk, ingestgap.Gap{})
+
+	if got := runOn(t, app, now, "7", false, true); got.Incomplete != nil {
+		t.Fatalf("At the first read: expected the table, as EventStore cannot yet tell the wait, got %+v", *got.Incomplete)
+	}
+	clk.Advance(storage.LogProcessingLag + time.Second)
+	got := runOn(t, app, clk.Now(), "7", false, true)
+	if got.Incomplete == nil || got.Incomplete.Reason != handler.IncompleteLogProcessingBehind {
+		t.Fatalf("A minute later: expected log_processing_behind, got %+v", got)
+	}
+	if behind := got.Incomplete.BehindSeconds; behind == nil || *behind != 61 {
+		t.Fatalf("Expected 61 s behind, got %v", behind)
 	}
 }
 

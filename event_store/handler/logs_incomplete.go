@@ -25,8 +25,9 @@ type incompleteLogs struct {
 }
 
 // holdIfIncomplete says why a run that asked for hold_if_incomplete (hold)
-// is held, or nil when it runs: first the ingest gap of this start, then the
-// age of the Project's oldest Log batch that Log processing has not stored.
+// is held, or nil when it runs: first the ingest gap of this start, then how
+// long the Project's oldest Log batch that Log processing has not stored has
+// waited (storage.PebbleWriter.WaitingLogBatch).
 // A held run reads nothing and answers {"incomplete": {"reason",
 // "behind_seconds" | "until"}, "elapsed_ms"}. Thus a held Monitor puts no
 // load on ClickHouse while Log processing catches up.
@@ -39,12 +40,12 @@ func (h *LogsHandler) holdIfIncomplete(projectID uint32, hold bool) (*incomplete
 		until := h.IngestGap.Until.UTC()
 		return &incompleteLogs{Reason: IncompleteIngestGap, Until: &until}, nil
 	}
-	oldest, waiting, err := h.waiting.OldestWaitingLogBatch(projectID)
+	oldest, waiting, err := h.waiting.WaitingLogBatch(projectID, now)
 	if err != nil || !waiting {
 		return nil, err
 	}
-	if behind := now.Sub(storage.LogBatchWrittenAt(oldest)); behind > storage.LogProcessingLag {
-		return &incompleteLogs{Reason: IncompleteLogProcessingBehind, BehindSeconds: int64(behind.Seconds())}, nil
+	if oldest.Waited > storage.LogProcessingLag {
+		return &incompleteLogs{Reason: IncompleteLogProcessingBehind, BehindSeconds: int64(oldest.Waited.Seconds())}, nil
 	}
 	return nil, nil
 }

@@ -21,7 +21,7 @@ class Organization < ApplicationRecord
   belongs_to :monitor_status_integration, class_name: "Integration", optional: true
 
   validates :name, presence: true
-  validate :monitor_status_integration_allowed, if: :monitor_status_integration_id?
+  validate :monitor_status_integration_allowed, unless: -> { monitor_status_integration_id.nil? }
   validates :slug, presence: true, uniqueness: true, format: { with: /\A[a-z0-9-]+\z/, message: "only allows lowercase letters, numbers, and hyphens" }
 
   # A new Organization with user as its admin. Its slug comes from its name,

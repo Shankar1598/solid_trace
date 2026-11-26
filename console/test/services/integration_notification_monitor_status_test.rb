@@ -463,6 +463,69 @@ class IntegrationNotificationMonitorStatusTest < ActiveSupport::TestCase
     assert not_running.retried?
   end
 
+  test "a running again whose not running was given up is skipped, as the Integration was never told" do
+    m = monitor("Checkout errors")
+    eventstore_down(@project)
+    run_monitor(m)
+    travel 2.minutes
+    stub_request(:post, STATUS_URL).to_return(status: 500, body: "down")
+    MonitorStatusJob.perform_now
+    deliver
+    eventstore_up(@project)
+    travel 1.minute
+    run_monitor(m)
+    MonitorStatusJob.perform_now
+    travel 1.minute
+    deliver
+
+    stub_request(:post, STATUS_URL).to_return(status: 200, body: "ok")
+    WebMock::RequestRegistry.instance.reset!
+    travel Notification::MONITOR_RETRY_FOR
+    MonitorStatusJob.perform_now
+    deliver
+
+    assert_not_requested(:post, STATUS_URL)
+    assert_equal [ [ NOT_RUNNING, "failed" ], [ RUNNING_AGAIN, "skipped" ] ], Notification.order(:id).pluck(:kind, :status)
+    assert_equal IntegrationNotification::NEVER_TOLD, Notification.order(:id).last.error_message
+    assert_nil told(m)
+  end
+
+  test "a running again goes when the not running before it was sent, also after it was cleaned up" do
+    m = monitor("Checkout errors")
+    eventstore_down(@project)
+    run_monitor(m)
+    travel 2.minutes
+    MonitorStatusJob.perform_now
+    deliver
+    Notification.sole.delete
+    eventstore_up(@project)
+    travel 1.minute
+    run_monitor(m)
+    MonitorStatusJob.perform_now
+    travel 1.minute
+    deliver
+
+    assert Notification.sole.status_sent?
+    assert_equal "✅ Checkout errors is running again", slack_bodies(STATUS_URL).last["text"]
+  end
+
+  test "the rows go to the Integration that the setting names when the job writes them" do
+    other_url = "https://hooks.slack.com/services/T00/B00/OTHER"
+    other = @organization.integrations.create!(provider: "slack", name: "Other", settings: { "webhook_url" => other_url })
+    m = monitor("Checkout errors")
+    eventstore_down(@project)
+    run_monitor(m)
+    travel 2.minutes
+    read_before = Organization.includes(:monitor_status_integration).find(@organization.id)
+    read_before.monitor_status_integration
+    @organization.update!(monitor_status_integration: other)
+
+    IntegrationNotification.monitor_status(read_before, Time.current)
+
+    assert_equal [ other.id ], Notification.pluck(:integration_id)
+    assert_equal other.id, told(m)
+  end
+
   test "an email Monitor status Integration gets a mail with the Monitors and a link to the list" do
     email = @organization.integrations.create!(provider: "email", settings: { "recipients" => "ops@example.com" })
     @organization.update!(monitor_status_integration: email)

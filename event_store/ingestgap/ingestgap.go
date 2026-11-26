@@ -36,12 +36,16 @@ type Beats interface {
 }
 
 // Gap is the ingest gap of the last start: the Logs are not complete until
-// Until. The zero Gap holds nothing.
+// Until. The zero Gap holds nothing. Open's Until keeps the monotonic
+// reading of the open, so Holds compares on the monotonic clock: a step of
+// the wall clock after the open, as when a clock that was ahead at boot is
+// set right, does not make the hold longer.
 type Gap struct {
 	Until time.Time
 }
 
-// Holds reports whether the gap holds at now.
+// Holds reports whether the gap holds at now. now must keep its monotonic
+// reading, as clock.System's does: no UTC, In or Round(0) before the call.
 func (g Gap) Holds(now time.Time) bool {
 	return now.Before(g.Until)
 }

@@ -188,7 +188,7 @@ The check is at second 30 of each minute, half a minute after the Monitors' runs
 - **Turned off and on.** A told Monitor that is turned off goes into the next "running again" as turned off. A told Monitor that is turned on again before that check stays not running until a run compares.
 - **Deleted.** A deleted Monitor leaves the set with no message. When the last told Monitor is deleted, a "running again" says that it was deleted.
 - **A changed setting.** When another Integration is chosen, it gets a "not running" for the Monitors that still do not run. The Integration chosen before gets no more messages. With None, Console forgets which Monitors were told.
-- **A message that was not delivered.** When a "not running" message is skipped, refused, or fails for 6 hours, its Monitors were not told. So a new "not running" goes while they still do not run.
+- **A message that was not delivered.** When a "not running" message is skipped, refused, or fails for 6 hours, its Monitors were not told. So a new "not running" goes while they still do not run. A "running again" about only such Monitors is skipped, as the team was never told that they stopped.
 - **PagerDuty.** Both kinds use the dedup key `solid-trace-monitors-not-running-<Organization id>`. A "running again" resolves the incident when no told Monitor is still not running. While some are, it sends no event, and the row is skipped.
 - **Slack.** A message lists as many whole Monitor lines as fit, then "and N more". Mail and PagerDuty list at most 100 Monitors.
 

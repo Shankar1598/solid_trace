@@ -1,6 +1,10 @@
 package handler
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/solidtrace/event_store/storage"
+)
 
 // FailWaitingLogBatchReads makes every read of h for a Project's oldest
 // waiting Log batch fail with err, as a Pebble read error does.
@@ -10,6 +14,6 @@ func FailWaitingLogBatchReads(h *LogsHandler, err error) {
 
 type failingWaiting struct{ err error }
 
-func (f failingWaiting) OldestWaitingLogBatch(uint32) (uuid.UUID, bool, error) {
-	return uuid.Nil, false, f.err
+func (f failingWaiting) WaitingLogBatch(uint32, time.Time) (storage.WaitingLogBatch, bool, error) {
+	return storage.WaitingLogBatch{}, false, f.err
 }

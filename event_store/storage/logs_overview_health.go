@@ -6,33 +6,33 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/google/uuid"
 )
 
 // The Overview's Health reads: Log processing's oldest waiting Log batches,
 // the Log reads ClickHouse's query_log holds, and the Events of a range.
 
-// OldestWaitingLogBatches is the oldest Log batch still waiting for Log
-// processing of each Project of projectIDs that has one, read from Pebble
-// (OldestWaitingLogBatch).
-func (s *ClickHouseLogs) OldestWaitingLogBatches(projectIDs []uint32) ([]OldestLogBatch, error) {
-	var oldest []OldestLogBatch
+// WaitingLogBatches is the oldest Log batch still waiting for Log processing
+// of each Project of projectIDs that has one, and how long it has waited at
+// now, read from Pebble (PebbleWriter.WaitingLogBatch).
+func (s *ClickHouseLogs) WaitingLogBatches(projectIDs []uint32, now time.Time) ([]WaitingLogBatch, error) {
+	var oldest []WaitingLogBatch
 	for _, projectID := range projectIDs {
-		batchID, waiting, err := s.pebble.OldestWaitingLogBatch(projectID)
+		batch, waiting, err := s.pebble.WaitingLogBatch(projectID, now)
 		if err != nil {
 			return nil, fmt.Errorf("find Project %d's oldest waiting Log batch: %w", projectID, err)
 		}
 		if waiting {
-			oldest = append(oldest, OldestLogBatch{projectID, batchID})
+			oldest = append(oldest, batch)
 		}
 	}
 	return oldest, nil
 }
 
-// OldestWaitingLogBatch is a Project's oldest Log batch still waiting for Log
-// processing, and false if none waits (PebbleWriter.OldestWaitingLogBatch).
-func (s *ClickHouseLogs) OldestWaitingLogBatch(projectID uint32) (uuid.UUID, bool, error) {
-	return s.pebble.OldestWaitingLogBatch(projectID)
+// WaitingLogBatch is a Project's oldest Log batch still waiting for Log
+// processing, how long it has waited at now, and false if none waits
+// (PebbleWriter.WaitingLogBatch).
+func (s *ClickHouseLogs) WaitingLogBatch(projectID uint32, now time.Time) (WaitingLogBatch, bool, error) {
+	return s.pebble.WaitingLogBatch(projectID, now)
 }
 
 // ProjectReadTimes is how long a Project's Log reads took over the last day:

@@ -52,10 +52,14 @@ func TestTheOldestWaitingLogBatchIsTheFirstAfterTheCursor(t *testing.T) {
 	if err != nil || len(others) != 1 {
 		t.Fatalf("Expected 1 batch of Project 8, got %d (%v)", len(others), err)
 	}
-	health, err := (&ClickHouseLogs{pebble: w}).OldestWaitingLogBatches([]uint32{7, 8, 9})
+	health, err := (&ClickHouseLogs{pebble: w}).WaitingLogBatches([]uint32{7, 8, 9}, now)
+	var got []OldestLogBatch
+	for _, batch := range health {
+		got = append(got, OldestLogBatch{batch.ProjectID, batch.BatchID})
+	}
 	want := []OldestLogBatch{{7, batches[2].ID}, {8, others[0].ID}}
-	if err != nil || !slices.Equal(health, want) {
-		t.Fatalf("Health: expected %v, got %v (%v)", want, health, err)
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("Health: expected %v, got %v (%v)", want, got, err)
 	}
 
 	// As Log processing does, the batches up to the cursor are deleted, the
@@ -69,4 +73,68 @@ func TestTheOldestWaitingLogBatchIsTheFirstAfterTheCursor(t *testing.T) {
 		t.Fatalf("Move the cursor: %v", err)
 	}
 	assertWaiting("with the cursor at the last batch", uuid.Nil)
+}
+
+// A clock 10 min ahead writes a batch, and comes back. The batch id floor
+// keeps the next ids at that time, also after a restart. So the oldest
+// waiting batch's id is after now. Log processing that does not reach it
+// is behind once the batch has waited LogProcessingLag since this process
+// first read it, and a batch that it reaches starts a new wait.
+func TestABatchWhoseIdIsAheadWaitsFromWhenItWasFirstRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pebble")
+	w, err := NewPebbleWriter(&config.Config{PebblePath: path})
+	if err != nil {
+		t.Fatalf("Open Pebble: %v", err)
+	}
+	now := time.Now()
+	ahead := now.Add(10 * time.Minute)
+	if err := w.WriteLogBatch(7, []models.Log{{Message: "clock ahead", Time: ahead}}, ahead); err != nil {
+		t.Fatalf("Write a Log batch: %v", err)
+	}
+	w.StopWrites()
+	w.Close()
+
+	w, err = NewPebbleWriter(&config.Config{PebblePath: path})
+	if err != nil {
+		t.Fatalf("Open Pebble again: %v", err)
+	}
+	defer w.Close()
+	stored, _, err := w.OldestWaitingLogBatch(7)
+	if err != nil {
+		t.Fatalf("Read the oldest waiting batch: %v", err)
+	}
+	if err := w.SetLogProcessingCursor(7, stored); err != nil {
+		t.Fatalf("Move the cursor: %v", err)
+	}
+	for i := range 2 {
+		if err := w.WriteLogBatch(7, []models.Log{{Message: "waits", Time: now}}, now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("Write a Log batch: %v", err)
+		}
+	}
+	waits := func(at time.Time) WaitingLogBatch {
+		t.Helper()
+		batch, waiting, err := w.WaitingLogBatch(7, at)
+		if err != nil || !waiting {
+			t.Fatalf("Expected a waiting batch, got %v (%v)", waiting, err)
+		}
+		return batch
+	}
+	first := waits(now)
+	if !LogBatchWrittenAt(first.BatchID).After(now) {
+		t.Fatalf("Expected the floor to put the batch id after now, got %v", LogBatchWrittenAt(first.BatchID))
+	}
+	if first.Waited > 0 {
+		t.Fatalf("Expected no wait at the first read, got %v", first.Waited)
+	}
+	later := now.Add(LogProcessingLag + time.Second)
+	if waited := waits(later).Waited; waited != LogProcessingLag+time.Second {
+		t.Fatalf("Expected the batch to have waited %v since the first read, got %v", LogProcessingLag+time.Second, waited)
+	}
+
+	if err := w.SetLogProcessingCursor(7, first.BatchID); err != nil {
+		t.Fatalf("Move the cursor: %v", err)
+	}
+	if next := waits(later); next.BatchID == first.BatchID || next.Waited != 0 {
+		t.Fatalf("Expected the next batch to start a new wait, got %+v", next)
+	}
 }

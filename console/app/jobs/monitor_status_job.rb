@@ -10,8 +10,7 @@ class MonitorStatusJob < ApplicationJob
   def perform
     now = Time.current
     told = LogMonitor.where.not(not_running_told_integration_id: nil).select(:organization_id)
-    Organization.where.not(monitor_status_integration_id: nil).or(Organization.where(id: told))
-      .includes(:monitor_status_integration).find_each do |organization|
+    Organization.where.not(monitor_status_integration_id: nil).or(Organization.where(id: told)).find_each do |organization|
       IntegrationNotification.monitor_status(organization, now)
     end
   end

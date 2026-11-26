@@ -57,6 +57,15 @@ class OrganizationSettingsControllerTest < ActionDispatch::IntegrationTest
     assert_nil @organization.reload.monitor_status_integration_id
   end
 
+  test "an id that names no Integration is an error on the setting" do
+    [ "0", "abc", "999999" ].each do |value|
+      patch organization_path(org_slug: @organization.slug), params: { organization: { monitor_status_integration_id: value } }
+      assert_response :redirect, "#{value.inspect} is refused as the form's error, not with a 500"
+      assert_nil flash[:notice]
+      assert_nil @organization.reload.monitor_status_integration_id
+    end
+  end
+
   test "denies access to other org" do
     other_org = create(:organization)
 

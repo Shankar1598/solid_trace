@@ -195,17 +195,21 @@ func run(ctx context.Context, cfg *config.Config) {
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func() { defer wg.Done(); queryErr = queryApp.ShutdownWithTimeout(5 * time.Second) }()
-	go func() { defer wg.Done(); ingestErr = app.ShutdownWithTimeout(5 * time.Second) }()
+	go func() {
+		defer wg.Done()
+		ingestErr = app.ShutdownWithTimeout(5 * time.Second)
+		// Ingest takes no more requests: the last ingest heartbeat, so the
+		// next start measures its gap from now, not from the end of the
+		// shutdown.
+		stopIngestBeats()
+	}()
 	go func() { defer wg.Done(); start.stop(5 * time.Second) }()
 	wg.Wait()
 	if queryErr != nil || ingestErr != nil {
 		logger.L.Error("HTTP shutdown timed out", "query_error", queryErr, "ingest_error", ingestErr)
 	}
-	// Ingest takes no more requests: the last seconds' counts are written,
-	// and the last ingest heartbeat, so the next start measures its gap from
-	// now.
+	// The last seconds' ingest counts are written.
 	ingestService.StopFlushingIngestCounts()
-	stopIngestBeats()
 
 	// Every later write returns ErrShuttingDown, so nothing reaches Pebble
 	// after the deferred Close.

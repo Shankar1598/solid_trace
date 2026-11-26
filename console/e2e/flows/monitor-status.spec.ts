@@ -147,6 +147,8 @@ async function chooseStatusIntegration(page: Page) {
 }
 
 test('an admin chooses the Monitor status Integration, and a Monitor that does not run shows "Not running since" and is told', async ({ page }, info) => {
+  // The check runs at second 30 of each minute, and the tick 10 s after it.
+  test.setTimeout(3 * 60_000)
   await chooseStatusIntegration(page)
   await page.screenshot({ path: info.outputPath('settings-monitor-status.png') })
 

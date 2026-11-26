@@ -5,7 +5,7 @@ A Threshold monitor compares a range of Logs with its threshold ([ADR 0006](0006
 So a Threshold run is now **held** while the Project's Logs are not complete:
 
 - **Each read of a Threshold run sends `hold_if_incomplete: true`.** This is so for a Query, for SQL and for the Baseline's read. EventStore checks two facts before it runs the read:
-  - **Log processing is behind.** The Project's oldest Log batch that waits for Log processing is more than 60 seconds old. This is the same 60 seconds as Console's `LogMonitor::PROCESSING_LAG`.
+  - **Log processing is behind.** The Project's oldest Log batch that waits for Log processing has waited more than 60 seconds. This is the same 60 seconds as Console's `LogMonitor::PROCESSING_LAG`. The batch waits from the time in its id, or from the time that EventStore first read it as the oldest, on its monotonic clock, if that is earlier. A clock that was ahead when a batch was written puts the time in its id after now. So does the batch id floor for the batches after it, also after a restart.
   - **Ingest gap.** After a gap of more than 15 seconds, EventStore holds for the gap's length. The hold is at least 1 minute and at most 10 minutes.
 
   When either fact is true, EventStore does not run the read. It answers `{"incomplete": {"reason", "behind_seconds" | "until"}}`.

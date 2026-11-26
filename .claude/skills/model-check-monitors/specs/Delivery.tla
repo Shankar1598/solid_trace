@@ -15,6 +15,11 @@
 (* finishes or its process dies, and its concurrency maintenance deletes a *)
 (* semaphore 2 minutes after it was taken, also while the job runs.        *)
 (*                                                                         *)
+(* With StatusChain, the rows are the Monitor status chain instead: a      *)
+(* "not running", then the "running again" that follows it. A running      *)
+(* again whose not running ended with nothing sent is skipped              *)
+(* (never_told?), as the Integration was never told.                       *)
+(*                                                                         *)
 (* Steps, each one statement or one call:                                  *)
 (*   Dispatch  the tick's job is dispatched: the semaphore, or discard     *)
 (*   Pluck     Notification.pending_for(...).pluck(:id)                    *)
@@ -35,7 +40,8 @@ CONSTANTS
   SendCanFail,    \* TRUE: the provider can answer an error
   LockCanExpire,  \* TRUE: a tick can wait or run longer than 2 minutes
   TicksCanDie,    \* TRUE: a tick's process can die (out of memory, a kill, a deploy)
-  WritersCanDie   \* TRUE: a Monitor run's process can die after its commit
+  WritersCanDie,  \* TRUE: a Monitor run's process can die after its commit
+  StatusChain     \* TRUE: the Monitor status chain, with never_told?
 
 Rows == 1..2      \* 1: monitor_firing, 2: the monitor_resolved that closes it
 Ticks == 1..MaxTicks
@@ -47,17 +53,21 @@ VARIABLES
   attempts,   \* Notification#attempts
   sends,      \* sends[i]: messages that the provider got for row i
   early,      \* a resolve went while the trigger it closes could still go
+  alone,      \* a resolve went after the trigger it closes was given up
   tpc,        \* the step of each tick
   queue,      \* the rows a tick still delivers, oldest first
   sem,        \* the Integration's semaphore: "none" (no row), "taken" (value 0) or "free" (value 1)
   budgetHit   \* the model needed more than MaxTicks ticks
 
-vars == <<written, writer, status, attempts, sends, early, tpc, queue, sem, budgetHit>>
+vars == <<written, writer, status, attempts, sends, early, alone, alone, tpc, queue, sem, budgetHit>>
 
 Deliverable(i) ==
   /\ i <= written
   /\ \/ status[i] = "pending"
      \/ status[i] = "failed" /\ attempts[i] < MaxTries
+
+\* Failed for the last time: nothing was sent, and nothing will be.
+GivenUp(i) == status[i] = "failed" /\ attempts[i] >= MaxTries
 
 Settled(i) ==
   \/ status[i] \in {"sent", "skipped"}
@@ -70,6 +80,7 @@ Init ==
   /\ attempts = [i \in Rows |-> 0]
   /\ sends = [i \in Rows |-> 0]
   /\ early = FALSE
+  /\ alone = FALSE
   /\ tpc = [t \in Ticks |-> "unused"]
   /\ queue = [t \in Ticks |-> <<>>]
   /\ sem = "none"
@@ -94,21 +105,21 @@ Write ==
   /\ written < 2
   /\ written' = written + 1
   /\ writer' = "scheduling"
-  /\ UNCHANGED <<status, attempts, sends, early, tpc, queue, sem, budgetHit>>
+  /\ UNCHANGED <<status, attempts, sends, early, alone, tpc, queue, sem, budgetHit>>
 
 \* After the commit: IntegrationNotification.schedule_ticks.
 ScheduleAfterWrite ==
   /\ writer = "scheduling"
   /\ writer' = "idle"
   /\ Schedule(tpc)
-  /\ UNCHANGED <<written, status, attempts, sends, early, queue, sem>>
+  /\ UNCHANGED <<written, status, attempts, sends, early, alone, queue, sem>>
 
 \* The run's process dies after its commit, before schedule_ticks.
 WriterDies ==
   /\ WritersCanDie
   /\ writer = "scheduling"
   /\ writer' = "idle"
-  /\ UNCHANGED <<written, status, attempts, sends, early, tpc, queue, sem, budgetHit>>
+  /\ UNCHANGED <<written, status, attempts, sends, early, alone, tpc, queue, sem, budgetHit>>
 
 \* The tick's job is dispatched: Semaphore#wait, or on_conflict: :discard.
 Dispatch(t) ==
@@ -118,7 +129,7 @@ Dispatch(t) ==
             /\ tpc' = [tpc EXCEPT ![t] = "ready"]
        ELSE /\ tpc' = [tpc EXCEPT ![t] = "gone"]
             /\ UNCHANGED sem
-  /\ UNCHANGED <<written, writer, status, attempts, sends, early, queue, budgetHit>>
+  /\ UNCHANGED <<written, writer, status, attempts, sends, early, alone, queue, budgetHit>>
 
 \* deliver_pending: row_ids = Notification.pending_for(...).pluck(:id).
 \* deliver_monitor_rows then loads those rows by id, oldest first, and does
@@ -134,17 +145,24 @@ Pluck(t) ==
           ELSE /\ tpc' = [tpc EXCEPT ![t] = "deliver"]
                /\ queue' = [queue EXCEPT ![t] = order]
                /\ UNCHANGED sem
-  /\ UNCHANGED <<written, writer, status, attempts, sends, early, budgetHit>>
+  /\ UNCHANGED <<written, writer, status, attempts, sends, early, alone, budgetHit>>
 
-\* The chain loop: Notification.mark_rows([row.id], :processing) counts an attempt.
+\* The chain loop: Notification.mark_rows([row.id], :processing) counts an
+\* attempt. In the status chain, never_told? first: a running again whose
+\* not running was given up is marked skipped, and the chain goes on.
 Mark(t) ==
   /\ tpc[t] = "deliver"
   /\ queue[t] # <<>>
   /\ LET i == Head(queue[t])
-     IN /\ status' = [status EXCEPT ![i] = "processing"]
-        /\ attempts' = [attempts EXCEPT ![i] = attempts[i] + 1]
-  /\ tpc' = [tpc EXCEPT ![t] = "send"]
-  /\ UNCHANGED <<written, writer, sends, early, queue, sem, budgetHit>>
+     IN IF StatusChain /\ i = 2 /\ GivenUp(1)
+          THEN /\ status' = [status EXCEPT ![i] = "skipped"]
+               /\ queue' = [queue EXCEPT ![t] = Tail(queue[t])]
+               /\ UNCHANGED <<attempts, tpc>>
+          ELSE /\ status' = [status EXCEPT ![i] = "processing"]
+               /\ attempts' = [attempts EXCEPT ![i] = attempts[i] + 1]
+               /\ tpc' = [tpc EXCEPT ![t] = "send"]
+               /\ UNCHANGED queue
+  /\ UNCHANGED <<written, writer, sends, early, alone, sem, budgetHit>>
 
 \* deliver_monitor_message: the provider gets the message and the row is sent,
 \* or the provider fails, the row is failed, and the chain stops.
@@ -154,13 +172,14 @@ Send(t) ==
      IN \/ /\ sends' = [sends EXCEPT ![i] = sends[i] + 1]
            /\ status' = [status EXCEPT ![i] = "sent"]
            /\ early' = (early \/ (i = 2 /\ ~Settled(1) /\ sends[1] = 0))
+           /\ alone' = (alone \/ (i = 2 /\ GivenUp(1)))
            /\ queue' = [queue EXCEPT ![t] = Tail(queue[t])]
            /\ tpc' = [tpc EXCEPT ![t] = "deliver"]
         \/ /\ SendCanFail
            /\ status' = [status EXCEPT ![i] = "failed"]
            /\ queue' = [queue EXCEPT ![t] = <<>>]
            /\ tpc' = [tpc EXCEPT ![t] = "deliver"]
-           /\ UNCHANGED <<sends, early>>
+           /\ UNCHANGED <<sends, early, alone>>
   /\ UNCHANGED <<written, writer, attempts, sem, budgetHit>>
 
 \* After the chain: a follow-up tick when a row is still deliverable, then the
@@ -174,7 +193,7 @@ Follow(t) ==
           THEN Schedule(ended)
           ELSE /\ tpc' = ended
                /\ UNCHANGED budgetHit
-  /\ UNCHANGED <<written, writer, status, attempts, sends, early, queue>>
+  /\ UNCHANGED <<written, writer, status, attempts, sends, early, alone, queue>>
 
 \* The job's process dies. The supervisor fails the job
 \* (ClaimedExecution.fail_all_with) and signals the semaphore.
@@ -184,14 +203,14 @@ TickDies(t) ==
   /\ tpc' = [tpc EXCEPT ![t] = "done"]
   /\ queue' = [queue EXCEPT ![t] = <<>>]
   /\ sem' = Signal
-  /\ UNCHANGED <<written, writer, status, attempts, sends, early, budgetHit>>
+  /\ UNCHANGED <<written, writer, status, attempts, sends, early, alone, budgetHit>>
 
 \* Concurrency maintenance deletes the semaphore 2 minutes after it was taken.
 Expire ==
   /\ LockCanExpire
   /\ sem = "taken"
   /\ sem' = "none"
-  /\ UNCHANGED <<written, writer, status, attempts, sends, early, tpc, queue, budgetHit>>
+  /\ UNCHANGED <<written, writer, status, attempts, sends, early, alone, tpc, queue, budgetHit>>
 
 Quiet ==
   /\ writer = "idle"
@@ -228,4 +247,9 @@ ResolveAfterTrigger == ~early
 \* sent, skipped, or failed for the last time. None waits for ever.
 NoRowLeftBehind ==
   (Quiet /\ ~budgetHit) => \A i \in 1..written : Settled(i)
+
+\* In the status chain: a running again never goes after the not running
+\* before it was given up. The Integration was never told that the Monitors
+\* stopped.
+NoResolveAlone == ~alone
 =============================================================================

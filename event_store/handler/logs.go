@@ -42,7 +42,7 @@ type LogsHandler struct {
 	// waiting reads a Project's oldest waiting Log batch for
 	// hold_if_incomplete: clickHouse's.
 	waiting interface {
-		OldestWaitingLogBatch(projectID uint32) (uuid.UUID, bool, error)
+		WaitingLogBatch(projectID uint32, now time.Time) (storage.WaitingLogBatch, bool, error)
 	}
 	sql      *storage.ClickHouseSQL
 	settings ConsoleSettings
