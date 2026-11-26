@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { chartOf } from '../charts/series'
 import {
   chartGroups, chosenText, explorerHref, fieldSelectValues, filterValues, filterValuesOfSearch, formOfViz, movedPlaces, newChartQuery, optionsOfText,
   parametersOfChart, pickedOfSearch, rangeOfSearch, searchOfRangeAndPicked, searchOfRangeAndValues, stackedPlaces, textOfOptions, titleOfQuery,
   unknownFilterProblems, unknownFilters, valuesWithDefaults, vizOfForm,
-  drawnThresholds, savedThresholds, thresholdRows, withSource,
+  drawnThresholds, savedThresholds, sqlChartTable, sqlFilterHelp, thresholdRows, withSource,
   type DashboardChart, type DashboardFilter, type DashboardSection,
 } from './dashboard'
 
@@ -234,5 +235,42 @@ describe('the chart editor\'s threshold lines', () => {
     expect(drawnThresholds([{ value: '-', label: 'typing', severity: '' }, ...rows])).toEqual([
       { value: 100, label: 'full', severity: 'critical' }, { value: 0.5 },
     ])
+  })
+})
+
+describe('SQL Charts', () => {
+  it('draw a table whose first column is a time as a time series, binned by the smallest step', () => {
+    const table = sqlChartTable({
+      columns: [{ name: 't', type: 'datetime' }, { name: 'level', type: 'string' }, { name: 'n', type: 'number' }],
+      rows: [['2026-10-03T09:00:00Z', 'error', 3], ['2026-10-03T09:05:00Z', 'error', 1], ['2026-10-03T09:05:00Z', 'warn', 2], ['2026-10-03T09:15:00Z', 'warn', 4]],
+      truncated: false,
+    })
+    expect(table.columns[0].bin_seconds).toBe(300)
+    expect(chartOf(table).kind).toBe('time')
+  })
+
+  it('draw a table with no time column as bars, one row of one number as a stat, and a time column not first as no chart', () => {
+    const bars = sqlChartTable({ columns: [{ name: 'level', type: 'string' }, { name: 'n', type: 'number' }], rows: [['error', 3], ['warn', 1]], truncated: false })
+    expect(chartOf(bars).kind).toBe('bars')
+    const stat = sqlChartTable({ columns: [{ name: 'n', type: 'number' }], rows: [[7]], truncated: false })
+    expect(chartOf(stat).kind).toBe('stat')
+    const late = sqlChartTable({
+      columns: [{ name: 'n', type: 'number' }, { name: 't', type: 'datetime' }], rows: [[1, '2026-10-03T09:00:00Z']], truncated: false,
+    })
+    expect(chartOf(late).kind).toBe('none')
+  })
+
+  it('help names the Dashboard\'s own select and search box, or examples', () => {
+    expect(sqlFilterHelp([LEVEL])).toEqual({
+      select: '(empty({level:Array(String)}) OR service IN {level:Array(String)})',
+      search: "({q:String} = '' OR positionCaseInsensitive(message, {q:String}) > 0)",
+    })
+  })
+
+  it('open in the explorer in SQL mode', () => {
+    const href = explorerHref('acme', 'shop', { query: 'SELECT 1', viz: 'stat', language: 'sql' }, { kind: 'relative', span: '6h' })
+    const url = new URL(href, 'http://x')
+    expect(url.searchParams.get('mode')).toBe('sql')
+    expect(url.searchParams.get('sql')).toBe('SELECT 1')
   })
 })

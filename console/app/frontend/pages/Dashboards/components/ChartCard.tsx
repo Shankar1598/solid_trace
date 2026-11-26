@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { router } from '@inertiajs/react'
 import { Copy, ExternalLink, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -7,7 +7,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { fetchChartData } from '@/lib/dashboards/api'
 import {
-  explorerHref, notItsFilters, parametersOfChart, unknownFilters, type DashboardChart, type DashboardFilter, type FilterValues,
+  explorerHref, filterValues, notItsFilters, parametersOfChart, unknownFilters, type DashboardChart, type DashboardFilter, type FilterValues,
 } from '@/lib/dashboards/dashboard'
 import { isAbort, type FetchQueue } from '@/lib/dashboards/fetchQueue'
 import { elapsedText } from '@/lib/logs/runLine'
@@ -30,6 +30,10 @@ export interface DashboardRun {
  * shows its error here, and a name that isn't one of the Dashboard's filters
  * is said above the chart. In Edit mode the title is the handle that drags
  * the card.
+ *
+ * Only EventStore reads a SQL Chart's SQL, so a SQL Chart sends the values
+ * of every filter, and runs again when a filter changes that its last
+ * answer says the SQL names.
  */
 export function ChartCard({
   chart, project, showProject, orgSlug, run, range, filters, values, queue, editing, onRunning, onEdit, onDuplicate, onDelete,
@@ -53,12 +57,24 @@ export function ChartCard({
   onDelete: () => void
 }) {
   const [answer, setAnswer] = useState<ChartRun>({ status: 'running' })
-  const parameters = parametersOfChart(chart.query, filters, values)
+  const sql = chart.language === 'sql'
+  // The filters a SQL Chart's SQL names, from its last answer; null before one.
+  const [sqlNames, setSqlNames] = useState<string[] | null>(null)
+  const parameters = sql ? filterValues(filters, values) : parametersOfChart(chart.query, filters, values)
+  const valuesOfNamed = (names: string[]) => JSON.stringify(filterValues(filters.filter(f => names.includes(f.name)), values))
   // Changes only when the values of this chart's own filters do.
-  const parametersKey = JSON.stringify(parameters)
-  const unknown = unknownFilters(chart.query, filters)
+  const parametersKey = sql && sqlNames ? valuesOfNamed(sqlNames) : JSON.stringify(parameters)
+  // The key a SQL Chart's first answer moves to: its values ran already, so it runs nothing.
+  const ranKey = useRef<string | null>(null)
+  const known = new Set(filters.map(f => f.name))
+  const unknown = sql ? (sqlNames ?? []).filter(name => !known.has(name)) : unknownFilters(chart.query, filters)
 
   useEffect(() => {
+    if (ranKey.current === parametersKey) {
+      ranKey.current = null
+      return
+    }
+    ranKey.current = null
     let live = true
     const key = String(chart.id)
     setAnswer({ status: 'running' })
@@ -66,7 +82,14 @@ export function ChartCard({
     queue.run(key, signal => fetchChartData({
       orgSlug, dashboardId: chart.dashboard_id, chartId: chart.id, from: run.from, to: run.to, parameters, signal,
     }))
-      .then(({ table, elapsedMs }) => live && setAnswer({ status: 'done', table, elapsedMs }))
+      .then(({ table, elapsedMs, parameters: names }) => {
+        if (!live) return
+        setAnswer({ status: 'done', table, elapsedMs })
+        if (!sql || !names) return
+        const next = valuesOfNamed(names)
+        if (next !== parametersKey) ranKey.current = next
+        setSqlNames(names)
+      })
       .catch(error => live && setAnswer(isAbort(error) ? { status: 'cancelled' } : { status: 'error', message: error.message }))
       .finally(() => live && onRunning(chart.id, false))
     return () => {
@@ -109,11 +132,11 @@ export function ChartCard({
       </div>
       {unknown.length > 0 && (
         <p className="shrink-0 border-b px-3 py-1 text-[11px] text-muted-foreground">
-          {notItsFilters(unknown)}, so the chart runs {unknown.length === 1 ? 'it' : 'them'} as All.
+          {notItsFilters(unknown, sql ? '' : '$')}, so the chart runs {unknown.length === 1 ? 'it' : 'them'} as All.
         </p>
       )}
       <div className="min-h-0 flex-1 overflow-auto" data-chart-body>
-        <ChartBody run={answer} viz={chart.viz} options={chart.options} />
+        <ChartBody run={answer} viz={chart.viz} options={chart.options} sql={sql} />
       </div>
     </div>
   )

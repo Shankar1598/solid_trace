@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react'
 import { QueryChart } from '@/components/charts/QueryChart'
 import { ChartSkeleton } from '@/components/ui/skeleton'
 import { chartOf, formFor } from '@/lib/charts/series'
-import { THRESHOLD_VIZES, formOfViz, type ChartOptions, type DashboardViz } from '@/lib/dashboards/dashboard'
+import { THRESHOLD_VIZES, formOfViz, sqlChartTable, type ChartOptions, type DashboardViz } from '@/lib/dashboards/dashboard'
 import type { LogTable } from '@/lib/logs/table'
 import { LogTableView } from '../../Logs/components/LogTableView'
 
@@ -15,13 +15,14 @@ export type ChartRun =
 
 /**
  * A chart's run drawn as its viz: a chart, a single number, or the table.
- * A table its viz can't draw shows as the table, saying so.
+ * A table its viz can't draw shows as the table, saying so. A SQL Chart's
+ * table is read by sqlChartTable's rules.
  */
-export function ChartBody({ run, viz, options }: { run: ChartRun; viz: DashboardViz; options: ChartOptions }) {
+export function ChartBody({ run, viz, options, sql = false }: { run: ChartRun; viz: DashboardViz; options: ChartOptions; sql?: boolean }) {
   // Series keep their colours and hidden state across re-runs of this chart.
   const colors = useRef<ReadonlyMap<string, number>>(new Map())
   const hidden = useRef<ReadonlySet<string>>(new Set())
-  const table = run.status === 'done' ? run.table : null
+  const table = useMemo(() => (run.status !== 'done' ? null : sql ? sqlChartTable(run.table) : run.table), [run, sql])
   const model = useMemo(() => (table ? chartOf(table) : null), [table])
 
   switch (run.status) {
@@ -49,5 +50,5 @@ export function ChartBody({ run, viz, options }: { run: ChartRun; viz: Dashboard
   }
   // Only a line or area chart draws its threshold lines, as the editor's preview shows while the viz changes.
   const thresholds = THRESHOLD_VIZES.includes(viz) ? options.thresholds : undefined
-  return <QueryChart table={run.table} form={form} options={options} statName={false} thresholds={thresholds} fill colors={colors} hidden={hidden} className="pb-1" />
+  return <QueryChart table={table ?? run.table} form={form} options={options} statName={false} thresholds={thresholds} fill colors={colors} hidden={hidden} className="pb-1" />
 }

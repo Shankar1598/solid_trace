@@ -8,6 +8,7 @@ import type { Severity, Threshold } from '../charts/thresholds'
 import { searchOf, stateFromSearch, type Viz } from '../logs/explorerState'
 import type { QueryProblem } from '../logs/api'
 import { parametersOf, tokenize } from '../logs/queryLexer'
+import type { LogTable } from '../logs/table'
 import { isSpan, type TimeRange } from '../timeRange'
 
 export type DashboardViz = 'line' | 'area' | 'bar' | 'stat' | 'table'
@@ -78,10 +79,15 @@ interface GridItem {
 }
 
 /** A chart that runs its Query on a Project and draws the table as its viz. */
+/** What a chart's query text is: a Query, or ClickHouse SQL. */
+export type ChartLanguage = 'query' | 'sql'
+
 export interface DashboardChart extends GridItem {
   project_id: number
   title: string
+  /** The Query, or the SQL of a SQL Chart. */
   query: string
+  language: ChartLanguage
   viz: DashboardViz
   options: ChartOptions
   text: null
@@ -93,6 +99,7 @@ export interface TextBlock extends GridItem {
   /** null or '' for none. */
   title: string | null
   query: null
+  language: null
   viz: 'text'
   options: Record<string, never>
   text: string
@@ -320,8 +327,8 @@ export function unknownFilters(query: string, filters: DashboardFilter[]): strin
 }
 
 /** Names that aren't the Dashboard's filters, saying so: `$a isn't one of this Dashboard's filters`. */
-export function notItsFilters(names: string[]): string {
-  const listed = names.map(name => `$${name}`).join(', ')
+export function notItsFilters(names: string[], mark = '$'): string {
+  const listed = names.map(name => `${mark}${name}`).join(', ')
   return names.length === 1 ? `${listed} isn't one of this Dashboard's filters` : `${listed} aren't this Dashboard's filters`
 }
 
@@ -372,8 +379,13 @@ export function vizOfForm(form: ChartForm | 'table'): DashboardViz {
 const EXPLORER_VIZ: Record<DashboardViz, Viz> = { line: 'line', area: 'area', bar: 'bars', stat: 'auto', table: 'table' }
 
 /** The explorer over a chart's Project, Query and the range shown, drawn as the chart is. */
-export function explorerHref(orgSlug: string, projectSlug: string, chart: Pick<DashboardChart, 'query' | 'viz'>, range: TimeRange): string {
-  const search = searchOf({ range, mode: 'builder', query: chart.query, sql: '', viz: EXPLORER_VIZ[chart.viz] })
+export function explorerHref(
+  orgSlug: string, projectSlug: string, chart: Pick<DashboardChart, 'query' | 'viz'> & { language?: ChartLanguage }, range: TimeRange,
+): string {
+  // A SQL Chart opens in SQL mode, where its filters run as All.
+  const search = chart.language === 'sql'
+    ? searchOf({ range, mode: 'sql', query: '', sql: chart.query, viz: EXPLORER_VIZ[chart.viz] })
+    : searchOf({ range, mode: 'builder', query: chart.query, sql: '', viz: EXPLORER_VIZ[chart.viz] })
   return `/${orgSlug}/projects/${projectSlug}/logs${search}`
 }
 
@@ -421,4 +433,41 @@ export function stackedPlaces<T extends { x: number; y: number; w: number; h: nu
       y += p.h
       return stacked
     })
+}
+
+/**
+ * A SQL Chart's table as the chart rules read it. SQL gives no time bins
+ * and no aggregates, so a table whose first column is a time is a time
+ * series, binned by the smallest step between its times; a table with no
+ * time column gives bars, its number columns their values; and a table of
+ * one row and one number stays a single number. A time column that isn't
+ * first draws no chart.
+ */
+export function sqlChartTable(table: LogTable): LogTable {
+  const { columns, rows } = table
+  if (columns[0]?.type === 'datetime') {
+    const times = [...new Set(rows.map(row => (typeof row[0] === 'string' ? Date.parse(row[0]) : NaN)))]
+      .filter(t => !Number.isNaN(t))
+      .sort((a, b) => a - b)
+    let step = Infinity
+    for (let i = 1; i < times.length; i++) step = Math.min(step, times[i] - times[i - 1])
+    const binSeconds = Number.isFinite(step) ? step / 1000 : 60
+    return { ...table, columns: [{ ...columns[0], bin_seconds: binSeconds }, ...columns.slice(1)] }
+  }
+  if (columns.some(c => c.type === 'datetime')) return table
+  return { ...table, columns: columns.map(c => (c.type === 'number' ? { ...c, agg: 'max' as const } : c)) }
+}
+
+/**
+ * The help under the chart editor's SQL: how SQL names a Dashboard filter,
+ * as a ClickHouse query parameter, with its All case written in. Uses the
+ * Dashboard's first select and search box when it has them.
+ */
+export function sqlFilterHelp(filters: DashboardFilter[]): { select: string; search: string } {
+  const select = filters.find(f => f.kind === 'select')?.name ?? 'region'
+  const search = filters.find(f => f.kind === 'search')?.name ?? 'q'
+  return {
+    select: `(empty({${select}:Array(String)}) OR service IN {${select}:Array(String)})`,
+    search: `({${search}:String} = '' OR positionCaseInsensitive(message, {${search}:String}) > 0)`,
+  }
 }
