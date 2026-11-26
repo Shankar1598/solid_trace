@@ -31,10 +31,13 @@ const ScopeSessionsDownload = "sessions:download"
 // on the server; this lets a slow client have 1 MB a second.
 const agentDownloadTimeout = 10 * time.Minute
 
-// agentDownloadsAtOnce is the most downloads that read at the same time.
-// Each download keeps a ClickHouse connection of the pool until its
-// stream ends, at the pace of its client. Without a limit, slow downloads
-// can take the whole pool, and then /health and ingest fail.
+// agentDownloadsAtOnce is the most downloads by a person's token that read
+// at the same time. Each download keeps a ClickHouse connection of the
+// pool until its stream ends, at the pace of its client. Without a limit,
+// slow downloads can take the whole pool, and then /health and ingest
+// fail. A Run's token is not in the limit: a member's slow downloads must
+// not stop the restores of Runs, and a Run downloads only its own Agent
+// sessions.
 const agentDownloadsAtOnce = 2
 
 // agentDownloadRetryAfter is the Retry-After, in seconds, of a download
@@ -85,7 +88,8 @@ type AgentDownloads interface {
 // the bytes are stored, and the download must not leave them out. A read
 // that fails after the first byte stops the answer with no end, so the
 // client sees an error and not a short archive. When agentDownloadsAtOnce
-// downloads read, it answers 503 with Retry-After.
+// downloads by a person's token read, it answers 503 with Retry-After to
+// the next person's token.
 func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	token := agentToken(c)
 	if token.AgentSessionIDs == nil && !token.Has(ScopeSessionsDownload) {
@@ -115,14 +119,17 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"error": "The last uploads of this Agent session are stored but not yet ready to download. Try again in a second."})
 	}
-	select {
-	case h.downloadSlots <- struct{}{}:
-	default:
-		c.Set(fiber.HeaderRetryAfter, agentDownloadRetryAfter)
-		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-			"error": "The server sends as many downloads as it can now. Try again in a few seconds."})
+	release := func() {}
+	if !limitedToARun(token) {
+		select {
+		case h.downloadSlots <- struct{}{}:
+		default:
+			c.Set(fiber.HeaderRetryAfter, agentDownloadRetryAfter)
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "The server sends as many downloads as it can now. Try again in a few seconds."})
+		}
+		release = func() { <-h.downloadSlots }
 	}
-	release := func() { <-h.downloadSlots }
 	files, err := h.downloads.AgentDownloadFiles(c.UserContext(), projectID, sessionID)
 	if err != nil {
 		release()

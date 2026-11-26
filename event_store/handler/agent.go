@@ -92,7 +92,8 @@ type AgentHandler struct {
 	// redaction gives the Redaction patterns that each unit goes through
 	// before it is stored.
 	redaction *redaction.Follower
-	// downloadSlots has one entry for each download that reads now.
+	// downloadSlots has one entry for each download by a person's token
+	// that reads now.
 	downloadSlots chan struct{}
 }
 

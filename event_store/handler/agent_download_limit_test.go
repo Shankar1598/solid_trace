@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,16 +48,24 @@ func (d heldDownloads) ReadAgentDownload(_ context.Context, _ uint32, _ uuid.UUI
 	return write(0, []byte("x"))
 }
 
-// While agentDownloadsAtOnce downloads read, the next one gets 503 with
-// Retry-After, and the ClickHouse pool keeps connections for the rest of
-// the server. When they end, a download gets 200.
+// While agentDownloadsAtOnce downloads by a person's token read, the next
+// person's download gets 503 with Retry-After, and the ClickHouse pool
+// keeps connections for the rest of the server. A Run's token is not in
+// the limit: its download reads, so a member's slow downloads do not stop
+// the restores of Runs. When they end, a download gets 200.
 func TestAgentDownloadsOverTheLimitGet503WithRetryAfter(t *testing.T) {
 	logger.Init()
 	downloads := heldDownloads{reading: make(chan struct{}, 10), release: make(chan struct{})}
 	h := NewAgentHandler(AgentConfig{Settings: downloadSettings{}, Files: downloadFiles{}, Downloads: downloads})
 	app := fiber.New()
+	sessionID := uuid.NewString()
 	app.Get("/agent-sessions/:session_id/download", func(c *fiber.Ctx) error {
-		c.Locals(agentTokenKey, auth.Token{Organization: auth.Organization{ID: 1}, Scopes: []string{ScopeSessionsDownload}})
+		token := auth.Token{Organization: auth.Organization{ID: 1}, Scopes: []string{ScopeSessionsDownload}}
+		if c.Query("token") == "run" {
+			token = auth.Token{Organization: auth.Organization{ID: 1}, Scopes: []string{ScopeSessionsRead},
+				AgentSessionIDs: []string{sessionID}}
+		}
+		c.Locals(agentTokenKey, token)
 		return c.Next()
 	}, h.DownloadAgentSession)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -65,7 +74,10 @@ func TestAgentDownloadsOverTheLimitGet503WithRetryAfter(t *testing.T) {
 	}
 	go func() { _ = app.Listener(listener) }()
 	defer func() { _ = app.Shutdown() }()
-	url := "http://" + listener.Addr().String() + "/agent-sessions/" + uuid.NewString() + "/download"
+	// A failed check must not leave held reads that keep the Shutdown.
+	release := sync.OnceFunc(func() { close(downloads.release) })
+	defer release()
+	url := "http://" + listener.Addr().String() + "/agent-sessions/" + sessionID + "/download"
 
 	type answer struct {
 		status     int
@@ -75,8 +87,8 @@ func TestAgentDownloadsOverTheLimitGet503WithRetryAfter(t *testing.T) {
 	// A download over the limit that waits for the held reads fails at
 	// the timeout, and does not keep the test.
 	client := &http.Client{Timeout: 5 * time.Second}
-	get := func() answer {
-		resp, err := client.Get(url)
+	get := func(query string) answer {
+		resp, err := client.Get(url + query)
 		if err != nil {
 			t.Error(err)
 			return answer{}
@@ -91,7 +103,7 @@ func TestAgentDownloadsOverTheLimitGet503WithRetryAfter(t *testing.T) {
 
 	held := make(chan answer, agentDownloadsAtOnce)
 	for range agentDownloadsAtOnce {
-		go func() { held <- get() }()
+		go func() { held <- get("") }()
 	}
 	for range agentDownloadsAtOnce {
 		select {
@@ -101,18 +113,32 @@ func TestAgentDownloadsOverTheLimitGet503WithRetryAfter(t *testing.T) {
 		}
 	}
 
-	if got := get(); got.status != http.StatusServiceUnavailable || got.retryAfter != agentDownloadRetryAfter {
+	if got := get(""); got.status != http.StatusServiceUnavailable || got.retryAfter != agentDownloadRetryAfter {
 		t.Errorf("Expected 503 with Retry-After %s over the limit, got %d with %q: %s",
 			agentDownloadRetryAfter, got.status, got.retryAfter, got.body)
 	}
 
-	close(downloads.release)
+	run := make(chan answer, 1)
+	go func() { run <- get("?token=run") }()
+	select {
+	case <-downloads.reading:
+	case got := <-run:
+		t.Fatalf("Expected a Run's download to read while the person's slots are held, got %d with %q: %s",
+			got.status, got.retryAfter, got.body)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Expected a Run's download to read while the person's slots are held")
+	}
+
+	release()
 	for range agentDownloadsAtOnce {
 		if got := <-held; got.status != http.StatusOK {
 			t.Errorf("Expected 200 for a download in the limit, got %d: %s", got.status, got.body)
 		}
 	}
-	if got := get(); got.status != http.StatusOK {
+	if got := <-run; got.status != http.StatusOK {
+		t.Errorf("Expected 200 for a Run's download, got %d: %s", got.status, got.body)
+	}
+	if got := get(""); got.status != http.StatusOK {
 		t.Errorf("Expected 200 after the downloads ended, got %d: %s", got.status, got.body)
 	}
 }
