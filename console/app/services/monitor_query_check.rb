@@ -15,8 +15,9 @@
 #   it has to start again (#arm?).
 # - SQL, for a Threshold monitor only: refused while SQL queries are off;
 #   else a dry run over the Monitor's range on EventStore's SQL endpoint
-#   gives a table with exactly one number column. SQL that doesn't run gives
-#   ClickHouse's message.
+#   names no Dashboard filter ({service:Array(String)}), and gives a table
+#   with exactly one number column. SQL that doesn't run gives ClickHouse's
+#   message.
 class MonitorQueryCheck
   SUMMARIZE = "must end in a summarize that gives one number per group, such as " \
     "| summarize count() by service, for a Threshold monitor to compare with its threshold"
@@ -60,6 +61,9 @@ class MonitorQueryCheck
     answer = EventStore.run_logs_sql(
       project_id: @monitor.project_id, sql: @monitor.query, from: from, to: to, timeout_seconds: timeout_seconds
     )
+    filters = Array(answer["parameters"])
+    return add("can't name a filter. Filters (#{filters.map { |name| "{#{name}}" }.join(', ')}) work only on Dashboard Charts") if filters.any?
+
     check_columns(answer.dig("table", "columns") || [])
   rescue EventStore::Rejected => e
     add("can't run: #{EventStore.error_text(e.body)}")

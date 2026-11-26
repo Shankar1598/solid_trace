@@ -203,6 +203,25 @@ A value is text. Compared with a built-in field, it is text. Compared with an At
 
 A filter goes on either side of `==`, `!=`, `=~` and `!~`, after `contains`, `startswith` and their `!` and `_cs` forms, and after `search`. Anywhere else it's an error: in `project`, `extend`, `summarize` or `sort`, in an `in (…)` list, in an order comparison such as `>`, after `matches regex`, and inside `not(…)`, where All would keep nothing. To leave a value out, use `!=`.
 
+### Dashboard filters in SQL
+
+While SQL queries are on, a Chart can save a SQL query in place of a Query: the SQL tab of the chart editor. The SQL names a filter as a ClickHouse query parameter, and ClickHouse fills in the values ([ADR 0025](../adr/0025-dashboard-filters-in-sql-are-clickhouse-query-parameters.md)). SQL can't drop a comparison, so the SQL writes the All case itself:
+
+```sql
+SELECT level, count() AS n FROM logs
+WHERE (empty({service:Array(String)}) OR service IN {service:Array(String)})
+  AND ({q:String} = '' OR positionCaseInsensitive(message, {q:String}) > 0)
+GROUP BY level
+```
+
+The type says how the values come in:
+
+- `Array(String)`: every value, as an array. All is `[]`. Use it for a select.
+- `String`: the values joined by one space. All is `''`. Use it for a search box.
+- `Nullable(String)`: as `String`, but All is `NULL`.
+
+Another type is an error. A Chart's SQL draws a time series when its first column is a time, bars when it has no time column, and a single number when it is one row of one number. In the Logs explorer, `run_sql` and a Monitor, the same SQL runs with every filter as All, and a Monitor's SQL can't name a filter.
+
 Only a Dashboard's Charts fill filters in, on the Dashboard page or through the MCP server's `get_chart_data`, which runs a filter it isn't given with its default values. The Logs explorer and the MCP server's `query_logs` run every filter as All, and so does a Chart whose Query names a filter its Dashboard doesn't have. A Monitor's Query can't name a filter.
 
 ## Reading less
