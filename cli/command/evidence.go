@@ -100,7 +100,7 @@ func evidenceProblem(err error) string {
 	case http.StatusRequestEntityTooLarge:
 		return "the file is too large: an Evidence file is at most 32 MiB" + why
 	case http.StatusUnsupportedMediaType:
-		return "SolidTrace keeps only PNG, JPEG, WebP and GIF images and MP4 and WebM videos as Evidence files" + why
+		return "SolidTrace keeps only PNG, JPEG, WebP and GIF images and MP4 and WebM videos as Evidence files"
 	case http.StatusForbidden:
 		return "SolidTrace refused the upload to this Agent session" + why
 	}
