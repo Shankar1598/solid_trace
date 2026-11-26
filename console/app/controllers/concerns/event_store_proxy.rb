@@ -13,9 +13,10 @@ module EventStoreProxy
   RUN_TIMEOUT_SECONDS = 30
 
   # How long a SQL query may take before EventStore stops it, from the
-  # explorer or the MCP server. EventStore stops SQL by then whatever it is
-  # asked: its SQL users' limit, so a slow one holds up ingest no longer.
-  SQL_TIMEOUT_SECONDS = 10
+  # explorer or the MCP server: the same as a run, so that query_logs and
+  # run_sql stop at the same time. EventStore stops SQL by then whatever it
+  # is asked: its SQL users' limit, so a slow one holds up ingest no longer.
+  SQL_TIMEOUT_SECONDS = RUN_TIMEOUT_SECONDS
 
   included do
     rescue_from EventStore::SQLQueriesOff, with: :sql_queries_off

@@ -10,15 +10,15 @@ import (
 // A SQL run stops by the SQL users' time limit whatever it asks for, so a
 // slow query can't hold ClickHouse's threads from ingest for long.
 func TestASQLRunStopsByItsCapWhateverItAsksFor(t *testing.T) {
-	limit := 10 * time.Second
+	limit := 30 * time.Second
 	short, long, wrong, tooLong := 0.25, 60.0, -1.0, float64(maxTimeoutSeconds+1)
 	cases := []struct {
 		asked *float64
 		want  float64
 	}{
-		{nil, 10},
+		{nil, 30},
 		{&short, 0.25},
-		{&long, 10},
+		{&long, 30},
 		{&wrong, -1},
 		{&tooLong, maxTimeoutSeconds + 1},
 	}
@@ -29,6 +29,6 @@ func TestASQLRunStopsByItsCapWhateverItAsksFor(t *testing.T) {
 		}
 	}
 	if got := storage.DefaultSQLLimits().Time; got != limit {
-		t.Errorf("Expected SQL runs capped at 10 s, got %v", got)
+		t.Errorf("Expected SQL runs capped at 30 s, got %v", got)
 	}
 }

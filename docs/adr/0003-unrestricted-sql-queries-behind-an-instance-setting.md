@@ -53,6 +53,10 @@ The setting stays, and stays on by default. With it on, a member can read every 
 
 With Traces, the SQL user also gets the `spans` table, with a row policy like those on `logs` and `events`, and SELECT on it; `trace_index` stays without a grant. [ADR 0016](0016-logs-and-events-in-clickhouse.md)'s amendment of the same day has the details. A member can now read their own Organization's Spans as well as its Logs and Events (`logs_sql_scope_test.go`).
 
+## Amended: SQL stops after 30 seconds (2026-11-26)
+
+The SQL users' time limit is now 30 seconds, not 10. It is the same as the timeout of a Query's run, so that the MCP server's `run_sql` and `query_logs` stop at the same time, and a SQL query that needs more than 10 seconds can finish. The other limits stay. A slow query can now take CPU from ingest for up to 30 seconds. A SQL Monitor still asks for 10 seconds for each read, so that the two reads of a change fit in its run's 30 seconds ([ADR 0006](0006-monitors-evaluated-by-console-through-the-query-api.md)).
+
 ## Consequences
 
 - Users query the `logs` and `events` tables. Since the amendment above, their columns are the tables' own, and SQL written for the DuckDB views doesn't run.

@@ -35,8 +35,9 @@ class LogMonitor < ApplicationRecord
   SCHEDULE_SLACK = 30.seconds
   # How long EventStore may take over a run, as for a Dashboard's chart.
   RUN_TIMEOUT_SECONDS = 30
-  # The most time a SQL Monitor gives each read: the SQL users' own limit
-  # for each statement (ADR 0003).
+  # The most time a SQL Monitor gives each read, below the SQL users' own
+  # limit (ADR 0003), so that the two reads of a change fit in the run's
+  # RUN_TIMEOUT_SECONDS.
   SQL_READ_TIMEOUT_SECONDS = 10
   # Why a SQL Monitor is refused, and its SQL is read-only, while SQL
   # queries are off. MonitorEvaluation::SQL_OFF is a run's message.

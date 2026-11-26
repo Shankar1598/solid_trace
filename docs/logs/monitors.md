@@ -94,7 +94,7 @@ The rules:
 - **The SQL is ClickHouse SQL** over the Project's `logs`, `events` and `spans` tables. It runs as the Project's SQL user, with the same limits as in the Logs explorer, so it can't read another Project or change data.
 - **EventStore sets the range outside the SQL.** Each run reads the Monitor's range, ending 60 seconds before the run, as for a Query. Do not write a time condition in the SQL.
 - **The table is the group columns and one number column.** The columns other than the number name each group, as for a Query. Groups, notify by group, alert on no data and the Notifications are the same.
-- **Each read stops after 10 seconds**, the SQL user's limit. A timeout is a failed run.
+- **Each read stops after 10 seconds**, less than the SQL user's 30-second limit. A timeout is a failed run.
 - **More than 10,000 rows** is an error, as for a Query, and changes no state.
 - **Compare the value or the change.** Comparing the change, each run reads the SQL a second time, over the Baseline's range, with the same Baseline rules as a Query. The two reads stop after 10 seconds each, so they stay inside the run's 30 seconds. A group with no row in the Baseline rises from 0.
 - **Preview before you save.** The form lists the groups a run now would find, with no chart: the SQL reads one range, so it has no time bins. `run_monitor` with `preview` true reads what a run now would and gives each group's number, Baseline and change, and whether it would fire. It saves nothing and tells no Integration.

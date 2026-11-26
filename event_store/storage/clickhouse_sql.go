@@ -72,11 +72,11 @@ type SQLLimits struct {
 	ResultRows int
 }
 
-// DefaultSQLLimits are an install's limits: 10 seconds, 1 GiB, half the
-// CPUs and 100,000 rows. A slow query holds its threads from ingest and
-// other reads for no longer than the time.
+// DefaultSQLLimits are an install's limits: 30 seconds, the same as a
+// Query's run, 1 GiB, half the CPUs and 100,000 rows. A slow query holds
+// its threads from ingest and other reads for no longer than the time.
 func DefaultSQLLimits() SQLLimits {
-	return SQLLimits{Time: 10 * time.Second, MemoryBytes: 1 << 30, Threads: max(1, runtime.NumCPU()/2), ResultRows: 100_000}
+	return SQLLimits{Time: 30 * time.Second, MemoryBytes: 1 << 30, Threads: max(1, runtime.NumCPU()/2), ResultRows: 100_000}
 }
 
 // SQLColumn is a column of a SQL query's result: its name, and its
