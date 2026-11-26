@@ -239,13 +239,13 @@ func (u *uploads) last(ctx context.Context) (*uint64, error) {
 	if session == "" {
 		session = u.task.SessionID
 	}
-	files, err := u.capturer.API.AgentSessionFiles(ctx, session)
+	answer, err := u.capturer.API.AgentSession(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("ask SolidTrace what it has of the transcript: %w", err)
 	}
 	var offset uint64
 	hashes := map[string]string{}
-	for _, f := range files {
+	for _, f := range answer.Files {
 		if f.Path == session+".jsonl" {
 			offset = f.EndOffset
 		}
