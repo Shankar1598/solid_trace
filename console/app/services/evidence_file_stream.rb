@@ -14,6 +14,8 @@ class EvidenceFileStream
 
   AT_ONCE = 4
   SLOT_WAIT_SECONDS = 1
+  WRITE_SECONDS = 10
+  STREAM_SECONDS = 600
 
   @lock = Mutex.new
   @slot_freed = ConditionVariable.new
@@ -84,15 +86,21 @@ class EvidenceFileStream
   end
 
   def call(socket)
+    socket.timeout = WRITE_SECONDS if socket.respond_to?(:timeout=)
+    stop_at = Process.clock_gettime(Process::CLOCK_MONOTONIC) + STREAM_SECONDS
     chunk = @first_chunk
     while chunk
       socket.write(chunk)
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > stop_at
+        Rails.logger.info("Evidence file bytes: the browser read for more than #{STREAM_SECONDS} s, so the stream stopped")
+        break
+      end
       chunk = @reads.resume
     end
   rescue EventStore::Unavailable => e
     Rails.logger.error("Evidence file bytes stopped before their Content-Length: #{e.message}")
   rescue IOError, SystemCallError => e
-    Rails.logger.info("Evidence file bytes: the browser closed the connection: #{e.message}")
+    Rails.logger.info("Evidence file bytes: the browser closed the connection or stopped reading: #{e.message}")
   ensure
     socket.close
     close

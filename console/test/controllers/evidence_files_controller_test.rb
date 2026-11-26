@@ -311,6 +311,25 @@ class EvidenceFilesControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "a browser that stops reading loses its stream after the write deadline, so the next one runs" do
+    size = 4 * 1024 * 1024
+    stub_request(:get, content_url(VIDEO)).to_return(status: 200, headers: { "Content-Length" => size.to_s }, body: "v" * size)
+    browser, console = UNIXSocket.pair
+
+    stub_const(EvidenceFileStream, :AT_ONCE, 1) do
+      stub_const(EvidenceFileStream, :SLOT_WAIT_SECONDS, 0.05) do
+        stub_const(EvidenceFileStream, :WRITE_SECONDS, 0.2) do
+          Timeout.timeout(5) { EvidenceFileStream.open(id: VIDEO).call(console) }
+
+          assert_predicate console, :closed?
+          EvidenceFileStream.open(id: VIDEO).close
+        end
+      end
+    end
+  ensure
+    browser&.close
+  end
+
   test "each answer of the bytes gives back its stream, so the next one runs" do
     stub_request(:get, content_url(SHOT)).to_return(status: 200, headers: { "Content-Length" => "84" }, body: "p" * 84)
     stub_request(:get, content_url(VIDEO)).to_return(status: 416, headers: { "Content-Range" => "bytes */1000" }, body: "{}")
