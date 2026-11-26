@@ -36,6 +36,10 @@ type world struct {
 	slept         []time.Duration
 	version       string
 	claudeSession string
+	// cwd is the current directory of the command ("" is the test's).
+	cwd string
+	// started are the starts of Claude Code, as StartClaude got them.
+	started [][]string
 }
 
 type syncBuffer struct {
@@ -120,6 +124,11 @@ func (w *world) env() command.Env {
 		Version:           w.version,
 		ClaudeProjectsDir: w.projectsDir(),
 		ClaudeSessionID:   w.claudeSession,
+		Dir:               w.cwd,
+		StartClaude: func(dir string, args []string) error {
+			w.started = append(w.started, append([]string{dir}, args...))
+			return nil
+		},
 	}
 }
 

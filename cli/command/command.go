@@ -53,6 +53,9 @@ type Env struct {
 	// the environment of its Bash tool: the Agent session of `evidence
 	// add`.
 	ClaudeSessionID string
+	// StartClaude starts Claude Code (claude) with args in dir, in place
+	// of this process, for `resume`. Nil means that the machine cannot.
+	StartClaude func(dir string, args []string) error
 }
 
 var usage = `solidtrace: the SolidTrace agent CLI.
@@ -78,6 +81,21 @@ Usage:
       the uploads) as done or not done, with what to do, and a count of the
       Agent sessions on this machine as uploaded, not captured, failed or
       not checked yet. --all lists each Agent session.
+  solidtrace resume SESSION_ID [--fork] [--print] [-- CLAUDE_ARGS...]
+      Continue an Agent session of your Organization on this machine, in a
+      checkout of its repository. It downloads the Agent session from
+      SolidTrace into Claude Code's project folder (nothing when this
+      machine has all of its transcript), and starts claude --resume in
+      the Agent session's folder. Your own Agent session continues with the
+      same id, and its uploads go on: close it on the other machine first.
+      Another person's Agent session, a Run's, or yours with --fork
+      continues as a new Agent session of yours (--fork-session), and the
+      first one does not change. When the checkout is not on the Agent
+      session's branch, it tells you how to get the branch; work that was
+      not pushed is not in SolidTrace. Arguments after -- go to claude.
+      --print prints the command and its folder, and does not start Claude
+      Code. It needs a sign-in with sessions:download: an older sign-in
+      must run solidtrace login again.
   solidtrace start [--project PROJECT] [--branch BRANCH] [--dispatcher URL] PROMPT
       Start a Run: an agent works on PROMPT with the Factory settings of
       PROJECT. With no --project, the Project is the one whose Factory
@@ -388,6 +406,8 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return reviewCommand(ctx, args[1:], env)
 	case "evidence":
 		return evidence(ctx, args[1:], env)
+	case "resume":
+		return resume(ctx, args[1:], env)
 	case "version", "--version":
 		fmt.Fprintf(env.Stdout, "solidtrace %s\n", env.Version)
 		return 0
