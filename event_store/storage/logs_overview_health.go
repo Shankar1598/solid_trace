@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/google/uuid"
 )
 
 // The Overview's Health reads: Log processing's oldest waiting Log batches,
@@ -20,6 +21,12 @@ func (s *ClickHouseLogs) OldestWaitingLogBatches(projectIDs []uint32) ([]OldestL
 		return nil, fmt.Errorf("find the oldest waiting Log batches: %w", err)
 	}
 	return slices.DeleteFunc(oldest, func(b OldestLogBatch) bool { return !slices.Contains(projectIDs, b.ProjectID) }), nil
+}
+
+// OldestWaitingLogBatch is a Project's oldest Log batch still waiting for Log
+// processing, and false if none waits (PebbleWriter.OldestWaitingLogBatch).
+func (s *ClickHouseLogs) OldestWaitingLogBatch(projectID uint32) (uuid.UUID, bool, error) {
+	return s.pebble.OldestWaitingLogBatch(projectID)
 }
 
 // ProjectReadTimes is how long a Project's Log reads took over the last day:

@@ -265,6 +265,36 @@ func (w *PebbleWriter) OldestLogBatches() ([]OldestLogBatch, error) {
 	return oldest, iter.Error()
 }
 
+// OldestWaitingLogBatch returns the id of a Project's oldest Log batch that
+// Log processing has not stored, the first after its Processing cursor, and
+// false if none waits. It reads from the cursor, so it does not step over
+// the deleted batches under it, as OldestLogBatches does: on a Pebble with
+// many range deletions it reads in microseconds, not milliseconds.
+func (w *PebbleWriter) OldestWaitingLogBatch(projectID uint32) (uuid.UUID, bool, error) {
+	cursor, err := w.LogProcessingCursor(projectID)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	lower := logBatchPrefix(projectID)
+	if cursor != uuid.Nil {
+		lower = append(logBatchKey(projectID, cursor), 0)
+	}
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: logBatchUpperBound(projectID)})
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	defer iter.Close()
+	if !iter.First() {
+		return uuid.Nil, false, iter.Error()
+	}
+	key := iter.Key()
+	batchID, err := uuid.FromBytes(key[len(key)-16:])
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("log batch key %x: %w", key, err)
+	}
+	return batchID, true, nil
+}
+
 // Log processing keeps two ids per Project in Pebble, beside Event
 // processing's cursors: its Processing cursor, the last Log batch whose Logs
 // are in ClickHouse, and the last batch of the range it is inserting. Each is

@@ -31,11 +31,11 @@ func (h *LogsHandler) incomplete(projectID uint32) (*incompleteLogs, error) {
 		until := h.IngestGap.Until.UTC()
 		return &incompleteLogs{Reason: "ingest_gap", Until: &until}, nil
 	}
-	oldest, err := h.clickHouse.OldestWaitingLogBatches([]uint32{projectID})
-	if err != nil || len(oldest) == 0 {
+	oldest, waiting, err := h.clickHouse.OldestWaitingLogBatch(projectID)
+	if err != nil || !waiting {
 		return nil, err
 	}
-	if behind := now.Sub(storage.LogBatchWrittenAt(oldest[0].BatchID)); behind > logProcessingLag {
+	if behind := now.Sub(storage.LogBatchWrittenAt(oldest)); behind > logProcessingLag {
 		return &incompleteLogs{Reason: "log_processing_behind", BehindSeconds: int64(behind.Seconds())}, nil
 	}
 	return nil, nil
