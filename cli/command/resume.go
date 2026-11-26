@@ -498,12 +498,12 @@ func tellBranch(ctx context.Context, env Env, root, branch string) {
 	}
 	if has {
 		fmt.Fprintf(env.Stderr, "The Agent session worked on the branch %s. This checkout is on %s. To work on "+
-			"its branch, run this command:\n  git switch %s\n", branch, cmp.Or(current, "no branch"), branch)
+			"its branch, run this command:\n  git switch %s\n", branch, cmp.Or(current, "no branch"), shellQuote(branch))
 		return
 	}
 	fmt.Fprintf(env.Stderr, "The Agent session worked on the branch %s. This checkout does not have that branch. "+
 		"To get it, run these commands:\n  git fetch\n  git switch %s\nSolidTrace does not have work that was not "+
-		"pushed.\n", branch, branch)
+		"pushed.\n", branch, shellQuote(branch))
 }
 
 // shellQuote is s as one word of a POSIX shell.

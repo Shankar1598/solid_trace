@@ -694,3 +694,29 @@ func TestResumeOfADownloadWithAPathTwiceKeepsTheLastCopy(t *testing.T) {
 		t.Errorf("transcript = %q", got)
 	}
 }
+
+func TestResumeQuotesTheBranchInTheGitSwitchLine(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	w.git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	const branch = "fix(ui)"
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript +
+		`{"type":"user","gitBranch":"` + branch + `","message":"go on"}` + "\n"})
+
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+	if got := w.stderr.String(); !strings.Contains(got, "\n  git fetch\n  git switch 'fix(ui)'\n") {
+		t.Errorf("stderr %q, want the branch quoted", got)
+	}
+
+	w.git(repo, "branch", branch)
+	w.stderr = &syncBuffer{}
+	if code := w.resume(resumeID, "--print"); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+	if got := w.stderr.String(); !strings.Contains(got, "run this command:\n  git switch 'fix(ui)'\n") {
+		t.Errorf("stderr %q, want the branch quoted", got)
+	}
+}
