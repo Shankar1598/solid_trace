@@ -80,8 +80,7 @@ func reviewRecordOf(body string) *storage.ReviewRecord {
 // reviewRecordOfFile is the Review record of unit when it is a whole file
 // <session id>/solidtrace/review-records/<name>.json of its own Agent
 // session, with the place of the file at offset 0; nil for another unit, a
-// cut file, or a file that is not a record. A subagent's file is under
-// subagents/, so it is not in that folder.
+// cut file, or a file that is not a record.
 func reviewRecordOfFile(unit storage.AgentFileUnit) *storage.ReviewRecord {
 	name, ok := strings.CutPrefix(unit.Path, unit.SessionID.String()+reviewRecordFolder)
 	if !ok || !strings.HasSuffix(name, ".json") || strings.Contains(name, "/") || unit.Size > uint64(len(unit.Bytes)) {

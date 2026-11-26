@@ -547,22 +547,24 @@ test('the record file of an open-pr Agent session, or the final reply of an olde
   const first = openPrSession(shopDir, { exampleRecord: example, record: round1, minutesAgo: 30, inReply: true })
   const second = openPrSession(shopDir, { exampleRecord: example, record: round2, minutesAgo: 10 })
   capture(reviewer, first, shopDir)
-  // Round 2 is written two times. The Stop hook sends each file at once,
-  // and the second file replaces the first.
   const draft = reviewRecord(pr, 2, 230)
   expect(reviewFinal(reviewer, second, shopDir, draft)).toMatch(new RegExp(`^record: round 2, 230 findings, 228 fixed, kept in .*/${second.id}/solidtrace/review-records/round-2-[0-9a-f]{12}\\.json$`))
   capture(reviewer, second, shopDir, 'Stop')
-  // A record in a repository that is not captured stays on the machine.
-  // Capture it before the last Stop capture: when the last record shows, a
-  // record of the other repository that went up by mistake shows too.
-  const elsewherePr = `https://github.example/other/notes-${RUN}/pull/1`
-  const elsewhereDir = gitRepository(`${ELSEWHERE}-records`)
-  const elsewhere = openPrSession(elsewhereDir, { exampleRecord: example, record: reviewRecord(elsewherePr, 1, 4), minutesAgo: 5 })
-  const kept = reviewFinal(reviewer, elsewhere, elsewhereDir, reviewRecord(elsewherePr, 1, 4)).split('kept in ')[1]
-  expect(existsSync(kept), kept).toBe(true)
-  capture(reviewer, elsewhere, elsewhereDir, 'Stop')
-  expect(reviewFinal(reviewer, second, shopDir, round2)).toMatch(/^record: round 2, 240 findings, 238 fixed, kept in /)
-  capture(reviewer, second, shopDir, 'Stop')
+  const captureOutsideTheCapturedRepositories = () => {
+    const elsewherePr = `https://github.example/other/notes-${RUN}/pull/1`
+    const elsewhereDir = gitRepository(`${ELSEWHERE}-records`)
+    const elsewhere = openPrSession(elsewhereDir, { exampleRecord: example, record: reviewRecord(elsewherePr, 1, 4), minutesAgo: 5 })
+    const kept = reviewFinal(reviewer, elsewhere, elsewhereDir, reviewRecord(elsewherePr, 1, 4)).split('kept in ')[1]
+    expect(existsSync(kept), kept).toBe(true)
+    capture(reviewer, elsewhere, elsewhereDir, 'Stop')
+    return elsewherePr
+  }
+  const captureTheLastRound = () => {
+    expect(reviewFinal(reviewer, second, shopDir, round2)).toMatch(/^record: round 2, 240 findings, 238 fixed, kept in /)
+    capture(reviewer, second, shopDir, 'Stop')
+  }
+  const elsewherePr = captureOutsideTheCapturedRepositories()
+  captureTheLastRound()
 
   const table = page.getByRole('table', { name: 'Review records' })
   const row = table.locator(`tr[data-review-record="${pr}"]`)

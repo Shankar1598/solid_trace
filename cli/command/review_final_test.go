@@ -207,7 +207,6 @@ func TestReviewFinalTakesAFileOfUpTo32MiBTheMostThatTheCaptureSendsWhole(t *test
 
 func TestReviewFinalSaysSoWhenItCannotWriteTheFile(t *testing.T) {
 	projects, project := finalProjects(t)
-	// A file where the folder of the Agent session must be.
 	writeFile(t, filepath.Join(project, finalSession), "not a folder")
 
 	code, out, stderr := runFinal(t, projects, finalRecord)
