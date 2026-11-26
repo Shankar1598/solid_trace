@@ -13,6 +13,7 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/ingestgap"
 	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -207,6 +208,7 @@ type clickHouseWork struct {
 	logTransforms      *logtransform.Transforms
 	ingest             *ingest.Service
 	health             *handler.HealthHandler
+	ingestGap          ingestgap.Gap
 	eventProcessor     *processing.Processor
 	eventCleanup       *processing.Cleanup
 	logProcessor       *logprocessing.Processor
@@ -291,6 +293,7 @@ func (w *clickHouseWork) queryRoutes() *fiber.App {
 	})
 	logsHandler := handler.NewLogsHandler(w.logs, w.sqlQueries, w.settings, clock.System{})
 	logsHandler.HeavyReads = handler.NewHeavyReads(w.cfg.LogsHeavyReadSlots)
+	logsHandler.IngestGap = w.ingestGap
 	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
 		Logs: w.logs, Clock: clock.System{}, DiskLimit: w.diskLimit, Retention: w.settings,
 		LocalCacheHours: w.clickHouse.LocalCacheHours,

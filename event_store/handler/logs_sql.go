@@ -31,6 +31,8 @@ type sqlRequest struct {
 	// Parameters are the values of the Dashboard filters the SQL names, by
 	// name. A filter without values is All.
 	Parameters map[string][]string `json:"parameters"`
+	// HoldIfIncomplete is as for a Query (queryRequest).
+	HoldIfIncomplete bool `json:"hold_if_incomplete"`
 }
 
 // sqlTimeout is the timeout a SQL run gets for the timeout_seconds it asked
@@ -65,7 +67,10 @@ const simplerSQL = "try a shorter time range or a simpler query"
 // syntax error's position: so does SQL that reads what its user may not, or
 // changes a setting, and SQL that names a filter with a type other than
 // Array(String), String or Nullable(String). A run past its timeout answers
-// 504 with {"errors": [{"message"}]}.
+// 504 with {"errors": [{"message"}]}. With "hold_if_incomplete": true, SQL
+// whose Project's Logs are not complete does not run, as for a Query: it
+// answers {"incomplete": …}. Only the Logs count, also for SQL that reads
+// events or spans.
 func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -97,6 +102,9 @@ func (h *LogsHandler) SQL(c *fiber.Ctx) error {
 	defer run.end()
 	if problem := rangeProblem(req.From, req.To); problem != nil {
 		return c.Status(400).JSON(problem)
+	}
+	if answered, err := h.holdIfIncomplete(c, run, projectID, req.HoldIfIncomplete); answered {
+		return err
 	}
 	result, err := h.sql.RunSQL(run.ctx, projectID, req.From, req.To, req.SQL, sqlfilter.Parameters(filters, req.Parameters), maxTableRows)
 	// Stopped, the SQL fails as the context ends or ClickHouse stops it at

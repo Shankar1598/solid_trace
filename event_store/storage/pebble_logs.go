@@ -278,6 +278,36 @@ func logInsertKey(projectID uint32) []byte {
 	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "loginsert/"...), projectID)
 }
 
+// ingestBeatKey holds the time of Log ingest's last heartbeat, which tells
+// the next start how long ingest was down (package ingestgap). It is the
+// reserved Project id 0, then "ingestbeat", outside the Log batches'
+// keyspace and every cursor's.
+var ingestBeatKey = append(eventKeyPrefix(0), "ingestbeat"...)
+
+// WriteIngestBeat records that ingest was open at at. NoSync: a beat lost
+// to a power loss only makes the next start's gap seem longer.
+func (w *PebbleWriter) WriteIngestBeat(at time.Time) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return ErrShuttingDown
+	}
+	return w.db.Set(ingestBeatKey, binary.BigEndian.AppendUint64(nil, uint64(at.UnixMilli())), pebble.NoSync)
+}
+
+// LastIngestBeat returns the time of the last heartbeat WriteIngestBeat
+// wrote, and false if there is none.
+func (w *PebbleWriter) LastIngestBeat() (time.Time, bool, error) {
+	value, err := w.get(ingestBeatKey)
+	if err != nil || value == nil {
+		return time.Time{}, false, err
+	}
+	if len(value) != 8 {
+		return time.Time{}, false, fmt.Errorf("ingest heartbeat %x is not 8 bytes", value)
+	}
+	return time.UnixMilli(int64(binary.BigEndian.Uint64(value))), true, nil
+}
+
 // LogProcessingCursor returns the id of the last Log batch whose Logs Log
 // processing has stored for a Project, or uuid.Nil if it has stored none.
 func (w *PebbleWriter) LogProcessingCursor(projectID uint32) (uuid.UUID, error) {

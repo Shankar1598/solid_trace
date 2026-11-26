@@ -14,6 +14,7 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/ingestgap"
 	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -164,6 +165,12 @@ func run(ctx context.Context, cfg *config.Config) {
 		}
 	}()
 
+	// The ingest gap is measured as the ingest port opens, before the
+	// ClickHouse start, so the time that ClickHouse takes is not in it.
+	ingestGap, err := ingestgap.Open(ctx, pebbleWriter, clock.System{})
+	if err != nil {
+		logger.L.Warn("Reading the last ingest heartbeat failed: this start holds no Monitor for an ingest gap", "error", err)
+	}
 	go func() {
 		logger.L.Info("Starting ingest server", "port", cfg.Port)
 		if err := app.Listen(":" + cfg.Port); err != nil {
@@ -174,7 +181,7 @@ func run(ctx context.Context, cfg *config.Config) {
 	work := &clickHouseWork{
 		cfg: cfg, pebble: pebbleWriter, clickHouse: clickHouse, logs: clickHouseLogs, sqlQueries: sqlQueries,
 		settings: consoleSettings, evidenceFiles: evidenceFiles, logTransforms: logTransforms,
-		ingest: ingestService, health: healthHandler,
+		ingest: ingestService, health: healthHandler, ingestGap: ingestGap,
 		eventProcessor: processor, eventCleanup: eventCleanup, logProcessor: logProcessor,
 		spanProcessor: spanProcessor, agentFileProcessor: agentFileProcessor, agentParser: agentParser,
 	}
