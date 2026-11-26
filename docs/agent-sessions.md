@@ -162,7 +162,7 @@ The SolidTrace marketplace has a second plugin, `solidtrace-skills`, which is no
   - what the person said, and what the agent then found and changed;
   - the fix.
 
-  A problem that the person, a later agent or a test run found is a finding too, with `found_by`. So the record also shows what the reviews missed. The record tells the `story` of the feature, and gives the outcome of each finding: `fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`. The PR body gives the human reviewer a short summary of the record: what changes, where to look, the evidence, and what the reviews found and missed. When the pstack plugin is installed, the skill writes the body with its `technical-writing` skill. At the end, the agent sends the record to `solidtrace review final` in a heredoc, which checks it and prints one line with its round and counts. The final reply gives the PR and a short summary, not the JSON of the record.
+  A problem that the person, a later agent or a test run found is a finding too, with `found_by`. So the record also shows what the reviews missed. The record tells the `story` of the feature, and gives the outcome of each finding: `fixed`, `ignored_by_person`, `disputed`, `deferred`, `ignored_trivial` or `open`. The PR body gives the human reviewer a short summary of the record: what changes, where to look, the evidence, and what the reviews found and missed. Its Evidence section links to the screenshots and videos that prove the PR (see [Prove a PR with screenshots and videos](#prove-a-pr-with-screenshots-and-videos-evidence-files)). When the pstack plugin is installed, the skill writes the body with its `technical-writing` skill. At the end, the agent sends the record to `solidtrace review final` in a heredoc, which checks it and prints one line with its round and counts. The final reply gives the PR and a short summary, not the JSON of the record.
 
 - **`/solidtrace-skills:update-pr`** works on the feedback on the open PR: its comments, its reviews (also from a review bot) and its failed checks. Each change request becomes a finding with `found_by` (the comment's author, the bot or the check). The agent decides and fixes each one, runs security on the fix diff, and replies to each comment. Then it writes the next round of the record, and updates the PR body. A record replaces the earlier rounds of the same PR. `update-pr local` reads the feedback from `<branch>.comments.md` next to the local PR file.
 
@@ -200,6 +200,7 @@ Click the PR to open its record. The page shows:
 - the review runs, with the skill, the stage, the step, the reviewers with their models and efforts, and the verifier;
 - each finding with who found it (**missed** when the reviews did not), its severity, its title and place, its decisions in the order of its events (as `trivial, verifier pushed back, person asks fix, fixed`), and its outcome. **Details** shows its scenario and the words of its events: why, what the person said, what the agent found, and the files;
 - the confirmations, each **Given**, **Not given** or **Not known**;
+- the Evidence files of its Agent session, each a link to its page;
 - the rounds of the PR, when it has more than one. Click a round to open it.
 
 The record is what the agent wrote, with the words of PR commenters in it, so the pages show all of it as text, never as HTML or Markdown.
@@ -215,6 +216,51 @@ SolidTrace reads the record from the `solidtrace review final` call of the Agent
 ### Over MCP
 
 An agent reads the Review records with two MCP tools ([MCP](mcp.md)): `list_review_records` lists the newest record of each PR, as the page does, and `get_review_record` reads one record with the rounds of its PR. It gives the findings in pages of 30, and `findings_from` and `findings_limit` select a page. A token with `mcp:read` can call both. To compare the reviews of many PRs, an agent lists the records, then reads each one, page by page, until `next_findings_from` is `null`.
+
+## Prove a PR with screenshots and videos: Evidence files
+
+`open-pr` and `update-pr` upload the screenshots and videos that prove the PR, for example the screenshots and the videos of a verify-solidtrace run. The Evidence section of the PR body has one link for each file, as **Screenshot: <caption>** or **Video: <caption>**. A reviewer on GitHub or Bitbucket clicks the link and sees the file in Console after sign-in. The files are not public, and the forge token needs no write scope ([ADR 0025](adr/0025-evidence-files-are-kept-by-eventstore-and-shown-by-console.md)).
+
+The agent decides which files are safe to upload, and uploads only the files that prove the PR. No person confirms each file, and SolidTrace does not redact an image. Each member of the Organization can see each Evidence file. When an upload fails, the agent writes no link for that file, and its final reply gives the file and the error.
+
+Upgrade EventStore and Console before the plugin. An older server answers the upload with 404, and the skills then write no links.
+
+### Upload a file
+
+```bash
+solidtrace evidence add evidence/review-records-list.png --caption "The Review records list, newest PR first"
+```
+
+`solidtrace evidence add FILE... [--caption TEXT] [--session ID]` uploads each file as an Evidence file of the Agent session, and prints one line for each file: the link, the type and the size, as `https://console.example.com/acme/evidence/<id> image/png 84 KB`.
+
+- **The Agent session** is `--session`, else `CLAUDE_CODE_SESSION_ID`, which Claude Code sets in its Bash tool. With neither, the command exits 1 before it uploads.
+- **The caption** is at most 200 characters. It applies to each file of the call, so the skills upload each file in its own call.
+- **The types** are PNG, JPEG, WebP and GIF images, and MP4 and WebM videos. EventStore finds the type from the bytes, not from the file name, and refuses each other type, such as SVG or HTML. A file is at most 32 MiB.
+- **A file that fails** prints its error. The command continues with the next file, and exits 1 at the end.
+- **The same file again** to the same Agent session gives the same link.
+- **An older server** answers 404, and the command says `this SolidTrace server is too old for Evidence files: ask the operator to upgrade it`.
+
+The command uploads as the signed-in person, with the `sessions:write` scope, to the Organization of the sign-in. Its Agent sessions must be on. The link names the Console URL instance setting, else EventStore's `CONSOLE_URL`. With neither, the CLI joins the path to the Console URL of its sign-in.
+
+### Open a file
+
+The link opens `/<org>/evidence/<id>` in Console. A person who is not signed in signs in, then comes back to the link. A person who is not a member of the Organization gets 404. The page shows:
+
+- the image, or a video player with the speed buttons **0.25x**, **0.5x**, **1x** and **2x**. The browser keeps the last speed of the viewer;
+- the caption, the uploader and the date;
+- a link to the Agent session, and a link to its Review record when the session has one.
+
+Console streams the bytes from EventStore with `Range`, so a video can seek. It sends the stored `Content-Type`, with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Content-Disposition: inline` and `Cache-Control: private`.
+
+**Coding agents** → **Evidence files** lists the Evidence files of the Organization, the newest first: a small image or a video mark, the caption, the type, the size, the Agent session, the uploader and the date. A deleted file shows **deleted**. The page of each Agent session and of each Review record lists the Evidence files of its Agent session.
+
+### Evidence Retention
+
+An Admin sets **Evidence Retention (days)** on **Settings** → **Agent sessions**: how many whole days the Agent Project keeps each Evidence file. The default is 90, from 1 to 3650. Each other member reads it there. Over MCP, `update_project` sets it as `evidence_retention_days` on the Agent Project. A change applies to the files that are already there.
+
+Once a day, EventStore deletes each file that is older than Evidence Retention. The link then shows "This evidence was deleted on <date>, after <N> days of Evidence Retention." Evidence Retention is separate from the Agent Project's Retention, which the Agent sessions and the Review records follow.
+
+EventStore keeps the bytes in the bucket of `object_store`, under the `evidence/` prefix. Without a bucket, it keeps them in `evidence_path` on its data disk (`/storage/evidence/production` in `deploy/event_store.yml`).
 
 ## Send Claude Code's telemetry to SolidTrace
 
@@ -510,7 +556,7 @@ The Run page shows one Run from its run events:
 - The **Executions**: for each, its start, its end, its duration, why it ended, the subscription account, the VM, and its form (headless, or take-over). An Execution that has not ended shows "Live".
 - While the Run is taken over: who took it over, the VM, and the command that attaches to its terminal there.
 - The **interventions**: each message, interrupt, stop, take-over, account switch and continue, with the person who did it. Below them, all the events of the Run in order.
-- The **last report**: each check with pass or fail and the last lines of its output, the Evidence files (an image shows on the page; click another file to download it), and `evidence/report.md` in full. A done report with no check that passed shows **no Evidence**. The report of an Issue or a Monitor Run shows its cause report.
+- The **last report**: each check with pass or fail and the last lines of its output, the files of its Evidence (an image shows on the page; click another file to download it), and `evidence/report.md` in full. A done report with no check that passed shows **no Evidence**. The report of an Issue or a Monitor Run shows its cause report.
 - Links to the Run's Agent sessions, and the CLI commands to message the Run, take it over or stop it.
 
 ### The totals of a Closed Run
@@ -593,7 +639,7 @@ The command starts the real Dispatcher and the real wrapper, with fakes for the 
 
 The six Runs:
 
-- Done, with a PR, two checks that passed and one Evidence file. The demo merges its PR on the fake forge, so the Run closes with the reason `pr_merged`, and the starter **Factory** Dashboard draws its Charts from that one closed event.
+- Done, with a PR, two checks that passed and one file in its Evidence. The demo merges its PR on the fake forge, so the Run closes with the reason `pr_merged`, and the starter **Factory** Dashboard draws its Charts from that one closed event.
 - Done, with no Evidence (a check failed).
 - Needs a person, with a question.
 - Failed (the agent's harness exited in the middle of a turn).
