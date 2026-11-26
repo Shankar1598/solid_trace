@@ -39,7 +39,7 @@ func TestAgentDownloadOfAClientThatStopsReading(t *testing.T) {
 	files := []storage.AgentDownloadFile{{Path: "session.jsonl", Version: 1, Size: 1 << 40, EndOffset: 1 << 40}}
 	done := make(chan struct{})
 	go func() {
-		h.sendDownload(writer, 50*time.Millisecond, 1, uuid.New(), files)
+		h.sendDownload(writer, 50*time.Millisecond, func() {}, 1, uuid.New(), files)
 		close(done)
 	}()
 	select {

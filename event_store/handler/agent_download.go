@@ -31,6 +31,16 @@ const ScopeSessionsDownload = "sessions:download"
 // on the server; this lets a slow client have 1 MB a second.
 const agentDownloadTimeout = 10 * time.Minute
 
+// agentDownloadsAtOnce is the most downloads that read at the same time.
+// Each download keeps a ClickHouse connection of the pool until its
+// stream ends, at the pace of its client. Without a limit, slow downloads
+// can take the whole pool, and then /health and ingest fail.
+const agentDownloadsAtOnce = 2
+
+// agentDownloadRetryAfter is the Retry-After, in seconds, of a download
+// that the limit refuses.
+const agentDownloadRetryAfter = "5"
+
 // AgentSessionFlagsHeader carries the flags of the downloaded Agent
 // session: cut, partial and trimmed. A resume of a cut or partial Agent
 // session can fail.
@@ -74,7 +84,8 @@ type AgentDownloads interface {
 // session, it answers 503 with Retry-After: a 200 of an upload means that
 // the bytes are stored, and the download must not leave them out. A read
 // that fails after the first byte stops the answer with no end, so the
-// client sees an error and not a short archive.
+// client sees an error and not a short archive. When agentDownloadsAtOnce
+// downloads read, it answers 503 with Retry-After.
 func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	token := agentToken(c)
 	if token.AgentSessionIDs == nil && !token.Has(ScopeSessionsDownload) {
@@ -104,8 +115,17 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"error": "The last uploads of this Agent session are stored but not yet ready to download. Try again in a second."})
 	}
+	select {
+	case h.downloadSlots <- struct{}{}:
+	default:
+		c.Set(fiber.HeaderRetryAfter, agentDownloadRetryAfter)
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "The server sends as many downloads as it can now. Try again in a few seconds."})
+	}
+	release := func() { <-h.downloadSlots }
 	files, err := h.downloads.AgentDownloadFiles(c.UserContext(), projectID, sessionID)
 	if err != nil {
+		release()
 		logger.L.Error("Failed to read an Agent session's files", "project_id", projectID, "session_id", sessionID, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The Agent session could not be read. Try again later."})
 	}
@@ -122,7 +142,7 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	c.Set(AgentSessionFlagsHeader, strings.Join(flags, ", "))
 
 	reader, writer := io.Pipe()
-	go h.sendDownload(writer, agentDownloadTimeout, projectID, sessionID, files)
+	go h.sendDownload(writer, agentDownloadTimeout, release, projectID, sessionID, files)
 	c.Context().SetBodyStream(reader, -1)
 	return nil
 }
@@ -134,13 +154,14 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 // client that stops reading but keeps its connection open must not keep
 // the query or this goroutine, because the ingest app has no write
 // timeout: after timeout, the close of w stops a write that waits for the
-// client.
-func (h *AgentHandler) sendDownload(w *io.PipeWriter, timeout time.Duration, projectID uint32, sessionID uuid.UUID, files []storage.AgentDownloadFile) {
+// client. When the read ends, it calls release, before the close of w.
+func (h *AgentHandler) sendDownload(w *io.PipeWriter, timeout time.Duration, release func(), projectID uint32, sessionID uuid.UUID, files []storage.AgentDownloadFile) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	stop := context.AfterFunc(ctx, func() { w.CloseWithError(ctx.Err()) })
 	defer stop()
 	err := h.writeDownload(ctx, w, projectID, sessionID, files)
+	release()
 	if err != nil {
 		logger.L.Error("Failed to send an Agent session's download", "project_id", projectID, "session_id", sessionID, "error", err)
 	}

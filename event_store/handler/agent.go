@@ -92,6 +92,8 @@ type AgentHandler struct {
 	// redaction gives the Redaction patterns that each unit goes through
 	// before it is stored.
 	redaction *redaction.Follower
+	// downloadSlots has one entry for each download that reads now.
+	downloadSlots chan struct{}
 }
 
 // NewAgentHandler returns the agent ingest API of cfg.
@@ -110,6 +112,8 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 		version:     cfg.Version,
 		minimum:     minimumClientVersion(cfg.Version),
 		redaction:   redaction.NewFollower(cfg.Settings.RedactionPatterns),
+
+		downloadSlots: make(chan struct{}, agentDownloadsAtOnce),
 	}
 }
 
