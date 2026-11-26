@@ -17,6 +17,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/agentapi"
 	"github.com/solidtrace/cli/capture"
@@ -489,8 +491,11 @@ func lastBranch(transcript string) string {
 // tellBranch tells the person how to get the Agent session's branch when
 // the checkout is on another branch. It does not change the checkout.
 func tellBranch(ctx context.Context, env Env, root, branch string) {
+	if !validBranch(ctx, root, branch) {
+		return
+	}
 	current, _ := gitOutput(ctx, root, "branch", "--show-current")
-	if branch == "" || branch == "HEAD" || branch == current {
+	if branch == current {
 		return
 	}
 	refs, _ := gitOutput(ctx, root, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes")
@@ -514,6 +519,23 @@ func tellBranch(ctx context.Context, env Env, root, branch string) {
 	fmt.Fprintf(env.Stderr, "The Agent session worked on the branch %s. This checkout does not have that branch. "+
 		"To get it, run these commands:\n  git fetch\n  git switch %s\nSolidTrace does not have work that was not "+
 		"pushed.\n", branch, shellQuote(branch))
+}
+
+// validBranch tells if branch is a branch name by git's rules that is safe
+// to print. Another member wrote the transcript, so the name can hold
+// terminal escapes or be an option of git switch.
+func validBranch(ctx context.Context, root, branch string) bool {
+	if branch == "" || strings.HasPrefix(branch, "-") || !utf8.ValidString(branch) {
+		return false
+	}
+	for _, r := range branch {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	// git expands a name such as @{-1}, so the name must come back unchanged.
+	out, err := gitOutput(ctx, root, "check-ref-format", "--branch", branch)
+	return err == nil && out == branch
 }
 
 // shellQuote is s as one word of a POSIX shell.
