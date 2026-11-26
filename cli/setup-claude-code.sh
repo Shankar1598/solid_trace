@@ -1,14 +1,14 @@
 #!/bin/sh
 # Installs or upgrades SolidTrace for Claude Code on this machine: the
-# solidtrace CLI of a release, the SolidTrace marketplace, the capture plugin
-# and the review plugin. It asks no questions. Run it again to upgrade.
+# solidtrace CLI of a release, the SolidTrace marketplace and the solidtrace
+# plugin (capture and the review skills). It asks no questions. Run it again
+# to upgrade.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Shankar1598/solid_trace/main/cli/setup-claude-code.sh | sh
 #
 # Environment:
 #   SOLIDTRACE_VERSION      the release, such as v0.24.3 (default: the newest)
 #   SOLIDTRACE_INSTALL_DIR  the folder of solidtrace (default: ~/.local/bin)
-#   SOLIDTRACE_REVIEW_PLUGIN=no   do not install the review plugin
 #   SOLIDTRACE_CONSOLE_URL and SOLIDTRACE_INGEST_URL   sign in when this
 #                           machine has no sign-in (Console's Capture setup
 #                           page gives both)
@@ -47,7 +47,7 @@ main() {
     || fail "the CLI install failed"
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
-    *) todo "Add $BIN_DIR to PATH, so that the capture plugin finds solidtrace." ;;
+    *) todo "Add $BIN_DIR to PATH, so that the solidtrace plugin finds solidtrace." ;;
   esac
 
   # Claude Code cannot add the marketplace file from a github.com URL, so the
@@ -63,17 +63,21 @@ main() {
     claude plugin marketplace add "$MARKETPLACE_FILE" </dev/null || fail "could not add the solidtrace marketplace"
   fi
 
-  info "Installing the capture plugin"
+  info "Installing the solidtrace plugin"
   install_plugin solidtrace@solidtrace
 
-  if [ "${SOLIDTRACE_REVIEW_PLUGIN:-yes}" = no ]; then
-    info "Not installing the review plugin (SOLIDTRACE_REVIEW_PLUGIN=no)"
-  else
-    info "Installing the review plugin"
+  # Up to v0.24.3 the review skills were a second plugin, solidtrace-skills.
+  # A release whose marketplace has it gets it. A later release removes it,
+  # because the solidtrace plugin has the same skills.
+  if grep -qF '"solidtrace-skills"' "$MARKETPLACE_FILE"; then
+    info "Installing the review plugin of $VERSION"
     install_plugin solidtrace-skills@solidtrace
-    if [ -z "${BITBUCKET_TOKEN:-}" ] && ! grep -qs '"BITBUCKET_TOKEN"' "$CLAUDE_SETTINGS"; then
-      todo "On bitbucket.org, open-pr and update-pr need BITBUCKET_EMAIL and BITBUCKET_TOKEN in env of $CLAUDE_SETTINGS (an Atlassian API token with the scopes read:user:bitbucket, read:repository:bitbucket, read:pullrequest:bitbucket and write:pullrequest:bitbucket). GitHub needs no token."
-    fi
+  elif plugin_installed solidtrace-skills@solidtrace; then
+    info "Removing solidtrace-skills: the solidtrace plugin now has its skills"
+    claude plugin uninstall solidtrace-skills@solidtrace </dev/null || fail "could not remove solidtrace-skills@solidtrace"
+  fi
+  if [ -z "${BITBUCKET_TOKEN:-}" ] && ! grep -qs '"BITBUCKET_TOKEN"' "$CLAUDE_SETTINGS"; then
+    todo "On bitbucket.org, open-pr and update-pr need BITBUCKET_EMAIL and BITBUCKET_TOKEN in env of $CLAUDE_SETTINGS (an Atlassian API token with the scopes read:user:bitbucket, read:repository:bitbucket, read:pullrequest:bitbucket and write:pullrequest:bitbucket). GitHub needs no token."
   fi
 
   # capture status exits 1 when one of its checks fails, also when this machine

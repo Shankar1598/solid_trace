@@ -16,7 +16,7 @@ You read other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not replac
 
 - The working tree is clean. If it is not, list the changed files and ask the person whether to commit them.
 - Find the open PR of this branch, as `${CLAUDE_SKILL_DIR}/../open-pr/platforms.md` says. That file gives every call to the PR in this skill.
-- With no open PR, stop and tell the person to run `/solidtrace-skills:open-pr`.
+- With no open PR, stop and tell the person to run `/solidtrace:open-pr`.
 - The round of this run is one more than the `<!-- solidtrace-record round N -->` line of the PR body, or 2 when the body has none.
 
 Make a folder for this round's files: `dir=$(mktemp -d)`.

@@ -19,7 +19,6 @@ import (
 const (
 	cliDir    = "../.."
 	pluginDir = "../../plugin"
-	skillsDir = "../../plugin-skills"
 )
 
 var binaries = []string{"solidtrace-darwin-amd64", "solidtrace-darwin-arm64", "solidtrace-linux-amd64", "solidtrace-linux-arm64"}
@@ -59,8 +58,7 @@ func TestTheReleaseHasTheBinariesOneChecksumFileThePluginZipAndTheMarketplaceFil
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	want := append(slices.Clone(binaries), "SHA256SUMS", "install.sh", "marketplace.json", "solidtrace-plugin.zip",
-		"solidtrace-skills.zip")
+	want := append(slices.Clone(binaries), "SHA256SUMS", "install.sh", "marketplace.json", "solidtrace-plugin.zip")
 	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		t.Fatalf("release files:\n%v\nwant\n%v", names, want)
@@ -103,28 +101,16 @@ func unzip(t *testing.T, path string) ([]string, map[string][]byte) {
 	return names, files
 }
 
-func TestTheSkillsZipHoldsTheSkillsAndAManifestWithTheReleaseVersion(t *testing.T) {
-	dist := release(t)
-
-	names, files := unzip(t, filepath.Join(dist, "solidtrace-skills.zip"))
-
-	if !slices.Contains(names, ".claude-plugin/plugin.json") || !slices.ContainsFunc(names, func(n string) bool {
-		return strings.HasPrefix(n, "skills/")
-	}) {
-		t.Fatalf("zip entries: %v", names)
-	}
-	manifest := readJSON(t, files[".claude-plugin/plugin.json"])
-	if manifest["name"] != "solidtrace-skills" || manifest["version"] != "0.19.0" || manifest["displayName"] != "SolidTrace skills" {
-		t.Fatalf("plugin.json: %v", manifest)
-	}
-}
-
-func TestThePluginZipHoldsTheHooksAndAManifestWithTheReleaseVersion(t *testing.T) {
+func TestThePluginZipHoldsTheHooksTheSkillsTheAgentAndAManifestWithTheReleaseVersion(t *testing.T) {
 	dist := release(t)
 
 	names, files := unzip(t, filepath.Join(dist, "solidtrace-plugin.zip"))
-	if !slices.Equal(names, []string{".claude-plugin/plugin.json", "README.md", "hooks/hooks.json"}) {
-		t.Fatalf("zip entries: %v", names)
+	for _, want := range []string{".claude-plugin/plugin.json", "README.md", "hooks/hooks.json",
+		"agents/record-writer.md", "skills/code-review/SKILL.md", "skills/deep-review/SKILL.md",
+		"skills/open-pr/SKILL.md", "skills/update-pr/SKILL.md", "skills/try-pr/SKILL.md"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("the zip has no %s: %v", want, names)
+		}
 	}
 	manifest := readJSON(t, files[".claude-plugin/plugin.json"])
 	if manifest["name"] != "solidtrace" || manifest["version"] != "0.19.0" {
@@ -148,7 +134,6 @@ func TestTheMarketplaceFilePinsEachPluginToItsReleaseZip(t *testing.T) {
 	plugins, _ := m["plugins"].([]any)
 	wantEntries := []struct{ name, zip string }{
 		{"solidtrace", "solidtrace-plugin.zip"},
-		{"solidtrace-skills", "solidtrace-skills.zip"},
 	}
 	if len(plugins) != len(wantEntries) {
 		t.Fatalf("plugins: %v", plugins)
@@ -242,18 +227,15 @@ func TestTheReleaseRefusesAPluginWhoseManifestHasAnotherName(t *testing.T) {
 	}
 }
 
-// pluginRoot is a cli folder whose plugin folder has the manifest, and
-// whose skills plugin folder is correct.
+// pluginRoot is a cli folder whose plugin folder has the manifest.
 func pluginRoot(t *testing.T, manifest string) string {
 	t.Helper()
 	root := t.TempDir()
-	for dir, data := range map[string]string{"plugin": manifest, "plugin-skills": `{"name":"solidtrace-skills"}`} {
-		if err := os.MkdirAll(filepath.Join(root, dir, ".claude-plugin"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, dir, ".claude-plugin", "plugin.json"), []byte(data), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(filepath.Join(root, "plugin", ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plugin", ".claude-plugin", "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	return root
 }
@@ -299,9 +281,7 @@ func TestThePluginsHoldNoInstanceURLAndNoSecret(t *testing.T) {
 	// name a public forge's site or API.
 	url := regexp.MustCompile(`[a-z]+://[^\s"]+`)
 	secret := regexp.MustCompile(`(?i)token|secret|password|bearer|authorization|api[_-]?key`)
-	for _, dir := range []string{pluginDir, skillsDir} {
-		checkNoInstanceURLAndNoSecret(t, dir, url, secret)
-	}
+	checkNoInstanceURLAndNoSecret(t, pluginDir, url, secret)
 }
 
 // publicHosts are the public forges, with their subdomains. A host that
