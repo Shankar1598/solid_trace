@@ -1,6 +1,6 @@
 {
   "name": "solidtrace",
-  "version": "0.24.3",
+  "version": "0.25.0",
   "displayName": "SolidTrace",
   "description": "Uploads your Claude Code Agent sessions in the repositories that your Organization captures to SolidTrace, and gives skills that review a change and open its PR, with a record of what the review found and what happened to each finding, and that run a PR's dev stack in its own worktree. It needs the solidtrace CLI, and capture needs 'solidtrace login'.",
   "author": { "name": "SolidTrace" },
