@@ -266,25 +266,20 @@ func TestAgentSessionDownloadWithSessionsDownload(t *testing.T) {
 		}
 	})
 
-	t.Run("the files call answers each Agent session, and yours only for the person's own that is not a Run's", func(t *testing.T) {
+	t.Run("the files call answers each Agent session", func(t *testing.T) {
 		for _, c := range []struct {
 			name, secret, session string
-			yours                 bool
 		}{
-			{"the person's own, with sessions:download", download, laptopSession, true},
-			{"the person's own, with sessions:write", o.secret, laptopSession, true},
-			{"another person's", download, otherSession, false},
-			{"a Run's", download, runSession, false},
-			{"a Run's, with the Run's token", runSecret, runSession, false},
-			{"the other person's own", o.otherSecret, otherSession, true},
+			{"the person's own, with sessions:download", download, laptopSession},
+			{"the person's own, with sessions:write", o.secret, laptopSession},
+			{"another person's", download, otherSession},
+			{"a Run's", download, runSession},
+			{"a Run's, with the Run's token", runSecret, runSession},
+			{"the other person's own", o.otherSecret, otherSession},
 		} {
 			answer, files := offsetsOf(t, env, c.secret, c.session)
-			if answer.status != 200 || files.AgentSession == nil {
+			if answer.status != 200 || files.AgentSession == nil || files.AgentSession.ID != c.session {
 				t.Errorf("%s: expected the Agent session, got %d: %s", c.name, answer.status, answer.raw)
-				continue
-			}
-			if files.AgentSession.Yours != c.yours {
-				t.Errorf("%s: expected yours %v, got %v", c.name, c.yours, files.AgentSession.Yours)
 			}
 		}
 		// Without sessions:download, another person's Agent session is

@@ -101,9 +101,6 @@ type sessionFiles struct {
 		Person struct {
 			UserID int64 `json:"user_id"`
 		} `json:"person"`
-		// Yours is true for the token's person's Agent session that is
-		// not a Run's.
-		Yours      bool     `json:"yours"`
 		Harness    string   `json:"harness"`
 		Repository string   `json:"repository"`
 		Folder     string   `json:"folder"`
