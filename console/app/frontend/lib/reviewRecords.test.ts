@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decisionsOf, eventWords, foundByText, givenText, missedByTheReviews, prHref, recordPath, reviewersText, sessionRecordPath } from './reviewRecords'
+import { decisionsOf, eventWords, foundByText, givenText, missedByTheReviews, prHref, recordPath, reviewersText, runHasNoData, sessionRecordPath } from './reviewRecords'
 
 describe('the link of a PR', () => {
   it('is the PR\'s web address', () => {
@@ -91,5 +91,17 @@ describe('a confirmation and a run', () => {
     expect(reviewersText({ run: 1, reviewers: [{ name: 'bugs-and-spec', model: 'opus', effort: 'xhigh' }, { name: 'code-quality', model: 'sonnet' }, { name: 'tests' }] }))
       .toBe('bugs-and-spec (opus, xhigh), code-quality (sonnet), tests')
     expect(reviewersText({ run: 2, reviewers: null })).toBe('')
+  })
+
+  it('has no data when an earlier record made it from a findings block that could not be read', () => {
+    expect(runHasNoData({ run: 3, skill: null, trigger: null, stage: null, step: null, skipped: null, reviewers: null, verifier: null })).toBe(true)
+    expect(runHasNoData({ run: 3 })).toBe(true)
+  })
+
+  it('has data when it has a skill, a stage, a step, a reviewer, a verifier or a skip', () => {
+    for (const part of [{ skill: 'solidtrace:code-review' }, { stage: 'final' }, { step: 'parser-01' }, { reviewers: [{ name: 'bugs' }] },
+      { verifier: { model: 'opus' } }, { skipped: 'docs only' }]) {
+      expect(runHasNoData({ run: 1, ...part })).toBe(false)
+    }
   })
 })

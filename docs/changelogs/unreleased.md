@@ -13,6 +13,7 @@
 ## Fixed
 
 - **No empty runs in a Review record.** A findings block that cannot be read (a block that Claude Code's output limit cut, or a block that came back in a subagent's report) no longer makes a review run with no skill, stage, reviewers or verifier. `solidtrace review record` warns that the record has none of its findings, and a review start that only such a block follows is a run of its own, with the start's skill.
+- **The Review record page.** A run that a record already has with no skill, stage, reviewers or verifier shows one muted line: "No data: the findings block of this run could not be read." The Details of a finding wrap long paths, so they stay in their cell.
 
 ## Upgrading
 

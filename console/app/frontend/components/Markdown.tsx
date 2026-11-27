@@ -1,11 +1,11 @@
-import type { ReactNode } from 'react'
+import { useMemo, type MouseEvent, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 
 /** A link opens in a new tab, and the page it opens gets no hold on this one. */
-function Link({ href, children }: { href?: string; children?: ReactNode }) {
-  return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">{children}</a>
+function Link({ href, children, onClick }: { href?: string; children?: ReactNode; onClick?: (e: MouseEvent<HTMLAnchorElement>) => void }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick} className="text-primary underline underline-offset-2">{children}</a>
 }
 
 const COMPONENTS: Components = {
@@ -36,12 +36,20 @@ const COMPONENTS: Components = {
 /**
  * Markdown, as a Text block shows it: GitHub's Markdown (tables, task lists,
  * strikethrough, autolinks). Raw HTML is not drawn and runs nothing, an
- * image is shown as a link, and a link opens in a new tab.
+ * image is shown as a link, and a link opens in a new tab. `onLinkClick`
+ * sees each click on a link first, and can prevent the new tab.
  */
-export function Markdown({ text, className }: { text: string; className?: string }) {
+export function Markdown({ text, className, onLinkClick }: {
+  text: string
+  className?: string
+  onLinkClick?: (href: string | undefined, e: MouseEvent<HTMLAnchorElement>) => void
+}) {
+  const components = useMemo<Components>(() => onLinkClick
+    ? { ...COMPONENTS, a: ({ href, children }) => <Link href={href} onClick={e => onLinkClick(href, e)}>{children}</Link> }
+    : COMPONENTS, [onLinkClick])
   return (
     <div className={cn('text-[13px] leading-relaxed break-words', className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={COMPONENTS}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={components}>{text}</ReactMarkdown>
     </div>
   )
 }

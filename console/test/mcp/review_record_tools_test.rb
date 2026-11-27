@@ -206,7 +206,8 @@ class McpReviewRecordToolsTest < ActiveSupport::TestCase
   # F2 and on.
   def record_json(findings: 0)
     JSON.pretty_generate({
-      version: 2, sessions: [ { id: SESSION, title: "Cart page" } ], pr: PR, round: 2, story: { started_from: "Add a <b>cart</b> page…" },
+      version: 2, sessions: [ { id: SESSION, title: "Cart page" } ], pr: PR, pr_body: "## Cart page\n\nAdds a cart page.", round: 2,
+      story: { started_from: "Add a <b>cart</b> page…" },
       reviews: [ { run: 1, skill: "code-review", stage: "step", step: "cart page" } ],
       findings: Array.new(findings) { |i| { id: "F#{i + 1}", found_by: { kind: "reviewer", name: "tests" }, title: "Finding #{i + 1}", outcome: "fixed" } },
       confirmations: [ { id: "C1", run: 1, ask: "Confirm the deploy order.", given: true } ],
