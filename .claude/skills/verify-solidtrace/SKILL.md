@@ -37,9 +37,9 @@ These things are shared and are **not** isolated:
 
 - Active Storage files (`storage/active_storage` of the checkout).
 - `console/log/development.log`.
-- Playwright's `console/tmp/playwright-auth/admin.json`. Run one `verify flow` at a time for each checkout.
+- Playwright's `console/tmp/playwright-auth/` (the signed-in admin of each worker). Run one `verify flow` at a time for each checkout.
 
-Each stack needs about 2.5 GB of RAM, and Chromium needs about 1 GB more. `verify up` refuses to start when less than 3000 MB is free.
+Each stack needs about 2.5 GB of RAM, and each Chromium (one for each Playwright worker) needs about 1 GB more. `verify up` refuses to start when less than 3000 MB is free.
 
 ## Launch
 
@@ -89,7 +89,12 @@ Run doctor first when something looks wrong. `verify flow` runs doctor before ea
   "$V" flow --video -- e2e/flows/runs.spec.ts         # also a .webm of each browser context
   ```
 
-  The arguments after `--` go to `playwright test --project=flows`. Global setup seeds the database, signs the admin in, and tops up the Logs. To prove a new behavior, add or extend a flow in `console/e2e/flows/`, in the same style as the other flows. Then run it with `verify flow`.
+  The arguments after `--` go to `bun run e2e` (`console/e2e/run-flows`). It runs the flows in two Playwright runs, with the same arguments:
+
+  1. The project `flows`, with `E2E_WORKERS` workers at the same time (default 3). Each worker has its own Organization, Project, admin and member (`e2e/support/data.ts`). Worker 0 has the seed records. Worker N has copies with the suffix `-wN`, for example `solid-trace-org-w1`, `solid-trace-project-w1` and `admin-w1@solidtrace.local`, with the same names and passwords. So a flow writes `${ORG}`, `${PROJECT}`, `ADMIN` and `MEMBER`, never the seed's slugs or emails.
+  2. The project `flows-alone`, with one worker: the flows in `ALONE` in `playwright.config.ts`. These change the install (an `InstanceSetting`, or the factory's flow stack or demo, which set the Console URL and the Dispatcher URL), and every Organization sees that, so nothing runs beside them. A new flow that writes `InstanceSetting` goes in `ALONE`: the config refuses to load until it is there. With `--output DIR`, this run writes to `DIR/alone`.
+
+  Global setup seeds the database, makes the records of each worker, signs each worker's admin in, and tops up each worker's Project with Logs. `E2E_WORKERS=1 "$V" flow -- ...` runs everything with one worker. To prove a new behavior, add or extend a flow in `console/e2e/flows/`, in the same style as the other flows. Then run it with `verify flow`.
 
   `--video` records each browser context, as `E2E_VIDEO=on` in `e2e/support/video.ts` sets it. Headless Chromium shows no mouse pointer, so the video draws one. The pointer moves to each action and shows the click there, with the action's name at the top right and the test's title at the bottom left. A flow that opens a second user's browser must make the context with `newContext(browser, ...)` from `e2e/support/video.ts`. A context from `browser.newContext()` is not recorded. Use `--video` when a person will watch the proof, because each video is a few MB.
 - **One page, signed in.** This makes a quick visual and ARIA proof without a spec:
@@ -162,7 +167,7 @@ The evidence folder stays. Run `down` after every failed `up` or flow too, so th
 
 - Chromium on this box needs the libraries in `~/.cache/solid-trace/pw/libs`. Both `playwright.config.ts` and `snap.mjs` set `LD_LIBRARY_PATH` for them.
 - After you change a `.tsx` file, `touch` it before you run a flow. Vite can serve stale code after an edit. The stack runs Vite with `CHOKIDAR_USEPOLLING=1`, because worktrees use up the inotify limit.
-- Sign-in has a rate limit of 10 for each address in 3 minutes. If a long series of `snap` calls and flows gets the login page back, wait, or use one flow.
+- Sign-in has a rate limit for each address (the request's IP, so every Playwright worker counts as 127.0.0.1) in 3 minutes: 10 in production, and 1000 in development, which the stack uses (`config.x.tries_allowed`). The OAuth device and authorization pages keep 10 for each address in 3 minutes in development too, and only the `flows-alone` flows use them.
 - A new worktree needs `mise trust` in the checkout and `bun install` in `console/` before `up`. Without `node_modules`, Vite's auto-build calls itself in a loop.
 - `~/.netrc` must have mode 600. If it does not, every Console call to EventStore fails with "EventStore is unavailable".
 - A change in `event_store/vrl/rust/` needs `event_store/vrl/build`. The helper builds VRL only when the library is missing.

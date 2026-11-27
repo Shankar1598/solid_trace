@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { ORG } from '../support/data'
+import { ORG, PROJECT } from '../support/data'
 import { last24h, openLogs } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
@@ -7,7 +7,7 @@ import { watchErrors } from '../support/screens'
 // seconds over a relative range, until another interval or Off is picked. The
 // page's clock is Playwright's, so the 15 seconds pass at once.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 
 const picker = (page: Page) => page.getByRole('combobox', { name: 'Auto-refresh' })
 

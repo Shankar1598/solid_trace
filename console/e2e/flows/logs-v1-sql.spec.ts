@@ -1,4 +1,5 @@
 import { test, expect, type Locator } from '@playwright/test'
+import { PROJECT } from '../support/data'
 import { builderRow, expectEditorText, holdSqlQueries, last24h, logCount, openLogs, releaseSqlQueries, runBy, settled } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
 
@@ -80,7 +81,7 @@ test('leaving SQL mode without edits is silent', async ({ page }) => {
   await expect(page.getByText(/SQL can't be turned back into a Query/)).toHaveCount(0)
   await expect(page).toHaveURL(/mode=query/)
   // The empty Builder's Query shows as the Project's slug, as Builder to Query writes it.
-  await expectEditorText(page.getByLabel('Query', { exact: true }), "['solid-trace-project']")
+  await expectEditorText(page.getByLabel('Query', { exact: true }), `['${PROJECT}']`)
   expect(errors).toEqual([])
 })
 
@@ -91,7 +92,7 @@ test('leaving SQL for the Builder drops a Query typed in Query mode that never r
 
   // Typed in Query mode, not run, and SQL opened from it.
   await page.getByRole('button', { name: 'Query', exact: true }).click()
-  await page.getByLabel('Query', { exact: true }).fill(`['solid-trace-project'] | where level == "warn" | project time, message`)
+  await page.getByLabel('Query', { exact: true }).fill(`['${PROJECT}'] | where level == "warn" | project time, message`)
   await page.getByRole('button', { name: 'SQL', exact: true }).click()
   await expectEditorText(page.getByLabel('SQL', { exact: true }), /'warn'/)
   await page.getByRole('button', { name: 'Builder', exact: true }).click()

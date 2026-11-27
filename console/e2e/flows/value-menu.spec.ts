@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { PROJECT } from '../support/data'
 import { expectEditorText, last24h, openLogs, runBy, streamRows, summaryLine } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
@@ -6,7 +7,7 @@ import { watchErrors } from '../support/screens'
 // legend and the inspector, with Show only, Hide, Group by, Chart this, Add
 // column and Copy. Group by and Chart this make a Summarize that charts.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 
 /** The chart over the table, by its accessible name: "Line chart of count_ over time". */
 const chart = (page: Page) => page.getByRole('figure')

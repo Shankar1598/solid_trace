@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { PROJECT } from '../support/data'
 import { addFilter, builderRow, expectEditorText, last24h, logCount, openLogs, runBy, settled, streamRows, summaryLine } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
@@ -6,7 +7,7 @@ import { watchErrors } from '../support/screens'
 // Ctrl+Enter; a bad Query's mistake with its line and column; and the way
 // back to the Builder, silent when the Builder can show the Query.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 
 async function typeQuery(page: Page, text: string) {
   const box = page.getByLabel('Query', { exact: true })

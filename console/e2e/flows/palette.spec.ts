@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { ORG } from '../support/data'
+import { ORG, PROJECT } from '../support/data'
 import { rails } from '../support/factoryFlow'
 import { expectEditorText, last24h, openLogs, runBy, settled } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
@@ -49,7 +49,7 @@ const search = (page: Page) => page.getByLabel('Search the palette')
 test('Cmd+K jumps to a recent Query from another page', async ({ page }) => {
   const errors = watchErrors(page, [failedLoad(503)])
   // A Query run in Query mode is recorded as recent.
-  const query = `['solid-trace-project']\n| where level == "warn"\n| take ${100 + Math.floor(Math.random() * 900)}`
+  const query = `['${PROJECT}']\n| where level == "warn"\n| take ${100 + Math.floor(Math.random() * 900)}`
   await openLogs(page, last24h('query'))
   const box = page.getByLabel('Query', { exact: true })
   await box.fill(query)
@@ -63,7 +63,7 @@ test('Cmd+K jumps to a recent Query from another page', async ({ page }) => {
   await expect(palette(page).getByRole('option')).toHaveCount(1)
   await search(page).press('Enter')
 
-  await expect(page).toHaveURL(/\/projects\/solid-trace-project\/logs\?/)
+  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT}/logs\\?`))
   await settled(page)
   await expectEditorText(page.getByLabel('Query', { exact: true }), query)
   expect(errors).toEqual([])
@@ -100,7 +100,7 @@ test('the palette lists Projects\' Logs, pages and actions, and the sidebar open
   await page.keyboard.press('Control+k')
   await search(page).fill('logs solid')
   await palette(page).getByRole('option').first().click()
-  await expect(page).toHaveURL(/\/projects\/solid-trace-project\/logs/)
+  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT}/logs`))
   await settled(page)
 
   // Cmd+K again closes it, and the next opening starts with an empty search.

@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
-import { ORG } from '../support/data'
+import { ORG, PROJECT } from '../support/data'
 import { last24h, openLogs, pickQuickRange, runBy } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
 
@@ -8,7 +8,7 @@ import { failedLoad, watchErrors } from '../support/screens'
 // charts run again, moves a chart and finds it moved after a reload, then
 // deletes a chart and the Dashboard.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 
 const card = (page: Page, title: string) => page.locator(`[data-chart-card="${title}"]`)
 const cards = (page: Page) => page.locator('[data-chart-card]')
@@ -40,6 +40,8 @@ async function size(locator: Locator) {
 }
 
 test('a member builds a Dashboard from the explorer and the editor, ranges it, lays it out and deletes it', async ({ page }) => {
+  // About 45 s alone, and more with other workers beside it.
+  test.setTimeout(120_000)
   const errors = watchErrors(page)
   const name = `Flow dashboard ${Date.now()}`
 
@@ -167,7 +169,7 @@ test('a member builds a Dashboard from the explorer and the editor, ranges it, l
 
   await card(page, 'Logs by level').getByRole('button', { name: 'Menu for Logs by level' }).click()
   await page.getByRole('menuitem', { name: 'Open in explorer' }).click()
-  await expect(page).toHaveURL(/\/projects\/solid-trace-project\/logs\?range=2d&mode=builder&q=.*level.*&viz=bars$/)
+  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT}/logs\\?range=2d&mode=builder&q=.*level.*&viz=bars$`))
   await expect(page.getByRole('group', { name: 'Chart' }).getByRole('button', { name: 'Bars' })).toHaveAttribute('aria-pressed', 'true')
   await page.goBack()
   await chartsRan(page, 3)

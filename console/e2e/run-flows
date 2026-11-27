@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# `bun run e2e [playwright test arguments]`: the flows in two runs on one
+# stack (playwright.config.ts). First the project flows, with E2E_WORKERS
+# workers (default 3), each with its own Organization, Project and users
+# (e2e/support/data.ts). Then the project flows-alone, with one worker: these
+# flows change the install, so nothing runs beside them. Both runs get the
+# same arguments, such as spec files or -g, and a run with no test that
+# matches them passes. With --output DIR, the second run writes into
+# DIR/alone, as Playwright clears a run's output folder when it starts.
+# The exit code is the first run's when it failed, else the second run's.
+#
+# A project dependency would also order the two projects, but Playwright runs
+# a dependency in full, also when the arguments name one spec file, and skips
+# the dependent project when one test of the dependency fails.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+playwright=node_modules/.bin/playwright
+
+first=() second=()
+while (($#)); do
+  case $1 in
+    --output) first+=("$1" "$2"); second+=("$1" "$2/alone"); shift 2 ;;
+    --output=*) first+=("$1"); second+=("$1/alone"); shift ;;
+    *) first+=("$1"); second+=("$1"); shift ;;
+  esac
+done
+
+"$playwright" test --project=flows --pass-with-no-tests "${first[@]}"
+code=$?
+# Ctrl-C, or a kill: no second run.
+((code > 128)) && exit "$code"
+"$playwright" test --project=flows-alone --workers=1 --pass-with-no-tests "${second[@]}"
+alone=$?
+exit $((code ? code : alone))

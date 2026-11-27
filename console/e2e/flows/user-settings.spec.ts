@@ -18,8 +18,11 @@ async function saveName(page: Page, path: string, name: string) {
   await expect(profileName(page)).toHaveValue(name)
 }
 
-for (const path of [`/${ORG}/settings/user`, '/user_settings']) {
-  test(`the profile form saves the name at ${path}`, async ({ page }) => {
+// The title names the path without the Organization's slug, which differs
+// in each Playwright worker (e2e/support/data.ts), and Playwright finds a test
+// in its worker by its title.
+for (const [shown, path] of [['/:org/settings/user', `/${ORG}/settings/user`], ['/user_settings', '/user_settings']]) {
+  test(`the profile form saves the name at ${shown}`, async ({ page }) => {
     const errors = watchErrors(page)
     await page.goto(path)
     const before = await profileName(page).inputValue()

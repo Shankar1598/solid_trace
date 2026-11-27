@@ -11,6 +11,12 @@ class MonitorsController < ApplicationController
   before_action :set_current_org
   before_action :set_monitor, only: %i[show edit update destroy enable disable run]
   before_action :set_time_range, only: :preview
+  # The form asks for previews while a person edits it, also while it saves.
+  # Each response writes back the session cookie as it was when the request
+  # began, so a preview that ends after a refused save's redirect takes the
+  # save's errors out of the session, and the form shows none. The previews
+  # change nothing in the session, so they do not write it.
+  before_action -> { request.session_options[:skip] = true }, only: %i[preview preview_groups]
 
   def index
     monitors = @current_org.monitors.includes(:project, :states, :integrations).order(:name)

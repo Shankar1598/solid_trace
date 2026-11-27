@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { PROJECT } from '../support/data'
 import { builderRow, openLogs, settled, streamRows } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
@@ -115,7 +116,7 @@ test('Logs around this one says why when the stream ends without the Log', async
 
 test('Chart this field charts a number\'s average over time', async ({ page }) => {
   const errors = watchErrors(page)
-  await openLogs(page, `?range=24h&q=${encodeURIComponent("['solid-trace-project']\n| where isnotnull(duration_ms)")}`)
+  await openLogs(page, `?range=24h&q=${encodeURIComponent(`['${PROJECT}']\n| where isnotnull(duration_ms)`)}`)
   await expect(builderRow(page, 'Where')).toContainText('duration_ms')
 
   await streamRows(page).nth(0).click(AT_START)
