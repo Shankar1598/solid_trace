@@ -485,6 +485,9 @@ type AgentAPI struct {
 	DownloadNotReady int
 	// DownloadLeavesOut is a path that the download does not give.
 	DownloadLeavesOut string
+	// DownloadBusy is how many downloads answer 503 with Retry-After 5,
+	// as the server does when it sends as many downloads as it can.
+	DownloadBusy int
 	// DownloadCutAfter is a path after whose file the download waits for
 	// the client to close it, for at most 2 seconds, and then stops the
 	// stream with no end of the archive.

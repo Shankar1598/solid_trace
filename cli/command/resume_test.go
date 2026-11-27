@@ -353,6 +353,34 @@ func TestResumeStopsWhenSolidTraceIsNotReadyAfterTwoMinutes(t *testing.T) {
 	}
 }
 
+func TestResumeStopsWhenSolidTraceIsBusyWithOtherDownloadsAfterTwoMinutes(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	w.checkout()
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript})
+	w.agent.Set(func(a *fake.AgentAPI) { a.DownloadBusy = 1000 })
+
+	if code := w.resume(resumeID); code != 1 {
+		t.Fatalf("exit %d, want 1\nstderr: %s", code, w.stderr)
+	}
+
+	var waited time.Duration
+	for _, d := range w.slept {
+		waited += d
+	}
+	if waited < 2*time.Minute || waited > 2*time.Minute+5*time.Second {
+		t.Errorf("waited %s, want 2 minutes", waited)
+	}
+	want := "solidtrace resume: SolidTrace is busy with other downloads. Run solidtrace resume again in a few " +
+		"minutes.\n"
+	if got := w.stderr.String(); got != want {
+		t.Errorf("stderr %q\n  want %q", got, want)
+	}
+	if len(w.started) != 0 {
+		t.Errorf("started Claude Code: %q", w.started)
+	}
+}
+
 func TestResumeRefusesADownloadWithNoTranscript(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()

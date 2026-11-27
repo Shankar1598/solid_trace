@@ -78,6 +78,13 @@ func (f *AgentAPI) download(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "The last uploads are not ready yet."})
 		return
 	}
+	if f.DownloadBusy > 0 {
+		f.DownloadBusy--
+		w.Header().Set("Retry-After", "5")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "The server sends as many downloads as it can now. Try again in a few seconds."})
+		return
+	}
 	f.Downloads++
 	paths := make([]string, 0, len(s.Files))
 	for p := range s.Files {

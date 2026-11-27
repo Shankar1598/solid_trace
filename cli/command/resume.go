@@ -340,8 +340,14 @@ func downloadTranscript(ctx context.Context, env Env, client *agentapi.Client, i
 	return filepath.Join(folder, transcript), nil
 }
 
+// downloadsBusy starts the message of the server's 503 when it sends as
+// many downloads as it can (event_store/handler/agent_download.go). Its
+// other 503 is for last uploads that are not ready yet.
+const downloadsBusy = "The server sends as many downloads as it can now."
+
 // downloadWhenReady asks for the download, and waits while the server
-// answers 503 (the last uploads are not ready yet), for at most resumeWait.
+// answers 503 (the last uploads are not ready yet, or the server is busy
+// with other downloads), for at most resumeWait.
 func downloadWhenReady(ctx context.Context, env Env, client *agentapi.Client, id string) (agentapi.Download, error) {
 	ctx, cancel := context.WithTimeout(ctx, resumeTimeout)
 	hc := &http.Client{Transport: env.HTTP.Transport}
@@ -350,6 +356,11 @@ func downloadWhenReady(ctx context.Context, env Env, client *agentapi.Client, id
 		download, err := client.DownloadAgentSession(ctx, hc, id)
 		var answer *agentapi.Error
 		switch {
+		case errors.As(err, &answer) && answer.Status == http.StatusServiceUnavailable && !env.Now().Before(deadline) &&
+			strings.HasPrefix(answer.Message, downloadsBusy):
+			cancel()
+			return download, errors.New("SolidTrace is busy with other downloads. Run solidtrace resume again " +
+				"in a few minutes.")
 		case errors.As(err, &answer) && answer.Status == http.StatusServiceUnavailable && !env.Now().Before(deadline):
 			cancel()
 			return download, fmt.Errorf("SolidTrace did not make the last uploads ready in %d minutes. Run "+
