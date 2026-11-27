@@ -124,6 +124,7 @@ test('an Evidence file opens in a popup, and the Review record page shows the PR
   const body = [
     '## What changes', '', 'The cart page shows the **total** with the discount.', '',
     '## Evidence', '', `- [Screenshot: Cart page](${image.url})`, `- [Video: Checkout](${video.url})`, '- [The spec](https://example.com/spec)', '',
+    `![The cart page](${image.url})`, '',
     '<b data-raw-html>raw HTML</b>', '', '<!-- solidtrace-record round 1 -->',
   ].join('\n')
   await uploadRecord(withBody, record(withBody, NEW_PR, { pr_body: body }))
@@ -182,6 +183,15 @@ test('an Evidence file opens in a popup, and the Review record page shows the PR
   await expect(dialog).toHaveCount(0)
   await expect(page).toHaveURL(`${origin}${sessionPath}`)
 
+  // A popup that opens on the video: the first focus is not in the video, so → opens the next file.
+  await files.getByRole('link', { name: 'Video: Checkout' }).click()
+  await expect(dialog.locator('[data-position]')).toHaveText('1 of 2')
+  await expect(dialog.getByRole('button', { name: 'Next Evidence file' })).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  await expect(dialog).toHaveAccessibleName('Screenshot: Cart page')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+
   // A click with Ctrl or Cmd opens the file's page in a new tab, as a link does.
   const [tab] = await Promise.all([
     page.context().waitForEvent('page'),
@@ -210,6 +220,15 @@ test('an Evidence file opens in a popup, and the Review record page shows the PR
   await expect(page).toHaveURL(`${origin}${recordPage}`)
   await expect(dialog.locator('[data-position]')).toHaveText('2 of 2')
   await expect.poll(() => popupImage.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBeGreaterThan(0)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  // An image of the body is a link, and a link to an Evidence file opens the popup too.
+  await prBody.getByRole('link', { name: 'The cart page' }).click()
+  await expect(dialog).toHaveAccessibleName('Screenshot: Cart page')
+  await expect(page).toHaveURL(`${origin}${recordPage}`)
+  await expect(page.context().pages()).toHaveLength(1)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
   await theme(page, 'light')
   await page.reload()
   await prBody.getByRole('link', { name: 'Screenshot: Cart page' }).click()

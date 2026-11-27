@@ -59,10 +59,11 @@ export function EvidenceViewer({ files, openId, onOpenChange }: {
 }) {
   const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
   const index = files.findIndex(f => f.id === openId)
+  const next = useRef<HTMLButtonElement>(null)
   const file = index >= 0 ? files[index] : null
   const move = (step: number) => {
-    const next = files[index + step]
-    if (next) onOpenChange(next.id)
+    const to = files[index + step]
+    if (to) onOpenChange(to.id)
   }
   const keys = (e: KeyboardEvent) => {
     // A video's own controls take the arrows to seek.
@@ -77,6 +78,8 @@ export function EvidenceViewer({ files, openId, onOpenChange }: {
       {file && (
         <DialogContent
           onKeyDown={keys}
+          // The first focus goes to Next, not to a video, so ← and → move between the files when the popup opens.
+          initialFocus={next}
           className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-y-auto sm:max-w-[min(72rem,calc(100%-2rem))]"
           data-evidence-viewer={file.id}
         >
@@ -98,7 +101,7 @@ export function EvidenceViewer({ files, openId, onOpenChange }: {
                 className="data-disabled:opacity-50" aria-label="Previous Evidence file">
                 <ChevronLeft aria-hidden /> Previous
               </Button>
-              <Button variant="outline" size="sm" onClick={() => move(1)} disabled={index === files.length - 1} focusableWhenDisabled
+              <Button ref={next} variant="outline" size="sm" onClick={() => move(1)} disabled={index === files.length - 1} focusableWhenDisabled
                 className="data-disabled:opacity-50" aria-label="Next Evidence file">
                 Next <ChevronRight aria-hidden />
               </Button>
