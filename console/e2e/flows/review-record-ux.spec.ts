@@ -281,8 +281,11 @@ test('an Evidence file opens in a popup, and the Review record page shows the PR
   expect(await across()).toBe(0)
   // Tab goes round the popup: the video's own controls (Chrome draws their
   // ring), the speeds, the buttons and Open page. The focus never leaves it,
-  // and a button shows its ring.
-  const focusOf = () => page.evaluate(() => {
+  // and a button shows its ring. A Tab past the last control first focuses
+  // the popup's hidden focus guard, which sends the focus round in the next
+  // animation frame, so the focus is read after that frame, as a person sees it.
+  const focusOf = () => page.evaluate(async () => {
+    await new Promise(requestAnimationFrame)
     const el = document.activeElement as HTMLElement
     return { inDialog: !!el.closest('[role="dialog"]'), button: el.getAttribute('aria-label') ?? el.textContent ?? '', ring: getComputedStyle(el).boxShadow }
   })
