@@ -22,6 +22,12 @@ test('a member makes a Threshold monitor with SQL on the form, previews it, save
 
   await page.goto(`/${ORG}/monitors/new`)
   await expect(page.getByRole('heading', { name: 'New monitor' })).toBeVisible()
+  // The form starts on the first Project by name, which can be the Agent
+  // Project of an earlier flow, with no dummy Logs.
+  const project = page.getByRole('combobox', { name: 'Project' }).first()
+  await project.click()
+  await page.getByRole('option', { name: 'SolidTrace Project', exact: true }).click()
+  await expect(project).toHaveText('SolidTrace Project')
   await page.getByLabel('Name').fill(name)
   await page.getByLabel('Over the last (minutes)').fill('1440')
   await page.getByLabel('Run every (minutes)').fill('60')

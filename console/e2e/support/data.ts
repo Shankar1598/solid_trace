@@ -4,7 +4,9 @@
 // Members or Logs. Worker 0 (the only worker of a run with one) uses the
 // records of `db:seed`. Worker N uses copies with the suffix -wN, which global
 // setup makes. Their names are the same as the seed's, so the pages show the
-// same text.
+// same text. A test's title must not hold these values: Playwright lists the
+// tests in its main process (worker 0's values) and finds each one in its
+// worker by its title.
 
 export interface Identity {
   org: string
