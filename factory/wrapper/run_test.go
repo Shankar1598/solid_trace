@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,25 @@ import (
 
 // The test binary is also the wrapper, the harness and the agent's
 // solidtrace CLI (see factorytest.Executions).
+// lockedBuilder holds what wrapper.Main writes to its stderr. The wrapper
+// writes to it from more than one goroutine, as os.Stderr allows.
+type lockedBuilder struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuilder) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuilder) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
 func TestMain(m *testing.M) {
 	factorytest.MainIfAsked()
 	os.Exit(m.Run())
