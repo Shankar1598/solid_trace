@@ -11,20 +11,14 @@ describe('the page of an Agent session', () => {
 
 describe('the resume of an Agent session on another machine', () => {
   const id = '0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41'
-  const mine = { person: { id: 3, name: 'Ana' }, run: null }
 
   it('is solidtrace resume and the id', () => {
     expect(resumeCommand(id)).toBe(`solidtrace resume ${id}`)
   })
 
-  it('continues your own Agent session with the same id', () => {
-    expect(resumeText(mine, 3)).toContain('with the same id')
-  })
-
-  it('continues another person\'s, or a Run\'s, as a new Agent session of yours', () => {
-    expect(resumeText(mine, 4)).toContain('as a new Agent session of yours')
-    expect(resumeText({ person: { id: 3, name: 'Ana' }, run: { id: 'r1', project: null } }, 3)).toContain('as a new Agent session of yours')
-    expect(resumeText(mine, undefined)).toContain('as a new Agent session of yours')
+  it('continues it on the first machine, and starts a new Agent session on another', () => {
+    expect(resumeText).toContain('On the machine where this Agent session started, it continues it.')
+    expect(resumeText).toContain('On another machine, it starts a new Agent session from its history')
   })
 })
 

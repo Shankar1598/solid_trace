@@ -287,12 +287,11 @@ function Header({ session, costLabel, parentPath, record }: {
 
 /** The command that continues this Agent session on another machine, with Copy. */
 function Resume({ session }: { session: AgentSessionRow }) {
-  const viewer = usePage<SharedProps>().props.current_user
   const command = resumeCommand(session.id)
   return (
     <section aria-labelledby="resume-heading" data-section="resume" className="space-y-2 border p-4">
       <h2 id="resume-heading" className="text-sm font-semibold">Resume on another machine</h2>
-      <p className="text-sm text-muted-foreground">{resumeText(session, viewer?.id)}</p>
+      <p className="text-sm text-muted-foreground">{resumeText}</p>
       <div className="flex items-start gap-2">
         <code className="min-w-0 flex-1 break-all border bg-muted/40 px-3 py-2 font-mono text-xs leading-5" data-command="resume">{command}</code>
         <Button variant="outline" size="sm" onClick={() => copyText(command, 'Resume command')} aria-label="Copy the resume command">
