@@ -22,7 +22,9 @@ type ExtractedFile struct {
 
 // Extract writes each file of a download's tar archive into root. It
 // gives what it did with each file, in the sequence of the archive. With
-// want, it writes and gives only the files whose names want is true for.
+// an only that is not "", it writes and gives only the first file of that
+// name, and stops reading the archive at the end of that file: the server
+// sorts the archive by path and gives each path one time.
 //
 // Extract calls give with the path of each folder and file that it makes,
 // for example to change the owner. give can be nil. Extract does not call
@@ -33,7 +35,7 @@ type ExtractedFile struct {
 // agree with the offsets in SolidTrace, and a resume from it is not
 // promised. A path that is not a plain relative path makes Extract return
 // an error.
-func Extract(archive io.Reader, root *os.Root, want func(name string) bool,
+func Extract(archive io.Reader, root *os.Root, only string,
 	give func(name string) error) ([]ExtractedFile, error) {
 	if give == nil {
 		give = func(string) error { return nil }
@@ -57,11 +59,14 @@ func Extract(archive io.Reader, root *os.Root, want func(name string) bool,
 			strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
 			return nil, fmt.Errorf("the download has the path %q, which is not in the Agent session directory", name)
 		}
-		if want != nil && !want(name) {
+		if only != "" && name != only {
 			continue
 		}
 		if flags := h.PAXRecords[PAXFlags]; flags != "" {
 			files = append(files, ExtractedFile{Name: name, Flags: flags})
+			if name == only {
+				return files, nil
+			}
 			continue
 		}
 		// Each folder of the path that is not there yet.
@@ -92,5 +97,8 @@ func Extract(archive io.Reader, root *os.Root, want func(name string) bool,
 			return nil, fmt.Errorf("extract %s: %w", name, err)
 		}
 		files = append(files, ExtractedFile{Name: name})
+		if name == only {
+			return files, nil
+		}
 	}
 }

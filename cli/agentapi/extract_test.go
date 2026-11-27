@@ -58,7 +58,7 @@ func extractIn(t *testing.T, archive io.Reader, dir string) ([]agentapi.Extracte
 	}
 	defer root.Close()
 	var given []string
-	files, err := agentapi.Extract(archive, root, nil, func(name string) error {
+	files, err := agentapi.Extract(archive, root, "", func(name string) error {
 		given = append(given, filepath.ToSlash(name))
 		return nil
 	})
@@ -150,7 +150,7 @@ func TestExtractWithNoGiveWritesTheFiles(t *testing.T) {
 	}
 	defer root.Close()
 	files, err := agentapi.Extract(archiveOf(t, tarFile{name: "s/subagents/a.jsonl", body: "{}\n"},
-		tarFile{name: "s.jsonl", body: "{\"uuid\":\"a\"}\n"}), root, nil, nil)
+		tarFile{name: "s.jsonl", body: "{\"uuid\":\"a\"}\n"}), root, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

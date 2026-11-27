@@ -485,9 +485,13 @@ type AgentAPI struct {
 	DownloadNotReady int
 	// DownloadLeavesOut is a path that the download does not give.
 	DownloadLeavesOut string
-	// DownloadTwice is a path that the download gives two times: first
-	// with other bytes and the other Partial flag, then as stored.
-	DownloadTwice string
+	// DownloadCutAfter is a path after whose file the download waits for
+	// the client to close it, for at most 2 seconds, and then stops the
+	// stream with no end of the archive.
+	DownloadCutAfter string
+	// DownloadsClosed counts the downloads that the client closed while
+	// they waited after DownloadCutAfter.
+	DownloadsClosed int
 	// Downloads counts the downloads that gave the archive.
 	Downloads int
 	// OlderServer answers /files as a server older than resume: 403 to

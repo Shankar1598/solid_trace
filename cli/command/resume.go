@@ -322,27 +322,20 @@ func downloadTranscript(ctx context.Context, env Env, client *agentapi.Client, i
 	if err != nil {
 		return "", err
 	}
+	// The transcript is the first <id>.jsonl of the archive. The close
+	// after it stops the download, and the server then frees its slot.
 	transcript := id + ".jsonl"
-	extracted, err := agentapi.Extract(download.Archive, root, func(name string) bool { return name == transcript },
-		nil)
+	extracted, err := agentapi.Extract(download.Archive, root, transcript, nil)
 	download.Archive.Close()
 	if err != nil {
 		return "", err
 	}
-	// An archive can have a name more than once: the last copy is the one
-	// in the folder, as Extract wrote it.
-	found, flags := false, ""
-	for _, file := range extracted {
-		if file.Name == transcript {
-			found, flags = true, file.Flags
-		}
-	}
 	switch {
-	case !found:
+	case len(extracted) == 0:
 		return "", fmt.Errorf("the download of the Agent session %s has no transcript", id)
-	case flags != "":
+	case extracted[0].Flags != "":
 		return "", fmt.Errorf("the transcript of the Agent session is %s in SolidTrace, so a resume is not "+
-			"promised. Start a new Agent session.", flags)
+			"promised. Start a new Agent session.", extracted[0].Flags)
 	}
 	return filepath.Join(folder, transcript), nil
 }
