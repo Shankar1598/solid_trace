@@ -2,7 +2,7 @@
 # library, which the builder links (docs/adr/0012-log-transform-runs-vrl-through-cgo.md).
 # Bookworm, as the builder and the final image are, so the library's glibc
 # symbols resolve. Keep Rust's version in step with mise.toml.
-FROM rust:1.99-slim-bookworm AS vrl
+FROM rust:1.100-slim-bookworm AS vrl
 
 WORKDIR /vrl
 
