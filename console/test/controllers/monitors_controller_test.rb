@@ -478,6 +478,21 @@ class MonitorsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ [ 3 ] ], response.parsed_body["table"]["rows"]
   end
 
+  test "a preview leaves the session cookie alone, so it can't take away the errors of a save that ends first" do
+    stub_request(:post, "#{@base_url}/api/#{@project.id}/logs/query")
+      .to_return(status: 200, body: { table: { columns: [ COUNT_COLUMN ], rows: [ [ 3 ] ] }, elapsed_ms: 12 }.to_json)
+    session_cookie = Rails.application.config.session_options.fetch(:key)
+
+    post preview_monitors_url(org_slug: @organization.slug), params: {
+      project_id: @project.id, query: "x", from: "2026-10-02T10:00:00Z", to: "2026-10-03T10:00:00Z",
+    }, as: :json
+    assert_response :success
+    assert_no_match(/^#{session_cookie}=/, Array(response.headers["Set-Cookie"]).join("\n"))
+
+    post preview_groups_monitors_url(org_slug: @organization.slug), params: { monitor: { name: "x" } }, as: :json
+    assert_no_match(/^#{session_cookie}=/, Array(response.headers["Set-Cookie"]).join("\n"))
+  end
+
   test "the preview won't run on another Organization's Project, or past the chart runs Console allows" do
     post preview_monitors_url(org_slug: @organization.slug), params: {
       project_id: @foreign_project.id, query: "x", from: "2026-10-02T10:00:00Z", to: "2026-10-03T10:00:00Z",
