@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_26_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_26_180000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -245,6 +245,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_100000) do
     t.integer "monitor_id", null: false
     t.datetime "ran_at", null: false
     t.string "status", null: false
+    t.text "held_reason"
     t.index ["monitor_id", "ran_at"], name: "index_monitor_runs_on_monitor_id_and_ran_at"
   end
 
@@ -287,6 +288,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_100000) do
     t.integer "timeouts_in_a_row", default: 0, null: false
     t.datetime "updated_at", null: false
     t.float "minimum"
+    t.datetime "held_since"
+    t.datetime "not_running_since"
+    t.integer "not_running_told_integration_id"
+    t.index ["not_running_told_integration_id"], name: "index_monitors_on_not_running_told_integration_id"
     t.index ["organization_id"], name: "index_monitors_on_organization_id"
     t.index ["project_id"], name: "index_monitors_on_project_id"
   end
@@ -310,7 +315,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_100000) do
     t.index ["integration_id"], name: "index_notifications_on_integration_id"
     t.index ["monitor_id", "group_key", "created_at"], name: "index_notifications_on_monitor_group_created_at"
     t.index ["status", "created_at"], name: "index_notifications_on_status_and_created_at"
-    t.check_constraint "(issue_id IS NOT NULL AND monitor_id IS NULL AND group_key IS NULL) OR (issue_id IS NULL AND monitor_id IS NOT NULL AND group_key IS NOT NULL)", name: "notifications_one_subject"
+    t.check_constraint "(issue_id IS NOT NULL AND monitor_id IS NULL AND group_key IS NULL) OR (issue_id IS NULL AND monitor_id IS NOT NULL AND group_key IS NOT NULL) OR (issue_id IS NULL AND monitor_id IS NULL AND group_key IS NULL AND kind IN ('monitors_not_running', 'monitors_running_again'))", name: "notifications_one_subject"
   end
 
   create_table "oauth_clients", force: :cascade do |t|
@@ -419,6 +424,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_100000) do
     t.datetime "updated_at", null: false
     t.boolean "require_two_factor", default: false, null: false
     t.datetime "factory_dashboard_made_at"
+    t.integer "monitor_status_integration_id"
+    t.index ["monitor_status_integration_id"], name: "index_organizations_on_monitor_status_integration_id"
     t.index ["slug"], name: "index_organizations_on_slug"
   end
 
@@ -552,6 +559,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_100000) do
   add_foreign_key "monitor_integrations", "monitors", on_delete: :cascade
   add_foreign_key "monitor_runs", "monitors", on_delete: :cascade
   add_foreign_key "monitor_states", "monitors", on_delete: :cascade
+  add_foreign_key "monitors", "integrations", column: "not_running_told_integration_id", on_delete: :nullify
   add_foreign_key "monitors", "organizations"
   add_foreign_key "monitors", "projects"
   add_foreign_key "notifications", "integrations"
@@ -563,6 +571,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_26_100000) do
   add_foreign_key "oauth_pending_requests", "oauth_clients"
   add_foreign_key "oauth_tokens", "oauth_grants"
   add_foreign_key "oauth_tokens", "oauth_tokens", column: "replaced_by_id", on_delete: :nullify
+  add_foreign_key "organizations", "integrations", column: "monitor_status_integration_id", on_delete: :nullify
   add_foreign_key "organizations_users", "organizations"
   add_foreign_key "organizations_users", "users"
   add_foreign_key "passkeys", "users"

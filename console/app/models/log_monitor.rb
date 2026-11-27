@@ -16,6 +16,20 @@
 # - A Match monitor reads the Logs ingested since its last run, from
 #   ingest_cursor, and sends one message when any match.
 #
+# held_since is when a Threshold monitor's runs started to be held. They
+# are held while EventStore says that the Project's Logs are not complete.
+# It is nil while its runs are not held. Turning the Monitor off or on
+# clears it, and so does a change of what its runs read: its Project, its
+# Query or SQL, or its kind.
+#
+# not_running_since is when the Monitor stopped running: its first failed
+# run, or the start of a hold that lasts HOLD_MEANS_NOT_RUNNING_AFTER. A run
+# that compares clears it (MonitorEvaluation#finish).
+# not_running_told_integration_id is the Integration that was told that the
+# Monitor is not running (IntegrationNotification.monitor_status). Until
+# that Integration is told that it runs again, turning the Monitor off or on
+# keeps not_running_since. Otherwise, turning it off or on clears it.
+#
 # MonitorEvaluation runs it; any member of the Organization can manage it.
 class LogMonitor < ApplicationRecord
   self.table_name = "monitors"
@@ -46,7 +60,13 @@ class LogMonitor < ApplicationRecord
   MAX_TEXT_LENGTH = 20_000
   # A Threshold monitor's range ends this long before its run, so Logs
   # still waiting for Log processing are not counted as missing.
+  # EventStore's storage.LogProcessingLag (event_store/storage/pebble_logs.go)
+  # is the same 60 s: past it, a run with hold_if_incomplete is held.
   PROCESSING_LAG = 60.seconds
+  # A hold this long makes the Monitor not running. A hold after an ingest
+  # gap is at most 10 minutes, so only a long Log processing backlog gets
+  # here.
+  HOLD_MEANS_NOT_RUNNING_AFTER = 10.minutes
 
   def self.model_name
     @model_name ||= ActiveModel::Name.new(self, nil, "Monitor")
@@ -90,9 +110,12 @@ class LogMonitor < ApplicationRecord
   validate :query_runs_as_its_kind, if: :query_check_needed?
 
   before_save :run_at_the_next_tick, if: :schedule_changed?
+  before_save :forget_the_hold, if: :hold_out_of_date?
+  before_save :forget_not_running, if: :not_running_out_of_date?
   after_update :resolve_groups_on_change, if: :stopped_checking_the_threshold?
   # Before the dependent deletes, which take its states and Integrations.
   before_destroy :resolve_groups_on_delete, prepend: true
+  before_destroy :tell_monitor_status_on_delete
 
   # The fields of the rule a change preview compares by, which it checks as
   # saving would before reading anything.
@@ -361,6 +384,36 @@ class LogMonitor < ApplicationRecord
 
   def run_at_the_next_tick
     self.next_run_at = nil
+  end
+
+  # A Monitor that is off does not run, so no run would clear its hold. The
+  # first held run after it is turned on starts a new hold. A hold is about
+  # the Logs that the runs read, so a Monitor that reads other Logs starts a
+  # new hold too.
+  def hold_out_of_date?
+    will_save_change_to_disabled_at? || will_save_change_to_project_id? || will_save_change_to_query? ||
+      will_save_change_to_language? || will_save_change_to_kind?
+  end
+
+  def forget_the_hold
+    self.held_since = nil
+  end
+
+  # A Monitor that is off does not run, so no run would clear its
+  # not_running_since. A told Monitor keeps it: a Monitor turned off goes
+  # into the next "running again" as turned off, and one turned on again
+  # runs again only at a run that compares. A change of what the runs read
+  # keeps it too: the Monitor has still not run.
+  def not_running_out_of_date?
+    will_save_change_to_disabled_at? && not_running_told_integration_id.nil?
+  end
+
+  def forget_not_running
+    self.not_running_since = nil
+  end
+
+  def tell_monitor_status_on_delete
+    IntegrationNotification.monitor_deleted(self)
   end
 
   # A Match monitor, or a Threshold monitor comparing the value, has no

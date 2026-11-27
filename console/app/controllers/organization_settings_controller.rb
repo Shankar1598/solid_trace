@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
-# The Organization's settings page: its name and slug, and Require
-# two-factor, which only an admin who has Two-factor turns on or off. No MCP
-# tool reads or changes Require two-factor, so a leaked API token can't.
+# The Organization's settings page: its name and slug, its Monitor status
+# Integration, and Require two-factor, which only an admin who has
+# Two-factor turns on or off. No MCP tool reads or changes Require
+# two-factor, so a leaked API token can't. The Monitor status Integration is
+# in Console only too.
 class OrganizationSettingsController < ApplicationController
   layout "dashboard"
   before_action :set_current_org
@@ -16,6 +18,11 @@ class OrganizationSettingsController < ApplicationController
         can_change: @current_org.can_require_two_factor?(current_user),
         you_have_two_factor: current_user.two_factor?,
         members_without_two_factor: @current_org.members_without_two_factor,
+      },
+      monitor_status: {
+        integration_id: @current_org.monitor_status_integration_id,
+        options: IntegrationOptionSerializer.list(@current_org.monitor_status_integration_options),
+        after_minutes: IntegrationNotification::NOT_RUNNING_AFTER.in_minutes.to_i,
       },
     }
   end
@@ -34,6 +41,6 @@ class OrganizationSettingsController < ApplicationController
   private
 
   def organization_params
-    params.require(:organization).permit(:name, :slug, :require_two_factor)
+    params.require(:organization).permit(:name, :slug, :require_two_factor, :monitor_status_integration_id)
   end
 end

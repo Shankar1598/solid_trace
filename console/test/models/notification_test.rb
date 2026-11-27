@@ -90,4 +90,29 @@ class NotificationTest < ActiveSupport::TestCase
     assert_raises(ActiveRecord::StatementInvalid) { neither.save!(validate: false) }
     assert_raises(ActiveRecord::StatementInvalid) { no_group.save!(validate: false) }
   end
+
+  test "a Monitor status row is about the Organization's Monitors: no Issue, no Monitor, no group" do
+    project = @organization.projects.create!(name: "Monitored")
+    stub_monitor_query_check(project)
+    monitor = create(:monitor, project: project)
+
+    row = Notification.enqueue!(integration: @integration, kind: IntegrationNotification::MONITORS_NOT_RUNNING)
+    assert_equal [ nil, nil, nil ], [ row.issue_id, row.monitor_id, row.group_key ]
+
+    with_monitor = Notification.new(integration: @integration, monitor: monitor, group_key: "",
+      kind: IntegrationNotification::MONITORS_RUNNING_AGAIN)
+    assert_not with_monitor.valid?
+  end
+
+  test "a failed Monitor status row is retried as a Monitor row is, not given up after 5 attempts" do
+    row = Notification.enqueue!(integration: @integration, kind: IntegrationNotification::MONITORS_NOT_RUNNING)
+    row.update_columns(status: Notification.statuses[:failed], attempts: Notification::MAX_ATTEMPTS)
+
+    assert row.retried?
+    assert_not Notification.exhausted.exists?(row.id)
+    travel Notification::MONITOR_RETRY_FOR + 1.minute
+    assert_not row.retried?
+    assert Notification.exhausted.exists?(row.id)
+    assert Notification.undelivered.exists?(row.id)
+  end
 end

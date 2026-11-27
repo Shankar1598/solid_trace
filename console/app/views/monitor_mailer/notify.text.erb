@@ -5,12 +5,12 @@
 <% @message.fields.each do |label, value| -%>
 <%= label %>: <%= value %>
 <% end -%>
-<% if @message.lines.any? %>
-<% @message.lines.each do |line| -%>
+<% if @message.listed_lines.any? %>
+<% @message.listed_lines.each do |line| -%>
 - <%= line %>
 <% end -%>
 <% end %>
-Open in the Logs explorer: <%= @message.link %>
+<%= @message.link_text %>: <%= @message.link %>
 <% if @message.baseline_link -%>
 Open the Baseline in the Logs explorer: <%= @message.baseline_link %>
 <% end -%>

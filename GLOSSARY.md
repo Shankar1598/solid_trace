@@ -180,6 +180,14 @@ _Avoid_: log alert, match rule
 The two states of a **Threshold monitor**'s group: firing while its number passes the threshold, or while the table is empty when the Monitor alerts on no data, and ok otherwise. Going from ok to firing sends a monitor firing **Notification** and going back sends monitor resolved; a group that stays firing sends nothing more. Turning the Monitor off, deleting it, making it a **Match monitor** or switching it between comparing the value and the change resolves its firing groups.
 _Avoid_: alerting, triggered, breached, open
 
+**Hold**:
+What a **Threshold monitor**'s run does while EventStore says that the **Project**'s **Logs** are not complete. The run compares nothing. It changes no group's state and sends no **Notification**. The Monitor runs again at the next tick. The Logs are not complete while **Log processing** is behind, and during the hold after an **Ingest gap**. Log processing is behind when the Project's oldest **Log batch** that waits for it is more than 60 seconds old. Then some Logs of the Monitor's range are still in Pebble or still with their senders. A count would read low, and no data would look like a fact. A hold never compares on partial data, however long it lasts. A **Match monitor** never holds. It reads each Log in the first run after **Log ingest** stores the Log's batch.
+_Avoid_: pause, skip, suppressed run
+
+**Ingest gap**:
+The time that EventStore's **Log ingest** was down before its last start. EventStore measures it from the last heartbeat that it wrote while ingest was open. After a gap of more than 15 seconds, EventStore holds **Threshold monitor** runs for the gap's length. The hold is at least 1 minute and at most 10 minutes from when ingest opened again. In this time, the senders can send the **Logs** that they kept. A first start has no heartbeat, so it has no gap.
+_Avoid_: downtime, outage window, restart gap
+
 **Log file store**:
 Where the Log files of the DuckDB releases are: the Parquet files that held a **Project**'s **Logs** stored before the switch to ClickHouse, on the local disk, in the bucket, or both. They are read in place, alongside the Logs stored since, until **Retention** deletes them; no new Log files are written.
 _Avoid_: archive, cold storage, data lake, Late file, Log file order
@@ -192,12 +200,16 @@ _Avoid_: query cache, result cache
 An outbound notification target owned by an organization. Its provider is Slack, PagerDuty, email, or the **Factory** provider, which starts a **Run** for each **Issue** or **Monitor** group that it is told about, through a **Webhook sender** that Console makes at the **Dispatcher**. The Factory provider has no URL field.
 _Avoid_: webhook config, notifier job
 
+**Monitor status Integration**:
+The one **Integration** that an **Organization** chooses to be told when its **Monitors** are not running, and when they run again. It is a Slack, PagerDuty or email Integration, not the **Factory** provider. A Monitor is not running from its first failed run, or from the start of a **Hold** that lasts 10 minutes. A run that compares makes it run again. After 2 minutes, the Monitor status Integration gets one monitors not running **Notification** about the Monitors that stopped. Later, it gets one monitors running again Notification. A Monitor's own Integrations do not get these Notifications.
+_Avoid_: health alert, watchdog, heartbeat channel, status page
+
 **Notification**:
-A message owed to one **Integration** about one or more **Issues**, or about one group of a **Monitor**, recorded in the outbox until it ends as sent, failed after the last retry, refused by a receiver that will never take it (the **Factory** provider's 4xx other than 429, which is not retried), or skipped because it can never be delivered. Each has a notification kind (issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched) that decides the message.
+A message owed to one **Integration**. It is about one or more **Issues**, one group of a **Monitor**, or the Monitors of an **Organization** that do not run. The outbox keeps it until it is sent, failed after the last retry, refused, or skipped. A refused Notification goes to a receiver that will never take it: the **Factory** provider's 4xx other than 429, which is not retried. A skipped Notification can never be delivered. Its notification kind decides the message: issue created, threshold reached, assignment changed, monitor firing, monitor resolved, monitor matched, monitors not running, or monitors running again. Only the **Monitor status Integration** gets the last two.
 _Avoid_: notification event, alert, event type
 
 **Integration notification**:
-The Console module that decides which **Notifications** an **Issue** change produces, records those a **Monitor**'s run owes, and delivers them to each **Integration** under a per-Integration rate limit: Issues in batches (one at a time to the **Factory** provider, which starts a **Run** for each), and each group of a Monitor in order.
+The Console module that decides which **Notifications** an **Issue** change produces, and records those that a **Monitor**'s run owes. It delivers them to each **Integration** under a per-Integration rate limit. Issues go in batches, but one at a time to the **Factory** provider, which starts a **Run** for each. The Notifications about one group of a Monitor go in order. The Notifications to the **Monitor status Integration** go in order too.
 _Avoid_: notifier, integration notifier
 
 **Organization**:
@@ -398,6 +410,8 @@ _Avoid_: command, mention, slash command
 - **Integration notification** turns **Issue** changes into **Notifications**; each **Notification** belongs to exactly one **Integration**
 - A **Monitor** runs a saved **Query** on a **Project** of its organization, and its changes become **Notifications** to its **Integrations**
 - A **Threshold monitor**'s groups are **firing** or **ok**; a **Match monitor** reads the **Logs** of each new **Log batch**
+- A **Threshold monitor**'s run is a **Hold** while **Log processing** is behind or after an **Ingest gap**. Its groups stay as they were
+- An **Organization** has at most one **Monitor status Integration**, which is told when its **Monitors** do not run and when they run again
 - The **Bin cache** keeps a **Chart**'s bins of hours that have ended, until **Log processing** or **Retention** changes their Logs
 - The **Log file store** holds a **Project**'s **Logs** stored before the switch to ClickHouse, read with those stored since until **Retention** deletes them
 - An **Invite** to an **Organization** makes someone without a password an **Invited** member, whom an **Invite link** lets set a password

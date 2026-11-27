@@ -14,8 +14,14 @@ class Organization < ApplicationRecord
   has_many :monitors, class_name: "LogMonitor", dependent: :destroy
   has_many :oauth_grants, class_name: "Oauth::Grant", dependent: :destroy
   has_many :evidence_files
+  # The Monitor status Integration (GLOSSARY): the one Integration that is
+  # told when the Organization's Monitors are not running, and when they run
+  # again (IntegrationNotification.monitor_status). Deleting it sets this to
+  # none, through the foreign key's ON DELETE SET NULL.
+  belongs_to :monitor_status_integration, class_name: "Integration", optional: true
 
   validates :name, presence: true
+  validate :monitor_status_integration_allowed, unless: -> { monitor_status_integration_id.nil? }
   validates :slug, presence: true, uniqueness: true, format: { with: /\A[a-z0-9-]+\z/, message: "only allows lowercase letters, numbers, and hyphens" }
 
   # A new Organization with user as its admin. Its slug comes from its name,
@@ -61,5 +67,20 @@ class Organization < ApplicationRecord
   # it up. Each is asked two_factor?, which alone says what counts.
   def members_without_two_factor
     users.count { |user| !user.two_factor? }
+  end
+
+  # The Integrations that can be the Monitor status Integration: not the
+  # Factory provider, as a message about Monitors that do not run must not
+  # start a Run.
+  def monitor_status_integration_options
+    integrations.where.not(provider: Integration::FACTORY).order(:name)
+  end
+
+  private
+
+  def monitor_status_integration_allowed
+    return if monitor_status_integration_options.exists?(id: monitor_status_integration_id)
+
+    errors.add(:monitor_status_integration, "must be a Slack, PagerDuty or email Integration of this Organization")
   end
 end

@@ -39,8 +39,11 @@ func TestEventStoreIsUnhealthyWhileClickHouseIsUnreachable(t *testing.T) {
 	defer env.Cleanup()
 	assertHealth(t, env, fiber.StatusOK, "ok")
 
+	// ClickHouse fails after the start passed. The ingest port's /health
+	// still answers 200, as ingest writes only into Pebble.
 	link.Cut()
-	assertHealth(t, env, fiber.StatusServiceUnavailable, "not ok")
+	assertHealthOn(t, "ingest", env.App, fiber.StatusOK, "down")
+	assertHealthOn(t, "query", env.QueryApp, fiber.StatusServiceUnavailable, "down")
 
 	link.Restore()
 	assertHealth(t, env, fiber.StatusOK, "ok")
@@ -90,26 +93,48 @@ func TestEventStoresConnectionReadsAttributesSortedAcrossSeveralParts(t *testing
 func assertHealth(t *testing.T, env *TestEnv, status int, clickHouse string) {
 	t.Helper()
 	for name, app := range map[string]*fiber.App{"ingest": env.App, "query": env.QueryApp} {
-		req, _ := http.NewRequest("GET", "/health", nil)
-		resp, err := app.Test(req, 10000)
-		if err != nil {
-			t.Fatalf("%s /health: %v", name, err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		var health struct {
-			Checks map[string]string `json:"checks"`
-		}
-		if err := json.Unmarshal(body, &health); err != nil {
-			t.Fatalf("%s /health: %v in %s", name, err, body)
-		}
+		health := getHealth(t, name, app, status)
 		got := health.Checks["clickhouse"]
 		if got != "ok" && got != "" {
 			got = "not ok"
 		}
-		if resp.StatusCode != status || got != clickHouse {
-			t.Errorf("%s /health = %d with ClickHouse %q, want %d with ClickHouse %q (%s)", name, resp.StatusCode, got, status, clickHouse, body)
+		if got != clickHouse {
+			t.Errorf("%s /health has ClickHouse check %q, want %q (%v)", name, got, clickHouse, health.Checks)
 		}
 	}
+}
+
+// assertHealthOn checks /health on app: its status, and its "clickhouse",
+// "ready", "starting" or "down".
+func assertHealthOn(t *testing.T, name string, app *fiber.App, status int, clickHouse string) {
+	t.Helper()
+	if health := getHealth(t, name, app, status); health.ClickHouse != clickHouse {
+		t.Errorf("%s /health has ClickHouse %q, want %q (%v)", name, health.ClickHouse, clickHouse, health.Checks)
+	}
+}
+
+type healthBody struct {
+	ClickHouse string            `json:"clickhouse"`
+	Checks     map[string]string `json:"checks"`
+}
+
+// getHealth gets /health from app, and checks its status.
+func getHealth(t *testing.T, name string, app *fiber.App, status int) healthBody {
+	t.Helper()
+	req, _ := http.NewRequest("GET", "/health", nil)
+	resp, err := app.Test(req, 10000)
+	if err != nil {
+		t.Fatalf("%s /health: %v", name, err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var health healthBody
+	if err := json.Unmarshal(body, &health); err != nil {
+		t.Fatalf("%s /health: %v in %s", name, err, body)
+	}
+	if resp.StatusCode != status {
+		t.Errorf("%s /health = %d, want %d (%s)", name, resp.StatusCode, status, body)
+	}
+	return health
 }
 
 // cuttableLink forwards TCP connections to a server until it is cut, as a

@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -12,14 +11,28 @@ import (
 // The Overview's Health reads: Log processing's oldest waiting Log batches,
 // the Log reads ClickHouse's query_log holds, and the Events of a range.
 
-// OldestWaitingLogBatches is the oldest Log batch still waiting for Log
-// processing of each Project of projectIDs that has one, read from Pebble.
-func (s *ClickHouseLogs) OldestWaitingLogBatches(projectIDs []uint32) ([]OldestLogBatch, error) {
-	oldest, err := s.pebble.OldestLogBatches()
-	if err != nil {
-		return nil, fmt.Errorf("find the oldest waiting Log batches: %w", err)
+// WaitingLogBatches is the oldest Log batch still waiting for Log processing
+// of each Project of projectIDs that has one, and how long it has waited at
+// now, read from Pebble (PebbleWriter.WaitingLogBatch).
+func (s *ClickHouseLogs) WaitingLogBatches(projectIDs []uint32, now time.Time) ([]WaitingLogBatch, error) {
+	var oldest []WaitingLogBatch
+	for _, projectID := range projectIDs {
+		batch, waiting, err := s.pebble.WaitingLogBatch(projectID, now)
+		if err != nil {
+			return nil, fmt.Errorf("find Project %d's oldest waiting Log batch: %w", projectID, err)
+		}
+		if waiting {
+			oldest = append(oldest, batch)
+		}
 	}
-	return slices.DeleteFunc(oldest, func(b OldestLogBatch) bool { return !slices.Contains(projectIDs, b.ProjectID) }), nil
+	return oldest, nil
+}
+
+// WaitingLogBatch is a Project's oldest Log batch still waiting for Log
+// processing, how long it has waited at now, and false if none waits
+// (PebbleWriter.WaitingLogBatch).
+func (s *ClickHouseLogs) WaitingLogBatch(projectID uint32, now time.Time) (WaitingLogBatch, bool, error) {
+	return s.pebble.WaitingLogBatch(projectID, now)
 }
 
 // ProjectReadTimes is how long a Project's Log reads took over the last day:

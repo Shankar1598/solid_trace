@@ -31,7 +31,7 @@
 (* Left out: the Log transform and content errors (storeApart), parts of   *)
 (* more than one day, the key counts and Source counts tables (each has    *)
 (* its own dedup log, with the same token), Retention, Project deletion,  *)
-(* other Projects, and the id floor (KeepLogBatchIDsAbove).                *)
+(* other Projects, and the id floor (keepBatchIDsAbove).                   *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -184,6 +184,7 @@ Delete ==
 \* cursor, and Console keeps it.
 Scan ==
   /\ up
+  /\ pc # "preparing"
   /\ scans < MaxScans
   /\ LET c == Pebble.cursor
      IN /\ matched' = [b \in Ids |-> IF mc < b /\ b <= c THEN matched[b] + Copies(b) ELSE matched[b]]
@@ -233,13 +234,22 @@ PowerLoss ==
   /\ losses' = losses + 1
   /\ UNCHANGED <<made, durable, next, accepted, rng, forgotten, onDisk, mc, matched, fails, scans, crashes>>
 
-\* Processor.Prepare at the start: it deletes the batches at or below the cursor.
+\* The start since 01: Pebble and the ingest port open first (up), and
+\* Log processing prepares later, in the ClickHouse start.
 Restart ==
   /\ ~up
   /\ up' = TRUE
+  /\ pc' = "preparing"
+  /\ UNCHANGED <<wal, durable, next, accepted, rng, parts, made, forgotten, onDisk, mc, matched, fails, scans, crashes, losses>>
+
+\* Processor.Prepare, a step of the ClickHouse start: it deletes the
+\* batches at or below the cursor. Ingest can write before it.
+Prepare ==
+  /\ up
+  /\ pc = "preparing"
   /\ pc' = "idle"
   /\ wal' = IF Pebble.cursor > 0 THEN Append(wal, [k |-> "delete", v |-> Pebble.cursor]) ELSE wal
-  /\ UNCHANGED <<durable, next, accepted, rng, parts, made, forgotten, onDisk, mc, matched, fails, scans, crashes, losses>>
+  /\ UNCHANGED <<durable, next, accepted, up, rng, parts, made, forgotten, onDisk, mc, matched, fails, scans, crashes, losses>>
 
 Done ==
   /\ up
@@ -251,13 +261,13 @@ Done ==
 Next ==
   \/ Ingest \/ Take \/ Insert \/ SetCursor \/ Delete \/ Scan
   \/ WritebackWal \/ WritebackPart \/ Forget
-  \/ Crash \/ PowerLoss \/ Restart
+  \/ Crash \/ PowerLoss \/ Restart \/ Prepare
   \/ Done
 
 Spec == Init /\ [][Next]_vars
 
 TypeOK ==
-  /\ pc \in {"idle", "insert", "stored", "cursorSet", "down"}
+  /\ pc \in {"idle", "insert", "stored", "cursorSet", "down", "preparing"}
   /\ durable <= Len(wal)
   /\ mc \in 0..N
 

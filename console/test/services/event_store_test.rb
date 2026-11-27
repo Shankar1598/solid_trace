@@ -456,4 +456,18 @@ class EventStoreTest < ActiveSupport::TestCase
 
     assert_nil result
   end
+
+  test "Incomplete says why a run is held, also without the facts that a reason usually has" do
+    now = Time.utc(2026, 10, 3, 9, 51)
+    text = ->(facts) { EventStore::Incomplete.new(facts).text(now) }
+
+    assert_equal "Waiting for Log processing: it is 5 minutes behind.",
+      text.call("reason" => "log_processing_behind", "behind_seconds" => 241)
+    assert_equal "Waiting for Log processing: it is 1 minute behind.", text.call("reason" => "log_processing_behind")
+    assert_equal "Waiting for the senders' Logs after EventStore's restart: 2 minutes more.",
+      text.call("reason" => "ingest_gap", "until" => (now + 90.seconds).iso8601)
+    assert_equal "Waiting for the senders' Logs after EventStore's restart.", text.call("reason" => "ingest_gap")
+    assert_equal "Waiting until EventStore has all the Project's Logs (clickhouse_loading).",
+      text.call("reason" => "clickhouse_loading")
+  end
 end

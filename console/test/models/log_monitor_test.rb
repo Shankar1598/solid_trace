@@ -347,6 +347,70 @@ class LogMonitorTest < ActiveSupport::TestCase
     assert_not monitor.due?(now)
   end
 
+  test "turning a Monitor off or on forgets when its runs started to be held; an edit keeps it" do
+    held_since = Time.utc(2026, 10, 17, 9, 51)
+    monitor = create(:monitor, project: @project)
+    monitor.update_columns(held_since: held_since)
+
+    monitor.update!(name: "Renamed")
+    assert_equal held_since, monitor.reload.held_since
+
+    monitor.update!(disabled_at: Time.current)
+    assert_nil monitor.reload.held_since
+
+    monitor.update_columns(held_since: held_since)
+    monitor.update!(disabled_at: nil)
+    assert_nil monitor.reload.held_since
+  end
+
+  test "a Monitor moved to another Project, or given another Query, language or kind, starts a new hold but is still not running" do
+    other = create(:project, organization: @organization, name: "Search")
+    stub_monitor_query_check(other)
+    stub_monitor_sql_check(@project)
+    since = Time.utc(2026, 10, 17, 10, 15)
+    changes = {
+      project: { project: other },
+      query: { query: "['#{@project.slug}']\n| where level == 'warn'\n| summarize count()" },
+      language: { language: "sql", query: "SELECT service, count() AS errors FROM logs GROUP BY service" },
+      kind: { kind: "match", query: "['#{@project.slug}']\n| where level == 'error'", operator: nil, threshold: nil },
+    }
+
+    changes.each do |field, change|
+      monitor = create(:monitor, project: @project)
+      monitor.update_columns(held_since: since, not_running_since: since)
+
+      monitor.update!(change)
+
+      monitor.reload
+      assert_nil monitor.held_since, "a change of #{field} starts a new hold"
+      assert_equal since, monitor.not_running_since, "a change of #{field} keeps not_running_since"
+    end
+  end
+
+  test "turning a Monitor that was not told off or on clears not_running_since" do
+    since = Time.utc(2026, 10, 17, 10, 15)
+    monitor = create(:monitor, project: @project)
+    monitor.update_columns(not_running_since: since)
+    monitor.update!(disabled_at: Time.current)
+    assert_nil monitor.reload.not_running_since
+
+    monitor.update_columns(not_running_since: since)
+    monitor.update!(disabled_at: nil)
+    assert_nil monitor.reload.not_running_since
+  end
+
+  test "turning a told Monitor off or on keeps not_running_since, for its running again message" do
+    since = Time.utc(2026, 10, 17, 10, 15)
+    status = @organization.integrations.create!(provider: "slack", settings: { "webhook_url" => "https://hooks.slack.com/services/T/B/C" })
+    monitor = create(:monitor, project: @project)
+    monitor.update_columns(not_running_since: since, not_running_told_integration_id: status.id)
+
+    monitor.update!(disabled_at: Time.current)
+    assert_equal since, monitor.reload.not_running_since
+    monitor.update!(disabled_at: nil)
+    assert_equal since, monitor.reload.not_running_since
+  end
+
   # ---------------------------------------------------------------------------
   # Deleting
   # ---------------------------------------------------------------------------

@@ -3,6 +3,31 @@
 require "test_helper"
 
 class OrganizationTest < ActiveSupport::TestCase
+  test "the Monitor status Integration is a Slack, PagerDuty or email Integration of the Organization" do
+    organization = create(:organization)
+    slack = organization.integrations.create!(provider: "slack", settings: { "webhook_url" => "https://hooks.slack.com/x" })
+    factory = organization.integrations.create!(provider: "factory")
+    foreign = create(:organization).integrations.create!(provider: "email", settings: { "recipients" => "a@b.c" })
+
+    assert organization.update(monitor_status_integration: slack)
+    assert_not organization.update(monitor_status_integration_id: factory.id)
+    assert_includes organization.errors[:monitor_status_integration], "must be a Slack, PagerDuty or email Integration of this Organization"
+    assert_not organization.update(monitor_status_integration_id: foreign.id)
+    assert_not organization.update(monitor_status_integration_id: "0"), "an id that casts to 0 names no Integration"
+    assert_not organization.update(monitor_status_integration_id: "abc")
+    assert_equal [ slack ], organization.monitor_status_integration_options.to_a
+  end
+
+  test "deleting the Monitor status Integration sets the setting to none" do
+    organization = create(:organization)
+    slack = organization.integrations.create!(provider: "slack", settings: { "webhook_url" => "https://hooks.slack.com/x" })
+    organization.update!(monitor_status_integration: slack)
+
+    slack.destroy!
+
+    assert_nil organization.reload.monitor_status_integration_id
+  end
+
   test "has projects" do
     organization = create(:organization)
     project = create(:project, organization: organization)

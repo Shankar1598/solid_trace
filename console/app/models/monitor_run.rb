@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 # One run of a Monitor: when it ran (ran_at, the run's now), whether
-# EventStore answered (ok) or not (error, with why), and what it found: how
+# EventStore answered (ok) or not (error, with why), or held a Threshold
+# run because the Project's Logs were not complete (held, with
+# held_reason: the run compared nothing), and what it found: how
 # many groups were firing after it, or how many Logs matched. logs_skipped
 # marks the run of a Match monitor that started again from the newest Log
 # batch after its runs kept timing out, leaving the Logs in between unread.
@@ -9,7 +11,7 @@
 class MonitorRun < ApplicationRecord
   KEEP = 100
 
-  enum :status, { ok: "ok", error: "error" }, prefix: true, validate: true
+  enum :status, { ok: "ok", error: "error", held: "held" }, prefix: true, validate: true
 
   belongs_to :monitor, class_name: "LogMonitor", inverse_of: :runs
 
@@ -25,6 +27,11 @@ class MonitorRun < ApplicationRecord
     else
       "#{firing} #{'group'.pluralize(firing)} firing"
     end
+  end
+
+  # What Run now says of a held run.
+  def held_notice
+    "The run is held, so it compared nothing: #{held_reason}"
   end
 
   # Deletes each Monitor's runs older than its newest KEEP.

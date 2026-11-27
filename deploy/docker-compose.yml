@@ -102,8 +102,10 @@ services:
     depends_on:
       db_prepare:
         condition: service_completed_successfully
+      # Started, not healthy: ingest takes Logs and Events while ClickHouse
+      # starts, and EventStore waits for ClickHouse itself.
       clickhouse:
-        condition: service_healthy
+        condition: service_started
 
   # Keeps Logs and Events for EventStore, on 127.0.0.1:4200 only, with
   # deploy/clickhouse's config. EventStore adds the bucket volume to its

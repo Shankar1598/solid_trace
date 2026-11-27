@@ -77,7 +77,7 @@ The old-file path is one module, `storage/logs_old_files.go`, which goes once th
   - It is pinned to an exact patch. 26.8.34.13 skips a boundary second when `time` is compared with a DateTime or an integer, so the Query compiler compares it only with `toDateTime64(…)`.
   - It listens on loopback only, with EventStore's password from `SOLIDTRACE_CLICKHOUSE_PASSWORD`, which `deploy/install` generates.
   - Its memory is half of RAM, set by `max_server_memory_usage` from `deploy/install`, never by a container memory limit.
-- **While ClickHouse is down,** ingest still answers `200`, since Pebble is in front. `/health` says ClickHouse is unreachable, and Event reads answer 503.
+- **While ClickHouse is down,** ingest still answers `200`, since Pebble is in front. `/health` says ClickHouse is unreachable, and Event reads answer 503. The ingest port is public, so its `/health` gives only fixed words (`ok`, `starting`, `unreachable`) in `checks`. The loopback query port's `/health` also gives the error text.
 - **clickhouse-go 2.49** can't decode a `JSON` column that 26.8 sends after a sort merges several parts. EventStore's connection and the SQL users' profile both ask for it flattened (`output_format_native_use_flattened_dynamic_and_json_serialization`).
 - **A disk snapshot must cover ClickHouse's data directory,** which holds the metadata of the parts in the bucket. The bucket alone can't be restored from.
 - **The Log file order is gone:** every Project is sorted by `service` and `file`. Generic sort columns filled per Project could bring it back without changing how Logs are stored.

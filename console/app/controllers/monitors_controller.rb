@@ -97,6 +97,8 @@ class MonitorsController < ApplicationController
       redirect_to monitor_page(@monitor), alert: "The Monitor is running now: its run shows here when it ends."
     elsif run.status_error?
       redirect_to monitor_page(@monitor), alert: "The run failed: #{run.error}"
+    elsif run.status_held?
+      redirect_to monitor_page(@monitor), notice: run.held_notice
     else
       redirect_to monitor_page(@monitor), notice: "Ran the Monitor: #{run.found}."
     end

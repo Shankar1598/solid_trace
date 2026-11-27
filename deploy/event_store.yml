@@ -19,9 +19,10 @@ pebble_path: /storage/pebble/production/events
 # The Log file store: the Log files a DuckDB release wrote, read in place until
 # Retention deletes them. ClickHouse reads them through Compose's /logs_parquet
 # mount of the same folder, which deploy/install sets from this key: run it again
-# after changing it. EventStore won't start while logs.duckdb, beside it,
-# holds Logs that the last DuckDB release's prepare-clickhouse didn't prepare;
-# deploy/install runs it.
+# after changing it. While logs.duckdb, beside it, holds Logs that the last
+# DuckDB release's prepare-clickhouse didn't prepare, EventStore takes ingest
+# but answers no reads, and /health says ClickHouse is starting. deploy/install
+# runs prepare-clickhouse.
 logs_parquet_path: /storage/duckdb/production/logs_parquet
 # The most of ClickHouse's local disk, in GB, every Project's Logs may take together;
 # past it the oldest days move to the object_store's bucket, or are deleted without

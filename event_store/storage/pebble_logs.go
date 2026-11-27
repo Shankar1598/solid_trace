@@ -55,8 +55,8 @@ func logBatchKey(projectID uint32, batchID uuid.UUID) []byte {
 // order and a reader never sees a batch before a lower one.
 //
 // The id is a UUIDv7 of receivedAt, unless that doesn't come after every id
-// written before, or seen in Pebble or a Log processing cursor
-// (KeepLogBatchIDsAbove): then it is the next id after them. So a clock that
+// written before, or seen in Pebble or a Processing cursor
+// (keepBatchIDsAbove): then it is the next id after them. So a clock that
 // steps back never puts a batch below Log processing's cursor, where it would
 // be skipped and deleted.
 func (w *PebbleWriter) WriteLogBatch(projectID uint32, logs []models.Log, receivedAt time.Time) error {
@@ -111,9 +111,8 @@ func nextLogBatchID(id uuid.UUID) uuid.UUID {
 	return id
 }
 
-// KeepLogBatchIDsAbove makes every Log batch id written from now on come
-// after id, such as a Log processing cursor read at startup.
-func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
+// keepBatchIDsAbove makes every batch id written from now on come after id.
+func (w *PebbleWriter) keepBatchIDsAbove(id uuid.UUID) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if bytes.Compare(id[:], w.logBatchFloor[:]) > 0 {
@@ -121,24 +120,31 @@ func (w *PebbleWriter) KeepLogBatchIDsAbove(id uuid.UUID) {
 	}
 }
 
-// seedLogBatchFloor keeps new batch ids above the newest stored Log batch
-// and Transaction batch and Agent file batch of every Project, reading one key per Project.
-func (w *PebbleWriter) seedLogBatchFloor() error {
+// keepBatchIDsAboveBatchesAndCursors runs at the open. It keeps new batch ids
+// above the newest Log, Transaction and Agent file batch of each Project.
+// It also keeps them above each Processing cursor, because ingest writes
+// before processing prepares, as while ClickHouse starts.
+func (w *PebbleWriter) keepBatchIDsAboveBatchesAndCursors() error {
 	for _, keyspace := range [][2][]byte{
 		{logBatchKeyspace, logBatchKeyspaceEnd},
 		{transactionBatchKeyspace, transactionBatchKeyspaceEnd},
 		{agentFileBatchKeyspace, agentFileBatchKeyspaceEnd},
 	} {
-		if err := w.seedBatchFloor(keyspace[0], keyspace[1]); err != nil {
+		if err := w.keepBatchIDsAboveNewestBatches(keyspace[0], keyspace[1]); err != nil {
+			return err
+		}
+	}
+	for _, cursors := range []string{"logcursor", "txncursor", "agentcursor"} {
+		if err := w.keepBatchIDsAboveCursors(cursors); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// seedBatchFloor keeps new batch ids above the newest batch of every Project
-// in the keyspace from lower to upper.
-func (w *PebbleWriter) seedBatchFloor(lower, upper []byte) error {
+// keepBatchIDsAboveNewestBatches keeps new batch ids above the newest batch
+// of each Project in the keyspace from lower to upper.
+func (w *PebbleWriter) keepBatchIDsAboveNewestBatches(lower, upper []byte) error {
 	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return err
@@ -150,11 +156,30 @@ func (w *PebbleWriter) seedBatchFloor(lower, upper []byte) error {
 		if err != nil {
 			return fmt.Errorf("batch key %x: %w", key, err)
 		}
-		if bytes.Compare(batchID[:], w.logBatchFloor[:]) > 0 {
-			w.logBatchFloor = batchID
-		}
+		w.keepBatchIDsAbove(batchID)
 		projectStart := binary.BigEndian.AppendUint32(bytes.Clone(lower), binary.BigEndian.Uint32(key[len(lower):]))
 		valid = iter.SeekLT(projectStart)
+	}
+	return iter.Error()
+}
+
+// keepBatchIDsAboveCursors keeps new batch ids above each Project's cursor
+// whose key starts with name and "/", such as "logcursor".
+func (w *PebbleWriter) keepBatchIDsAboveCursors(name string) error {
+	iter, err := w.db.NewIter(&pebble.IterOptions{
+		LowerBound: append(eventKeyPrefix(0), name+"/"...),
+		UpperBound: append(eventKeyPrefix(0), name+"0"...),
+	})
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+	for valid := iter.First(); valid; valid = iter.Next() {
+		cursor, err := uuid.FromBytes(iter.Value())
+		if err != nil {
+			return fmt.Errorf("%s %x: %w", name, iter.Key(), err)
+		}
+		w.keepBatchIDsAbove(cursor)
 	}
 	return iter.Error()
 }
@@ -179,9 +204,9 @@ func (w *PebbleWriter) LogBatchesAfter(projectID uint32, after uuid.UUID, maxLog
 	logs := 0
 	for valid := iter.First(); valid && logs < maxLogs; valid = iter.Next() {
 		key := iter.Key()
-		batchID, err := uuid.FromBytes(key[len(key)-16:])
+		batchID, err := logBatchKeyID(key)
 		if err != nil {
-			return nil, fmt.Errorf("log batch key %x: %w", key, err)
+			return nil, err
 		}
 		batch, err := decodeLogBatch(iter.Value())
 		if err != nil {
@@ -218,7 +243,10 @@ type OldestLogBatch struct {
 }
 
 // OldestLogBatches returns the oldest Log batch of every Project that has
-// one, in Project order, reading one key per Project.
+// one, in Project order, reading one key per Project. It reads each
+// Project's first key, so for some milliseconds after Log processing moves
+// its cursor, a batch that it stored but has not deleted yet is the oldest.
+// The oldest batch that waits is OldestWaitingLogBatch's.
 func (w *PebbleWriter) OldestLogBatches() ([]OldestLogBatch, error) {
 	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: logBatchKeyspace, UpperBound: logBatchKeyspaceEnd})
 	if err != nil {
@@ -230,14 +258,52 @@ func (w *PebbleWriter) OldestLogBatches() ([]OldestLogBatch, error) {
 	for valid := iter.First(); valid; {
 		key := iter.Key()
 		projectID := binary.BigEndian.Uint32(key[len(logBatchKeyspace):])
-		batchID, err := uuid.FromBytes(key[len(key)-16:])
+		batchID, err := logBatchKeyID(key)
 		if err != nil {
-			return nil, fmt.Errorf("log batch key %x: %w", key, err)
+			return nil, err
 		}
 		oldest = append(oldest, OldestLogBatch{projectID, batchID})
 		valid = iter.SeekGE(logBatchUpperBound(projectID))
 	}
 	return oldest, iter.Error()
+}
+
+// OldestWaitingLogBatch returns the id of a Project's oldest Log batch that
+// Log processing has not stored, the first after its Processing cursor, and
+// false if none waits. It reads from the cursor, so it does not step over
+// the deleted batches under it, as OldestLogBatches does: on a Pebble with
+// many range deletions it reads in microseconds, not milliseconds.
+func (w *PebbleWriter) OldestWaitingLogBatch(projectID uint32) (uuid.UUID, bool, error) {
+	cursor, err := w.LogProcessingCursor(projectID)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	lower := logBatchPrefix(projectID)
+	if cursor != uuid.Nil {
+		lower = append(logBatchKey(projectID, cursor), 0)
+	}
+	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: logBatchUpperBound(projectID)})
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	defer iter.Close()
+	if !iter.First() {
+		return uuid.Nil, false, iter.Error()
+	}
+	batchID, err := logBatchKeyID(iter.Key())
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return batchID, true, nil
+}
+
+// logBatchKeyID is the id of the Log batch at key: its last 16 bytes.
+func logBatchKeyID(key []byte) (uuid.UUID, error) {
+	batchID, err := uuid.FromBytes(key[len(key)-16:])
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("log batch key %x: %w", key, err)
+	}
+	return batchID, nil
 }
 
 // Log processing keeps two ids per Project in Pebble, beside Event
@@ -251,6 +317,36 @@ func logProcessingCursorKey(projectID uint32) []byte {
 
 func logInsertKey(projectID uint32) []byte {
 	return binary.BigEndian.AppendUint32(append(eventKeyPrefix(0), "loginsert/"...), projectID)
+}
+
+// ingestBeatKey holds the time of Log ingest's last heartbeat, which tells
+// the next start how long ingest was down (package ingestgap). It is the
+// reserved Project id 0, then "ingestbeat", outside the Log batches'
+// keyspace and every cursor's.
+var ingestBeatKey = append(eventKeyPrefix(0), "ingestbeat"...)
+
+// WriteIngestBeat records that ingest was open at at. NoSync: a beat lost
+// to a power loss only makes the next start's gap seem longer.
+func (w *PebbleWriter) WriteIngestBeat(at time.Time) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return ErrShuttingDown
+	}
+	return w.db.Set(ingestBeatKey, binary.BigEndian.AppendUint64(nil, uint64(at.UnixMilli())), pebble.NoSync)
+}
+
+// LastIngestBeat returns the time of the last heartbeat WriteIngestBeat
+// wrote, and false if there is none.
+func (w *PebbleWriter) LastIngestBeat() (time.Time, bool, error) {
+	value, err := w.get(ingestBeatKey)
+	if err != nil || value == nil {
+		return time.Time{}, false, err
+	}
+	if len(value) != 8 {
+		return time.Time{}, false, fmt.Errorf("ingest heartbeat %x is not 8 bytes", value)
+	}
+	return time.UnixMilli(int64(binary.BigEndian.Uint64(value))), true, nil
 }
 
 // LogProcessingCursor returns the id of the last Log batch whose Logs Log
@@ -270,35 +366,19 @@ func (w *PebbleWriter) SetLogProcessingCursor(projectID uint32, cursor uuid.UUID
 // SetLogProcessingCursors moves several Projects' Log processing cursors at
 // once, synced, so that they are on disk before what follows records that
 // they moved, as loading the prepared cursors records its marker.
+//
+// First it keeps new batch ids above each cursor. Ingest can write while the
+// cursors move, and Log processing deletes a batch under its cursor unstored.
 func (w *PebbleWriter) SetLogProcessingCursors(cursors map[uint32]uuid.UUID) error {
 	batch := w.db.NewBatch()
 	defer batch.Close()
 	for projectID, cursor := range cursors {
+		w.keepBatchIDsAbove(cursor)
 		if err := batch.Set(logProcessingCursorKey(projectID), cursor[:], nil); err != nil {
 			return err
 		}
 	}
 	return batch.Commit(pebble.Sync)
-}
-
-// LogProcessingCursors returns the Log processing cursor of every Project
-// that has one.
-func (w *PebbleWriter) LogProcessingCursors() ([]uuid.UUID, error) {
-	prefix := append(eventKeyPrefix(0), "logcursor/"...)
-	iter, err := w.db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: append(eventKeyPrefix(0), "logcursor0"...)})
-	if err != nil {
-		return nil, err
-	}
-	defer iter.Close()
-	var cursors []uuid.UUID
-	for valid := iter.First(); valid; valid = iter.Next() {
-		cursor, err := uuid.FromBytes(iter.Value())
-		if err != nil {
-			return nil, fmt.Errorf("log processing cursor %x: %w", iter.Key(), err)
-		}
-		cursors = append(cursors, cursor)
-	}
-	return cursors, iter.Error()
 }
 
 // RecordLogInsert records, before Log processing inserts a Project's Log
@@ -328,6 +408,14 @@ func (w *PebbleWriter) logBatchID(key []byte) (uuid.UUID, error) {
 	}
 	return id, nil
 }
+
+// LogProcessingLag is how long a Log batch may wait for Log processing
+// before Log processing is behind for its Project: Log processing logs a
+// warning, and a run that asks for hold_if_incomplete is held. Console's
+// LogMonitor::PROCESSING_LAG is the same 60 s: a Threshold monitor's range
+// ends that long before its run, so a shorter wait misses no Log of the
+// range.
+const LogProcessingLag = time.Minute
 
 // LogBatchWrittenAt is when the Log batch with id batchID was written, to the
 // millisecond: the time in its UUIDv7.

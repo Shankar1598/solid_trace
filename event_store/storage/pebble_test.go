@@ -91,6 +91,127 @@ func TestPebbleWriterRefusesWritesOnceClosed(t *testing.T) {
 	})
 }
 
+// Ingest writes before processing prepares, as while ClickHouse starts. A
+// batch written then, with the clock behind the Processing cursor, must come
+// after the cursor. Else processing never reads it.
+func TestBatchWrittenAtOpenComesAfterTheProcessingCursor(t *testing.T) {
+	const project = 7
+	for _, kind := range []struct {
+		name string
+		// setCursor sets the Project's Processing cursor of this kind.
+		setCursor func(w *PebbleWriter, cursor uuid.UUID) error
+		// write writes one batch of this kind, and after counts the
+		// batches after the cursor.
+		write func(w *PebbleWriter) error
+		after func(w *PebbleWriter, cursor uuid.UUID) (int, error)
+	}{
+		{
+			name: "Log",
+			setCursor: func(w *PebbleWriter, cursor uuid.UUID) error {
+				return w.SetLogProcessingCursor(project, cursor)
+			},
+			write: func(w *PebbleWriter) error {
+				return w.WriteLogBatch(project, []models.Log{{Message: "after a restart"}}, time.Now())
+			},
+			after: func(w *PebbleWriter, cursor uuid.UUID) (int, error) {
+				batches, err := w.LogBatchesAfter(project, cursor, 100)
+				return len(batches), err
+			},
+		},
+		{
+			name: "Transaction",
+			setCursor: func(w *PebbleWriter, cursor uuid.UUID) error {
+				return w.SetSpanProcessingCursor(project, cursor)
+			},
+			write: func(w *PebbleWriter) error {
+				return w.WriteTransactionBatch(project, []models.Transaction{{}}, time.Now())
+			},
+			after: func(w *PebbleWriter, cursor uuid.UUID) (int, error) {
+				batches, err := w.TransactionBatchesAfter(project, cursor, 1<<20)
+				return len(batches), err
+			},
+		},
+		{
+			name: "Agent file",
+			setCursor: func(w *PebbleWriter, cursor uuid.UUID) error {
+				return w.SetAgentFileCursor(project, cursor)
+			},
+			write: func(w *PebbleWriter) error {
+				session := uuid.New()
+				_, _, err := w.WriteAgentFileUnit(project, AgentUpload{Unit: AgentFileUnit{
+					SessionID: session, Path: session.String() + ".jsonl", Version: 1,
+					Bytes:   []byte("after a restart\n"),
+					Session: AgentSession{UserID: 1, Harness: "claude-code", Repository: "github.com/acme/shop"},
+				}})
+				return err
+			},
+			after: func(w *PebbleWriter, cursor uuid.UUID) (int, error) {
+				batches, err := w.AgentFileBatchesAfter(project, cursor, 1<<20)
+				return len(batches), err
+			},
+		},
+	} {
+		t.Run(kind.name, func(t *testing.T) {
+			logger.Init()
+			path := filepath.Join(t.TempDir(), "pebble")
+			writer, err := NewPebbleWriter(&config.Config{PebblePath: path})
+			if err != nil {
+				t.Fatalf("Failed to create PebbleWriter: %v", err)
+			}
+			cursor, err := newLogBatchID(time.Now().Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := kind.setCursor(writer, cursor); err != nil {
+				t.Fatalf("Setting the cursor failed: %v", err)
+			}
+			writer.Close()
+
+			writer, err = NewPebbleWriter(&config.Config{PebblePath: path})
+			if err != nil {
+				t.Fatalf("Failed to open PebbleWriter again: %v", err)
+			}
+			defer writer.Close()
+			if err := kind.write(writer); err != nil {
+				t.Fatalf("Writing the batch failed: %v", err)
+			}
+			if n, err := kind.after(writer, cursor); err != nil || n != 1 {
+				t.Fatalf("Expected the batch written after the open to come after the cursor, got %d batches after it (%v)", n, err)
+			}
+		})
+	}
+}
+
+// The Logs from before the switch to ClickHouse move the Log processing
+// cursors after the open. A Log batch written after that, with the clock
+// behind a moved cursor, must come after it. Else Log processing deletes it
+// unstored.
+func TestLogBatchWrittenAfterTheCursorsMoveComesAfterThem(t *testing.T) {
+	logger.Init()
+	writer, err := NewPebbleWriter(&config.Config{PebblePath: filepath.Join(t.TempDir(), "pebble")})
+	if err != nil {
+		t.Fatalf("Failed to create PebbleWriter: %v", err)
+	}
+	defer writer.Close()
+	cursor, err := newLogBatchID(time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.SetLogProcessingCursors(map[uint32]uuid.UUID{7: cursor}); err != nil {
+		t.Fatalf("SetLogProcessingCursors failed: %v", err)
+	}
+	if err := writer.WriteLogBatch(7, []models.Log{{Message: "while ClickHouse starts"}}, time.Now()); err != nil {
+		t.Fatalf("WriteLogBatch failed: %v", err)
+	}
+	batches, err := writer.LogBatchesAfter(7, cursor, 100)
+	if err != nil {
+		t.Fatalf("LogBatchesAfter failed: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("Expected the batch written after the cursors moved to come after them, got %d batches after them", len(batches))
+	}
+}
+
 // Event processing reads a Project forward from a processing cursor, so a
 // reader must never see an Event key while a lower one is still uncommitted.
 func TestConcurrentWritesCommitInUUIDOrder(t *testing.T) {

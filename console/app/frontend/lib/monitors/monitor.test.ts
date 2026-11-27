@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Builder } from '@/lib/logs/builder'
 import type { LogTable } from '@/lib/logs/table'
 import {
-  baselineOffsetMinutes, breached, changeText, groupLabel, groupsNow, kindPicked, newMonitorHref, previewCaption, rangeMinutesOf, ruleText, runText, textEditing, withRangeBins,
+  baselineOffsetMinutes, breached, changeText, firingNote, groupLabel, groupsNow, holdOf, kindPicked, newMonitorHref, previewCaption, rangeMinutesOf, ruleText, runText, textEditing, withRangeBins,
   withBaselineSeries, withoutTimeBins,
 } from './monitor'
 
@@ -170,13 +170,22 @@ describe('groupLabel', () => {
 })
 
 describe('runText', () => {
-  const run = { status: 'ok' as const, error: null, firing: 0, matched: null, logs_skipped: false }
+  const run = { status: 'ok' as const, error: null, held_reason: null, firing: 0, matched: null, logs_skipped: false }
 
   it('says what a run found', () => {
     expect(runText(run, 'threshold')).toBe('Nothing firing')
     expect(runText({ ...run, firing: 2 }, 'threshold')).toBe('2 groups firing')
     expect(runText({ ...run, firing: null, matched: 1 }, 'match')).toBe('1 Log matched')
     expect(runText({ ...run, status: 'error', error: 'EventStore is unavailable' }, 'threshold')).toBe('EventStore is unavailable')
+  })
+
+  it('says why a run was held, not what it found', () => {
+    const held = { ...run, status: 'held' as const, firing: null, held_reason: 'Waiting for Log processing: it is 5 minutes behind.' }
+    expect(runText(held, 'threshold')).toBe('Held: Waiting for Log processing: it is 5 minutes behind.')
+  })
+
+  it('gives one reason for a held run that has none', () => {
+    expect(runText({ ...run, status: 'held', firing: null }, 'threshold')).toBe('Held: the Logs are not complete.')
   })
 
   it('says when a Match monitor skipped Logs to start again', () => {
@@ -307,5 +316,33 @@ describe('picking a kind on the form', () => {
   it('keeps a SQL Monitor\'s read-only SQL shown while SQL queries are off, so a save never puts a Query in its place', () => {
     expect(kindPicked('match', sql, false)).toBeNull()
     expect(kindPicked('threshold', sql, false)).toBeNull()
+  })
+})
+
+describe('holdOf', () => {
+  const heldRun = { status: 'held' as const, held_reason: 'Waiting for Log processing: it is 5 minutes behind.' }
+  const monitor = { status: 'firing' as const, enabled: true, held_since: '2026-10-03T09:51:00Z', runs: [heldRun] }
+
+  it('gives since when and why the runs are held, whatever the status of the Monitor that is on', () => {
+    expect(holdOf(monitor)).toEqual({ since: '2026-10-03T09:51:00Z', reason: 'Waiting for Log processing: it is 5 minutes behind.' })
+  })
+
+  it('gives nothing while the runs are not held, or while the Monitor is off', () => {
+    expect(holdOf({ ...monitor, held_since: null })).toBeNull()
+    expect(holdOf({ ...monitor, enabled: false })).toBeNull()
+  })
+})
+
+describe('firingNote', () => {
+  const firing = { status: 'firing' as const, last_error: null, held_since: null }
+
+  it('notes beside a firing Monitor that its runs are held or its last run failed', () => {
+    expect(firingNote({ ...firing, held_since: '2026-10-03T09:51:00Z' })).toBe('Runs held')
+    expect(firingNote({ ...firing, last_error: 'EventStore is unavailable' })).toBe('Last run failed')
+    expect(firingNote(firing)).toBeNull()
+  })
+
+  it('notes nothing beside a Monitor that is not firing: its status says it', () => {
+    expect(firingNote({ ...firing, status: 'held', held_since: '2026-10-03T09:51:00Z' })).toBeNull()
   })
 })

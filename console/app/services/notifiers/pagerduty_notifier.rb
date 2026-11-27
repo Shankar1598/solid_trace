@@ -15,7 +15,8 @@ module Notifiers
 
     # +kind+ is the Notification kind and selects the message. A batched kind
     # lists every Issue in +issues+; the others describe +issues.first+. A
-    # Monitor kind sends +message+, a Notifiers::Message.
+    # kind of IntegrationNotification::MESSAGE_KINDS sends +message+, a
+    # Notifiers::Message.
     def initialize(integration, kind:, issues: [], message: nil, previous_assignee_name: nil, new_assignee_name: nil)
       @integration = integration
       @kind = kind
@@ -54,7 +55,7 @@ module Notifiers
       when IntegrationNotification::ISSUE_CREATED then issue_created_payload
       when IntegrationNotification::THRESHOLD_REACHED then issue_payload("Event threshold reached")
       when IntegrationNotification::ASSIGNMENT_CHANGED then issue_payload("Issue assignment updated")
-      when *IntegrationNotification::MONITOR_KINDS then monitor_payload
+      when *IntegrationNotification::MESSAGE_KINDS then monitor_payload
       else raise ArgumentError, "Unknown notification kind: #{kind.inspect}"
       end
     end
@@ -63,14 +64,17 @@ module Notifiers
     MAX_SUMMARY = 1024
 
     # A Monitor's trigger, or the resolve that closes the incident its
-    # trigger opened, by the same dedup key.
+    # trigger opened, by the same dedup key. A message with no action
+    # changes no incident, so nothing is sent.
     def monitor_payload
+      raise Skipped, "PagerDuty gets no event for this message: the incident stays open." if message.action.nil?
+
       event = { routing_key: routing_key, event_action: message.action, dedup_key: message.dedup_key }
       return event if message.resolve?
 
       fields = message.fields.to_h
       details = { "Summary" => message.text }.merge(fields)
-      details["Logs"] = message.lines if message.lines.any?
+      details["Logs"] = message.listed_lines if message.listed_lines.any?
       event.merge(
         payload: {
           summary: message.title.truncate(MAX_SUMMARY),
@@ -78,7 +82,7 @@ module Notifiers
           severity: severity,
           custom_details: details,
         },
-        links: [ { href: message.link, text: "Open in the Logs explorer" } ]
+        links: [ { href: message.link, text: message.link_text } ]
       )
     end
 

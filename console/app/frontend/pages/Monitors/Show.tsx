@@ -12,7 +12,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { valueText } from '@/lib/charts/axis'
 import { providerName } from '@/lib/integrations'
-import { LANGUAGE_NAMES, changeText, groupLabel, minutesText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
+import { LANGUAGE_NAMES, changeText, groupLabel, holdOf, minutesText, ruleText, runText, type Monitor } from '@/lib/monitors/monitor'
 import { cn } from '@/lib/utils'
 import type { SharedProps } from '@/types'
 import { MonitorStatusBadge } from './components/MonitorStatusBadge'
@@ -32,6 +32,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
   const [deleting, setDeleting] = useState(false)
   const states = monitor.states ?? []
   const runs = monitor.runs ?? []
+  const hold = holdOf(monitor)
   const integrations = monitor.integrations ?? []
   const comparesChange = monitor.kind === 'threshold' && monitor.compare === 'change'
 
@@ -77,6 +78,12 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
         {monitor.last_error && (
           <div role="alert" className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             The last run failed: {monitor.last_error}
+          </div>
+        )}
+        {hold && (
+          <div role="status" className="border bg-muted p-3 text-sm" data-monitor-held>
+            Held since {format(new Date(hold.since), 'p')}: {hold.reason}{' '}
+            <span className="text-muted-foreground">Runs compare nothing and send nothing until the Logs are complete. It runs again each minute.</span>
           </div>
         )}
 
@@ -163,7 +170,7 @@ export default function MonitorsShow({ monitor, has_by_columns }: {
                   {runs.map(r => (
                     <TableRow key={r.id} data-run-status={r.status}>
                       <TableCell className="font-mono text-xs text-muted-foreground">{format(new Date(r.ran_at), 'PPpp')}</TableCell>
-                      <TableCell className={r.status === 'error' ? 'text-destructive' : undefined}>{runText(r, monitor.kind)}</TableCell>
+                      <TableCell className={r.status === 'error' ? 'text-destructive' : r.status === 'held' ? 'text-muted-foreground' : undefined}>{runText(r, monitor.kind)}</TableCell>
                       <TableCell className="text-right font-mono text-xs text-muted-foreground">{r.elapsed_ms === null ? '' : `${r.elapsed_ms} ms`}</TableCell>
                     </TableRow>
                   ))}

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# query-port-switch on|off: a switch between Console and EventStore's query
+# port, for e2e/flows/monitor-status.spec.ts (E2E_QUERY_PORT_SWITCH).
+#
+# Console reaches EventStore at EVENT_STORE_URL. "on" starts a socat proxy
+# on that URL's port, to the stack's query port. "off" stops the proxy and
+# its children, so each call from Console is refused.
+#
+# The query port is QUERY_PORT_TARGET, or QUERY_PORT from the meta file of
+# the verify stack in SOLIDTRACE_VERIFY_RUN. docs/agents/testing.md says how
+# to start a stack that goes through the switch.
+set -euo pipefail
+
+die() { echo "query-port-switch: $*" >&2; exit 1; }
+
+url=${EVENT_STORE_URL:?set EVENT_STORE_URL to the address that Console reaches EventStore at}
+listen=${url##*:}
+listen=${listen%%/*}
+target=${QUERY_PORT_TARGET:-}
+if [[ -z $target && -n ${SOLIDTRACE_VERIFY_RUN:-} && -f $SOLIDTRACE_VERIFY_RUN/meta ]]; then
+  target=$(sed -n 's/^QUERY_PORT=//p' "$SOLIDTRACE_VERIFY_RUN/meta")
+fi
+[[ $target =~ ^[0-9]+$ ]] || die "set QUERY_PORT_TARGET to EventStore's query port"
+[[ $listen =~ ^[0-9]+$ ]] || die "EVENT_STORE_URL has no port: $url"
+[[ $listen != "$target" ]] || die "EVENT_STORE_URL is the query port itself, so there is nothing to switch"
+command -v socat >/dev/null || die "needs socat"
+
+pid_file=${TMPDIR:-/tmp}/solidtrace-query-port-$listen.pid
+listening() { ss -ltn "( sport = :$listen )" | grep -q LISTEN; }
+
+case ${1:-} in
+on)
+  if [[ -f $pid_file ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then exit 0; fi
+  setsid socat "TCP-LISTEN:$listen,bind=127.0.0.1,reuseaddr,fork" "TCP:127.0.0.1:$target" </dev/null >/dev/null 2>&1 &
+  echo $! >"$pid_file"
+  for _ in $(seq 50); do listening && exit 0; sleep 0.1; done
+  die "the proxy does not listen on $listen"
+  ;;
+off)
+  if [[ -f $pid_file ]]; then
+    pid=$(cat "$pid_file")
+    pkill -P "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+    rm -f "$pid_file"
+  fi
+  for _ in $(seq 50); do listening || exit 0; sleep 0.1; done
+  die "port $listen still listens"
+  ;;
+*) echo "usage: query-port-switch on|off" >&2; exit 2 ;;
+esac

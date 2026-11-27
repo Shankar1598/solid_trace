@@ -1,9 +1,15 @@
 # frozen_string_literal: true
 
 # A Notification is one row in the Integration notification outbox: a message
-# of a given +kind+ owed to an Integration, about an Issue or about one group
-# of a Monitor (+group_key+, "" for a Monitor of one group), never both. The
+# of a given +kind+ owed to an Integration. It is about an Issue, or about one
+# group of a Monitor (+group_key+, "" for a Monitor of one group), never both.
+# A Monitor status row (IntegrationNotification::MONITOR_STATUS_KINDS) is
+# about the Organization's Monitors, and has neither. The
 # IntegrationNotification module writes, delivers and closes these rows.
+#
+# A row with an Issue is retried MAX_ATTEMPTS times. A row with no Issue is
+# a Monitor row for delivery, and is retried for MONITOR_RETRY_FOR. A
+# Monitor status row is one of these, with no monitor_id.
 class Notification < ApplicationRecord
   belongs_to :integration
   belongs_to :issue, optional: true
@@ -34,16 +40,20 @@ class Notification < ApplicationRecord
   # Rows a tick still has to deliver: pending, or failed and still retried.
   scope :deliverable, -> {
     where(status: :pending)
-      .or(where(status: :failed, monitor_id: nil, attempts: ...MAX_ATTEMPTS))
-      .or(where(status: :failed, created_at: MONITOR_RETRY_FOR.ago..).where.not(monitor_id: nil))
+      .or(where(status: :failed, attempts: ...MAX_ATTEMPTS).where.not(issue_id: nil))
+      .or(where(status: :failed, issue_id: nil, created_at: MONITOR_RETRY_FOR.ago..))
   }
 
   # Failed rows no longer retried, and refused rows: their outcome is final.
   scope :exhausted, -> {
-    where(status: :failed, monitor_id: nil, attempts: MAX_ATTEMPTS..)
-      .or(where(status: :failed, created_at: ...MONITOR_RETRY_FOR.ago).where.not(monitor_id: nil))
+    where(status: :failed, attempts: MAX_ATTEMPTS..).where.not(issue_id: nil)
+      .or(where(status: :failed, issue_id: nil, created_at: ...MONITOR_RETRY_FOR.ago))
       .or(where(status: :refused))
   }
+
+  # Rows whose outcome is final with nothing sent: skipped, refused, or
+  # exhausted.
+  scope :undelivered, -> { exhausted.or(where(status: :skipped)) }
 
   validate :one_subject
 
@@ -101,7 +111,9 @@ class Notification < ApplicationRecord
   private
 
   def one_subject
-    if issue_id.nil? == monitor_id.nil?
+    if IntegrationNotification::MONITOR_STATUS_KINDS.include?(kind)
+      errors.add(:base, "must be about the Organization's Monitors") unless issue_id.nil? && monitor_id.nil? && group_key.nil?
+    elsif issue_id.nil? == monitor_id.nil?
       errors.add(:base, "must be about either an Issue or a Monitor")
     elsif monitor_id && group_key.nil?
       errors.add(:group_key, "must be set for a Monitor")

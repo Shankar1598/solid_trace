@@ -5,6 +5,9 @@ import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/componen
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type { IntegrationOption } from '@/lib/monitors/monitor'
+import { monitorStatusItems, monitorStatusParam, NO_MONITOR_STATUS } from '@/lib/monitors/monitorStatus'
 import { Organization } from '@/types'
 import { toast } from 'sonner'
 
@@ -19,12 +22,22 @@ interface RequireTwoFactor {
   members_without_two_factor: number
 }
 
+// The Monitor status Integration (OrganizationSettingsController): the one
+// chosen, or null, and those that can be chosen. The Factory provider is not
+// one. after_minutes: how long a Monitor is not running before it is told.
+interface MonitorStatusSetting {
+  integration_id: number | null
+  options: IntegrationOption[]
+  after_minutes: number
+}
+
 interface SettingsOrganizationProps {
   organization: Organization
   require_two_factor: RequireTwoFactor
+  monitor_status: MonitorStatusSetting
 }
 
-export default function SettingsOrganization({ organization, require_two_factor }: SettingsOrganizationProps) {
+export default function SettingsOrganization({ organization, require_two_factor, monitor_status }: SettingsOrganizationProps) {
   const { data, setData, put, processing, errors, transform } = useForm({
     name: organization.name,
     slug: organization.slug
@@ -87,8 +100,51 @@ export default function SettingsOrganization({ organization, require_two_factor 
           </CardFooter>
         </form>
       </Card>
+      <MonitorStatusCard organization={organization} setting={monitor_status} />
       <RequireTwoFactorCard organization={organization} requirement={require_two_factor} />
     </SettingsLayout>
+  )
+}
+
+function MonitorStatusCard({ organization, setting }: { organization: Organization; setting: MonitorStatusSetting }) {
+  const items = monitorStatusItems(setting.options)
+  const value = setting.integration_id === null ? NO_MONITOR_STATUS : String(setting.integration_id)
+
+  const change = (next: string | null) => {
+    router.put(`/${organization.slug}/settings/organization`, { organization: { monitor_status_integration_id: monitorStatusParam(next) } }, {
+      preserveScroll: true,
+      onError: () => toast.error('Failed to change the Monitor status Integration'),
+    })
+  }
+
+  return (
+    <Card className="mt-6" role="region" aria-label="Monitor status">
+      <CardHeader>
+        <CardTitle>Monitor status</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2 pb-6 text-sm">
+        <p>
+          The Integration that is told when Monitors do not run for {setting.after_minutes} minutes, and when they run again.
+          Each Monitor’s own Integrations are not told.
+        </p>
+        <div className="max-w-sm space-y-2">
+          <Label htmlFor="monitorStatusIntegration">Integration</Label>
+          <Select value={value} onValueChange={change} items={items}>
+            <SelectTrigger id="monitorStatusIntegration" data-monitor-status-integration>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {items.map(item => (
+                <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <p className="text-muted-foreground">
+          Slack, PagerDuty and email Integrations only. With None, the Monitors list still shows each Monitor that is not running.
+        </p>
+      </CardContent>
+    </Card>
   )
 }
 

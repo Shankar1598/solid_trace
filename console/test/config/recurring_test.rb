@@ -1,13 +1,14 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "fugit"
 
 # Solid Queue reads config/recurring.yml as Solid Queue's supervisor does:
 # when the file has a block for the environment it takes only that block,
 # so every task must be listed under each environment that runs it.
 class RecurringTest < ActiveSupport::TestCase
   FILE = Rails.root.join("config/recurring.yml")
-  TASKS = %i[event_store_message_processor monitor_scheduler maintenance_notification_cleanup].freeze
+  TASKS = %i[event_store_message_processor monitor_scheduler monitor_status maintenance_notification_cleanup].freeze
 
   test "development and production both run every task, each on a schedule" do
     %w[development production].each do |env|
@@ -16,6 +17,16 @@ class RecurringTest < ActiveSupport::TestCase
         assert tasks.dig(task, :schedule).present?, "#{task} has no schedule in #{env}"
       end
     end
+  end
+
+  test "the Monitor status job runs each minute, half a minute after the Monitor scheduler" do
+    task = tasks_for("production").fetch(:monitor_status)
+    cron = Fugit.parse(task[:schedule])
+
+    # Solid Queue takes a schedule that Fugit parses as a cron.
+    assert_instance_of Fugit::Cron, cron
+    tick = Time.utc(2026, 10, 17, 12, 0, 0)
+    assert_equal [ tick + 30.seconds, tick + 90.seconds ], [ cron.next_time(tick).to_t.utc, cron.next_time(tick + 31.seconds).to_t.utc ]
   end
 
   test "only production clears finished Solid Queue jobs" do

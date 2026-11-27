@@ -24,6 +24,13 @@ Some Monitors need a join, a subquery, a window, or a read of `events` or `spans
 - **The run counts the rows itself.** The SQL users' row limit is 100,000, so more than 10,000 rows is the same table cut as for a Query.
 - **The instance setting for SQL queries stays the one control.** While it is off, saving a Threshold monitor with SQL is refused, and each run of a saved one fails with the reason.
 
+## Amended: Monitor status rows (2026-11-26)
+
+An Organization can choose a Monitor status Integration (GLOSSARY). Every minute, `MonitorStatusJob` tells it which Monitors do not run. It also tells it which Monitors run again. These rows have two kinds, `monitors_not_running` and `monitors_running_again`. They are about the Organization's Monitors. So they have no `issue_id`, no `monitor_id` and no `group_key`. The check constraint allows that for these two kinds only.
+
+- **They are delivered as Monitor rows.** A row with an `issue_id` is an Issue row. A row with no `issue_id` is delivered as a Monitor row, and is retried for 6 hours. A status row has no `monitor_id` too. The status rows of one Integration are one chain, oldest first. The chain stops at its first failure, as the chain of a Monitor group does.
+- **Each Monitor keeps the Integration that was told.** `not_running_told_integration_id` names it. It changes in the same transaction as the row that tells. So a job that stops and runs again writes each message one time. The tick is scheduled after the commit, as for a run. A changed setting, or a "not running" row that was never delivered, clears the mark with no message. Then the next job tells the Monitor status Integration again.
+
 ## Considered options
 
 - **EventStore evaluates Monitors itself:** a Go scheduler beside the data, reading Monitors from Console's database as Event processing writes Issues. It would need Console's Monitor and Integration tables, message formats and outbox in Go, a second notifier for Slack, PagerDuty and email, and a second rate limit per Integration.
@@ -34,7 +41,7 @@ Some Monitors need a join, a subquery, a window, or a read of `events` or `spans
 ## Consequences
 
 - **Each run is a query over HTTP.** It has a 30-second timeout, set by Console and enforced by EventStore. A Threshold run reads its whole range every time; nothing is aggregated as Logs arrive. The runs take Console's Solid Queue workers, and Run now takes a Puma thread for up to 30 seconds.
-- **Runs see processed Logs only.** The 60-second lag covers normal Log processing. During a longer processing backlog a count reads low, and alert on no data can fire while Logs are still arriving.
+- **Runs see processed Logs only.** The 60-second lag covers normal Log processing. During a longer processing backlog a count reads low, and alert on no data can fire while Logs are still arriving. Since [ADR 0027](0027-threshold-monitors-hold-while-their-logs-are-not-complete.md), a Threshold run is held during such a backlog and after an ingest gap. A held run compares nothing.
 - **Match monitors need batch ids in EventStore's storage.** The `batch` column is in ClickHouse's `logs` table ([ADR 0016](0016-logs-and-events-in-clickhouse.md)), and each Log file written before the switch has its `batch_max` (once the hot tables, `logs_late` and the manifest of [ADR 0007](0007-log-files-listed-in-a-manifest.md)). After 3 timeouts in a row a Match monitor starts again from the newest batch and says it skipped Logs.
 - **One run at a time per Monitor.** Run now runs in the request, outside the job queue, so the lock is a lease on the Monitor row (`run_started_at`), taken with one conditional UPDATE, that both paths take. A run whose Monitor was saved while it ran writes nothing it found, because the change may have resolved the Monitor's groups.
 - **De-duplication comes from state changes.** Only a group's move between ok and firing writes rows, so a group that stays firing sends nothing more. Turning a Monitor off, deleting it or changing it to a Match monitor resolves its firing groups.

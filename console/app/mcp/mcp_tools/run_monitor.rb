@@ -14,8 +14,9 @@ module McpTools
 
     description "Runs a Monitor now, as its schedule would, and says what the run found: how many groups are firing, or how " \
                 "many Logs matched, and comparing the change, each group's number, Baseline and change. Like a scheduled run, " \
-                "it tells the Monitor's Integrations what changed. get_monitor shows the run. With preview true, it saves " \
-                "nothing and tells no Integration: it reads what a threshold Monitor's run now would and gives each group's " \
+                "it tells the Monitor's Integrations what changed, or it is held while the Project's Logs are not complete, " \
+                "and says why. get_monitor shows the run. With preview true, it saves nothing, tells no Integration and is " \
+                "never held: it reads what a threshold Monitor's run now would and gives each group's " \
                 "number, Baseline and change, and whether it would fire, before you save it. Give project and the fields " \
                 "create_monitor would take for a new Monitor, or monitor and the fields to change for a saved one."
     writes!(open_world: true)
@@ -42,6 +43,7 @@ module McpTools
       ran = MonitorEvaluation.run(monitor, Time.current)
       raise ToolError, "The Monitor is running now: get_monitor shows that run when it ends." if ran.nil?
       raise ToolError, "The run failed: #{ran.error}" if ran.status_error?
+      return text(ran.held_notice, link: links.monitor(monitor)) if ran.status_held?
 
       text([ "Ran the Monitor: #{ran.found}.", *changes ].join("\n"), link: links.monitor(monitor))
     end

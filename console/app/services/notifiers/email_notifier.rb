@@ -4,7 +4,8 @@ module Notifiers
   class EmailNotifier
     # +kind+ is the Notification kind and selects the mail. A batched kind
     # lists every Issue in +issues+; the others describe +issues.first+. A
-    # Monitor kind sends +message+, a Notifiers::Message.
+    # kind of IntegrationNotification::MESSAGE_KINDS sends +message+, a
+    # Notifiers::Message.
     def initialize(integration, kind:, issues: [], message: nil, previous_assignee_name: nil, new_assignee_name: nil)
       @integration = integration
       @kind = kind
@@ -38,7 +39,7 @@ module Notifiers
           previous_assignee_name: @previous_assignee_name,
           new_assignee_name: @new_assignee_name
         )
-      when *IntegrationNotification::MONITOR_KINDS
+      when *IntegrationNotification::MESSAGE_KINDS
         MonitorMailer.notify(@message.to_h, recipients)
       else
         raise ArgumentError, "Unknown notification kind: #{@kind.inspect}"

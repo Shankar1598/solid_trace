@@ -137,6 +137,8 @@ A scheduler checks every minute and runs each Monitor that is on and due. A Moni
 
 When EventStore is down, times out or refuses the Query, the run is an error: it changes no state, sends nothing, and the Monitor runs again at the next tick. A firing Monitor whose last run failed still shows as Firing, with the failure beside it.
 
+**A Threshold run is held while the Project's Logs are not complete.** This is so while Log processing is more than a minute behind. It is also so for some minutes after EventStore was down, while the senders send the Logs that they kept. That hold is as long as ingest was down, at least 1 minute and at most 10. A held run compares nothing, changes no state and sends nothing. The Monitor runs again at the next tick. So a restart does not fire **alert on no data** or a "too few" threshold on Logs that are still on their way. The run history shows each held run with its reason, such as "Waiting for Log processing: it is 5 minutes behind". While its runs are held, the Monitor's page says "Held since" and the time. A Monitor with no firing group shows as Held. A firing Monitor stays Firing. Turning a Monitor off or on clears "Held since", and its next held run sets it again. A hold never compares on part of the Logs, however long it lasts. A Match monitor is never held. It reads each Log in the first run after Log ingest stores the Log's batch. The form's preview is never held either.
+
 A Monitor's page shows each group's state and its last 100 runs.
 
 **Turning a Monitor off** stops its runs. **Deleting** it removes it and its runs. Either one resolves each firing group, so a PagerDuty incident it opened is closed. Changing a Threshold monitor into a Match monitor does the same, and so does switching it between comparing the value and the change, since its groups' firing meant something else; the resolve says why, and comparing the change, it gives each group's change at its last run, with links to the ranges that run read unless the Monitor was saved after it. Changing the direction, threshold, Baseline, minimum or range resolves nothing: the next run decides. Turned back on, a group still past the threshold fires again.
@@ -170,8 +172,29 @@ Events go to PagerDuty's Events API v2, `https://events.pagerduty.com/v2/enqueue
 
 An email to the Integration's recipients, with the subject "[SolidTrace] " and the message's title, and the same text, fields and link.
 
+### When Monitors do not run
+
+A Monitor is **not running** from its first failed run, or from the start of a hold that lasts 10 minutes. A shorter hold does not make it not running. A run that compares makes it run again. The Monitors list shows "Not running since" and the time beside each Monitor that is on and not running.
+
+An Organization can choose one **Monitor status Integration** in Settings → Organization → Monitor status: a Slack, PagerDuty or email Integration, or None. The Factory provider is not in the list, as a message about Monitors that do not run must not start a Run. Deleting the chosen Integration sets the setting to None. Each Monitor's own Integrations get none of these messages.
+
+Every minute, Console checks the Monitors of each Organization that has a Monitor status Integration:
+
+- The Monitors that are on, are not running for 2 minutes or more, and were not told to this Integration go into one "not running" message. Each Monitor has its name, Project, since when, why (the last run's error, or why its runs are held) and a link. When every Monitor that is on stops, as in a restart, the message says "All 30 Monitors are not running" and gives the first error one time.
+- The Monitors that were told and now run again, or were turned off, go into one "running again" message. It says how many are still not running.
+
+The check is at second 30 of each minute, half a minute after the Monitors' runs start. So the Monitors that stop at one tick go into one message. During a restart that takes some minutes, the team gets one message about 2 and a half minutes after the first failed run, and one about half a minute after the runs compare again. These messages go through the same outbox, with the same rate limit and retries. "Running again" never goes before the "not running" that it follows.
+
+- **Turned off and on.** A told Monitor that is turned off goes into the next "running again" as turned off. A told Monitor that is turned on again before that check stays not running until a run compares.
+- **Deleted.** A deleted Monitor leaves the set with no message. When the last told Monitor is deleted, a "running again" says that it was deleted.
+- **A changed setting.** When another Integration is chosen, it gets a "not running" for the Monitors that still do not run. The Integration chosen before gets no more messages. With None, Console forgets which Monitors were told.
+- **A message that was not delivered.** When a "not running" message is skipped, refused, or fails for 6 hours, its Monitors were not told. So a new "not running" goes while they still do not run. A "running again" about only such Monitors is skipped, as the team was never told that they stopped.
+- **PagerDuty.** Both kinds use the dedup key `solid-trace-monitors-not-running-<Organization id>`. A "running again" resolves the incident when no told Monitor is still not running. While some are, it sends no event, and the row is skipped.
+- **Slack.** A message lists as many whole Monitor lines as fit, then "and N more". Mail and PagerDuty list at most 100 Monitors.
+
 ## Known limits
 
-- **No data during a processing backlog.** A run reads Logs once Log processing has handled them. When processing falls more than a minute behind, the newest Logs aren't readable yet, so a count looks low and **alert on no data** can fire while Logs are still arriving. It resolves once processing catches up.
+- **No message during a hold.** A held run sends nothing, also when the Logs it waits for would make it fire. A problem that starts during a hold is sent once the Logs are complete.
+- **SQL Monitors hold on the Logs only.** A SQL Monitor that reads `events` or `spans` does not wait for Event processing or Span processing.
 - **A turned-off Integration hears nothing.** Turning an Integration off stops every message to it, resolves too, so a PagerDuty incident a Monitor opened stays open: resolve it in PagerDuty. An Integration ticked while a group is firing gets no firing message for it, only the resolve.
 - **A Match link may miss a Log sent late.** The link in a Match message starts a minute before the run's starting point, or at the oldest Log it lists if that is older. A Log stored late, with a time older than that and not among the 10 listed, falls outside the link, though the message counts it.

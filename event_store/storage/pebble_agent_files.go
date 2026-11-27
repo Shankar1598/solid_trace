@@ -559,27 +559,6 @@ func (w *PebbleWriter) SetAgentFileCursor(projectID uint32, cursor uuid.UUID) er
 	return w.db.Set(agentFileCursorKey(projectID), cursor[:], pebble.NoSync)
 }
 
-// KeepBatchIDsAboveAgentFileCursors makes every batch id written from now
-// on come after every Project's Agent file processing cursor.
-func (w *PebbleWriter) KeepBatchIDsAboveAgentFileCursors() error {
-	iter, err := w.db.NewIter(&pebble.IterOptions{
-		LowerBound: append(eventKeyPrefix(0), "agentcursor/"...),
-		UpperBound: append(eventKeyPrefix(0), "agentcursor0"...),
-	})
-	if err != nil {
-		return err
-	}
-	defer iter.Close()
-	for valid := iter.First(); valid; valid = iter.Next() {
-		cursor, err := uuid.FromBytes(iter.Value())
-		if err != nil {
-			return fmt.Errorf("agent file processing cursor %x: %w", iter.Key(), err)
-		}
-		w.KeepLogBatchIDsAbove(cursor)
-	}
-	return iter.Error()
-}
-
 // RecordAgentFileInsert records, synced, the last batch of the range Agent
 // file processing is about to insert, as RecordLogInsert.
 func (w *PebbleWriter) RecordAgentFileInsert(projectID uint32, upTo uuid.UUID) error {

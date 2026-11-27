@@ -34,6 +34,9 @@ type PebbleWriter struct {
 	// agentMu serialises the check and the write of each Agent file unit
 	// (WriteAgentFileUnit).
 	agentMu sync.Mutex
+	// seen keeps when each Project's oldest waiting Log batch was first read
+	// (WaitingLogBatch).
+	seen waitingSeen
 }
 
 func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
@@ -111,9 +114,9 @@ func NewPebbleWriter(cfg *config.Config) (*PebbleWriter, error) {
 	}
 
 	w := &PebbleWriter{db: db}
-	if err := w.seedLogBatchFloor(); err != nil {
+	if err := w.keepBatchIDsAboveBatchesAndCursors(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("read newest log batches: %w", err)
+		return nil, fmt.Errorf("read newest batches and Processing cursors: %w", err)
 	}
 	return w, nil
 }

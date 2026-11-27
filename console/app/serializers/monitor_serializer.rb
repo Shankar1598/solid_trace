@@ -2,7 +2,10 @@
 
 # A Monitor as its pages know it. status is what the list shows first:
 # disabled when it is off, firing when any group is firing (its pages note
-# last_error beside it), error when its last run failed, and ok otherwise.
+# last_error or held_since beside it), held while its runs are held, error
+# when its last run failed, and ok otherwise.
+# not_running_since is when it stopped running: its runs failed, or were
+# held for LogMonitor::HOLD_MEANS_NOT_RUNNING_AFTER.
 # A failed run changes no state, so the groups it left firing still are. include_details adds each group's state,
 # the runs it keeps and its Integrations, for its own page.
 class MonitorSerializer
@@ -36,6 +39,8 @@ class MonitorSerializer
       firing_count: firing,
       last_run_at: @monitor.last_run_at&.iso8601,
       last_error: @monitor.last_error,
+      held_since: @monitor.held_since&.iso8601,
+      not_running_since: @monitor.not_running_since&.iso8601,
       logs_skipped_at: @monitor.logs_skipped_at&.iso8601,
       created_at: @monitor.created_at.iso8601,
       updated_at: @monitor.updated_at.iso8601,
@@ -53,6 +58,7 @@ class MonitorSerializer
   def status(firing)
     if !@monitor.enabled? then "disabled"
     elsif firing.positive? then "firing"
+    elsif @monitor.held_since then "held"
     elsif @monitor.last_error.present? then "error"
     else "ok"
     end
@@ -66,7 +72,8 @@ class MonitorSerializer
       end,
       runs: @monitor.runs.limit(MonitorRun::KEEP).map do |run|
         {
-          id: run.id, ran_at: run.ran_at.iso8601, status: run.status, error: run.error, firing: run.firing,
+          id: run.id, ran_at: run.ran_at.iso8601, status: run.status, error: run.error, held_reason: run.held_reason,
+          firing: run.firing,
           matched: run.matched, logs_skipped: run.logs_skipped, elapsed_ms: run.elapsed_ms,
         }
       end,

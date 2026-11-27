@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/solidtrace/event_store/config"
 	"github.com/solidtrace/event_store/handler"
 	"github.com/solidtrace/event_store/ingest"
+	"github.com/solidtrace/event_store/ingestgap"
 	"github.com/solidtrace/event_store/logprocessing"
 	"github.com/solidtrace/event_store/logtransform"
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -29,7 +31,18 @@ func main() {
 	for _, warning := range cfg.Warnings {
 		logger.L.Warn(warning)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	run(ctx, cfg)
+}
 
+// run serves EventStore on cfg until ctx is done, and then shuts it down.
+//
+// It opens the stores on local disk and the ingest port first, and runs the
+// steps that need ClickHouse in the background (clickHouseStart). Ingest
+// writes only into Pebble, so a ClickHouse that is slow to start, as after a
+// restart of the machine, does not stop it.
+func run(ctx context.Context, cfg *config.Config) {
 	// Initialize storage
 	pebbleWriter, err := storage.NewPebbleWriter(cfg)
 	if err != nil {
@@ -40,29 +53,13 @@ func main() {
 	// Event processing stores Events' rows in ClickHouse, and Event reads
 	// read them there. Log processing inserts Logs into it, and Log rows,
 	// single Logs, Match monitors and Fields read them there.
-	clickHouse, err := storage.OpenClickHouse(cfg.ClickHouse, cfg.ObjectStore)
+	clickHouse, err := storage.NewClickHouse(cfg.ClickHouse, cfg.ObjectStore)
 	if err != nil {
 		logger.L.Fatal("Failed to open ClickHouse", "error", err)
 	}
 	defer clickHouse.Close()
 	clickHouseLogs := storage.NewClickHouseLogs(clickHouse, pebbleWriter)
 	clickHouseLogs.UseBinCache(cfg.LogsBinCacheBytes)
-
-	// The Logs from before the switch, in the DuckDB release's Log files,
-	// are read in place. This loads what prepare-clickhouse wrote, and stops
-	// the start on DuckDB data it didn't prepare. It runs before Log
-	// processing, which reads the Processing cursors it loads.
-	if err := clickHouseLogs.UseOldLogFiles(storage.OldLogFiles{
-		LogsDuckDB: cfg.LogsDuckDBPath,
-		// Compose mounts logs_parquet_path at ClickHouse's user_files_path,
-		// where deploy/install finds it, and bin/clickhouse-dev the
-		// development store, so ClickHouseDir is "": file() reads each file
-		// by its path in the store.
-		LocalDir: cfg.LogsParquetPath,
-		Bucket:   cfg.ObjectStore,
-	}); err != nil {
-		logger.L.Fatal("Failed to ready the Logs from before the switch to ClickHouse", "error", err)
-	}
 
 	sqliteWriter, err := storage.NewSQLiteWriter(cfg.SQLitePath)
 	if err != nil {
@@ -95,62 +92,19 @@ func main() {
 	}
 	defer consoleSettings.Close()
 
-	// With a bucket, the day tables' parts move there once as old as
-	// Settings → Instance says, read now and every minute.
-	localCache := storage.FollowLocalCacheHours(clickHouse, consoleSettings, storage.LocalCacheHoursInterval)
-
-	// Prepare must run before the worker starts. The Event cleanup never
-	// runs inside a batch: they share batchLock.
+	// The Event cleanup never runs inside a batch: they share batchLock.
 	var batchLock sync.Mutex
 	processor := processing.New(pebbleWriter, clickHouse, messageQueueWriter, sqliteWriter, &batchLock)
-	if err := processor.Prepare(); err != nil {
-		logger.L.Fatal("Failed to prepare Event processing", "error", err)
-	}
-	processor.Start()
-
 	// Deletes a deleted Project's Events, holding batchLock while it does.
 	eventCleanup := processing.NewCleanup(pebbleWriter, clickHouse, sqliteWriter, consoleSettings, &batchLock, clock.System{})
-	eventCleanup.Start()
-
 	logTransforms := logtransform.New(consoleSettings, clock.System{})
 	logProcessor := logprocessing.New(pebbleWriter, clickHouseLogs, logTransforms, clock.System{})
-	if err := logProcessor.Prepare(); err != nil {
-		logger.L.Fatal("Failed to prepare Log processing", "error", err)
-	}
-	logProcessor.Start()
-
 	spanProcessor := spanprocessing.New(pebbleWriter, clickHouse)
-	if err := spanProcessor.Prepare(); err != nil {
-		logger.L.Fatal("Failed to prepare Span processing", "error", err)
-	}
-	spanProcessor.Start()
-
 	// The parse makes each line that Agent file processing stores into a
 	// Log of the Agent Project, with no Log transform.
 	agentParser := agentprocessing.NewParser(pebbleWriter, clickHouseLogs, consoleSettings)
 	agentFileProcessor := agentprocessing.New(pebbleWriter, clickHouse, agentParser.Notify)
-	if err := agentFileProcessor.Prepare(); err != nil {
-		logger.L.Fatal("Failed to prepare Agent file processing", "error", err)
-	}
-	if err := agentParser.Prepare(); err != nil {
-		logger.L.Fatal("Failed to prepare the parse of Agent sessions", "error", err)
-	}
-	agentFileProcessor.Start()
-	agentParser.Start()
-
-	diskLimit, err := clickHouseLogs.DiskLimit(cfg.LogsDiskLimitBytes)
-	if err != nil {
-		logger.L.Fatal("Failed to work out the Log disk limit", "error", err)
-	}
-	logger.L.Info("Log disk limit", "bytes", diskLimit.Bytes)
 	sqlQueries := storage.NewClickHouseSQL(clickHouse, storage.DefaultSQLLimits())
-	logCleanup := logprocessing.NewCleanup(clickHouseLogs, sqlQueries, diskLimit, clock.System{},
-		&logprocessing.Evidence{Files: evidenceFiles, Retention: consoleSettings.EvidenceRetention},
-		logprocessing.Family{Days: storage.LogDays, Retention: consoleSettings.ProjectLogRetention},
-		logprocessing.Family{Days: storage.SpanDays, Retention: consoleSettings.ProjectTraceRetention},
-		// The Agent Project's Log Retention, which its derived Logs keep too.
-		logprocessing.Family{Days: storage.AgentDays, Retention: consoleSettings.ProjectLogRetention})
-	logCleanup.Start()
 
 	// CPU profiles are written only when the file names their directory.
 	var profiler *cpuprofile.Profiler
@@ -174,17 +128,9 @@ func main() {
 		MaxWaiting:   cfg.IngestMaxWaiting,
 		IngestCounts: clickHouseLogs,
 	})
-	ingestService.StartFlushingIngestCounts()
 	ingestHandler := handler.NewIngestHandler(projectAuth, ingestService)
-	eventsHandler := handler.NewEventsHandler(pebbleWriter, clickHouse)
-	logsHandler := handler.NewLogsHandler(clickHouseLogs, sqlQueries, consoleSettings, clock.System{})
-	logsHandler.HeavyReads = handler.NewHeavyReads(cfg.LogsHeavyReadSlots)
-	transformHandler := handler.NewLogTransformHandler(logTransforms)
-	overviewHandler := handler.NewOverviewHandler(handler.OverviewConfig{
-		Logs: clickHouseLogs, Clock: clock.System{}, DiskLimit: diskLimit, Retention: consoleSettings,
-		LocalCacheHours: clickHouse.LocalCacheHours,
-	})
-	healthHandler := handler.NewHealthHandler(pebbleWriter, clickHouse)
+	start := newClickHouseStart(clickHouse)
+	healthHandler := handler.NewHealthHandler(pebbleWriter, start)
 
 	// Setup Fiber: public ingest and loopback-only query API on separate listeners
 	app := handler.NewIngestApp(ingestHandler, healthHandler, handler.IngestOptions{
@@ -203,18 +149,12 @@ func main() {
 		ConsoleURL: os.Getenv("CONSOLE_URL"), Clock: clock.System{}, Version: serverVersion(),
 	}))
 
+	// The query routes are served once the ClickHouse start has passed.
 	queryApp := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
-	handler.RegisterQueryRoutes(queryApp, eventsHandler, logsHandler, transformHandler, overviewHandler, handler.NewTracesHandler(clickHouse), healthHandler, handler.NewConfigHandler(cfg, diskLimit.Bytes))
-	handler.RegisterPerformanceRoutes(queryApp, handler.NewPerformanceHandler(clickHouse))
-	handler.RegisterRedactionRoutes(queryApp)
-	handler.RegisterAgentQueryRoutes(queryApp, handler.NewAgentSessionsHandler(clickHouseLogs))
-	handler.RegisterReviewRecordRoutes(queryApp, handler.NewReviewRecordsHandler(clickHouseLogs))
-	handler.RegisterRunsQueryRoutes(queryApp, handler.NewRunsHandler(clickHouseLogs, clock.System{}))
-	handler.RegisterAgentEvidenceRoute(queryApp, handler.NewAgentEvidenceHandler(clickHouse))
-	handler.RegisterEvidenceQueryRoutes(queryApp, handler.NewEvidenceFilesHandler(evidenceFiles))
-	handler.RegisterRetentionRoute(queryApp, logCleanup)
+	queryApp.Get("/health", healthHandler.Health)
+	queryApp.Use(start.serveQueries)
 
 	// The query API has no authentication, so it is only reachable from this machine.
 	queryAddr := "127.0.0.1:" + cfg.QueryPort
@@ -225,6 +165,12 @@ func main() {
 		}
 	}()
 
+	// The ingest gap is measured as the ingest port opens, before the
+	// ClickHouse start, so the time that ClickHouse takes is not in it.
+	ingestGap, stopIngestBeats, err := ingestgap.Open(pebbleWriter, clock.System{})
+	if err != nil {
+		logger.L.Warn("Reading the last ingest heartbeat failed: this start holds no Monitor for an ingest gap", "error", err)
+	}
 	go func() {
 		logger.L.Info("Starting ingest server", "port", cfg.Port)
 		if err := app.Listen(":" + cfg.Port); err != nil {
@@ -232,22 +178,37 @@ func main() {
 		}
 	}()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
+	work := &clickHouseWork{
+		cfg: cfg, pebble: pebbleWriter, clickHouse: clickHouse, logs: clickHouseLogs, sqlQueries: sqlQueries,
+		settings: consoleSettings, evidenceFiles: evidenceFiles, logTransforms: logTransforms,
+		ingest: ingestService, health: healthHandler, ingestGap: ingestGap,
+		eventProcessor: processor, eventCleanup: eventCleanup, logProcessor: logProcessor,
+		spanProcessor: spanProcessor, agentFileProcessor: agentFileProcessor, agentParser: agentParser,
+	}
+	go start.run(ctx, work.steps(ctx, start))
+
+	<-ctx.Done()
 	logger.L.Info("Shutting down...")
 
 	// Concurrent, so the whole shutdown fits Docker's 10 s stop grace period.
 	var queryErr, ingestErr error
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); queryErr = queryApp.ShutdownWithTimeout(5 * time.Second) }()
-	go func() { defer wg.Done(); ingestErr = app.ShutdownWithTimeout(5 * time.Second) }()
+	go func() {
+		defer wg.Done()
+		ingestErr = app.ShutdownWithTimeout(5 * time.Second)
+		// Ingest takes no more requests: the last ingest heartbeat, so the
+		// next start measures its gap from now, not from the end of the
+		// shutdown.
+		stopIngestBeats()
+	}()
+	go func() { defer wg.Done(); start.stop(5 * time.Second) }()
 	wg.Wait()
 	if queryErr != nil || ingestErr != nil {
 		logger.L.Error("HTTP shutdown timed out", "query_error", queryErr, "ingest_error", ingestErr)
 	}
-	// Ingest takes no more requests: the last seconds' counts are written.
+	// The last seconds' ingest counts are written.
 	ingestService.StopFlushingIngestCounts()
 
 	// Every later write returns ErrShuttingDown, so nothing reaches Pebble
@@ -255,14 +216,9 @@ func main() {
 	pebbleWriter.StopWrites()
 
 	// Then the stores close through the defers above.
-	processor.Stop()
-	logProcessor.Stop()
-	spanProcessor.Stop()
-	agentFileProcessor.Stop()
-	agentParser.Stop()
-	logCleanup.Stop()
-	localCache.Stop()
-	eventCleanup.Stop()
+	for _, stop := range start.workerStops() {
+		stop()
+	}
 	if profiler != nil {
 		profiler.Stop()
 	}

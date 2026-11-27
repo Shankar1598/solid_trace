@@ -37,6 +37,22 @@
 # run records the error as last_error, changes no state, and the next tick
 # runs the Monitor again.
 #
+# A Threshold run is held while the Project's Logs are not complete (ADR
+# 0027). Each of its reads sends hold_if_incomplete. EventStore can answer
+# that Log processing is behind, or that it holds after an ingest gap. Then
+# the run compares nothing. It records a held run with the reason. It
+# changes no state and sends nothing. The next tick runs the Monitor again,
+# as after an error. held_since is when the Monitor's runs started to be
+# held. Any run that is not held clears it. A hold never compares on
+# partial data, however long it lasts. A Match run never holds. It reads
+# each Log in the first run after Log ingest stores the Log's batch.
+#
+# not_running_since is when the Monitor stopped running. The first failed
+# run sets it. A hold sets it to held_since once the hold is
+# LogMonitor::HOLD_MEANS_NOT_RUNNING_AFTER old, and a shorter hold keeps it
+# as it is. A run that compares clears it. MonitorStatusJob tells the
+# Organization's Monitor status Integration about it.
+#
 # One run at a time per Monitor, whether the scheduler (MonitorEvaluationJob)
 # or Run now started it: a run takes the Monitor's run_started_at as a lease
 # and lets go when it ends, and a run that finds the lease taken does nothing.
@@ -92,8 +108,9 @@ class MonitorEvaluation
   # compare and for SQL while SQL queries are off (SQL_OFF), and EventStore's
   # errors. A SQL Monitor's preview reads as its run does, so comparing the
   # change, it too reads two times, at most 10 s each.
+  # The preview is not held. A member sees what the Logs give now.
   def self.preview(monitor, now)
-    new(monitor, now).preview
+    new(monitor, now, hold_if_incomplete: false).preview
   end
 
   def preview
@@ -125,9 +142,10 @@ class MonitorEvaluation
   end
   private_class_method :take
 
-  def initialize(monitor, now)
+  def initialize(monitor, now, hold_if_incomplete: true)
     @monitor = monitor
     @now = now
+    @hold_if_incomplete = hold_if_incomplete
     # Which version of the Monitor the run reads: any save changes it.
     @version = monitor.updated_at
     @started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -155,6 +173,8 @@ class MonitorEvaluation
         baseline_range: found.baseline_range)
       finish(firing: firing)
     end
+  rescue EventStore::Incomplete => e
+    held(e)
   rescue EventStore::TimedOut => e
     failed(EventStore.error_text(e.body))
   rescue Unusable => e
@@ -194,7 +214,8 @@ class MonitorEvaluation
     return sql_table_over(from, to, timeout) if @monitor.language_sql?
 
     answer = EventStore.query_logs(
-      project_id: @monitor.project_id, query: @monitor.query, from: from, to: to, timeout_seconds: timeout
+      project_id: @monitor.project_id, query: @monitor.query, from: from, to: to, timeout_seconds: timeout,
+      hold_if_incomplete: @hold_if_incomplete
     )
     table = answer["table"]
     raise Unusable, "The Query returns Logs, not a table: end it in a summarize of one number." unless table
@@ -206,7 +227,7 @@ class MonitorEvaluation
   def sql_table_over(from, to, timeout)
     answer = EventStore.run_logs_sql(
       project_id: @monitor.project_id, sql: @monitor.query, from: from, to: to,
-      timeout_seconds: [ timeout, LogMonitor::SQL_READ_TIMEOUT_SECONDS ].min
+      timeout_seconds: [ timeout, LogMonitor::SQL_READ_TIMEOUT_SECONDS ].min, hold_if_incomplete: @hold_if_incomplete
     )
     table = answer["table"] || {}
     raise Unusable, SQL_TABLE_CUT if table["truncated"] || Array(table["rows"]).size > MAX_GROUPS
@@ -434,6 +455,10 @@ class MonitorEvaluation
     record { finish(error: error) }
   end
 
+  def held(incomplete)
+    record { finish(held_reason: incomplete.text(@now)) }
+  end
+
   # Writes what the run found in one transaction, if the Monitor is still
   # the version the run read. SQLite transactions here begin IMMEDIATE, so
   # no save of the Monitor lands between the check and the writes. A
@@ -456,15 +481,30 @@ class MonitorEvaluation
     run
   end
 
-  # Records the run. An ok run is next due after the Monitor's interval; one
-  # with an error at the next tick.
-  def finish(error: nil, firing: nil, matched: nil, logs_skipped: false)
-    next_run_in = error ? 1.minute : @monitor.interval_minutes.minutes
-    @monitor.update_columns(last_run_at: @now, last_error: error, next_run_at: @now + next_run_in)
+  # Records the run. An ok run is next due after the Monitor's interval. A
+  # run with an error, or a held run with its reason, is due at the next
+  # tick.
+  def finish(error: nil, held_reason: nil, firing: nil, matched: nil, logs_skipped: false)
+    status = if error then "error" elsif held_reason then "held" else "ok" end
+    next_run_in = status == "ok" ? @monitor.interval_minutes.minutes : 1.minute
+    held_since = held_reason ? (@monitor.held_since || @now) : nil
+    columns = { last_run_at: @now, last_error: error, next_run_at: @now + next_run_in, held_since: held_since }
+    # The save during the run set not_running_since as it should be, and
+    # this run read the Monitor before that save.
+    columns[:not_running_since] = not_running_since(status, held_since) unless error == CHANGED_DURING_RUN
+    @monitor.update_columns(columns)
     @monitor.runs.create!(
-      ran_at: @now, status: error ? "error" : "ok", error: error, firing: firing, matched: matched,
+      ran_at: @now, status: status, error: error, held_reason: held_reason, firing: firing, matched: matched,
       logs_skipped: logs_skipped,
       elapsed_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - @started) * 1000).round
     )
+  end
+
+  def not_running_since(status, held_since)
+    case status
+    when "ok" then nil
+    when "error" then @monitor.not_running_since || @now
+    else @monitor.not_running_since || (held_since if held_since <= @now - LogMonitor::HOLD_MEANS_NOT_RUNNING_AFTER)
+    end
   end
 end

@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/solidtrace/event_store/config"
+	"github.com/solidtrace/event_store/ingestgap"
 	"github.com/solidtrace/event_store/logquery"
 	"github.com/solidtrace/event_store/models"
 	"github.com/solidtrace/event_store/pkg/clock"
@@ -38,15 +39,23 @@ type LogsHandler struct {
 	// Logs, the Logs ingested after a batch and the Fields are read from it.
 	// sql runs SQL queries on it, each as its Project's SQL user.
 	clickHouse *storage.ClickHouseLogs
-	sql        *storage.ClickHouseSQL
-	settings   ConsoleSettings
-	clock      clock.Clock
+	// waiting reads a Project's oldest waiting Log batch for
+	// hold_if_incomplete: clickHouse's.
+	waiting interface {
+		WaitingLogBatch(projectID uint32, now time.Time) (storage.WaitingLogBatch, bool, error)
+	}
+	sql      *storage.ClickHouseSQL
+	settings ConsoleSettings
+	clock    clock.Clock
 	// ScanBudget is how long a run of Log rows reads before it answers with
 	// what it has found and a next_cursor.
 	ScanBudget time.Duration
 	// HeavyReads are the slots heavy reads hold while they run
 	// (logs_heavy_reads.go).
 	HeavyReads *HeavyReads
+	// IngestGap is the ingest gap of this start, during which a run that
+	// asks for hold_if_incomplete is held (logs_incomplete.go).
+	IngestGap ingestgap.Gap
 }
 
 // NewLogsHandler serves the Logs in clickHouse, and SQL queries through sql;
@@ -55,7 +64,7 @@ type LogsHandler struct {
 // ago() and now() read.
 func NewLogsHandler(clickHouse *storage.ClickHouseLogs, sql *storage.ClickHouseSQL, settings ConsoleSettings, clock clock.Clock) *LogsHandler {
 	return &LogsHandler{
-		clickHouse: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget,
+		clickHouse: clickHouse, waiting: clickHouse, sql: sql, settings: settings, clock: clock, ScanBudget: defaultScanBudget,
 		HeavyReads: NewHeavyReads(config.DefaultLogsHeavyReadSlots(runtime.NumCPU())),
 	}
 }
@@ -76,6 +85,9 @@ type queryRequest struct {
 	// Parameters are the values of the Dashboard filters the Query names,
 	// by name. A filter without values is All.
 	Parameters map[string][]string `json:"parameters"`
+	// HoldIfIncomplete asks for {"incomplete": …} in place of the table or
+	// the Logs while the Project's Logs are not complete (holdIfIncomplete).
+	HoldIfIncomplete bool `json:"hold_if_incomplete"`
 	// check_budget, force and estimate say how the read is sized.
 	budgetOptions
 }
@@ -132,8 +144,15 @@ func parametersProblem(parameters map[string][]string) fiber.Map {
 // the range, or timeout_seconds, past which the run answers 504 with
 // {"errors": [{"message"}]}.
 //
+// With "hold_if_incomplete": true, as a Threshold monitor's run asks, a
+// Query whose Project's Logs are not complete does not run: it answers
+// {"incomplete": …} (holdIfIncomplete). Without it, the answer does not
+// change.
+//
 // With "after_batch", a Match monitor's run reads the Logs ingested since
-// its last run instead (afterBatch).
+// its last run instead (afterBatch). It reads in Log batch order: a run
+// reads each Log once, in the first run after Log ingest writes the Log's
+// batch, whatever the Log's time. It ignores hold_if_incomplete.
 func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	projectID, err := parseProjectID(c)
 	if err != nil {
@@ -175,6 +194,15 @@ func (h *LogsHandler) Query(c *fiber.Ctx) error {
 	query, err := h.compile(projectID, req.Query, logquery.Bounds{From: req.From, To: req.To, Now: h.clock.Now()}, req.Parameters)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"errors": queryErrors(req.Query, err)})
+	}
+
+	held, err := h.holdIfIncomplete(projectID, req.HoldIfIncomplete)
+	if err != nil {
+		logger.L.Error("Checking whether a Project's Logs are complete failed", "project_id", projectID, "error", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Internal error"})
+	}
+	if held != nil {
+		return run.answer(c, fiber.Map{"incomplete": held})
 	}
 
 	from, to := query.Range()

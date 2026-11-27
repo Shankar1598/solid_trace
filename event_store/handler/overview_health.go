@@ -17,7 +17,7 @@ const slowestReads = 10
 
 // overviewHealthData is what Health's parts read.
 type overviewHealthData struct {
-	oldest []storage.OldestLogBatch
+	oldest []storage.WaitingLogBatch
 	reads  storage.LogReadTimes
 	events []storage.ProjectEvents
 }
@@ -26,7 +26,7 @@ type overviewHealthData struct {
 func (h *OverviewHandler) healthParts(q overviewQuery, d *overviewHealthData) []func(context.Context) error {
 	return []func(context.Context) error{
 		func(context.Context) (err error) {
-			d.oldest, err = h.logs.OldestWaitingLogBatches(q.scope.ProjectIDs)
+			d.oldest, err = h.logs.WaitingLogBatches(q.scope.ProjectIDs, q.now)
 			return err
 		},
 		func(ctx context.Context) (err error) {
@@ -85,9 +85,9 @@ func assembleHealth(q overviewQuery, d overviewHealthData) healthAnswer {
 		Events:     []overviewEvents{},
 	}
 	for _, batch := range d.oldest {
-		at := storage.LogBatchWrittenAt(batch.BatchID).UTC()
+		waited := max(batch.Waited, 0)
 		health.Processing = append(health.Processing, overviewWaiting{
-			ProjectID: batch.ProjectID, OldestBatchAt: at, WaitedSeconds: max(q.now.Sub(at), 0).Seconds(),
+			ProjectID: batch.ProjectID, OldestBatchAt: q.now.Add(-waited).UTC(), WaitedSeconds: waited.Seconds(),
 		})
 	}
 	for _, p := range d.reads.Projects {

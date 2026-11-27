@@ -466,7 +466,7 @@ func resetClickHouse(t *testing.T, env *TestEnv) {
 		return
 	}
 	clickhousetest.Reset(t, func() error {
-		clickHouse, err := storage.OpenClickHouse(clickhousetest.Config(), nil)
+		clickHouse, err := clickhousetest.OpenClickHouse(clickhousetest.Config(), nil)
 		if err != nil {
 			return err
 		}
@@ -566,7 +566,7 @@ func (env *TestEnv) open(t *testing.T) {
 		t.Fatalf("Failed to create Pebble: %v", err)
 	}
 
-	clickHouse, err := storage.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
+	clickHouse, err := clickhousetest.OpenClickHouse(env.ClickHouseConfig, env.BucketConfig)
 	if err != nil {
 		t.Fatalf("Failed to open ClickHouse: %v", err)
 	}
