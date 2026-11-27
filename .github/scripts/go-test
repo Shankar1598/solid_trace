@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Runs `go test -json` with the arguments after NAME, and keeps go test's
+# exit code. It writes the JSON to $GO_TEST_DIR/NAME.json, prints the tests'
+# output as `go test -v` does, and writes the summary of bin/go-test-times to
+# $GO_TEST_DIR/NAME.md and to the job summary. The job uploads $GO_TEST_DIR.
+#
+#   .github/scripts/go-test NAME [go test flags and packages]
+set -euo pipefail
+
+name=$1
+shift
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+dir=${GO_TEST_DIR:?set GO_TEST_DIR to the folder for the JSON and the summary}
+mkdir -p "$dir"
+
+code=0
+go test -json "$@" | tee "$dir/$name.json" |
+  jq -Rrj 'fromjson? | select(.Action == "output" or .Action == "build-output") | .Output' || code=$?
+
+"$root/bin/go-test-times" --title "$name" "$dir/$name.json" >"$dir/$name.md"
+if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+  cat "$dir/$name.md" >>"$GITHUB_STEP_SUMMARY"
+fi
+exit "$code"

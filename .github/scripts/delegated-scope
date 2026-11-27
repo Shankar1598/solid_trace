@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs a command as this user, with this user's environment and groups, in a
+# new systemd scope whose cgroup v2 is delegated to this user. The factory's
+# wrapper starts each harness in a child cgroup of its own cgroup (the kill
+# boundary), so the factory tests and the runs flow need a cgroup that they
+# can write to (docs/agents/testing.md). A runner's job is in a cgroup that
+# root owns, so this needs sudo.
+#
+#   .github/scripts/delegated-scope COMMAND [ARGUMENT...]
+#
+# User= makes systemd give the scope's cgroup to this user. setpriv then
+# changes from root to this user with all of the user's groups (docker is
+# one), and stays in the scope. sudo resets PATH and HOME, so env sets them
+# again.
+set -euo pipefail
+
+exec sudo --preserve-env systemd-run --scope --quiet -p Delegate=yes -p User="$(id -un)" -- \
+  setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+  env PATH="$PATH" HOME="$HOME" "$@"

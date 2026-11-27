@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Makes a Markdown summary of the times of a Go test run from the output of
+# `go test -json`: the time of each package, the 50 slowest tests, the tests
+# that failed (with the end of their output) and the tests that skipped. The
+# tests workflow (.github/workflows/tests.yml) writes it to the job summary.
+#
+#   bin/go-test-times [--title TITLE] FILE.json...
+#
+# A test is a top-level test (TestX). Its time includes the time of its
+# subtests. Lines that are not JSON are ignored. It needs jq.
+set -euo pipefail
+
+title="Go test times"
+if [[ ${1:-} == --title ]]; then
+  title=$2
+  shift 2
+fi
+(($#)) || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+jq -Rnr --arg title "$title" '
+  def secs: . * 100 | round / 100 | tostring;
+  def short: sub("^github\\.com/solidtrace/"; "");
+  def cell: gsub("\\|"; "\\|");
+
+  [inputs | fromjson? | select(type == "object" and .Package != null)] as $events
+  | [$events[] | select(.Test == null and (.Action == "pass" or .Action == "fail" or .Action == "skip"))] as $packages
+  | [$events[] | select(.Test != null and (.Action == "pass" or .Action == "fail" or .Action == "skip"))] as $results
+  | [$results[] | select(.Test | contains("/") | not)] as $tests
+  | [$results[] | select(.Action == "fail")] as $failed
+  | [$results[] | select(.Action == "skip")] as $skipped
+
+  | "## \($title)",
+    "",
+    "Packages: \($packages | length). Top-level tests: \($tests | length) (\([$tests[] | select(.Action == "pass")] | length) passed, \([$tests[] | select(.Action == "fail")] | length) failed, \([$tests[] | select(.Action == "skip")] | length) skipped). The lists of failed and skipped tests below also show subtests.",
+    "",
+    "### Packages, slowest first",
+    "",
+    "| Seconds | Package | Result | Tests | Failed | Skipped |",
+    "| ---: | --- | --- | ---: | ---: | ---: |",
+    ($packages | sort_by(-(.Elapsed // 0)) | .[]
+      | . as $p
+      | [$tests[] | select(.Package == $p.Package)] as $own
+      | "| \(.Elapsed // 0 | secs) | `\(.Package | short)` | \(.Action) | \($own | length) | \([$own[] | select(.Action == "fail")] | length) | \([$own[] | select(.Action == "skip")] | length) |"),
+    "",
+    "### The 50 slowest tests",
+    "",
+    "| # | Seconds | Package | Test | Result |",
+    "| ---: | ---: | --- | --- | --- |",
+    ($tests | map(select(.Action != "skip")) | sort_by(-(.Elapsed // 0)) | .[:50] | to_entries[]
+      | "| \(.key + 1) | \(.value.Elapsed // 0 | secs) | `\(.value.Package | short)` | `\(.value.Test | cell)` | \(.value.Action) |"),
+    (if ($failed | length) > 0 then
+      "",
+      "### Failed tests",
+      "",
+      ($failed | .[:30][]
+        | . as $f
+        | "<details><summary><code>\(.Package | short)</code> <code>\(.Test)</code> (\(.Elapsed // 0 | secs) s)</summary>",
+          "",
+          "```",
+          ([$events[] | select(.Action == "output" and .Package == $f.Package and .Test == $f.Test) | .Output | rtrimstr("\n")] | .[-80:][]),
+          "```",
+          "",
+          "</details>")
+    else empty end),
+    (if ($skipped | length) > 0 then
+      "",
+      "### Skipped tests",
+      "",
+      "| Package | Test |",
+      "| --- | --- |",
+      ($skipped | .[:100][] | "| `\(.Package | short)` | `\(.Test | cell)` |"),
+      (if ($skipped | length) > 100 then "", "And \(($skipped | length) - 100) more." else empty end)
+    else empty end)
+' "$@"
