@@ -88,7 +88,7 @@ class OauthDiscoveryTest < ActionDispatch::IntegrationTest
                    # Only the Scopes that a sign-in can ask for: never
                    # sessions:read, run_events:write, issues:comment or
                    # tokens:create.
-                   "scopes_supported" => [ "mcp", "mcp:read", "sessions:write", "factory" ],
+                   "scopes_supported" => [ "mcp", "mcp:read", "sessions:write", "sessions:download", "factory" ],
                    "client_id_metadata_document_supported" => true,
                    "authorization_response_iss_parameter_supported" => true }, response.parsed_body)
   end

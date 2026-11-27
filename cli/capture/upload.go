@@ -63,12 +63,12 @@ type upload struct {
 }
 
 func (u *upload) run(ctx context.Context) error {
-	files, err := u.c.API.AgentSessionFiles(ctx, u.in.SessionID)
+	answer, err := u.c.API.AgentSession(ctx, u.in.SessionID)
 	if err != nil {
 		return fmt.Errorf("ask what the server has: %w", err)
 	}
 	u.server = map[string]agentapi.AgentSessionFile{}
-	for _, f := range files {
+	for _, f := range answer.Files {
 		u.server[f.Path] = f
 	}
 	paths, err := u.paths()

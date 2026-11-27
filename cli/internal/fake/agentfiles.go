@@ -1,6 +1,7 @@
 package fake
 
 import (
+	"archive/tar"
 	"compress/gzip"
 	"io"
 	"net/http"
@@ -35,6 +36,12 @@ func (f *AgentAPI) files(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "Another Organization's Agent session."})
 		return
 	}
+	if f.OlderServer && s.AnotherPerson {
+		request.Status = http.StatusForbidden
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "Agent session " + request.SessionID +
+			" was uploaded by another person. Only its person, or a token of its Run, adds to it."})
+		return
+	}
 	paths := make([]string, 0, len(s.Files))
 	for p := range s.Files {
 		paths = append(paths, p)
@@ -46,11 +53,82 @@ func (f *AgentAPI) files(w http.ResponseWriter, r *http.Request) {
 		list = append(list, map[string]any{"path": p, "version": file.Version, "end_offset": file.End,
 			"content_hash": file.ContentHash})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"agent_session": map[string]any{"id": request.SessionID, "harness": s.Harness, "repository": s.Repository,
-			"folder": s.Folder},
-		"files": list,
-	})
+	session := map[string]any{"id": request.SessionID, "harness": s.Harness, "repository": s.Repository,
+		"folder": s.Folder, "run_id": s.RunID}
+	writeJSON(w, http.StatusOK, map[string]any{"agent_session": session, "files": list})
+}
+
+// download answers the Agent session directory as a tar archive, as the
+// real download: the highest version of each path, with its PAX records.
+func (f *AgentAPI) download(w http.ResponseWriter, r *http.Request) {
+	org := f.check(w, r)
+	if org == nil {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.Sessions[r.PathValue("id")]
+	if s == nil || s.Organization != org.Slug {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "No such Agent session."})
+		return
+	}
+	if f.DownloadNotReady > 0 {
+		f.DownloadNotReady--
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "The last uploads are not ready yet."})
+		return
+	}
+	if f.DownloadBusy > 0 {
+		f.DownloadBusy--
+		w.Header().Set("Retry-After", "5")
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "The server sends as many downloads as it can now. Try again in a few seconds."})
+		return
+	}
+	f.Downloads++
+	paths := make([]string, 0, len(s.Files))
+	for p := range s.Files {
+		if p != f.DownloadLeavesOut {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	w.Header().Set("Content-Type", "application/x-tar")
+	tw := tar.NewWriter(w)
+	for _, p := range paths {
+		file := s.Files[p]
+		flags := ""
+		switch {
+		case file.Partial:
+			flags = "partial"
+		case file.Cut:
+			flags = "cut"
+		}
+		records := map[string]string{"SOLIDTRACE.version": strconv.FormatUint(uint64(file.Version), 10),
+			"SOLIDTRACE.start_offset": "0", "SOLIDTRACE.end_offset": strconv.FormatUint(file.End, 10)}
+		if flags != "" {
+			records["SOLIDTRACE.flags"] = flags
+		}
+		h := &tar.Header{Typeflag: tar.TypeReg, Name: p, Mode: 0o600, Size: int64(len(file.Bytes)),
+			Format: tar.FormatPAX, PAXRecords: records}
+		if tw.WriteHeader(h) != nil {
+			return
+		}
+		if _, err := tw.Write(file.Bytes); err != nil {
+			return
+		}
+		if p == f.DownloadCutAfter {
+			_ = tw.Flush()
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				f.DownloadsClosed++
+			case <-time.After(2 * time.Second):
+			}
+			panic(http.ErrAbortHandler)
+		}
+	}
+	_ = tw.Close()
 }
 
 func (f *AgentAPI) record(request *Request) {

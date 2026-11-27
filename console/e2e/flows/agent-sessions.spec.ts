@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join, resolve } from 'node:path'
 import { ADMIN, MEMBER, ORG } from '../support/data'
 import { EFFORT, fakeAnthropicKey, longSession, MODEL, openPrSession, shortSession, SUBAGENT_EFFORT, SUBAGENT_MODEL, writeSession, type FixtureSession } from '../support/agentTranscripts'
-import { shoot, watchErrors } from '../support/screens'
+import { expectFits, shoot, watchErrors } from '../support/screens'
 import { newContext } from '../support/video'
 
 // Laptop Agent sessions, from the real capture to the pages. The admin and
@@ -244,16 +244,16 @@ test('laptop Agent sessions upload through the real capture and show on the Agen
   expect(status).toMatch(new RegExp(`${tools.id}\\s+uploaded\\s+${TOOLS}`))
   expect(status).toMatch(new RegExp(`${notCaptured.id}\\s+not captured`))
 
-  // The member's CLI cannot add to, or read, the admin's Agent session: a
-  // transcript with the admin's session id is refused when the CLI asks
-  // what the server has, and nothing is sent. The totals below show that
-  // the admin's Agent session did not change.
+  // The member's CLI cannot add to the admin's Agent session: EventStore
+  // refuses the upload of a transcript with the admin's session id with
+  // 403. The totals below show that the admin's Agent session did not
+  // change.
   const other = shortSession(appDir, 'Read the admin session.', { input: 900, output: 900, cacheRead: 900, cacheWrite: 900 })
   const impostor: FixtureSession = { id: long.id, files: { [`${long.id}.jsonl`]: other.files[`${other.id}.jsonl`].replaceAll(other.id, long.id) } }
   capture(member, impostor, appDir)
-  expect(captureLog(member).trim().split('\n')).toEqual([
-    expect.stringMatching(new RegExp(`^\\S+ capture ${long.id}: ask what the server has: the agent ingest API answered 403: Agent session ${long.id} was uploaded by another person\\.`)),
-  ])
+  expect(captureLog(member).trim().split('\n')).toContainEqual(
+    expect.stringMatching(new RegExp(`^\\S+ capture ${long.id}: upload ${long.id}\\.jsonl: the agent ingest API answered 403: Agent session ${long.id} was uploaded by another person\\.`)),
+  )
 
   // The Agent sessions page, once EventStore has parsed the uploads.
   await expect(async () => {
@@ -690,6 +690,73 @@ test('the record file of an open-pr Agent session, or the final reply of an olde
     from = nextPage.next_findings_from
   }
   expect(findings, 'all the findings, page by page').toEqual(whole.findings)
+
+  expect(errors).toEqual([])
+})
+
+// The Agent session page gives the command that continues the Agent session
+// on another machine, with Copy, at desktop and phone width, in light and
+// dark. The admin and the member, whose Agent session it is not, get the
+// same text: on the first machine the command continues it, on another it
+// starts a new Agent session from its history.
+test('the Agent session page gives the command that resumes it on another machine, and Copy copies it', async ({ page, browser, baseURL }) => {
+  test.setTimeout(180_000)
+  const errors = watchErrors(page)
+  const origin = new URL(baseURL!).origin
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
+  const laptop = machine('resume')
+  await page.goto(`/${ORG}/agent_sessions`)
+  await signIn(page, laptop, origin)
+  const dir = gitRepository(`flows.example/flowteam/resume-${RUN}`)
+  const session = shortSession(dir, 'Continue the cart work on my Mac.', { input: 2, output: 3, cacheRead: 4, cacheWrite: 5 })
+  capture(laptop, session, dir)
+
+  // The list first: the Agent session page is 404 until EventStore parsed the upload.
+  await expect(async () => {
+    await page.goto(`/${ORG}/agent_sessions`)
+    expect(await rowIds(page)).toContain(session.id)
+  }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] })
+  await page.goto(`/${ORG}/agent_sessions/${session.id}`)
+  const resume = page.locator('[data-section="resume"]')
+  await expect(resume).toBeVisible()
+
+  const command = `solidtrace resume ${session.id}`
+  const text = 'On the machine where this Agent session started, it continues it. On another machine, it starts a ' +
+    'new Agent session from its history, and this Agent session does not change.'
+  const isDark = () => page.evaluate(() => document.documentElement.classList.contains('dark'))
+  const shot = (name: string) => page.screenshot({ path: test.info().outputPath(`${name}.png`), animations: 'disabled' })
+  for (const size of [{ name: 'desktop', width: 1440, height: 900 }, { name: 'phone', width: 390, height: 844 }]) {
+    await page.setViewportSize({ width: size.width, height: size.height })
+    for (const theme of ['light', 'dark'] as const) {
+      // The theme switch is in the sidebar, which a phone hides: set the kept choice, and reload.
+      await page.evaluate(t => localStorage.setItem('theme', t), theme)
+      await page.reload()
+      await expect.poll(isDark).toBe(theme === 'dark')
+      await expect(resume.getByRole('heading', { name: 'Resume on another machine' })).toBeVisible()
+      await expect(resume).toContainText(text)
+      await expect(resume.locator('[data-command="resume"]')).toHaveText(command)
+
+      await page.evaluate(() => navigator.clipboard.writeText(''))
+      await resume.getByRole('button', { name: 'Copy the resume command' }).click()
+      await expect(page.getByText('Resume command copied').first()).toBeVisible()
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(command)
+
+      // The layout scrolls inside main, so main and the command box show a sideways scroll.
+      await expectFits(resume.locator('[data-command="resume"]'))
+      const across = await page.locator('main').evaluate(el => el.scrollWidth - el.clientWidth)
+      expect(across, `sideways scroll of main at ${size.width} px`).toBeLessThanOrEqual(0)
+      await resume.scrollIntoViewIfNeeded()
+      await shot(`resume-${size.name}-${theme}`)
+    }
+  }
+
+  // For the member, the admin's Agent session is another person's: the text is the same.
+  const memberPage = await signedInPage(browser, MEMBER)
+  await memberPage.goto(`/${ORG}/agent_sessions/${session.id}`)
+  const memberResume = memberPage.locator('[data-section="resume"]')
+  await expect(memberResume.locator('[data-command="resume"]')).toHaveText(command)
+  await expect(memberResume).toContainText(text)
+  await memberPage.context().close()
 
   expect(errors).toEqual([])
 })

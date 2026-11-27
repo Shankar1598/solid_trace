@@ -103,13 +103,30 @@ type AgentSessionFile struct {
 	ContentHash string `json:"content_hash"`
 }
 
-// AgentSessionFiles asks what the server has of an Agent session.
-func (c *Client) AgentSessionFiles(ctx context.Context, sessionID string) ([]AgentSessionFile, error) {
-	var answer struct {
-		Files []AgentSessionFile `json:"files"`
-	}
+// AgentSessionAnswer is the server's answer about one Agent session.
+// Session is nil when the server does not have it in the token's
+// Organization.
+type AgentSessionAnswer struct {
+	Session *AgentSession      `json:"agent_session"`
+	Files   []AgentSessionFile `json:"files"`
+}
+
+// AgentSession is who and where an Agent session is.
+type AgentSession struct {
+	ID         string   `json:"id"`
+	Repository string   `json:"repository"`
+	Folder     string   `json:"folder"`
+	RunID      string   `json:"run_id"`
+	Flags      []string `json:"flags"`
+}
+
+// AgentSession asks what the server has of an Agent session: who and
+// where it is, and its files. Another person's Agent session needs a
+// token with sessions:download.
+func (c *Client) AgentSession(ctx context.Context, sessionID string) (AgentSessionAnswer, error) {
+	var answer AgentSessionAnswer
 	err := c.call(ctx, http.MethodGet, "/agent-sessions/"+url.PathEscape(sessionID)+"/files", &answer)
-	return answer.Files, err
+	return answer, err
 }
 
 // Unit is one upload of a file of an Agent session: Bytes from Offset of
@@ -314,10 +331,10 @@ const (
 )
 
 // DownloadAgentSession asks for the Agent session directory, for a
-// resume. The token needs sessions:read for the Agent session. A 503 has
-// RetryAfter: the server has the last uploads but cannot give them yet.
-// hc is the client to use (nil: c.HTTP); a download can take longer than
-// the usual limit of one call.
+// resume. The token needs sessions:download, or sessions:read for the
+// Agent session. A 503 has RetryAfter: the server has the last uploads but
+// cannot give them yet. hc is the client to use (nil: c.HTTP); a download
+// can take longer than the usual limit of one call.
 func (c *Client) DownloadAgentSession(ctx context.Context, hc *http.Client, sessionID string) (Download, error) {
 	if hc == nil {
 		hc = c.HTTP

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -227,6 +228,104 @@ func TestAgentSessionDownload(t *testing.T) {
 		}
 		if d := downloadSession(t, env, token, "not-a-uuid"); d.status != 400 {
 			t.Errorf("Expected 400 for an id that is not a UUID, got %d: %s", d.status, d.raw)
+		}
+	})
+}
+
+// sessions:download is for a person's sign-in and API token: it downloads,
+// and reads the files call of, each Agent session of its Organization's
+// Agent Project, and writes nothing.
+func TestAgentSessionDownloadWithSessionsDownload(t *testing.T) {
+	env := setupTestEnv(t)
+	defer env.Cleanup()
+	o := newAgentOrganization(t, env)
+	runSecret, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization,
+		scopes: []string{"sessions:write", "sessions:read"}, sessionIDs: []string{runSession}})
+	mine, theirs, ofARun := lines("My prompt"), lines("Their prompt"), lines("A Run's prompt")
+	expectStatus(t, uploadUnit(t, env, o.secret, laptopSession, unitUpload{path: "session.jsonl", body: mine}), 200)
+	expectStatus(t, uploadUnit(t, env, o.otherSecret, otherSession, unitUpload{path: "session.jsonl", body: theirs}), 200)
+	expectStatus(t, uploadUnit(t, env, runSecret, runSession,
+		unitUpload{path: "session.jsonl", runID: "run-0193", project: "shop", body: ofARun}), 200)
+	env.ProcessAgentFiles(t)
+
+	download, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: o.organization,
+		scopes: []string{"sessions:download"}})
+	signIn, _, _ := o.rows.accessToken(accessTokenRow{user: o.user, organization: o.organization,
+		scopes: []string{"sessions:write", "sessions:download", "factory"}, resource: "http://console.test/factory",
+		expiresAt: o.rows.now.Add(time.Hour)})
+
+	t.Run("it downloads the person's own Agent session, another person's and a Run's", func(t *testing.T) {
+		for _, secret := range []string{download, signIn} {
+			for session, want := range map[string][]byte{laptopSession: mine, otherSession: theirs, runSession: ofARun} {
+				d := downloadSession(t, env, secret, session)
+				expectDownloadStatus(t, d, 200)
+				if got := d.files["session.jsonl"].bytes; got != string(want) {
+					t.Errorf("Expected %s to have %q, got %q", session, want, got)
+				}
+			}
+		}
+	})
+
+	t.Run("the files call answers each Agent session", func(t *testing.T) {
+		for _, c := range []struct {
+			name, secret, session string
+		}{
+			{"the person's own, with sessions:download", download, laptopSession},
+			{"the person's own, with sessions:write", o.secret, laptopSession},
+			{"another person's", download, otherSession},
+			{"a Run's", download, runSession},
+			{"a Run's, with the Run's token", runSecret, runSession},
+			{"the other person's own", o.otherSecret, otherSession},
+		} {
+			answer, files := offsetsOf(t, env, c.secret, c.session)
+			if answer.status != 200 || files.AgentSession == nil || files.AgentSession.ID != c.session {
+				t.Errorf("%s: expected the Agent session, got %d: %s", c.name, answer.status, answer.raw)
+			}
+		}
+		// Without sessions:download, another person's Agent session is
+		// still refused.
+		answer, _ := offsetsOf(t, env, o.otherSecret, laptopSession)
+		expectStatus(t, answer, 403)
+	})
+
+	t.Run("it writes nothing, also with sessions:write beside it", func(t *testing.T) {
+		expectStatus(t, uploadUnit(t, env, download, laptopSession,
+			unitUpload{path: "session.jsonl", offset: len(mine), body: lines("More")}), 403)
+		expectStatus(t, uploadUnit(t, env, signIn, otherSession,
+			unitUpload{path: "session.jsonl", offset: len(theirs), body: lines("More")}), 403)
+		expectStatus(t, uploadEvidence(t, env, signIn, otherSession, "", evidenceOf(pngBytes, 500), nil), 403)
+		_, files := offsetsOf(t, env, download, otherSession)
+		if got := endOffsets(files)["session.jsonl"]; got != fmt.Sprintf("1 %d", len(theirs)) {
+			t.Errorf("Expected another person's Agent session to stay at %d, got %s", len(theirs), got)
+		}
+	})
+
+	t.Run("a token with sessions:write and no sessions:download does not download", func(t *testing.T) {
+		d := downloadSession(t, env, o.secret, laptopSession)
+		if d.status != 403 || d.files != nil {
+			t.Fatalf("Expected 403 and no files, got %d: %s", d.status, d.raw)
+		}
+		var body struct{ Scope string }
+		if err := json.Unmarshal([]byte(d.raw), &body); err != nil || body.Scope != "sessions:download" {
+			t.Errorf("Expected the 403 to ask for sessions:download, got %s", d.raw)
+		}
+		if got, want := d.header.Get("WWW-Authenticate"), `scope="sessions:download"`; !strings.Contains(got, want) {
+			t.Errorf("Expected WWW-Authenticate to have %s, got %q", want, got)
+		}
+	})
+
+	t.Run("it does not reach an Agent session of another Organization", func(t *testing.T) {
+		globex := o.rows.organization("Globex")
+		o.rows.agentProject(globex, "github.com/globex/shop")
+		o.rows.member(globex, o.user)
+		globexDownload, _ := o.rows.apiToken(apiTokenRow{user: o.user, organization: globex,
+			scopes: []string{"sessions:download"}})
+		if d := downloadSession(t, env, globexDownload, laptopSession); d.status != 404 || d.files != nil {
+			t.Errorf("Expected 404 and no files, got %d: %s", d.status, d.raw)
+		}
+		answer, files := offsetsOf(t, env, globexDownload, laptopSession)
+		if answer.status != 200 || files.AgentSession != nil {
+			t.Errorf("Expected no Agent session, got %d: %s", answer.status, answer.raw)
 		}
 	})
 }

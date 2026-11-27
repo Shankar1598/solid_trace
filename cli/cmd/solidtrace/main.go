@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/solidtrace/cli/agentsocket"
@@ -40,6 +41,7 @@ func main() {
 		Detach:          detach,
 		AgentSocket:     os.Getenv(agentsocket.Env),
 		ClaudeSessionID: os.Getenv(command.ClaudeSessionEnv),
+		StartClaude:     startClaude,
 	}
 	if home, err := os.UserHomeDir(); err == nil || os.Getenv("CLAUDE_CONFIG_DIR") != "" {
 		env.ClaudeProjectsDir = command.ClaudeProjectsDir(os.Getenv, home)
@@ -80,6 +82,19 @@ func browser() func(string) error {
 		return nil
 	}
 	return opener(path, OpenerWait)
+}
+
+// startClaude runs claude with args in dir in place of this process, so
+// that Claude Code has the terminal. It returns only when it cannot.
+func startClaude(dir string, args []string) error {
+	path, err := exec.LookPath("claude")
+	if err != nil {
+		return errors.New("claude is not on PATH: install Claude Code")
+	}
+	if err := os.Chdir(dir); err != nil {
+		return err
+	}
+	return syscall.Exec(path, append([]string{"claude"}, args...), os.Environ())
 }
 
 // OpenerWait is how long the CLI waits for open or xdg-open to exit.

@@ -19,6 +19,7 @@
 //	POST /repos {"name": "workspace/name"}  a repository on the fake Forge
 //	POST /agent {"lines": [...]}            the harness script of the next Execution
 //	GET  /executions                        the Executions that the Runner started
+//	GET  /executions/<id>/output            what the Execution's wrapper wrote (its log)
 //	GET  /child-tokens                      each child token that Console made, with its scopes,
 //	                                        Agent sessions and Project limit
 //
@@ -115,6 +116,10 @@ func controlAPI(env *factorytest.Env, children *childTokens) http.Handler {
 	})
 	mux.HandleFunc("GET /executions", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"executions": env.Runner.Dispatched()})
+	})
+	mux.HandleFunc("GET /executions/{id}/output", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, env.Runner.Fake.Output(r.PathValue("id")))
 	})
 	mux.HandleFunc("GET /child-tokens", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"child_tokens": children.list()})

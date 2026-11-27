@@ -27,14 +27,15 @@ const FactoryResourcePath = "/factory"
 // registry (Oauth::Scopes) has. A Grant's Scope that is not here, or that
 // is for another resource than its access token, does not reach a call.
 var scopeResourcePaths = map[string]string{
-	"mcp":              "/mcp",
-	"mcp:read":         "/mcp",
-	"sessions:write":   FactoryResourcePath,
-	"sessions:read":    FactoryResourcePath,
-	"run_events:write": FactoryResourcePath,
-	"factory":          FactoryResourcePath,
-	"issues:comment":   FactoryResourcePath,
-	"tokens:create":    FactoryResourcePath,
+	"mcp":               "/mcp",
+	"mcp:read":          "/mcp",
+	"sessions:write":    FactoryResourcePath,
+	"sessions:read":     FactoryResourcePath,
+	"sessions:download": FactoryResourcePath,
+	"run_events:write":  FactoryResourcePath,
+	"factory":           FactoryResourcePath,
+	"issues:comment":    FactoryResourcePath,
+	"tokens:create":     FactoryResourcePath,
 }
 
 // Token is a live token that a client sent: an API token or an OAuth access
@@ -53,9 +54,13 @@ type Token struct {
 	// Scopes are the names of the Scopes the token acts with: mcp for an
 	// API token with none.
 	Scopes []string
-	// AgentSessionIDs is the list of Agent sessions that sessions:write and
-	// sessions:read are limited to; nil is no list.
+	// AgentSessionIDs is the list of Agent sessions that each call of the
+	// token that names an Agent session is limited to; nil is no list.
 	AgentSessionIDs []string
+	// Child is true for a child API token (parent_id), which only the
+	// Dispatcher makes for a Run. A person's own token with a list of
+	// Agent session ids is not a child.
+	Child bool
 	// ExpiresAt is nil for an API token that does not expire.
 	ExpiresAt *time.Time
 	// TwoFactorMissing is true when the Organization requires Two-factor and
@@ -185,6 +190,7 @@ func (t *Tokens) checkAPIToken(secret string, now time.Time) (Token, bool, error
 		}
 	}
 	token.ExpiresAt = expiresAt
+	token.Child = parentID.Valid
 	if err := json.Unmarshal([]byte(scopesJSON), &token.Scopes); err != nil {
 		return Token{}, false, fmt.Errorf("scopes of API token %d: %w", token.ID, err)
 	}

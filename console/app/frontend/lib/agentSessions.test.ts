@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { agentSessionPath, agentSessionsSearch, agoText, costText, modelText, nextOrder, orderOf, orderText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
+import { agentSessionPath, agentSessionsSearch, agoText, costText, modelText, nextOrder, orderOf, orderText, resumeCommand, resumeText, searchAcrossHref, titleOf, tokensText, whoText, type AgentSessionRow } from './agentSessions'
 
 const none = { person: null, repository: null, project: null, run: null }
 
 describe('the page of an Agent session', () => {
   it('is in its Organization', () => {
     expect(agentSessionPath('acme', '0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')).toBe('/acme/agent_sessions/0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41')
+  })
+})
+
+describe('the resume of an Agent session on another machine', () => {
+  const id = '0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41'
+
+  it('is solidtrace resume and the id', () => {
+    expect(resumeCommand(id)).toBe(`solidtrace resume ${id}`)
+  })
+
+  it('continues it on the first machine, and starts a new Agent session on another', () => {
+    expect(resumeText).toContain('On the machine where this Agent session started, it continues it.')
+    expect(resumeText).toContain('On another machine, it starts a new Agent session from its history')
   })
 })
 

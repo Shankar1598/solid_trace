@@ -46,7 +46,10 @@ type AuthorizeRequest struct {
 }
 
 type grant struct {
-	org     string
+	org string
+	// scope is what the client asked for: Console gives each Scope that
+	// the client asks for.
+	scope   string
 	revoked bool
 }
 
@@ -65,7 +68,7 @@ type refreshToken struct {
 }
 
 type pair struct {
-	access, refresh string
+	access, refresh, scope string
 }
 
 type authCode struct {
@@ -79,6 +82,7 @@ type authCode struct {
 type deviceCode struct {
 	userCode string
 	resource string
+	scope    string
 	grant    *grant
 	denied   bool
 	expires  time.Time
@@ -295,7 +299,7 @@ func (f *OAuth) authorize(w http.ResponseWriter, r *http.Request) {
 	} else if f.Deny {
 		answer.Set("error", "access_denied")
 	} else {
-		g := &grant{org: f.Pick}
+		g := &grant{org: f.Pick, scope: q.Get("scope")}
 		f.grants = append(f.grants, g)
 		code := random()
 		f.codes[code] = &authCode{grant: g, challenge: q.Get("code_challenge"), redirect: q.Get("redirect_uri"),
@@ -317,7 +321,7 @@ func (f *OAuth) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 	code := random()
 	userCode := fmt.Sprintf("WDJB-%04d", len(f.devices)+1)
-	f.devices[code] = &deviceCode{userCode: userCode, resource: r.PostForm.Get("resource"),
+	f.devices[code] = &deviceCode{userCode: userCode, resource: r.PostForm.Get("resource"), scope: r.PostForm.Get("scope"),
 		expires: f.Now().Add(time.Duration(f.DeviceExpiresIn) * time.Second)}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"device_code":      code,
@@ -411,7 +415,7 @@ func (f *OAuth) token(w http.ResponseWriter, r *http.Request) {
 		case device.grant != nil:
 			oauthError(w, http.StatusBadRequest, "invalid_grant")
 		default:
-			device.grant = &grant{org: f.Pick}
+			device.grant = &grant{org: f.Pick, scope: device.scope}
 			f.grants = append(f.grants, device.grant)
 			f.issue(w, device.grant, device.resource)
 		}
@@ -425,7 +429,7 @@ func (f *OAuth) issue(w http.ResponseWriter, g *grant, resource string) {
 }
 
 func (f *OAuth) newPair(g *grant, resource string) pair {
-	p := pair{access: "sto_" + random(), refresh: "str_" + random()}
+	p := pair{access: "sto_" + random(), refresh: "str_" + random(), scope: g.scope}
 	f.access[p.access] = &accessToken{grant: g, expires: f.Now().Add(AccessTokenLasts)}
 	f.refresh[p.refresh] = &refreshToken{grant: g, resource: resource}
 	return p
@@ -437,7 +441,7 @@ func (f *OAuth) answer(w http.ResponseWriter, p pair) {
 		"token_type":    "Bearer",
 		"expires_in":    int(AccessTokenLasts / time.Second),
 		"refresh_token": p.refresh,
-		"scope":         "sessions:write factory",
+		"scope":         p.scope,
 	})
 }
 
@@ -476,6 +480,26 @@ type AgentAPI struct {
 	// EvidenceLimit, when not 0, is the most bytes of an Evidence file in
 	// place of BodyLimit, as a server with a lower limit than the CLI's.
 	EvidenceLimit int
+	// DownloadNotReady is how many downloads answer 503 with Retry-After
+	// before one gives the archive.
+	DownloadNotReady int
+	// DownloadLeavesOut is a path that the download does not give.
+	DownloadLeavesOut string
+	// DownloadBusy is how many downloads answer 503 with Retry-After 5,
+	// as the server does when it sends as many downloads as it can.
+	DownloadBusy int
+	// DownloadCutAfter is a path after whose file the download waits for
+	// the client to close it, for at most 2 seconds, and then stops the
+	// stream with no end of the archive.
+	DownloadCutAfter string
+	// DownloadsClosed counts the downloads that the client closed while
+	// they waited after DownloadCutAfter.
+	DownloadsClosed int
+	// Downloads counts the downloads that gave the archive.
+	Downloads int
+	// OlderServer answers /files as a server older than resume: 403 to
+	// another person's Agent session.
+	OlderServer bool
 
 	evidence      map[string]*EvidenceFile
 	evidenceOrder []string
@@ -495,7 +519,11 @@ type Request struct {
 type Session struct {
 	Harness, Repository, Folder string
 	Organization                string
-	Files                       map[string]*File
+	// AnotherPerson is true for an Agent session that another person of
+	// the Organization uploaded, and RunID names the Run of a Run's.
+	AnotherPerson bool
+	RunID         string
+	Files         map[string]*File
 }
 
 // File is the highest version of one path: its bytes as stored, from
@@ -507,6 +535,8 @@ type File struct {
 	ContentHash string
 	Bytes       []byte
 	Cut         bool
+	// Partial is true when Retention dropped the file's start.
+	Partial bool
 	// Versions counts the versions that the fake got.
 	Versions int
 }
@@ -568,6 +598,7 @@ func NewAgentAPI(oauth *OAuth) *AgentAPI {
 	mux.HandleFunc("GET /api/agent/v1/agent-sessions/{id}/files", f.files)
 	mux.HandleFunc("POST /api/agent/v1/agent-sessions/{id}/files", f.upload)
 	mux.HandleFunc("POST /api/agent/v1/agent-sessions/{id}/evidence", f.addEvidence)
+	mux.HandleFunc("GET /api/agent/v1/agent-sessions/{id}/download", f.download)
 	f.Server = httptest.NewServer(mux)
 	return f
 }

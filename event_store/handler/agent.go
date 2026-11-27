@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,8 @@ type AgentHandler struct {
 	// redaction gives the Redaction patterns that each unit goes through
 	// before it is stored.
 	redaction *redaction.Follower
+	// reading has the people whose download reads now.
+	reading downloadLimit
 }
 
 // NewAgentHandler returns the agent ingest API of cfg.
@@ -109,6 +112,7 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 		version:     cfg.Version,
 		minimum:     minimumClientVersion(cfg.Version),
 		redaction:   redaction.NewFollower(cfg.Settings.RedactionPatterns),
+		reading:     downloadLimit{people: map[int64]struct{}{}},
 	}
 }
 
@@ -116,10 +120,10 @@ func NewAgentHandler(cfg AgentConfig) *AgentHandler {
 func RegisterAgentRoutes(app *fiber.App, h *AgentHandler) {
 	api := app.Group(AgentAPIPath, h.sendVersion, h.refuseOldClients)
 	api.Get("/captured-repositories", h.requireScope(ScopeSessionsWrite), h.CapturedRepositories)
-	api.Get("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.AgentSessionFiles)
+	api.Get("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite, ScopeSessionsDownload), h.AgentSessionFiles)
 	api.Post("/agent-sessions/:session_id/files", h.requireScope(ScopeSessionsWrite), h.UploadAgentFile)
 	api.Post("/agent-sessions/:session_id/evidence", h.requireScope(ScopeSessionsWrite), h.UploadEvidenceFile)
-	api.Get("/agent-sessions/:session_id/download", h.requireScope(ScopeSessionsRead), h.DownloadAgentSession)
+	api.Get("/agent-sessions/:session_id/download", h.requireScope(ScopeSessionsDownload, ScopeSessionsRead), h.DownloadAgentSession)
 	api.Get("/agent-session-totals", h.requireScope(ScopeSessionsRead), h.AgentSessionTotals)
 	api.Post("/run-events", h.requireScope(ScopeRunEventsWrite), h.SendRunEvents)
 }
@@ -149,10 +153,11 @@ func (h *AgentHandler) refuseOldClients(c *fiber.Ctx) error {
 
 const agentTokenKey = "agent_token"
 
-// requireScope checks the Bearer token and that it has scope. It answers
-// 401 with no live token and 403 without the scope, or when the token's
-// Organization requires Two-factor and its user has none.
-func (h *AgentHandler) requireScope(scope string) fiber.Handler {
+// requireScope checks the Bearer token and that it has one of scopes. It
+// answers 401 with no live token and 403 without such a scope (it asks
+// for the first), or when the token's Organization requires Two-factor
+// and its user has none.
+func (h *AgentHandler) requireScope(scopes ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		secret := bearerToken(c)
 		var token auth.Token
@@ -173,11 +178,11 @@ func (h *AgentHandler) requireScope(scope string) fiber.Handler {
 					"Sign in again with solidtrace login.",
 			})
 		}
-		if !token.Has(scope) {
-			c.Set(fiber.HeaderWWWAuthenticate, fmt.Sprintf(`Bearer error="insufficient_scope", scope=%q`, scope))
+		if !slices.ContainsFunc(scopes, token.Has) {
+			c.Set(fiber.HeaderWWWAuthenticate, fmt.Sprintf(`Bearer error="insufficient_scope", scope=%q`, scopes[0]))
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"error": fmt.Sprintf("This token does not have the %s scope, which this call needs.", scope),
-				"scope": scope,
+				"error": fmt.Sprintf("This token does not have the %s scope, which this call needs.", strings.Join(scopes, " or ")),
+				"scope": scopes[0],
 			})
 		}
 		if token.TwoFactorMissing {

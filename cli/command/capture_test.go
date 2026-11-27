@@ -67,7 +67,7 @@ func (w *world) session(cwd string) *agentSession {
 // Claude projects directory.
 func (w *world) sessionWithID(id, cwd string) *agentSession {
 	w.t.Helper()
-	dir := filepath.Join(w.projectsDir(), strings.ReplaceAll(cwd, "/", "-"))
+	dir := w.projectFolder(cwd)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		w.t.Fatal(err)
 	}
@@ -342,8 +342,9 @@ func TestCaptureMatchesTheDirectoryWhereTheAgentSessionStarted(t *testing.T) {
 	t.Run("started outside, the hook cwd is captured", func(t *testing.T) {
 		w := newWorld(t, acme)
 		w.signIn()
-		private := w.gitRepo("origin=https://github.com/someone/private.git")
-		s := w.session(w.gitRepo("origin=https://bitbucket.org/acme/shop.git"))
+		s := w.session(w.gitRepo("origin=https://github.com/someone/private.git"))
+		private := s.cwd
+		s.cwd = w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
 		s.write("", `{"type":"summary"}`+"\n"+`{"cwd":"`+private+`","secret":1}`+"\n"+`{"cwd":"`+s.cwd+`"}`+"\n")
 		s.stop()
 		s.hook("SessionEnd")
@@ -359,7 +360,8 @@ func TestCaptureMatchesTheDirectoryWhereTheAgentSessionStarted(t *testing.T) {
 		if err := os.MkdirAll(sub, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		s := w.session(t.TempDir())
+		s := w.session(sub)
+		s.cwd = t.TempDir()
 		line := `{"cwd":"` + sub + `"}` + "\n"
 		s.write("", line)
 		s.stop()

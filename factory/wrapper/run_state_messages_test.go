@@ -348,6 +348,40 @@ func TestAPartialOrCutTranscriptMakesANewAgentSessionJoinTheRun(t *testing.T) {
 	}
 }
 
+// A partial file that is not the transcript is not restored, but the
+// transcript is complete: the new Execution resumes the same Agent
+// session.
+func TestAPartialFileThatIsNotTheTranscriptDoesNotStopTheResume(t *testing.T) {
+	env, ana := newEnv(t)
+	env.Runner.Agent(takeTask, initLine(t), shell(`d="$CLAUDE_CONFIG_DIR/projects/$CLAUDE_CODE_PROJECT_DIR_NAME" && `+
+		`s=$(basename "$(ls "$d"/*.jsonl | head -n 1)" .jsonl) && mkdir -p "$d/$s/tool-results" && `+
+		`echo output > "$d/$s/tool-results/x.txt"`), done("First"), reply, result, waitForEnd)
+	id := start(t, env, ana, "Fix the cart")
+	waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	session := sessionOf(t, env, id)
+	toolResult := session + "/tool-results/x.txt"
+	if len(env.SolidTrace.Stored(session, toolResult)) == 0 {
+		t.Fatalf("SolidTrace has no %s", toolResult)
+	}
+	env.SolidTrace.FlagFile(session, toolResult, "partial")
+
+	env.Runner.Agent(takeTask, done("Second"), reply, result, waitForEnd)
+	sendContinued(t, env, ana, id, "Also fix the tax")
+	waitForExecutions(t, env, ana, id, 2)
+	run := waitFor(t, env, ana, id, dispatcherapi.StateDone)
+	if len(run.Executions) != 2 || run.Summary != "Second" {
+		t.Fatalf("the Run is done with %q in %+v", run.Summary, run.Executions)
+	}
+	if run.Executions[1].TaskDeliveredAt != nil || env.SolidTrace.Downloads() != 1 {
+		t.Errorf("the second Execution did not resume the Agent session: task delivered %v, %d downloads",
+			run.Executions[1].TaskDeliveredAt, env.SolidTrace.Downloads())
+	}
+	reports := eventsOf(env, id, "report")
+	if len(reports) != 2 || reports[1]["agent.session_id"] != session {
+		t.Errorf("the report events %v, want two with the Agent session %s", reports, session)
+	}
+}
+
 // With no Agent session in SolidTrace (the harness never started), the
 // new Execution keeps the Run's Agent session id.
 func TestWithNoAgentSessionInSolidTraceTheRunKeepsItsAgentSession(t *testing.T) {
