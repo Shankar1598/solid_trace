@@ -111,4 +111,20 @@ describe('the Evidence file of a link', () => {
     expect(evidenceFileOfLink(`javascript:alert(1)//acme/evidence/${id}`, 'acme', [id])).toBeNull()
     expect(evidenceFileOfLink(undefined, 'acme', [id])).toBeNull()
   })
+
+  it('is none for a path that only ends in the Organization, evidence and the id', () => {
+    expect(evidenceFileOfLink(`https://evil.example/x/acme/evidence/${id}`, 'acme', [id])).toBeNull()
+    expect(evidenceFileOfLink(`https://console.example.com/acme/evidence/${id}/x`, 'acme', [id])).toBeNull()
+  })
+
+  it('is none for a link with no scheme to another host, or a relative link', () => {
+    expect(evidenceFileOfLink(`//evil.example/acme/evidence/${id}`, 'acme', [id])).toBeNull()
+    expect(evidenceFileOfLink(`/\\evil.example/acme/evidence/${id}`, 'acme', [id])).toBeNull()
+    expect(evidenceFileOfLink(`acme/evidence/${id}`, 'acme', [id])).toBeNull()
+    expect(evidenceFileOfLink(`../acme/evidence/${id}`, 'acme', [id])).toBeNull()
+  })
+
+  it('is the file for a link to it on another host, as a Console can have more than one address', () => {
+    expect(evidenceFileOfLink(`http://10.0.0.5:3000/acme/evidence/${id}`, 'acme', [id])).toBe(id)
+  })
 })

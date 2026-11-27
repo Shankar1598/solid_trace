@@ -69,6 +69,7 @@ export type RecordFinding = {
 
 export type RecordReview = {
   run: number
+  block_run?: number | null
   skill?: string | null
   trigger?: string | null
   stage?: string | null
@@ -180,12 +181,13 @@ export function givenText(given: boolean | null | undefined): string {
 }
 
 /**
- * Whether a run has no data: no skill, stage, step, reviewers, verifier or
- * skip. Records made before review record skipped a findings block that
- * could not be read have such runs.
+ * Whether a run has no data: no block_run, skill, stage, step, reviewers,
+ * verifier or skip. Records made before review record skipped a findings
+ * block that could not be read have such runs. A run of a block that gives
+ * only its run number has data: its block_run.
  */
 export function runHasNoData(review: RecordReview): boolean {
-  return !review.skill && !review.stage && !review.step && !review.skipped && !review.reviewers?.length && !review.verifier
+  return review.block_run == null && !review.skill && !review.stage && !review.step && !review.skipped && !review.reviewers?.length && !review.verifier
 }
 
 /** The reviewers of a run, as "name (model, effort)" each. */

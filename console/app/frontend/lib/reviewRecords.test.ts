@@ -98,6 +98,10 @@ describe('a confirmation and a run', () => {
     expect(runHasNoData({ run: 3 })).toBe(true)
   })
 
+  it('has data when its block gives only its run number, with no skill', () => {
+    expect(runHasNoData({ run: 1, block_run: 1, skill: null, stage: null, step: null, skipped: null, reviewers: null, verifier: null })).toBe(false)
+  })
+
   it('has data when it has a skill, a stage, a step, a reviewer, a verifier or a skip', () => {
     for (const part of [{ skill: 'solidtrace:code-review' }, { stage: 'final' }, { step: 'parser-01' }, { reviewers: [{ name: 'bugs' }] },
       { verifier: { model: 'opus' } }, { skipped: 'docs only' }]) {
