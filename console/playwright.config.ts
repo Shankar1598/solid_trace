@@ -50,7 +50,9 @@ const changesInstall = /InstanceSetting|instance_settings:set|setSqlQueries\(|su
 const flowsDir = join(__dirname, 'e2e/flows')
 const notAlone = readdirSync(flowsDir).filter(file => !ALONE.includes(file) && changesInstall.test(readFileSync(join(flowsDir, file), 'utf8')))
 if (notAlone.length) throw new Error(`playwright.config.ts: add ${notAlone.join(', ')} to ALONE, as it changes the install`)
-const alone = new RegExp(`flows/(${ALONE.join('|').replace(/\./g, '\\.')})$`)
+// A RegExp that matches one of these flow files, with each special character escaped.
+const fileNames = (files: string[]) => new RegExp(`flows/(${files.map(f => f.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')).join('|')})$`)
+const alone = fileNames(ALONE)
 
 // The flows that run only when the command line names them, such as
 // `bun run e2e e2e/flows/ui-pass.spec.ts`: ui-pass is a 7-minute screenshot
@@ -59,7 +61,7 @@ const alone = new RegExp(`flows/(${ALONE.join('|').replace(/\./g, '\\.')})$`)
 // this config again with another command line, inherit the decision.
 process.env.E2E_UI_PASS ??= process.argv.some(arg => arg.includes('ui-pass')) ? '1' : '0'
 const onRequest = process.env.E2E_UI_PASS === '1' ? [] : ['ui-pass.spec.ts']
-const notRequested = onRequest.length ? new RegExp(`flows/(${onRequest.join('|').replace(/\./g, '\\.')})$`) : []
+const notRequested = onRequest.length ? fileNames(onRequest) : []
 
 export default defineConfig({
   testDir: './e2e',

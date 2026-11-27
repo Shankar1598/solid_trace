@@ -47,8 +47,9 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+# Install runtime dependencies, with the base image's packages upgraded to
+# their security fixes (as Console's image does).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y \
     libsqlite3-0 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*

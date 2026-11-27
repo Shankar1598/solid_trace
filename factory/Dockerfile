@@ -30,7 +30,9 @@ RUN CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.Version=${SOLIDTRAC
 # with it. sh: the command that reloads Squid.
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The base image's packages are upgraded to their security fixes, as
+# Console's image does.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
     && rm -rf /var/lib/apt/lists/* \
