@@ -305,7 +305,7 @@ func TestTheWrapperRefusesATaskWithNoAccountToken(t *testing.T) {
 	values := map[string]string{wrapper.EnvDispatcherURL: dispatcher.URL, wrapper.EnvExecution: "x1",
 		wrapper.EnvIdentityFile: identity, wrapper.EnvDir: filepath.Join(dir, "execution"), wrapper.EnvHarness: harness,
 		wrapper.EnvRunUser: self.Username}
-	var stderr strings.Builder
+	var stderr lockedBuilder
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if code := wrapper.Main(ctx, func(name string) string { return values[name] }, os.Environ(), &stderr); code != 0 {

@@ -142,7 +142,10 @@ function editorTheme(maxLines: number, minLines: number) {
       minHeight: `${minLines * LINE_HEIGHT + 2 * PADDING_Y}px`,
       caretColor: 'var(--foreground)',
     },
-    '.cm-line': { padding: '0 8px' },
+    // When typed text replaces a selection that starts in a keyword, Chromium
+    // can put the keyword's colour on the line as an inline style, and then
+    // the whole line shows in that colour. The line keeps the editor's colour.
+    '.cm-line': { padding: '0 8px', color: 'inherit !important' },
     '.cm-placeholder': { color: 'var(--muted-foreground)' },
     '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
     '&.cm-focused .cm-matchingBracket': { backgroundColor: 'var(--accent)', outline: '1px solid var(--ring)' },

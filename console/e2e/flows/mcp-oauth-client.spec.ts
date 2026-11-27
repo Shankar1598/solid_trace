@@ -136,10 +136,12 @@ test('the MCP SDK signs in from the 401, calls a tool, refreshes after its token
   await expect(card.getByRole('link', { name: 'Settings → User' })).toHaveAttribute('href', `/${ORG}/settings/user`)
   await expect(card.getByRole('link', { name: 'How to connect, and what it can do' })).toHaveAttribute('href', MCP_DOCS)
   const signIn = page.getByRole('region', { name: 'Sign-in snippets' })
-  await expect(signIn.getByRole('tabpanel')).toHaveText(new RegExp(`claude mcp add --transport http solidtrace ${mcpUrl}$`))
+  // The panel shown: the panel of the tab before stays for a moment, inert.
+  const shown = signIn.getByRole('tabpanel').and(signIn.locator(':not([inert])'))
+  await expect(shown).toHaveText(new RegExp(`claude mcp add --transport http solidtrace ${mcpUrl}$`))
   await expect(signIn).not.toContainText('Bearer')
   await signIn.getByRole('tab', { name: 'Cursor' }).click()
-  await expect(signIn.getByRole('tabpanel')).toContainText(`"url": "${mcpUrl}"`)
+  await expect(shown).toContainText(`"url": "${mcpUrl}"`)
   await expect(page.getByRole('note')).toHaveCount(0)
 
   // The first call gets the 401; the SDK finds the metadata from it,

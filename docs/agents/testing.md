@@ -1,6 +1,12 @@
 # Running the full suites
 
-Day to day, run the tests for what you changed. Before a release, run all three suites on the commit to be tagged, in this order:
+GitHub Actions runs the full suites on each PR, on each push to `main` and on each push to a `ci/` branch (`.github/workflows/tests.yml`, "Tests"). Each suite has its own job, on its own runner, with its own ClickHouse, MinIO and Console test database. The factory's wrapper package and the Playwright flows are each split into 4 jobs. The workflow file names the checks that it does not run, and the reasons.
+
+Each Go job runs `go test -json` through `.github/scripts/go-test`. The job summary shows the time of each package, the 50 slowest tests, and the tests that failed or skipped (`bin/go-test-times`). The job keeps the JSON and the summary for 14 days as an artifact `go-test-<job>`. A failed Playwright job keeps the flows' evidence (the reporter's output, a trace of each test, the stack's log) as an artifact `playwright-<shard>`.
+
+Day to day, run the tests for what you changed, with the commands below. Use them also to look into a failure of the CI run. Before a release, do not run the full suites on the dev box: the CI run of the commit to tag must be green (see the Release record below). The checks that the workflow does not run (the Harness contract checks, `factory/local/test-runner`, the image tests and the second test of `monitor-status.spec.ts`) stay local: run them when their parts change.
+
+To run all three suites on a dev box, run them in this order:
 
 0. **Start the dev ClickHouse and MinIO with `bin/clickhouse-dev`** (`docker-compose.dev.yml`, project `solidtrace-dev`). The Go tests and the dev stack's EventStore both use them, so the Go suite and the Playwright flows need them. `bin/dev` and `bin/go-dev` run it too. It's one ClickHouse for every checkout and worktree: each Go test package makes and drops a database of its own on it. Their data is in the main checkout's `storage/`.
 1. **Start or restart the dev stack's EventStore on that commit, and wait until it answers.** Building EventStore and running the Go suite both write `event_store/vrl/lib/<os>_<arch>/libst_vrl.a`. So if the stack's EventStore is rebuilt while the Go suite builds, the link can fail.
@@ -76,7 +82,7 @@ console/e2e/query-port-switch off
 
 If Vite stops with `ENOSPC` on a `watch`, the inotify watch limit is used up, not the disk. Restart Vite with `CHOKIDAR_USEPOLLING=1` set, and it polls instead of watching.
 
-Each release has its changelog, `docs/changelogs/<tag>.md`: the GitHub release's notes, then a "Release record" section saying what was tagged, the migrations and config changes, and the tests run. Before tagging, record each suite's result (exit, time, counts) there. The release commit also sets `version` in `cli/plugin/.claude-plugin/plugin.json` to the tag without its `v`, such as `0.25.0`. A Go test fails when that version is not the newest changelog's, and the release job fails when it is not the tag's.
+Each release has its changelog, `docs/changelogs/<tag>.md`: the GitHub release's notes, then a "Release record" section saying what was tagged, the migrations and config changes, and the tests run. Before tagging, find the "Tests" run of the commit to tag (`gh run list --workflow tests.yml --commit <sha>`). Each job must be green. Record the run's link and the time of each job there (`gh run view <run id> --json jobs --jq '.jobs[] | "\(.name): \(.conclusion), \(.startedAt) to \(.completedAt)"'`), and the local checks that you ran in addition. The release commit also sets `version` in `cli/plugin/.claude-plugin/plugin.json` to the tag without its `v`, such as `0.25.0`. A Go test fails when that version is not the newest changelog's, and the release job fails when it is not the tag's.
 
 The last step of a release, after the GitHub release is published and its images are built: give the user the upgrade command for the new tag, such as:
 

@@ -1,0 +1,351 @@
+name: Tests
+
+# Runs the full suites of docs/agents/testing.md, each suite in its own job,
+# on each PR, on each push to main, on each push to a ci/ branch (to try a
+# change to this workflow without a PR), and by hand. A release tags a commit
+# of main only when this workflow's run of that commit is green.
+#
+# Each runner has its own dev ClickHouse, MinIO and Console test database, so
+# the EventStore suite and the Rails suite can run at the same time here.
+#
+# The mise action installs the tools that mise.toml names, at the same
+# versions as on a dev box. Each Go test job runs go test -json through
+# .github/scripts/go-test: the job summary shows the time of each package and
+# the 50 slowest tests, and the job uploads the JSON and the summary.
+#
+# These checks of testing.md are not in this workflow:
+# - The Harness contract checks (factory/internal/harnesscontract) need a
+#   Claude login and cost money.
+# - factory/local/test-runner starts a local Nomad stack of its own, and
+#   factory/image/test, factory/test-dispatcher-image and
+#   factory/image/test-release-files build images or release files. Run them
+#   when their parts change, and before a release.
+# - The second test of e2e/flows/monitor-status.spec.ts cuts EventStore's
+#   query port for 3 minutes, on a stack of its own.
+
+on:
+  pull_request:
+  push:
+    branches: [main, "ci/**"]
+  workflow_dispatch:
+
+# A new run of a PR or a branch stops the older one. Each commit of main gets
+# its own run, so a release can find the run of the commit to tag.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  # Console's gems, outside the checkout, so that no test sees them as files
+  # of the repository.
+  BUNDLE_PATH: ${{ github.workspace }}/../bundle
+  SHARDS: 4
+
+jobs:
+  cli:
+    name: CLI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: go
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-cli-${{ hashFiles('mise.toml', 'cli/go.sum') }}
+          restore-keys: go-cli-
+      - name: Vet, test and build
+        working-directory: cli
+        env:
+          GO_TEST_DIR: ${{ runner.temp }}/go-test
+        run: |
+          go vet ./...
+          ../.github/scripts/go-test cli -race -count=1 ./...
+          ./build
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: go-test-cli
+          path: ${{ runner.temp }}/go-test
+          retention-days: 14
+
+  event-store:
+    name: EventStore Go
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: go rust ruby
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-event-store-${{ hashFiles('mise.toml', 'event_store/go.sum', 'docs/traces/go/go.sum') }}
+          restore-keys: go-event-store-
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            event_store/vrl/rust/target
+          key: cargo-${{ hashFiles('mise.toml', 'event_store/vrl/rust/Cargo.lock') }}
+          restore-keys: cargo-
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.BUNDLE_PATH }}
+          key: gems-${{ hashFiles('mise.toml', 'console/Gemfile.lock') }}
+          restore-keys: gems-
+      # The root package's tests make Console's test database with
+      # bin/rails db:reset, and send through docs/traces/ruby with Console's
+      # bundle.
+      - name: Install Console's gems
+        working-directory: console
+        run: bundle install --jobs 4
+      - name: Start ClickHouse and MinIO
+        run: bin/clickhouse-dev
+      - name: Build the VRL library
+        run: event_store/vrl/build
+      - name: Test
+        working-directory: event_store
+        env:
+          GO_TEST_DIR: ${{ runner.temp }}/go-test
+        run: |
+          # shellcheck disable=SC2046
+          ../.github/scripts/go-test event-store -p 1 -count=1 -timeout 60m $(go list ./... | grep -v /bench/)
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: go-test-event-store
+          path: ${{ runner.temp }}/go-test
+          retention-days: 14
+
+  rails:
+    name: Rails
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: ruby bun
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.BUNDLE_PATH }}
+          key: gems-${{ hashFiles('mise.toml', 'console/Gemfile.lock') }}
+          restore-keys: gems-
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('mise.toml', 'console/bun.lock') }}
+          restore-keys: bun-
+      # Vite builds the test assets (config/vite.json, autoBuild), so the
+      # suite needs the packages too.
+      - name: Install the gems and the packages
+        working-directory: console
+        run: |
+          bundle install --jobs 4
+          bun install --frozen-lockfile
+      - name: Test
+        working-directory: console
+        env:
+          RAILS_ENV: test
+        run: bin/rails db:test:prepare && bin/rails test
+
+  console:
+    name: Console typecheck and Vitest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: bun
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('mise.toml', 'console/bun.lock') }}
+          restore-keys: bun-
+      - name: Install the packages
+        working-directory: console
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: console
+        run: bun run typecheck
+      - name: Vitest
+        working-directory: console
+        run: bun run test
+
+  # The factory module without its wrapper package, which the next job runs.
+  # The tests run in a delegated cgroup, and KILLBOUNDARY_REQUIRED makes a
+  # test fail where it would skip for want of a kill boundary.
+  factory:
+    name: Factory Go
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: go
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-factory-${{ hashFiles('mise.toml', 'factory/go.sum', 'cli/go.sum') }}
+          restore-keys: go-factory-
+      - name: Vet
+        working-directory: factory
+        run: go vet ./...
+      # The reference Squid test skips when the pinned image of the local
+      # stack is not pulled.
+      - name: Pull the Squid image
+        working-directory: factory
+        run: |
+          docker pull "$(grep -oE 'image: ubuntu/squid:\S+@sha256:[0-9a-f]+' local/compose.yml |
+            sed -E 's/^image: ubuntu\/squid:[^@]*/ubuntu\/squid/')"
+      - name: Test
+        working-directory: factory
+        env:
+          GO_TEST_DIR: ${{ runner.temp }}/go-test
+          KILLBOUNDARY_REQUIRED: "1"
+          AUTOSCALER_REFERENCE_REQUIRED: "1"
+        run: |
+          # shellcheck disable=SC2046
+          ../.github/scripts/delegated-scope ../.github/scripts/go-test factory -race -count=1 -timeout 60m \
+            $(go list ./... | grep -vx github.com/solidtrace/factory/wrapper)
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: go-test-factory
+          path: ${{ runner.temp }}/go-test
+          retention-days: 14
+
+  # factory/wrapper alone takes about 25 min, so each of $SHARDS jobs runs
+  # one part of its tests: each $SHARDS-th test in the order of go test -list.
+  factory-wrapper:
+    name: Factory wrapper (${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: go
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-factory-wrapper-${{ hashFiles('mise.toml', 'factory/go.sum', 'cli/go.sum') }}
+          restore-keys: go-factory-wrapper-
+      - name: Test
+        working-directory: factory
+        env:
+          GO_TEST_DIR: ${{ runner.temp }}/go-test
+          KILLBOUNDARY_REQUIRED: "1"
+          SHARD: ${{ matrix.shard }}
+        run: |
+          tests=$(go test -race -list . ./wrapper | grep -E '^(Test|Fuzz|Example)' |
+            awk -v n="$SHARDS" -v i="$SHARD" 'NR % n == i % n' | paste -sd '|')
+          [[ -n $tests ]] || { echo "shard $SHARD of $SHARDS has no tests" >&2; exit 1; }
+          ../.github/scripts/delegated-scope ../.github/scripts/go-test "factory-wrapper-$SHARD" -race -count=1 -timeout 60m \
+            -run "^($tests)\$" ./wrapper
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: go-test-factory-wrapper-${{ matrix.shard }}
+          path: ${{ runner.temp }}/go-test
+          retention-days: 14
+
+  # The flows run against a stack of the verify-solidtrace skill, and each
+  # job runs one part of the spec files (playwright --shard). runs.spec.ts
+  # starts the factory's wrapper, so the flows run in a delegated cgroup.
+  playwright:
+    name: Playwright (${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-flows-${{ hashFiles('mise.toml', 'event_store/go.sum', 'factory/go.sum', 'cli/go.sum') }}
+          restore-keys: go-flows-
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            event_store/vrl/rust/target
+          key: cargo-${{ hashFiles('mise.toml', 'event_store/vrl/rust/Cargo.lock') }}
+          restore-keys: cargo-
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.BUNDLE_PATH }}
+          key: gems-${{ hashFiles('mise.toml', 'console/Gemfile.lock') }}
+          restore-keys: gems-
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('mise.toml', 'console/bun.lock') }}
+          restore-keys: bun-
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('console/bun.lock') }}
+      - name: Install the gems, the packages and Chromium
+        working-directory: console
+        run: |
+          bundle install --jobs 4
+          gem install foreman
+          bun install --frozen-lockfile
+          bunx playwright install --with-deps chromium
+      - name: Start ClickHouse and MinIO
+        run: bin/clickhouse-dev
+      - name: Build the VRL library
+        run: event_store/vrl/build
+      - name: Start the stack
+        run: |
+          echo "SOLIDTRACE_VERIFY_HOME=$RUNNER_TEMP/verify" >>"$GITHUB_ENV"
+          SOLIDTRACE_VERIFY_HOME=$RUNNER_TEMP/verify .claude/skills/verify-solidtrace/bin/verify up
+      - name: Run the flows
+        run: |
+          .github/scripts/delegated-scope .claude/skills/verify-solidtrace/bin/verify flow -- \
+            --shard="${{ matrix.shard }}/$SHARDS"
+      - name: Stop the stack
+        if: always()
+        run: .claude/skills/verify-solidtrace/bin/verify down || true
+      # The evidence has the reporter's output, a trace of each test and the
+      # stack's log. The flow stack's logs are the Dispatcher's.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/verify/runs/*/evidence
+            console/tmp/e2e-*.log
+          retention-days: 14

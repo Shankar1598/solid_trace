@@ -24,10 +24,12 @@ func TestAtStartTheDispatcherReconcilesEachConnection(t *testing.T) {
 	if !ok || r.Entity != "" {
 		t.Fatalf("no reconcile step of tickets acted on the change at start: %+v", env.Source.Reconciles())
 	}
+	// The reconcile of other at start can come after the one of tickets.
+	waitForSteps(t, env, "other", "", 2)
+	settle()
 	if n := stepsOf(env, "other", ""); n != 2 {
 		t.Errorf("other has %d reconcile steps of the whole connection, want 2 (one each start)", n)
 	}
-	settle()
 	// The reconcile at start is not a backstop: a change from while the
 	// Dispatcher was down gives no warning.
 	for _, ev := range env.SolidTrace.RunEvents() {

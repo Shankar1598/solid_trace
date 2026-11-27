@@ -21,6 +21,9 @@ const isData = (response: Response) => /\/charts\/\d+\/data\?/.test(response.url
 async function choose(page: Page, select: Locator, option: string) {
   await select.click()
   await page.getByRole('option', { name: option, exact: true }).click()
+  // A select opened while this popup still closes can leave this popup open
+  // and in the way, so the next step waits until it is gone.
+  await expect(page.getByRole('listbox')).toHaveCount(0)
 }
 
 async function chartsRan(page: Page, count: number) {
