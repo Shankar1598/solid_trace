@@ -3,7 +3,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { ORG, PROJECT } from '../support/data'
+import { ADMIN, ADMIN_STATE, ORG, PROJECT } from '../support/data'
 
 // A screenshot pass over the factory pages, to look at by eye (the UI
 // screenshot pass of the deferred work). It starts the factory demo (six
@@ -117,7 +117,7 @@ test('the demo and two more Runs are up', async () => {
   // The two Runs that the demo does not make, from run events.
   const made = JSON.parse(rails(`
     org = Organization.find_by!(slug: ${JSON.stringify(ORG)})
-    admin = User.find_by!(email: "admin@solidtrace.local")
+    admin = User.find_by!(email: ${JSON.stringify(ADMIN.email)})
     token, secret = ApiToken.issue!(user: admin, name: "UI pass events ${RUN}", scopes: Oauth::Scopes::DISPATCHER, organization_id: org.id)
     print({ id: token.id, secret: secret }.to_json)
   `))
@@ -159,8 +159,8 @@ test('every factory page at both sizes and themes', async ({ browser, baseURL })
   const login = await browser.newContext({ baseURL })
   const lp = await login.newPage()
   await lp.goto('/login')
-  await lp.fill('input[type=email]', 'admin@solidtrace.local')
-  await lp.fill('input[type=password]', 'password123')
+  await lp.fill('input[type=email]', ADMIN.email)
+  await lp.fill('input[type=password]', ADMIN.password)
   await lp.click('button[type=submit]')
   await lp.waitForURL(u => !u.pathname.startsWith('/login'), { timeout: 30_000 })
   const state = await login.storageState()
@@ -284,7 +284,7 @@ test('every factory page at both sizes and themes', async ({ browser, baseURL })
 // box and its notice show, and a click on the box ticks it (nothing covers it).
 for (const width of [1280, 1440, 390]) {
   test(`the confirm checkbox of the captured repositories works at ${width} px`, async ({ browser, baseURL }) => {
-    const ctx = await browser.newContext({ baseURL, viewport: { width, height: 800 }, storageState: join(consoleDir, 'tmp/playwright-auth/admin.json') })
+    const ctx = await browser.newContext({ baseURL, viewport: { width, height: 800 }, storageState: join(consoleDir, ADMIN_STATE) })
     const page = await ctx.newPage()
     await page.goto(`/${ORG}/settings/agent_sessions`)
     const entries = page.locator('#captured_repositories')

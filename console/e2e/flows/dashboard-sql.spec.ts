@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Response } from '@playwright/test'
-import { ORG } from '../support/data'
+import { ORG, PROJECT } from '../support/data'
 import { expectEditorText, holdSqlQueries, releaseSqlQueries, setSqlQueries } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
@@ -14,7 +14,7 @@ import { watchErrors } from '../support/screens'
 test.beforeAll(() => { holdSqlQueries() })
 test.afterAll(() => { releaseSqlQueries() })
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 const SQL = `SELECT count() AS n FROM logs
 WHERE (empty({level:Array(String)}) OR level IN {level:Array(String)})
 AND ({q:String} = '' OR positionCaseInsensitive(message, {q:String}) > 0)`

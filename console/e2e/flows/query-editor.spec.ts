@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { PROJECT } from '../support/data'
 import { editorText, expectEditorText, holdSqlQueries, openLogs, releaseSqlQueries, runBy, summaryLine, timeRange } from '../support/logs'
 import { failedLoad, watchErrors } from '../support/screens'
 
@@ -7,7 +8,7 @@ import { failedLoad, watchErrors } from '../support/screens'
 // Ctrl+Enter to run, and Esc to leave the editor. In SQL mode, SQL's own
 // highlighting.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 const completions = (page: Page) => page.locator('.cm-tooltip-autocomplete')
 const option = (page: Page, label: string) =>
   completions(page).getByRole('option', { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`) })

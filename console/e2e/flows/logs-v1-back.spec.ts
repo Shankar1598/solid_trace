@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { PROJECT } from '../support/data'
 import { addFilter, builderRow, expectEditorText, last24h, logCount, openLogs, pickQuickRange, runBy, settled, timeRange } from '../support/logs'
 import { watchErrors } from '../support/screens'
 
@@ -48,8 +49,8 @@ test('Back in Query mode returns to the Query run before', async ({ page }) => {
   const errors = watchErrors(page)
   await openLogs(page, last24h('query'))
   const box = page.getByLabel('Query', { exact: true })
-  const first = "['solid-trace-project']\n| where level == \"warn\""
-  const second = "['solid-trace-project']\n| where level == \"error\""
+  const first = `['${PROJECT}']\n| where level == "warn"`
+  const second = `['${PROJECT}']\n| where level == "error"`
 
   await box.fill(first)
   await runBy(page, () => box.press('Control+Enter'))

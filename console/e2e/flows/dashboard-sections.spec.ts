@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { ORG } from '../support/data'
+import { ORG, PROJECT } from '../support/data'
 import { watchErrors } from '../support/screens'
 
 // Dashboard Sections: a member adds a Section, adds a chart in it from its
@@ -7,7 +7,7 @@ import { watchErrors } from '../support/screens'
 // it, moves a chart in no Section into it with the chart editor, renames it,
 // and deletes it, which keeps its charts in no Section.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 
 const card = (page: Page, title: string) => page.locator(`[data-chart-card="${title}"]`)
 const cards = (page: Page) => page.locator('[data-chart-card]')

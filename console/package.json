@@ -4,7 +4,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
-    "e2e": "playwright test --project=flows",
+    "e2e": "e2e/run-flows",
     "e2e:screens": "playwright test --project='screens-*'"
   },
   "dependencies": {

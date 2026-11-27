@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Response } from '@playwright/test'
-import { ORG } from '../support/data'
+import { ORG, PROJECT } from '../support/data'
 import { pickQuickRange } from '../support/logs'
 import { shoot, useTheme, watchErrors } from '../support/screens'
 
@@ -9,7 +9,7 @@ import { shoot, useTheme, watchErrors } from '../support/screens'
 // URL and survives a reload; All brings the first numbers back. Removing a
 // filter that a chart names asks first, and the chart then says so.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 const LEVELS = 'error\nwarn\ninfo'
 
 const card = (page: Page, title: string) => page.locator(`[data-chart-card="${title}"]`)

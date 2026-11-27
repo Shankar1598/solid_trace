@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { resolve } from 'node:path'
-import { ORG } from '../support/data'
+import { ORG, PROJECT } from '../support/data'
 import { last24h, openLogs, runBy } from '../support/logs'
 import { shoot, useTheme, watchErrors } from '../support/screens'
 
@@ -13,7 +13,7 @@ import { shoot, useTheme, watchErrors } from '../support/screens'
 // message; a higher threshold and Run now resolve it. Then the Monitor is
 // turned off and on, and deleted, and the stub gets the resolve.
 
-const SOURCE = "['solid-trace-project']"
+const SOURCE = `['${PROJECT}']`
 
 interface Stub {
   server: Server
