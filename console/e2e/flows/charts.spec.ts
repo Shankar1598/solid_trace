@@ -348,6 +348,33 @@ test('a bin the range covers in part says so in the tooltip', async ({ page }) =
   expect(errors).toEqual([])
 })
 
+test('the tooltip lists the series largest value first at the bin it shows', async ({ page }) => {
+  const errors = watchErrors(page)
+  await openLogs(page, `?${new URLSearchParams({ range: '24h', mode: 'query' })}`)
+  await runQuery(page, `${SOURCE}\n| summarize count() by bin(time, 1h), service`)
+  const legendOrder = (await legend(page).allInnerTexts()).map(text => text.trim())
+  expect(legendOrder.length).toBeGreaterThan(1)
+
+  const tooltip = page.locator('.recharts-tooltip-wrapper')
+  const box = (await chart(page).locator('.recharts-cartesian-grid').boundingBox())!
+  let label = ''
+  let unlike = 0
+  for (let i = 1; i <= 12; i++) {
+    await page.mouse.move(box.x + (box.width * i) / 13, box.y + box.height / 2)
+    // Each place is another bin, so the tooltip's label changes before its rows are read.
+    await expect.poll(async () => (await tooltip.innerText()).split('\n')[0]).not.toBe(label)
+    label = (await tooltip.innerText()).split('\n')[0]
+    const values = (await tooltip.locator('span.font-mono').allInnerTexts()).map(text => Number(text.replace(/,/g, '')))
+    const names = (await tooltip.locator('span.text-muted-foreground').allInnerTexts()).map(text => text.trim())
+    expect(values.length, label).toBeGreaterThan(1)
+    expect(values, label).toEqual([...values].sort((a, b) => b - a))
+    if (names.join() !== legendOrder.filter(name => names.includes(name)).join()) unlike++
+  }
+  // The bins where the value order is not the legend's order: the ones a tooltip in the legend's order gets wrong.
+  test.info().annotations.push({ type: 'bins in another order than the legend', description: String(unlike) })
+  expect(errors).toEqual([])
+})
+
 test('on a phone the legend entries are targets a finger can hit', async ({ page }) => {
   const errors = watchErrors(page)
   await page.setViewportSize({ width: 390, height: 844 })
