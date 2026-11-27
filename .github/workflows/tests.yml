@@ -208,6 +208,13 @@ jobs:
       - name: Vet
         working-directory: factory
         run: go vet ./...
+      # The reference Squid test skips when the pinned image of the local
+      # stack is not pulled.
+      - name: Pull the Squid image
+        working-directory: factory
+        run: |
+          docker pull "$(grep -oE 'image: ubuntu/squid:\S+@sha256:[0-9a-f]+' local/compose.yml |
+            sed -E 's/^image: ubuntu\/squid:[^@]*/ubuntu\/squid/')"
       - name: Test
         working-directory: factory
         env:
@@ -317,6 +324,12 @@ jobs:
           gem install foreman
           bun install --frozen-lockfile
           bunx playwright install --with-deps chromium
+      - name: Probe animations (temporary)
+        continue-on-error: true
+        working-directory: console
+        run: |
+          bun e2e/support/anim-probe.mjs
+          ../.github/scripts/delegated-scope bun e2e/support/anim-probe.mjs
       - name: Start ClickHouse and MinIO
         run: bin/clickhouse-dev
       - name: Build the VRL library
@@ -325,6 +338,13 @@ jobs:
         run: |
           echo "SOLIDTRACE_VERIFY_HOME=$RUNNER_TEMP/verify" >>"$GITHUB_ENV"
           SOLIDTRACE_VERIFY_HOME=$RUNNER_TEMP/verify .claude/skills/verify-solidtrace/bin/verify up
+      - name: Probe animations with the stack up (temporary)
+        continue-on-error: true
+        working-directory: console
+        run: |
+          bun e2e/support/anim-probe.mjs
+          ../.github/scripts/delegated-scope bun e2e/support/anim-probe.mjs
+          uptime
       - name: Run the flows
         run: |
           .github/scripts/delegated-scope .claude/skills/verify-solidtrace/bin/verify flow -- \
