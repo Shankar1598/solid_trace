@@ -269,6 +269,38 @@ func TestReviewRecordSetsThePRAndTheRound(t *testing.T) {
 	}
 }
 
+func TestReviewRecordPutsThePRBodyInTheRecord(t *testing.T) {
+	digest := writeText(t, "digest.json", recordDigest)
+	body := "## What changes\n\nThe parser has a cap.\n"
+
+	code, record, stderr := runRecord(t, "--digest", digest, "--pr-body", writeText(t, "body.md", body))
+
+	if code != 0 || record["pr_body"] != body {
+		t.Fatalf("exit %d: pr_body %q\n%s", code, record["pr_body"], stderr)
+	}
+	code, record, stderr = runRecord(t, "--digest", digest)
+	if _, ok := record["pr_body"]; code != 0 || ok {
+		t.Fatalf("with no --pr-body: exit %d, pr_body %v\n%s", code, record["pr_body"], stderr)
+	}
+}
+
+func TestReviewRecordRefusesAPRBodyOverGitHubsLimit(t *testing.T) {
+	digest := writeText(t, "digest.json", recordDigest)
+	// GitHub counts characters, not bytes: 65,536 two-byte characters fit.
+	atLimit := strings.Repeat("é", 65536)
+
+	if code, record, stderr := runRecord(t, "--digest", digest, "--pr-body", writeText(t, "body.md", atLimit)); code != 0 || record["pr_body"] != atLimit {
+		t.Fatalf("65,536 characters: exit %d\n%s", code, stderr)
+	}
+	code, _, stderr := runRecord(t, "--digest", digest, "--pr-body", writeText(t, "long.md", atLimit+"x"))
+	if want := "solidtrace review record: the PR body has 65537 characters, more than GitHub's limit of 65536\n"; code != 1 || stderr != want {
+		t.Fatalf("exit %d\nstderr: %q", code, stderr)
+	}
+	if code, _, _ := runRecord(t, "--digest", digest, "--pr-body", filepath.Join(t.TempDir(), "none.md")); code != 2 {
+		t.Fatalf("a missing body: exit %d", code)
+	}
+}
+
 func TestReviewRecordCutsThePersonsWords(t *testing.T) {
 	long := strings.Repeat("é", 300)
 	notes := `{"events": [{"finding": "1.F6", "type": "person", "said": "` + long + `", "asks": "dig", "source": "record", "evidence": ["u-person"]}]}`

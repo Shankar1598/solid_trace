@@ -5,9 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"unicode/utf8"
 
 	"github.com/solidtrace/cli/review"
 )
+
+// prBodyLimit is the most characters that GitHub takes in a PR body.
+const prBodyLimit = 65536
 
 func reviewRecord(args []string, env Env) int {
 	flags := flag.NewFlagSet("review record", flag.ContinueOnError)
@@ -15,6 +19,7 @@ func reviewRecord(args []string, env Env) int {
 	digestPath := flags.String("digest", "", "the path of the digest JSON (from review digest)")
 	notesPath := flags.String("notes", "", "the path of the notes JSON")
 	pr := flags.String("pr", "", "the PR's URL (default: null)")
+	prBodyPath := flags.String("pr-body", "", "the path of the PR body, to keep in the record (default: none)")
 	round := flags.Int("round", 1, "the record's round: 1 for open-pr, one more for each update-pr")
 	positional, ok := parseInterspersed(flags, args)
 	if !ok {
@@ -38,6 +43,18 @@ func reviewRecord(args []string, env Env) int {
 	}
 	if *pr != "" {
 		opts.PR = pr
+	}
+	if *prBodyPath != "" {
+		body, err := os.ReadFile(*prBodyPath)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "solidtrace review record: %v\n", err)
+			return 2
+		}
+		if n := utf8.RuneCount(body); n > prBodyLimit {
+			fmt.Fprintf(env.Stderr, "solidtrace review record: the PR body has %d characters, more than GitHub's limit of %d\n", n, prBodyLimit)
+			return 1
+		}
+		opts.PRBody = string(body)
 	}
 	record, warnings, err := review.BuildRecord(digest, opts)
 	var refused *review.NotesError

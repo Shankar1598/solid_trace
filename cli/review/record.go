@@ -17,6 +17,7 @@ type Record struct {
 	Version       int                  `json:"version"`
 	Sessions      []SessionTitle       `json:"sessions"`
 	PR            *string              `json:"pr"`
+	PRBody        string               `json:"pr_body,omitempty"`
 	Round         int                  `json:"round"`
 	Story         Story                `json:"story"`
 	Reviews       []RecordReview       `json:"reviews"`
@@ -165,6 +166,8 @@ type RecordOptions struct {
 	// Notes is the JSON of the notes, or nil for the mechanical part only.
 	Notes []byte
 	PR    *string
+	// PRBody is the PR body in Markdown, or "" for none.
+	PRBody string
 	// Round is 1 or more.
 	Round int
 }
@@ -183,7 +186,7 @@ func BuildRecord(digestJSON []byte, opts RecordOptions) (Record, []string, error
 		return Record{}, nil, fmt.Errorf("digest: %w", err)
 	}
 	b := newRecordBuilder(d)
-	b.r.PR, b.r.Round = opts.PR, opts.Round
+	b.r.PR, b.r.PRBody, b.r.Round = opts.PR, opts.PRBody, opts.Round
 	b.build()
 	if opts.Notes != nil {
 		if problems := b.notes(opts.Notes); len(problems) > 0 {

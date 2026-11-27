@@ -269,7 +269,7 @@ Usage:
       there, is 1 or more. Print the counts, the problems and the warnings
       (a block of the digest that cannot be read) as JSON. Exit 1 when
       there is a problem, 2 when a file cannot be read.
-  solidtrace review record --digest PATH [--notes PATH] [--pr URL] [--round N]
+  solidtrace review record --digest PATH [--notes PATH] [--pr URL] [--pr-body FILE] [--round N]
       Print as JSON the review record (version 2) of a digest. Without
       --notes, it is the mechanical part: one run for each findings block
       that is not an update block and for each review start with no
@@ -285,11 +285,13 @@ Usage:
       the findings from outside the reviews (P, A and X) and of a review
       start with no block (T<run>-<n>), each confirmation's given, and
       low confidence. Then each outcome is worked out again. --pr sets
-      pr (default null), and --round sets round (default 1). A block
+      pr (default null), --pr-body sets pr_body to the text of FILE (the
+      PR body; default none), and --round sets round (default 1). A block
       that the record cannot read or place is a warning on stderr. Exit
       1 when the notes name a finding, a confirmation or an evidence uuid
-      that is not there, or are not of their shape; 2 when a file cannot
-      be read.
+      that is not there, or are not of their shape, or when the PR body
+      has more than 65536 characters (GitHub's limit); 2 when a file
+      cannot be read.
   solidtrace review fixed [COMMIT]
       Print one solidtrace-findings update block for each run that the
       Review-Findings trailers of COMMIT (default HEAD) name, with a fix

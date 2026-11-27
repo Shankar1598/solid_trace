@@ -2,7 +2,7 @@
 
 Amends [ADR 0020](0020-agent-transcripts-raw-chunks-in-clickhouse-and-logs-for-reading.md): the parse of the Agent file batches makes a third derived layer, `review_records`, next to the Logs and `agent_sessions`.
 
-Changed later, two times. First the skills sent the record to `solidtrace review final` in a heredoc, not in the final reply. Now `solidtrace review final` writes the record to a file in the folder of the Agent session, and the capture uploads it with the Agent session's other files. See [The record moves to a file of the Agent session](#the-record-moves-to-a-file-of-the-agent-session). The parse still reads the block of an older Agent session.
+Changed later, three times. First the skills sent the record to `solidtrace review final` in a heredoc, not in the final reply. Now `solidtrace review final` writes the record to a file in the folder of the Agent session, and the capture uploads it with the Agent session's other files. See [The record moves to a file of the Agent session](#the-record-moves-to-a-file-of-the-agent-session). The parse still reads the block of an older Agent session.
 
 The `open-pr` and `update-pr` skills ended their final reply with the PR's **Review record**, as JSON in a `solidtrace-pr-record` block. The reply uploads with its **Agent session**, as each transcript line does. SolidTrace reads the record from there:
 
@@ -38,6 +38,14 @@ The heredoc put the whole record in the input of one tool call. The agent must t
 - **The heredoc parse went.** No release had it, and no EventStore of the first team parsed it. The block parse stays.
 
 We did not take a folder of the CLI with a new scan in the capture: it needs a second way to find the session of each file and a second record of what was sent. We did not take a direct upload from `review final` to a new route: it must copy the rule of the captured repositories, and it has no retry.
+
+## The record keeps the PR body, shown as Markdown
+
+A reviewer reads the PR body first, but the record did not keep it. Now `solidtrace review record --pr-body FILE` puts the body in the record's `pr_body`, a string that a record with no body does not have. The version stays 2, because a record of version 2 with no `pr_body` is still correct. `open-pr` and `update-pr` give the body that they wrote to the PR. The command refuses a body of more than 65,536 characters, GitHub's limit. EventStore stores the record byte for byte as before, so it needs no change.
+
+- **Markdown, with the rules of a Text block.** The page shows `pr_body` as Markdown, as the PR shows it: raw HTML is skipped, an image is a link, and a link opens in a new tab. The words of PR commenters are not in the body, only the agent's own text. The other texts of the record stay plain text.
+- **A link to an Evidence file of the record opens it in a popup.** The body links each Evidence file to its page in Console. On the record's page, such a link opens the same popup as the Evidence files list.
+- **Earlier records have no PR body.** Records from plugin 0.24 and earlier do not keep it, and the page says so.
 
 ## Considered options
 

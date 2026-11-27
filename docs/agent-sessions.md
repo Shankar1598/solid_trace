@@ -200,14 +200,15 @@ Each Agent session that made a Review record links it: under its title on the **
 Click the PR to open its record. The page shows:
 
 - the PR, its round, the time it was stored, its Agent session and the counts;
+- the PR body, as Markdown. A link in it to an Evidence file of the record opens the file in a popup. A record from plugin 0.24 or earlier does not keep the PR body, so its page says that the record has no PR body;
 - the story of the feature;
-- the review runs, with the skill, the stage, the step, the reviewers with their models and efforts, and the verifier;
+- the review runs, with the skill, the stage, the step, the reviewers with their models and efforts, and the verifier. A run with no data (an earlier record made it from a findings block that could not be read) shows **No data** across its row;
 - each finding with who found it (**missed** when the reviews did not), its severity, its title and place, its decisions in the order of its events (as `trivial, verifier pushed back, person asks fix, fixed`), and its outcome. **Details** shows its scenario and the words of its events: why, what the person said, what the agent found, and the files;
 - the confirmations, each **Given**, **Not given** or **Not known**;
-- the Evidence files of the Agent sessions of all the rounds of the PR, each a link to its page;
+- the Evidence files of the Agent sessions of all the rounds of the PR. A click opens a file in a popup, with the previous and the next file (← and →) and a link to its page. A click with Ctrl, Cmd, Shift or the middle button opens its page;
 - the rounds of the PR, when it has more than one. Click a round to open it.
 
-The record is what the agent wrote, with the words of PR commenters in it, so the pages show all of it as text, never as HTML or Markdown.
+The record is what the agent wrote, with the words of PR commenters in it, so the pages show it as text, never as HTML or Markdown. The PR body is the one exception: it shows as Markdown with the rules of a Text block. Its raw HTML is skipped, an image shows as a link, and a link opens in a new tab.
 
 SolidTrace reads the record from the file that `solidtrace review final` writes: `<session id>/solidtrace/review-records/round-<n>-<h>.json` in the Claude project folder of the Agent session, when it is valid JSON of version 2 ([ADR 0024](adr/0024-review-records-come-from-the-final-reply-of-an-agent-session.md)). The capture uploads the file with the Agent session, so a record of up to 32 MiB uploads. An Agent session from before that command gives its record in a `solidtrace-pr-record` block of its final reply, and SolidTrace reads that block too. When one agent message has more than one block, the last one counts. So:
 
@@ -256,7 +257,7 @@ The link opens `/<org>/evidence/<id>` in Console. A person who is not signed in 
 
 Console streams the bytes from EventStore with `Range`, so a video can seek. It sends the stored `Content-Type`, with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Content-Disposition: inline` and `Cache-Control: private`.
 
-**Coding agents** → **Evidence files** lists the Evidence files of the Organization, the newest first: a small image or a video mark, the caption, the type, the size, the Agent session, the uploader and the date. A deleted file shows **deleted**. The page of each Agent session lists the Evidence files of that Agent session. The page of each Review record lists the Evidence files of the Agent sessions of all the rounds of its PR.
+**Coding agents** → **Evidence files** lists the Evidence files of the Organization, the newest first: a small image or a video mark, the caption, the type, the size, the Agent session, the uploader and the date. A deleted file shows **deleted**. The page of each Agent session lists the Evidence files of that Agent session. The page of each Review record lists the Evidence files of the Agent sessions of all the rounds of its PR. On both pages, a click opens a file in a popup: the image fits the window, a video has its speed control, and the popup shows the whole caption, "n of N", the previous and the next file (← and →, or the buttons) and **Open page**. Esc closes it. A click with Ctrl, Cmd, Shift or the middle button opens the file's page.
 
 ### Evidence Retention
 

@@ -1,5 +1,9 @@
 # Unreleased
 
+## Added
+
+- **The PR body on the Review record page.** `solidtrace review record --pr-body FILE` keeps the PR body in the record's new `pr_body` (the version stays 2), and refuses a body of more than 65,536 characters, GitHub's limit. `open-pr` and `update-pr` give it the body that they wrote. The page shows it as Markdown before the Story, with the rules of a Text block, and `get_review_record` gives it. A record from plugin 0.24 or earlier has no PR body, and the page says so.
+
 ## Changed
 
 - **One Claude Code plugin.** The `solidtrace` plugin now has capture and the review skills, and the `solidtrace-skills` plugin goes. The skills have new names: `/solidtrace:code-review`, `/solidtrace:deep-review`, `/solidtrace:open-pr`, `/solidtrace:update-pr` and `/solidtrace:try-pr`. The setup script installs the `solidtrace` plugin and removes `solidtrace-skills`. `SOLIDTRACE_REVIEW_PLUGIN=no` goes, because the skills are in the same plugin as capture. Records of earlier sessions stay as they are: the digest finds a review skill by the last part of its name, so `solidtrace-skills:code-review` and `solidtrace:code-review` are the same to it.
