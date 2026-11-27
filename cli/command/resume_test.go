@@ -2,7 +2,6 @@ package command_test
 
 import (
 	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -710,11 +709,12 @@ func TestTheSweepSendsNothingOfADownloadedAgentSession(t *testing.T) {
 		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
 	}
 	w.stderr = &syncBuffer{}
+	before := len(w.agent.AllRequests())
 
 	w.startSession(t.TempDir())
 
-	for _, r := range w.agent.AllRequests() {
-		if r.SessionID == resumeID && r.Method != http.MethodGet {
+	for _, r := range w.agent.AllRequests()[before:] {
+		if r.SessionID == resumeID {
 			t.Errorf("capture sent %s %v of another person's Agent session", r.Method, r.Query)
 		}
 	}
