@@ -341,8 +341,9 @@ func downloadTranscript(ctx context.Context, env Env, client *agentapi.Client, i
 }
 
 // downloadsBusy starts the message of the server's 503 when it sends as
-// many downloads as it can (event_store/handler/agent_download.go). Its
-// other 503 is for last uploads that are not ready yet.
+// many downloads as it can, to all people or to this person
+// (event_store/handler/agent_download.go). Its other 503 is for last
+// uploads that are not ready yet.
 const downloadsBusy = "The server sends as many downloads as it can now."
 
 // downloadWhenReady asks for the download, and waits while the server

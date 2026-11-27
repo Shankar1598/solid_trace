@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -31,13 +32,15 @@ const ScopeSessionsDownload = "sessions:download"
 // on the server; this lets a slow client have 1 MB a second.
 const agentDownloadTimeout = 10 * time.Minute
 
-// agentDownloadsAtOnce is the most downloads by a person's token that read
-// at the same time. Each download keeps a ClickHouse connection of the
-// pool until its stream ends, at the pace of its client. Without a limit,
-// slow downloads can take the whole pool, and then /health and ingest
-// fail. A Run's token is not in the limit: a member's slow downloads must
-// not stop the restores of Runs, and a Run downloads only its own Agent
-// sessions.
+// agentDownloadsAtOnce is the most downloads by people's tokens that read
+// at the same time, and each person has at most 1 of them. Each download
+// keeps a ClickHouse connection of the pool until its stream ends, at the
+// pace of its client. Without a limit, slow downloads can take the whole
+// pool, and then /health and ingest fail. Without the limit of 1 for each
+// person, one person's slow downloads can take all of them, and each
+// other person's resume fails. A Run's token is not in the limit: a
+// member's slow downloads must not stop the restores of Runs, and a Run
+// downloads only its own Agent sessions.
 const agentDownloadsAtOnce = 2
 
 // agentDownloadRetryAfter is the Retry-After, in seconds, of a download
@@ -88,8 +91,8 @@ type AgentDownloads interface {
 // the bytes are stored, and the download must not leave them out. A read
 // that fails after the first byte stops the answer with no end, so the
 // client sees an error and not a short archive. When agentDownloadsAtOnce
-// downloads by a person's token read, it answers 503 with Retry-After to
-// the next person's token.
+// downloads by people's tokens read, or a download by the same person
+// reads, it answers 503 with Retry-After to a person's token.
 func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	token := agentToken(c)
 	if token.AgentSessionIDs == nil && !token.Has(ScopeSessionsDownload) {
@@ -123,14 +126,11 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	// A Run's child token is not in the limit, as before people could
 	// download. A person's token with a list of ids is in it.
 	if !token.Child {
-		select {
-		case h.downloadSlots <- struct{}{}:
-		default:
+		var refusal string
+		if release, refusal = h.reading.take(token.UserID); refusal != "" {
 			c.Set(fiber.HeaderRetryAfter, agentDownloadRetryAfter)
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"error": "The server sends as many downloads as it can now. Try again in a few seconds."})
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": refusal})
 		}
-		release = func() { <-h.downloadSlots }
 	}
 	files, err := h.downloads.AgentDownloadFiles(c.UserContext(), projectID, sessionID)
 	if err != nil {
@@ -154,6 +154,39 @@ func (h *AgentHandler) DownloadAgentSession(c *fiber.Ctx) error {
 	go h.sendDownload(writer, agentDownloadTimeout, release, projectID, sessionID, files)
 	c.Context().SetBodyStream(reader, -1)
 	return nil
+}
+
+// downloadsBusy starts each refusal of downloadLimit. The solidtrace CLI
+// tells it from the 503 of uploads that are not ready by this start.
+const downloadsBusy = "The server sends as many downloads as it can now."
+
+// downloadLimit is the set of people (user ids) with a download that
+// reads now. As each person has at most 1, its size is the number of
+// downloads that read.
+type downloadLimit struct {
+	mu     sync.Mutex
+	people map[int64]struct{}
+}
+
+// take adds user to the set and gives the release that removes it. When
+// user already has a download that reads, or agentDownloadsAtOnce people
+// have one, it adds nothing and gives the refusal.
+func (l *downloadLimit) take(user int64) (release func(), refusal string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.people[user]; ok {
+		return nil, downloadsBusy + " It sends 1 download at a time to each person, and another download " +
+			"of yours reads now. Try again when it ends."
+	}
+	if len(l.people) >= agentDownloadsAtOnce {
+		return nil, downloadsBusy + " Try again in a few seconds."
+	}
+	l.people[user] = struct{}{}
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		delete(l.people, user)
+	}, ""
 }
 
 // sendDownload writes the tar archive of files to w and then closes w,
