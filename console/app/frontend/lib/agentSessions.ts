@@ -203,7 +203,6 @@ export const resumeText = 'Run this command in a checkout of the repository of t
   'where this Agent session started, it continues it. On another machine, it starts a new Agent session from its ' +
   'history, and this Agent session does not change.'
 
-
 /** Whose an Agent session is: the person, or the Run with its Project. */
 export function whoText({ person, run }: Pick<AgentSessionRow, 'person' | 'run'>): string {
   if (run) return run.project ? `Run ${run.id} (${run.project})` : `Run ${run.id}`
