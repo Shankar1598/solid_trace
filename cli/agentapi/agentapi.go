@@ -145,7 +145,10 @@ type Unit struct {
 	// Run (limited to its Agent sessions) sends them.
 	RunID   string
 	Project string
-	Bytes   []byte
+	// ParentSessionID is the Agent session that this one was forked from,
+	// when the uploader knows it.
+	ParentSessionID string
+	Bytes           []byte
 }
 
 // Uploaded is the server's answer to an upload.
@@ -181,6 +184,9 @@ func (c *Client) Upload(ctx context.Context, sessionID string, unit Unit) (Uploa
 	if unit.RunID != "" {
 		query.Set("run_id", unit.RunID)
 		query.Set("project", unit.Project)
+	}
+	if unit.ParentSessionID != "" {
+		query.Set("parent_session_id", unit.ParentSessionID)
 	}
 	if unit.ContentHash != "" {
 		query.Set("content_hash", unit.ContentHash)

@@ -31,7 +31,10 @@ type Record struct {
 	At         time.Time `json:"at"`
 	Repository string    `json:"repository,omitempty"`
 	StartDir   string    `json:"start_dir,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	// Parent is the Agent session that resume forked this one from. Each
+	// upload sends it as parent_session_id.
+	Parent string `json:"parent,omitempty"`
+	Error  string `json:"error,omitempty"`
 	// Fingerprint is the files as the uploaded call found them. The sweep
 	// does not ask the server again while they stay the same.
 	Fingerprint string `json:"fingerprint,omitempty"`
@@ -55,14 +58,14 @@ func RecordOf(dir, sessionID string) (r Record, ok bool) {
 	return r, r.Status != ""
 }
 
-// SetStartDir keeps startDir as the start directory in the record of an
-// Agent session, with the other fields of the record. resume calls it for
-// the fork of a download: the first cwd of its history can be a folder of
-// another machine, and the sweep has no hook cwd.
-func SetStartDir(dir, sessionID, startDir string) error {
+// SetFork keeps the start directory and the parent in the record of a
+// fork that resume starts, with the other fields of the record. The first
+// cwd of its history can be a folder of another machine, and the sweep has
+// no hook cwd. Each later record of the fork keeps the parent.
+func SetFork(dir, sessionID, startDir, parent string) error {
 	c := &Capturer{Dir: dir}
 	r, _ := RecordOf(dir, sessionID)
-	r.StartDir = startDir
+	r.StartDir, r.Parent = startDir, parent
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -72,6 +75,10 @@ func SetStartDir(dir, sessionID, startDir string) error {
 
 func (c *Capturer) record(sessionID string, r Record) {
 	r.At = c.Now()
+	if r.Parent == "" {
+		old, _ := RecordOf(c.Dir, sessionID)
+		r.Parent = old.Parent
+	}
 	data, err := json.Marshal(r)
 	if err == nil {
 		err = writeFile(c.recordPath(sessionID), data)

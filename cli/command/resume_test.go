@@ -2,6 +2,7 @@ package command_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -691,6 +692,9 @@ func TestResumeDownloadsIntoATemporaryFolderAndStartsANewAgentSessionFromItsHist
 			if r, _ := capture.RecordOf(w.dir, fork); r.StartDir != repo {
 				t.Errorf("capture's record of the fork has the start folder %q, want %q", r.StartDir, repo)
 			}
+			if r, _ := capture.RecordOf(w.dir, fork); r.Parent != resumeID {
+				t.Errorf("capture's record of the fork has the parent %q, want %q", r.Parent, resumeID)
+			}
 			want := "solidtrace resume: the new Agent session " + fork + " starts from the history of the Agent " +
 				"session " + resumeID + ".\n"
 			if got := w.stderr.String(); !strings.HasSuffix(got, want) {
@@ -817,5 +821,41 @@ func TestTheSweepSendsNothingOfADownloadedAgentSession(t *testing.T) {
 		if r.SessionID == resumeID {
 			t.Errorf("capture sent %s %v of another person's Agent session", r.Method, r.Query)
 		}
+	}
+}
+
+func TestCaptureSendsTheFirstAgentSessionAsTheParentOfEachUploadOfAFork(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	w.inSolidTrace(resumeID, fake.Session{AnotherPerson: true}, map[string]string{resumeID + ".jsonl": resumeTranscript})
+	if code := w.resume(resumeID); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+	_, fork := w.forkOf(w.started[0], repo)
+	w.onThisMachine(fork, repo, "/home/someone-else/checkouts/shop")
+	session := &agentSession{w: w, id: fork, cwd: repo, dir: w.projectFolder(repo)}
+	w.stderr = &syncBuffer{}
+	before := len(w.agent.AllRequests())
+
+	// The second capture comes after the first one kept its own record.
+	session.hook("SessionStart")
+	session.hook("Stop")
+
+	uploads := 0
+	for _, r := range w.agent.AllRequests()[before:] {
+		if r.SessionID != fork || r.Method != http.MethodPost || !r.Query.Has("path") {
+			continue
+		}
+		uploads++
+		if got := r.Query.Get("parent_session_id"); got != resumeID {
+			t.Errorf("an upload of the fork sent parent_session_id %q, want %q", got, resumeID)
+		}
+	}
+	if uploads == 0 {
+		t.Fatal("capture uploaded nothing of the fork")
+	}
+	if r, _ := capture.RecordOf(w.dir, fork); r.Parent != resumeID {
+		t.Errorf("capture's record of the fork has the parent %q after its uploads, want %q", r.Parent, resumeID)
 	}
 }

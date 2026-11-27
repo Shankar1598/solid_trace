@@ -60,6 +60,8 @@ type upload struct {
 	pending bool
 	// forRun is set for a Run's upload (UploadRun).
 	forRun *RunUpload
+	// parent is the Agent session that this one was forked from, or "".
+	parent string
 }
 
 func (u *upload) run(ctx context.Context) error {
@@ -170,6 +172,7 @@ func (u *upload) send(ctx context.Context, unit agentapi.Unit) (agentapi.Uploade
 	unit.Harness = Harness
 	unit.Repository = u.repo.Name
 	unit.Folder = u.repo.Folder
+	unit.ParentSessionID = u.parent
 	if u.forRun != nil {
 		unit.RunID, unit.Project = u.forRun.RunID, u.forRun.Project
 	}

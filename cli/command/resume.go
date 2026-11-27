@@ -223,8 +223,9 @@ func resume(ctx context.Context, args []string, env Env) int {
 	fork := newSessionID()
 	// The fork keeps the cwd of the history, which can be a folder of
 	// another machine. The record tells capture's sweep, and the next
-	// resume, that the fork starts in the target folder.
-	if err := capture.SetStartDir(env.ConfigDir, fork, f.target); err != nil {
+	// resume, that the fork starts in the target folder, and capture sends
+	// the first Agent session as the fork's parent.
+	if err := capture.SetFork(env.ConfigDir, fork, f.target, id); err != nil {
 		fmt.Fprintf(env.Stderr, "solidtrace resume: keep the folder of the Agent session for capture: %v\n", err)
 	}
 	fmt.Fprintf(env.Stderr, "solidtrace resume: the new Agent session %s starts from the history of the Agent "+
