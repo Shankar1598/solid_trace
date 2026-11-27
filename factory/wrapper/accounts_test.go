@@ -74,7 +74,9 @@ func TestTwoExecutionsAtTheSameTimeGetTwoAccountsWhenTwoAreFree(t *testing.T) {
 func TestAnAccountAtItsLimitIsNotGivenToANewRunBeforeItsResetTime(t *testing.T) {
 	env, ana := newEnv(t)
 	env.AddAccount("pool-2", secondToken)
-	env.MarkAtLimit(factorytest.DefaultAccount, env.Clock.Now().Add(30*time.Minute))
+	// The reset is well before the idle limit (30 min of the same clock), so
+	// the Runs that wait at the gate do not time out when the clock moves.
+	env.MarkAtLimit(factorytest.DefaultAccount, env.Clock.Now().Add(10*time.Minute))
 	wait, open := gate(t)
 	for range 3 {
 		env.Runner.Agent(takeTask, initLine(t), wait, done("Fixed"), reply, result, waitForEnd)
@@ -93,7 +95,7 @@ func TestAnAccountAtItsLimitIsNotGivenToANewRunBeforeItsResetTime(t *testing.T) 
 
 	// After the reset time, pool-1 is free and has the fewest live
 	// Executions.
-	env.Clock.Advance(30 * time.Minute)
+	env.Clock.Advance(10 * time.Minute)
 	third := start(t, env, ana, "Fix the till")
 	if got := onlyExecution(t, waitFor(t, env, ana, third, dispatcherapi.StateRunning)).Account; got != factorytest.DefaultAccount {
 		t.Errorf("the Run after the reset time is on %q, want %s", got, factorytest.DefaultAccount)
