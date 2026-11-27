@@ -641,3 +641,28 @@ func TestReviewRecordTakesWhatTheNotesGive(t *testing.T) {
 		t.Errorf("fix: %v", fix)
 	}
 }
+
+func TestReviewRecordAndReviewCheckWarnOfABlockThatIsNotAJSONObject(t *testing.T) {
+	for _, body := range []string{"null", `[{"id": "F1"}]`} {
+		path := transcript(t, assistantLine("a-block", text("Reviewed.\n```solidtrace-findings\n"+body+"\n```")))
+		code, digest, stderr := runDigest(t, command.Env{}, "--file", path)
+		if code != 0 {
+			t.Fatalf("%s: review digest: exit %d\n%s", body, code, stderr)
+		}
+
+		code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
+
+		want := "solidtrace review record: warning: the block a-block cannot be read (the solidtrace-findings block is not a JSON object): the record has none of its findings\n"
+		if code != 0 || stderr != want {
+			t.Fatalf("%s: exit %d\nstderr: %s", body, code, stderr)
+		}
+		if n := len(record["reviews"].([]any)); n != 0 {
+			t.Errorf("%s: %d reviews, want 0: a block that is not a JSON object is not a run", body, n)
+		}
+		code, out, _ := runCheck(t, decodeJSON(t, digest), record)
+		wantWarnings := []string{"the block a-block cannot be read (the solidtrace-findings block is not a JSON object): the record has none of its findings"}
+		if code != 0 || len(out.Problems) != 0 || !reflect.DeepEqual(out.Warnings, wantWarnings) {
+			t.Fatalf("%s: review check: exit %d, %+v", body, code, out)
+		}
+	}
+}

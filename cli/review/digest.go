@@ -823,6 +823,10 @@ func blockEntry(l line, body []byte) Entry {
 		e.Error = err.Error()
 		return e
 	}
+	if _, ok := v.(map[string]any); !ok {
+		e.Error = "the solidtrace-findings block is not a JSON object"
+		return e
+	}
 	// json.Compact keeps the block's own key order and its <, > and &.
 	var compact bytes.Buffer
 	_ = json.Compact(&compact, body)
