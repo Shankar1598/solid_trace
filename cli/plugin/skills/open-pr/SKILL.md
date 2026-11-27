@@ -90,7 +90,7 @@ Open the PR as [platforms.md](platforms.md) says, in Open a PR.
 
 ## 8. Final reply
 
-Run the command of step 4.4 again, with the same `--round`, with `--pr-body "$dir/body.md"` (the body of step 6, which the Review record page shows), and with `--pr` set to the PR's URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened). When it refuses the body because it has more than 65,536 characters, make the body shorter, change the PR body (Change the PR body in [platforms.md](platforms.md)), and run the command again. Then write the record to the Agent session with this command, with `$dir` the folder of step 1:
+Run the command of step 4.4 again, with the same `--round`, with `--pr-body "$dir/body.md"` (the body of step 6, which the Review record page shows), and with `--pr` set to the PR's URL, or to `local:<the file's path>` in local mode (no `--pr` when no PR opened). When it refuses the body because it has more than 65,536 characters, make the body shorter, change the PR body (Change the PR body in [platforms.md](platforms.md)), and run the command again. When the CLI does not know `--pr-body` (`flag provided but not defined: -pr-body`, from a CLI older than this plugin), run the command again without it, and say in the final reply that the record has no PR body. Then write the record to the Agent session with this command, with `$dir` the folder of step 1:
 
 ```bash
 solidtrace review final "$dir/record.json"
