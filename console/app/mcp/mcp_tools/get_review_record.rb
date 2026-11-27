@@ -11,14 +11,15 @@ module McpTools
 
     DEFAULT_FINDINGS_LIMIT = 30
     MOST_FINDINGS = 100
+    PR_BODY_CHARS = 16_000
 
     description <<~TEXT.squish
       Reads one Review record of an Organization, with one page of its findings, and links to its page. Give pr for the
       newest record of a PR (its URL, its local:<path>, or for a record with no PR the Agent session id, as the key of
       list_review_records), or id for one record, as rounds gives it. review_record is its row, as list_review_records
       gives it, with the place of its record file or line (session_id, path, version, offset). record is the record as
-      the agent wrote it (version 2): sessions, pr, pr_body (the PR body in Markdown; a record from plugin 0.24 or
-      earlier has none), round, story, reviews (each run with its skill, stage, step, reviewers and
+      the agent wrote it (version 2): sessions, pr, pr_body (the PR body in Markdown, only on the page with findings_from
+      0; a record from plugin 0.24 or earlier has none), round, story, reviews (each run with its skill, stage, step, reviewers and
       verifier), findings (each with found_by, severity, title, scenario, its events in order: found, triage with its
       decision, verify with its verdict and pushed_back, person with what they said and asked, agent, fix, refound; and
       its outcome: fixed, ignored_by_person, disputed, deferred, ignored_trivial or open), and confirmations (each with
@@ -27,7 +28,8 @@ module McpTools
       findings_from (0, the first, when left out). findings_total is the number of findings in the record.
       next_findings_from is the findings_from of the next page, or null after the last page: to read all the findings,
       call again with findings_from set to it until it is null. rounds lists all the records of the PR, newest first,
-      this one too.
+      this one too. A pr_body of more than #{PR_BODY_CHARS} characters is cut to its first #{PR_BODY_CHARS}, with pr_body_cut true
+      and pr_body_chars the length of the whole body; the Review record page shows all of it.
     TEXT
     read_only!
     takes_organization
@@ -50,9 +52,14 @@ module McpTools
       findings = record["findings"] || []
       from = arguments[:findings_from] || 0
       after = from + (arguments[:findings_limit] || DEFAULT_FINDINGS_LIMIT)
-      json({ review_record: view.review_record, record: record.merge("findings" => findings[from...after] || []),
-             findings_total: findings.size, next_findings_from: (after if after < findings.size), rounds: view.rounds },
-        link: links.review_record(organization, key: pr, id: id))
+      page = record.merge("findings" => findings[from...after] || [])
+      body = from.zero? ? page["pr_body"] : page.delete("pr_body")
+      cut = from.zero? && body.is_a?(String) && body.size > PR_BODY_CHARS
+      page["pr_body"] = body.first(PR_BODY_CHARS) if cut
+      answer = { review_record: view.review_record, record: page, findings_total: findings.size,
+                 next_findings_from: (after if after < findings.size), rounds: view.rounds }
+      answer.merge!(pr_body_cut: true, pr_body_chars: body.size) if cut
+      json(answer, link: links.review_record(organization, key: pr, id: id))
     end
   end
 end

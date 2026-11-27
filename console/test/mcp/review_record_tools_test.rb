@@ -134,6 +134,33 @@ class McpReviewRecordToolsTest < ActiveSupport::TestCase
     assert_operator got.text.size, :<, 100_000
   end
 
+  test "the first page of 200 large findings and a PR body of 65,536 characters is less than 100,000 characters, and the next page has no PR body" do
+    body = "A line of the PR body.\n" * 2850
+    assert_operator body.size, :>=, 65_536
+    body = body.first(65_536)
+    record = JSON.generate(JSON.parse(record_json).merge("pr_body" => body, "findings" => Array.new(200) { |i| large_finding(i + 1) }))
+    stub_record(body: { key: PR }, record: record)
+
+    first = call_tool(:get_review_record, user: @member, pr: PR)
+    second = call_tool(:get_review_record, user: @member, pr: PR, findings_from: 30)
+
+    assert_operator first.text.size, :<, 100_000
+    assert_equal body.first(16_000), first.json.dig("record", "pr_body")
+    assert_equal({ "pr_body_cut" => true, "pr_body_chars" => 65_536 }, first.json.slice("pr_body_cut", "pr_body_chars"))
+    assert_not second.json["record"].key?("pr_body")
+    assert_not second.json.key?("pr_body_cut")
+  end
+
+  test "a PR body of 16,000 characters or less comes whole on the first page, with no pr_body_cut" do
+    stub_record(body: { key: PR }, record: record_json(findings: 75))
+
+    got = call_tool(:get_review_record, user: @member, pr: PR)
+
+    assert_equal "## Cart page\n\nAdds a cart page.", got.json.dig("record", "pr_body")
+    assert_not got.json.key?("pr_body_cut")
+    assert_not got.json.key?("pr_body_chars")
+  end
+
   test "get_review_record reads one record by its id" do
     asked = stub_record(body: { id: EARLIER }, record: record_json)
 

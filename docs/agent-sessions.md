@@ -220,7 +220,7 @@ SolidTrace reads the record from the file that `solidtrace review final` writes:
 
 ### Over MCP
 
-An agent reads the Review records with two MCP tools ([MCP](mcp.md)): `list_review_records` lists the newest record of each PR, as the page does, and `get_review_record` reads one record with the rounds of its PR. It gives the findings in pages of 30, and `findings_from` and `findings_limit` select a page. A token with `mcp:read` can call both. To compare the reviews of many PRs, an agent lists the records, then reads each one, page by page, until `next_findings_from` is `null`.
+An agent reads the Review records with two MCP tools ([MCP](mcp.md)): `list_review_records` lists the newest record of each PR, as the page does, and `get_review_record` reads one record with the rounds of its PR. It gives the findings in pages of 30, and `findings_from` and `findings_limit` select a page. Only the first page has the PR body, and it cuts a body of more than 16,000 characters (`pr_body_cut` is `true`). The Review record page shows all of it. A token with `mcp:read` can call both. To compare the reviews of many PRs, an agent lists the records, then reads each one, page by page, until `next_findings_from` is `null`.
 
 ## Prove a PR with screenshots and videos: Evidence files
 
