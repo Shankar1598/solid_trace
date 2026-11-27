@@ -82,6 +82,8 @@ interface SeriesSet {
   omitted: number
   /** Number columns left out past MAX_SERIES. */
   omittedColumns: number
+  /** Whether the split values kept are those with the largest peaks of the first column, not totals: its values don't add up, as a max's don't. */
+  byPeak: boolean
   /** The names of series left out because they have no value at all. */
   empty: string[]
   /** The series' value axes, top to bottom: one unless the columns measure different things. */
@@ -287,12 +289,12 @@ function pivotRows(
 
 /**
  * The series to draw and their points: the combinations of split values with
- * the largest totals of the first measure (as many as leave every measure a
- * hue), each with every measure. A series with no value at all is left out
- * and named in empty. Series of Levels go worst first and wear their Level's
- * colour. A missing value is a zero where an empty bin has no Logs and the
- * aggregate counts, and a gap otherwise. A chart's unit, when given, is
- * that of every measure.
+ * the largest totals of the first measure when its values add up, else its
+ * largest peaks (as many as leave every measure a hue), each with every
+ * measure. A series with no value at all is left out and named in empty.
+ * Series of Levels go worst first and wear their Level's colour. A missing
+ * value is a zero where an empty bin has no Logs and the aggregate counts,
+ * and a gap otherwise. A chart's unit, when given, is that of every measure.
  */
 function keepSeries(
   pivot: Pivot, { columns, rows, truncated }: LogTable, measures: number[], splits: number[], filled: boolean, unit: string | undefined,
@@ -300,11 +302,14 @@ function keepSeries(
   const drawn = measures.slice(0, MAX_SERIES)
   const source = (combo: string, m: number) => `${combo}\u0000${m}`
   const totals = new Map<string, number>()
+  const peaks = new Map<string, number>()
   const valued = new Set<string>()
   for (const at of pivot.xs.values()) {
     for (const [key, value] of at) {
       totals.set(key, (totals.get(key) ?? 0) + (value ?? 0))
-      if (value !== null) valued.add(key)
+      if (value === null) continue
+      valued.add(key)
+      peaks.set(key, Math.max(peaks.get(key) ?? value, value))
     }
   }
   // A series with no value in any row draws nothing, so it gets no hue; with no rows at all, every series is a zero.
@@ -320,8 +325,10 @@ function keepSeries(
   const levelOf = (combo: string) => pivot.combos.get(combo)![0]
   const levels = splits.length === 1 && columns[splits[0]].name === 'level' && drawn.length === 1 &&
     order.every(combo => levelOf(combo) === null || LEVEL_ORDER.includes(levelOf(combo) as never))
+  const agg = columns[drawn[0]].agg
+  const byPeak = !levels && !(agg && ADDS_UP.has(agg))
   const rank = (combo: string) => {
-    if (!levels) return -(totals.get(source(combo, drawn[0])) ?? 0)
+    if (!levels) return -((byPeak ? peaks : totals).get(source(combo, drawn[0])) ?? 0)
     const level = levelOf(combo)
     return level === null ? LEVEL_ORDER.length : LEVEL_ORDER.indexOf(level as never)
   }
@@ -394,6 +401,7 @@ function keepSeries(
     points,
     omitted: pivot.combos.size * measures.length - series.length - empty.length,
     omittedColumns: measures.length - drawn.length,
+    byPeak,
     empty,
     panels,
     legend: legendOf(drawnSeries),
@@ -650,7 +658,7 @@ export function legendNotes(model: SeriesChartModel): LegendNote[] {
     if (fields.length > 0) {
       const kept = new Set(model.series.map(s => JSON.stringify(s.split))).size
       const each = columns.length > 1 ? `, each with its ${columns.length} number columns` : ''
-      why.push(`Only the ${kept} ${fields.join(' and ')} ${kept === 1 ? 'value' : 'values'} with the largest ${columns[0]} totals are drawn${each}.`)
+      why.push(`Only the ${kept} ${fields.join(' and ')} ${kept === 1 ? 'value' : 'values'} with the largest ${columns[0]} ${model.byPeak ? 'peaks' : 'totals'} are drawn${each}.`)
     }
     if (model.omittedColumns > 0) why.push(`Only the first ${columns.length} number columns are drawn.`)
     notes.push({ text: `${model.omitted.toLocaleString()} more not shown`, why: why.join(' ') })
@@ -671,7 +679,7 @@ export function legendNotes(model: SeriesChartModel): LegendNote[] {
   if (model.cutAt !== null) {
     const rows = model.cutAt.toLocaleString()
     const lost = model.kind === 'time' ? 'its later bins are missing, and ' : ''
-    notes.push({ text: `drawn from the first ${rows} rows`, why: `The table was cut at ${rows} rows, so ${lost}the totals that rank what is drawn count only those rows.` })
+    notes.push({ text: `drawn from the first ${rows} rows`, why: `The table was cut at ${rows} rows, so ${lost}the ${model.kind === 'time' && model.byPeak ? 'peaks' : 'totals'} that rank what is drawn count only those rows.` })
   }
   if (model.kind === 'time' && model.partial.length > 0 && !fadesPartial(model)) notes.push(partialNote(model))
   return notes
