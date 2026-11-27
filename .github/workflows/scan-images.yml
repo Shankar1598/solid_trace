@@ -34,7 +34,7 @@ jobs:
       list: ${{ steps.list.outputs.list }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: List the images
         id: list
@@ -55,7 +55,7 @@ jobs:
         image: ${{ fromJSON(needs.images.outputs.list) }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       # Scanned once to JSON, then written as SARIF for the upload and as a
       # table for the log.
