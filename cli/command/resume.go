@@ -102,6 +102,14 @@ var resumeRefusals = []resumeRefusal{
 		},
 	},
 	{
+		// Another member uploaded the folder, and resume prints it.
+		when: func(f resumeFacts) bool { return !printable(f.session.Folder) },
+		message: func(f resumeFacts) string {
+			return fmt.Sprintf("The folder %q of the Agent session has a character that a terminal does not print.",
+				f.session.Folder)
+		},
+	},
+	{
 		when: func(f resumeFacts) bool { return f.session.Folder != "" && !filepath.IsLocal(f.session.Folder) },
 		message: func(f resumeFacts) string {
 			return fmt.Sprintf("The folder %q of the Agent session is not a folder in its repository.", f.session.Folder)
@@ -473,17 +481,18 @@ func tellBranch(ctx context.Context, env Env, root, branch string) {
 // to print. Another member wrote the transcript, so the name can hold
 // terminal escapes or be an option of git switch.
 func validBranch(ctx context.Context, root, branch string) bool {
-	if branch == "" || branch == "HEAD" || strings.HasPrefix(branch, "-") || !utf8.ValidString(branch) {
+	if branch == "" || branch == "HEAD" || strings.HasPrefix(branch, "-") || !printable(branch) {
 		return false
-	}
-	for _, r := range branch {
-		if !unicode.IsPrint(r) {
-			return false
-		}
 	}
 	// git expands a name such as @{-1}, so the name must come back unchanged.
 	out, err := gitOutput(ctx, root, "check-ref-format", "--branch", branch)
 	return err == nil && out == branch
+}
+
+// printable tells if s is UTF-8 with only runes that a terminal prints:
+// no terminal escapes.
+func printable(s string) bool {
+	return utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool { return !unicode.IsPrint(r) })
 }
 
 // shellQuote is s as one word of a POSIX shell.

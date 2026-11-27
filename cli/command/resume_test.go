@@ -245,6 +245,34 @@ func TestResumeRefusesWithWhatToDo(t *testing.T) {
 	}
 }
 
+// Another member uploads the folder of the Agent session, so it can hold
+// terminal escapes. resume refuses it before it prints it, also with
+// --print, and its message has no escape.
+func TestResumeRefusesAFolderWithATerminalEscape(t *testing.T) {
+	for _, args := range [][]string{{resumeID}, {"--print", resumeID}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			w := newWorld(t, acme)
+			w.signIn()
+			w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript})
+			w.checkout()
+			w.agent.Set(func(a *fake.AgentAPI) { a.Sessions[resumeID].Folder = "app\x1b]0;owned\x07" })
+
+			if code := w.resume(args...); code != 1 {
+				t.Fatalf("exit %d, want 1\nstderr: %s", code, w.stderr)
+			}
+			want := `solidtrace resume: The folder "app\x1b]0;owned\a" of the Agent session has a character that ` +
+				"a terminal does not print.\n"
+			if got := w.stderr.String(); got != want {
+				t.Errorf("stderr %q, want %q", got, want)
+			}
+			if strings.Contains(w.stdout.String(), "&& claude") || w.downloads() != 0 || len(w.started) != 0 {
+				t.Errorf("stdout %q, downloads %d, starts %q: want no command, download or start",
+					w.stdout.String(), w.downloads(), w.started)
+			}
+		})
+	}
+}
+
 func TestResumeOfAnOldSignInAsksTheServerNothing(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()
