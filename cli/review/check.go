@@ -222,9 +222,7 @@ func (c *checker) top() {
 		if e.Kind == KindReviewStart {
 			runs++
 		}
-		if e.Kind == KindFindings {
-			// A block that is not valid JSON is null in the digest, and is
-			// still a run.
+		if e.Kind == KindFindings && e.Error == "" {
 			var b checkedBlock
 			_ = json.Unmarshal(e.Findings, &b)
 			if empty(b.Update) {

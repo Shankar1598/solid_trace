@@ -554,16 +554,39 @@ func TestReviewRecordAndReviewCheckWarnOfABlockThatCannotBeRead(t *testing.T) {
 
 	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
 
-	want := "solidtrace review record: warning: the block u-bad cannot be read (the solidtrace-findings block has no closing ```): its run has no findings\n"
+	want := "solidtrace review record: warning: the block u-bad cannot be read (the solidtrace-findings block has no closing ```): the record has none of its findings\n"
 	if code != 0 || stderr != want {
 		t.Fatalf("exit %d\nstderr: %s", code, stderr)
 	}
-	if n := len(record["reviews"].([]any)); n != 1 {
-		t.Errorf("%d reviews, want 1", n)
+	if n := len(record["reviews"].([]any)); n != 0 {
+		t.Errorf("%d reviews, want 0: a block that cannot be read is not a run", n)
 	}
 	code, out, _ := runCheck(t, decodeJSON(t, digest), record)
 	wantWarnings := []string{"the block u-bad cannot be read (the solidtrace-findings block has no closing ```): the record has none of its findings"}
 	if code != 0 || !reflect.DeepEqual(out.Warnings, wantWarnings) {
+		t.Fatalf("review check: exit %d, %+v", code, out)
+	}
+}
+
+func TestReviewRecordGivesAReviewStartARunOfItsOwnWhenOnlyABlockThatCannotBeReadFollows(t *testing.T) {
+	digest := recDigest(
+		`{"session": "s1", "uuid": "u-start", "kind": "review_start", "skill": "solidtrace-skills:code-review", "trigger": "person"}`,
+		`{"session": "s1", "uuid": "u-bad", "kind": "findings", "findings": null, "error": "unexpected end of JSON input"}`)
+
+	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	reviews := record["reviews"].([]any)
+	if len(reviews) != 1 {
+		t.Fatalf("reviews: %v, want one run of the review start", reviews)
+	}
+	if rv := reviews[0].(map[string]any); rv["start"] != "u-start" || rv["skill"] != "solidtrace-skills:code-review" {
+		t.Errorf("review: %v", rv)
+	}
+	code, out, _ := runCheck(t, decodeJSON(t, digest), record)
+	if code != 0 || len(out.Problems) != 0 {
 		t.Fatalf("review check: exit %d, %+v", code, out)
 	}
 }

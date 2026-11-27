@@ -326,10 +326,12 @@ func (b *recordBuilder) build() {
 			run := b.newRun(RecordReview{Session: e.Session, Writer: "", Skill: textOrNil(e.Skill),
 				Trigger: textOrNil(string(e.Trigger)), Start: e.UUID})
 			b.noBlock[run] = true
+		case e.Kind == KindFindings && e.Error != "":
+			// A block cut by the output limit, or one that came back in a
+			// subagent's report, tells no skill, run or finding: it is not
+			// a run.
+			b.warn("the block %s cannot be read (%s): the record has none of its findings", e.UUID, e.Error)
 		case e.Kind == KindFindings:
-			if e.Error != "" {
-				b.warn("the block %s cannot be read (%s): its run has no findings", e.UUID, e.Error)
-			}
 			rb := readBlock(e.Findings)
 			if rb.Update != nil {
 				b.update(e, rb)
@@ -348,15 +350,16 @@ func (b *recordBuilder) build() {
 // startsWithBlock marks each review start that a run block of its session
 // and skill follows before the session's next review start. Such a start
 // is not a run of its own: its blocks are. A block with no skill is of
-// any skill, and open-pr runs deep-review with no review start.
+// any skill, a block that cannot be read is no block, and open-pr runs
+// deep-review with no review start.
 func (b *recordBuilder) startsWithBlock() map[int]bool {
 	open := map[string]int{}
 	marked := map[int]bool{}
 	for i, e := range b.d.Events {
-		switch e.Kind {
-		case KindReviewStart:
+		switch {
+		case e.Kind == KindReviewStart:
 			open[e.Session] = i
-		case KindFindings:
+		case e.Kind == KindFindings && e.Error == "":
 			rb := readBlock(e.Findings)
 			start, ok := open[e.Session]
 			if !ok || rb.Update != nil {
