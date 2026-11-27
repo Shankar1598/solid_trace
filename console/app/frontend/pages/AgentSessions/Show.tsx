@@ -119,6 +119,7 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
   const title = session && titleOf(session)
   const [search, setSearch] = useState<string | null>(null)
   const [choices, setChoices] = useState(readChoices)
+  const [evidence, setEvidence] = useState<string | null>(null)
   const show: TimelineShow = { tools: choices.tools, thinking: choices.thinking }
   const change = (next: Partial<Choices>) => {
     const all = { ...choices, ...next }
@@ -154,7 +155,7 @@ export default function AgentSessionShow({ agent_session: view }: { agent_sessio
             </div>
           )}
           <Header session={session} costLabel={view.cost_label} parentPath={view.parent_path} record={view.review_record_known ? view.review_record : undefined} />
-          <EvidenceFileList files={view.evidence_files} />
+          <EvidenceFileList files={view.evidence_files} openId={evidence} onOpenChange={setEvidence} />
           <AgentSessionSearch
             label="Search this Agent session"
             placeholder="Search the steps of this Agent session…"

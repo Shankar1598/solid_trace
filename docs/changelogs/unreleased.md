@@ -2,6 +2,7 @@
 
 ## Added
 
+- **Evidence files open in a popup.** On the Agent session page and the Review record page, a click on an Evidence file opens it in a popup on the same page: the image fit to the window, or the video with its speed control, the whole caption, "n of N" with the previous and the next file (the buttons, or ← and →), and **Open page**. Esc closes it. A click with Ctrl, Cmd, Shift or the middle button still opens the file's page.
 - **The PR body on the Review record page.** `solidtrace review record --pr-body FILE` keeps the PR body in the record's new `pr_body` (the version stays 2), and refuses a body of more than 65,536 characters, GitHub's limit. `open-pr` and `update-pr` give it the body that they wrote. The page shows it as Markdown before the Story, with the rules of a Text block, and `get_review_record` gives it. A record from plugin 0.24 or earlier has no PR body, and the page says so.
 
 ## Changed

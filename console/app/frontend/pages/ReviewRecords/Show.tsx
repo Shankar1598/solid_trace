@@ -1,7 +1,7 @@
 import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { EvidenceFileList } from '@/components/EvidenceFileList'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
@@ -49,6 +49,7 @@ export default function ReviewRecordShow({ review_record: view }: { review_recor
   const row = view.review_record
   const record = view.record
   const title = row ? row.pr || 'No PR' : 'Review record'
+  const [evidence, setEvidence] = useState<string | null>(null)
   return (
     <DashboardLayout>
       <PageHeader
@@ -69,7 +70,7 @@ export default function ReviewRecordShow({ review_record: view }: { review_recor
       {row && record && (
         <div className="space-y-6">
           <Header row={row} />
-          <EvidenceFileList files={view.evidence_files} />
+          <EvidenceFileList files={view.evidence_files} openId={evidence} onOpenChange={setEvidence} />
           <Story record={record} />
           <Reviews record={record} />
           <Findings findings={record.findings ?? []} />
