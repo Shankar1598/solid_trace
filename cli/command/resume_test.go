@@ -578,6 +578,9 @@ func TestResumeDownloadsIntoATemporaryFolderAndStartsANewAgentSessionFromItsHist
 			if got := readFile(t, path); got != resumeTranscript {
 				t.Errorf("transcript = %q", got)
 			}
+			if got := entries(t, filepath.Dir(path)); !slices.Equal(got, []string{resumeID + ".jsonl"}) {
+				t.Errorf("the temporary folder has %q, want only the transcript", got)
+			}
 			if got := entries(t, w.projectsDir()); len(got) != 0 {
 				t.Errorf("the projects folder has %q, want nothing of the download", got)
 			}

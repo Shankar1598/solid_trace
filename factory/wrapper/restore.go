@@ -93,7 +93,7 @@ func (u *uploads) download(ctx context.Context, r runUser) (found, restored bool
 			return false, false, err
 		}
 		defer download.Archive.Close()
-		files, err := agentapi.Extract(download.Archive, u.dir, func(name string) error { return r.giveIn(u.dir, name) })
+		files, err := agentapi.Extract(download.Archive, u.dir, nil, func(name string) error { return r.giveIn(u.dir, name) })
 		if err != nil {
 			return false, false, err
 		}

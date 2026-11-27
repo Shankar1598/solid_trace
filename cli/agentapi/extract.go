@@ -21,7 +21,8 @@ type ExtractedFile struct {
 }
 
 // Extract writes each file of a download's tar archive into root. It
-// gives what it did with each file, in the sequence of the archive.
+// gives what it did with each file, in the sequence of the archive. With
+// want, it writes and gives only the files whose names want is true for.
 //
 // Extract calls give with the path of each folder and file that it makes,
 // for example to change the owner. give can be nil. Extract does not call
@@ -32,7 +33,8 @@ type ExtractedFile struct {
 // agree with the offsets in SolidTrace, and a resume from it is not
 // promised. A path that is not a plain relative path makes Extract return
 // an error.
-func Extract(archive io.Reader, root *os.Root, give func(name string) error) ([]ExtractedFile, error) {
+func Extract(archive io.Reader, root *os.Root, want func(name string) bool,
+	give func(name string) error) ([]ExtractedFile, error) {
 	if give == nil {
 		give = func(string) error { return nil }
 	}
@@ -54,6 +56,9 @@ func Extract(archive io.Reader, root *os.Root, give func(name string) error) ([]
 		if name == "" || path.IsAbs(name) || path.Clean(name) != name || name == ".." ||
 			strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
 			return nil, fmt.Errorf("the download has the path %q, which is not in the Agent session directory", name)
+		}
+		if want != nil && !want(name) {
+			continue
 		}
 		if flags := h.PAXRecords[PAXFlags]; flags != "" {
 			files = append(files, ExtractedFile{Name: name, Flags: flags})

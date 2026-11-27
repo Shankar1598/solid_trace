@@ -297,11 +297,11 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 	return f, nil
 }
 
-// downloadTranscript downloads the Agent session into a new temporary
-// folder, out of the Claude Code projects folder, and gives the path of
-// its transcript there. The folder stays after a download: Claude Code
-// reads the transcript when this process is gone, and the OS deletes the
-// folder later.
+// downloadTranscript downloads the transcript of the Agent session into a
+// new temporary folder, out of the Claude Code projects folder, and gives
+// its path there. It writes no other file of the download. The folder
+// stays after a download: Claude Code reads the transcript when this
+// process is gone, and the OS deletes the folder later.
 func downloadTranscript(ctx context.Context, env Env, client *agentapi.Client, id string) (path string, err error) {
 	folder, err := os.MkdirTemp("", "solidtrace-resume-*")
 	if err != nil {
@@ -322,12 +322,13 @@ func downloadTranscript(ctx context.Context, env Env, client *agentapi.Client, i
 	if err != nil {
 		return "", err
 	}
-	extracted, err := agentapi.Extract(download.Archive, root, nil)
+	transcript := id + ".jsonl"
+	extracted, err := agentapi.Extract(download.Archive, root, func(name string) bool { return name == transcript },
+		nil)
 	download.Archive.Close()
 	if err != nil {
 		return "", err
 	}
-	transcript := id + ".jsonl"
 	// An archive can have a name more than once: the last copy is the one
 	// in the folder, as Extract wrote it.
 	found, flags := false, ""
