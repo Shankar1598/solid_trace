@@ -89,26 +89,33 @@ func (f *AgentAPI) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-tar")
 	tw := tar.NewWriter(w)
 	for _, p := range paths {
-		file := s.Files[p]
-		flags := ""
-		switch {
-		case file.Partial:
-			flags = "partial"
-		case file.Cut:
-			flags = "cut"
+		copies := []File{*s.Files[p]}
+		if p == f.DownloadTwice {
+			earlier := copies[0]
+			earlier.Bytes, earlier.Partial = []byte("an earlier copy\n"), !earlier.Partial
+			copies = []File{earlier, copies[0]}
 		}
-		records := map[string]string{"SOLIDTRACE.version": strconv.FormatUint(uint64(file.Version), 10),
-			"SOLIDTRACE.start_offset": "0", "SOLIDTRACE.end_offset": strconv.FormatUint(file.End, 10)}
-		if flags != "" {
-			records["SOLIDTRACE.flags"] = flags
-		}
-		h := &tar.Header{Typeflag: tar.TypeReg, Name: p, Mode: 0o600, Size: int64(len(file.Bytes)),
-			Format: tar.FormatPAX, PAXRecords: records}
-		if tw.WriteHeader(h) != nil {
-			return
-		}
-		if _, err := tw.Write(file.Bytes); err != nil {
-			return
+		for _, file := range copies {
+			flags := ""
+			switch {
+			case file.Partial:
+				flags = "partial"
+			case file.Cut:
+				flags = "cut"
+			}
+			records := map[string]string{"SOLIDTRACE.version": strconv.FormatUint(uint64(file.Version), 10),
+				"SOLIDTRACE.start_offset": "0", "SOLIDTRACE.end_offset": strconv.FormatUint(file.End, 10)}
+			if flags != "" {
+				records["SOLIDTRACE.flags"] = flags
+			}
+			h := &tar.Header{Typeflag: tar.TypeReg, Name: p, Mode: 0o600, Size: int64(len(file.Bytes)),
+				Format: tar.FormatPAX, PAXRecords: records}
+			if tw.WriteHeader(h) != nil {
+				return
+			}
+			if _, err := tw.Write(file.Bytes); err != nil {
+				return
+			}
 		}
 	}
 	_ = tw.Close()

@@ -162,6 +162,41 @@ func TestResumeRefusesAPartialOrCutTranscript(t *testing.T) {
 	}
 }
 
+// The archive can give a name two times. The last copy is the one that
+// Extract writes, so its flags decide.
+func TestTheLastCopyOfTheTranscriptInTheDownloadDecidesTheResume(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		partial bool
+	}{{"the last copy is complete", false}, {"the last copy is partial", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t, acme)
+			w.signIn()
+			w.checkout()
+			w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript})
+			w.agent.Set(func(a *fake.AgentAPI) {
+				a.Sessions[resumeID].Files[resumeID+".jsonl"].Partial = c.partial
+				a.DownloadTwice = resumeID + ".jsonl"
+			})
+
+			code := w.resume(resumeID)
+
+			if c.partial {
+				if code != 1 || !strings.Contains(w.stderr.String(), "is partial in SolidTrace") {
+					t.Errorf("exit %d, stderr %q: want the refusal of a partial transcript", code, w.stderr)
+				}
+				return
+			}
+			if code != 0 || len(w.started) != 1 {
+				t.Fatalf("exit %d, started %q\nstderr: %s", code, w.started, w.stderr)
+			}
+			if got := readFile(t, w.started[0][2]); got != resumeTranscript {
+				t.Errorf("transcript = %q, want the last copy", got)
+			}
+		})
+	}
+}
+
 func TestResumeRefusesWithWhatToDo(t *testing.T) {
 	for _, c := range []struct {
 		name  string
