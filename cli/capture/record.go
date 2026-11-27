@@ -20,10 +20,6 @@ const (
 	// NotInList: the Agent session's repository is not a captured
 	// repository, so no byte of it left the machine.
 	NotInList Status = "not in the list"
-	// NotYours: SolidTrace has the Agent session as another person's or a
-	// Run's (a transcript that resume downloaded), so no byte of it left
-	// the machine.
-	NotYours Status = "not yours"
 	// Failed: the last call stopped before it sent each byte.
 	Failed Status = "failed"
 )
@@ -61,8 +57,8 @@ func RecordOf(dir, sessionID string) (r Record, ok bool) {
 
 // SetStartDir keeps startDir as the start directory in the record of an
 // Agent session, with the other fields of the record. resume calls it for
-// a transcript that it downloaded: the first cwd of the transcript can be
-// a folder of another machine, and the sweep has no hook cwd.
+// the fork of a download: the first cwd of its history can be a folder of
+// another machine, and the sweep has no hook cwd.
 func SetStartDir(dir, sessionID, startDir string) error {
 	c := &Capturer{Dir: dir}
 	r, _ := RecordOf(dir, sessionID)

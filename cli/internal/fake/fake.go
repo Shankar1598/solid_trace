@@ -485,13 +485,10 @@ type AgentAPI struct {
 	DownloadNotReady int
 	// DownloadLeavesOut is a path that the download does not give.
 	DownloadLeavesOut string
-	// DownloadTwice is a path that the download gives two times: first
-	// with other bytes, then with its own.
-	DownloadTwice string
 	// Downloads counts the downloads that gave the archive.
 	Downloads int
-	// OlderServer answers /files as a server older than resume: with no
-	// yours, and 403 to another person's Agent session.
+	// OlderServer answers /files as a server older than resume: 403 to
+	// another person's Agent session.
 	OlderServer bool
 
 	evidence      map[string]*EvidenceFile

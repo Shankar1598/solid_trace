@@ -152,11 +152,7 @@ func (c *Capturer) one(ctx context.Context, in Input, list []string, p *pass) er
 	root := filepath.Dir(in.TranscriptPath)
 	rec.Fingerprint = fingerprint(root, in.SessionID)
 	u := &upload{c: c, in: in, repo: repo, root: root, settledBefore: p.settledBefore}
-	if err := u.run(ctx); errors.Is(err, errNotYours) {
-		rec.Status = NotYours
-		c.record(in.SessionID, rec)
-		return nil
-	} else if err != nil {
+	if err := u.run(ctx); err != nil {
 		c.recordFailed(in.SessionID, rec, err)
 		return err
 	}

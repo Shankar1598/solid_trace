@@ -54,10 +54,7 @@ func (f *AgentAPI) files(w http.ResponseWriter, r *http.Request) {
 			"content_hash": file.ContentHash})
 	}
 	session := map[string]any{"id": request.SessionID, "harness": s.Harness, "repository": s.Repository,
-		"folder": s.Folder, "run_id": s.RunID, "yours": !s.AnotherPerson && s.RunID == ""}
-	if f.OlderServer {
-		delete(session, "yours")
-	}
+		"folder": s.Folder, "run_id": s.RunID}
 	writeJSON(w, http.StatusOK, map[string]any{"agent_session": session, "files": list})
 }
 
@@ -105,19 +102,13 @@ func (f *AgentAPI) download(w http.ResponseWriter, r *http.Request) {
 		if flags != "" {
 			records["SOLIDTRACE.flags"] = flags
 		}
-		copies := [][]byte{file.Bytes}
-		if p == f.DownloadTwice {
-			copies = [][]byte{[]byte("an earlier copy\n"), file.Bytes}
+		h := &tar.Header{Typeflag: tar.TypeReg, Name: p, Mode: 0o600, Size: int64(len(file.Bytes)),
+			Format: tar.FormatPAX, PAXRecords: records}
+		if tw.WriteHeader(h) != nil {
+			return
 		}
-		for _, bytes := range copies {
-			h := &tar.Header{Typeflag: tar.TypeReg, Name: p, Mode: 0o600, Size: int64(len(bytes)),
-				Format: tar.FormatPAX, PAXRecords: records}
-			if tw.WriteHeader(h) != nil {
-				return
-			}
-			if _, err := tw.Write(bytes); err != nil {
-				return
-			}
+		if _, err := tw.Write(file.Bytes); err != nil {
+			return
 		}
 	}
 	_ = tw.Close()

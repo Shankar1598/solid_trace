@@ -111,12 +111,9 @@ type AgentSessionAnswer struct {
 	Files   []AgentSessionFile `json:"files"`
 }
 
-// AgentSession is who and where an Agent session is. Yours is true when it
-// is the token's person's and not a Run's, and nil when the server is older
-// than resume and does not say.
+// AgentSession is who and where an Agent session is.
 type AgentSession struct {
 	ID         string   `json:"id"`
-	Yours      *bool    `json:"yours"`
 	Repository string   `json:"repository"`
 	Folder     string   `json:"folder"`
 	RunID      string   `json:"run_id"`

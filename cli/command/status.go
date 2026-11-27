@@ -274,7 +274,7 @@ func printSummary(out io.Writer, dir string, sessions []session) {
 	}
 	byRepository := map[string]int{}
 	byFolder := map[string]int{}
-	var uploaded, notCaptured, notYours, unchecked int
+	var uploaded, notCaptured, unchecked int
 	var failed []session
 	for _, s := range sessions {
 		switch {
@@ -286,8 +286,6 @@ func printSummary(out io.Writer, dir string, sessions []session) {
 		case s.record.Status == capture.NotInList:
 			notCaptured++
 			byFolder[startDir(s.record)]++
-		case s.record.Status == capture.NotYours:
-			notYours++
 		default:
 			failed = append(failed, s)
 		}
@@ -296,12 +294,8 @@ func printSummary(out io.Writer, dir string, sessions []session) {
 		{number(uploaded), "uploaded"},
 		{number(notCaptured), "not captured: they started outside a captured repository, so they stay on this machine"},
 		{number(len(failed)), "failed"},
+		{number(unchecked), "not checked yet: the next start of Claude Code checks them"},
 	}
-	if notYours > 0 {
-		rows = append(rows, [2]string{number(notYours), "not yours: you resumed another person's or a Run's " +
-			"Agent session, so this machine does not upload its copy"})
-	}
-	rows = append(rows, [2]string{number(unchecked), "not checked yet: the next start of Claude Code checks them"})
 	width := 0
 	for _, r := range rows {
 		width = max(width, len(r[0]))
@@ -390,8 +384,6 @@ func stateText(s session, withTime bool) string {
 		return fmt.Sprintf("uploaded      %s%s", r.Repository, at)
 	case capture.NotInList:
 		return fmt.Sprintf("not captured  %s%s", startDir(r), at)
-	case capture.NotYours:
-		return fmt.Sprintf("not yours     %s%s", r.Repository, at)
 	default:
 		return fmt.Sprintf("failed        %s%s: %s", orDash(r.Repository), at, oneLine(r.Error))
 	}

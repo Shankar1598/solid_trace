@@ -40,6 +40,8 @@ type world struct {
 	cwd string
 	// started are the starts of Claude Code, as StartClaude got them.
 	started [][]string
+	// tmp is TMPDIR of resume ("" before the first resume).
+	tmp string
 }
 
 type syncBuffer struct {

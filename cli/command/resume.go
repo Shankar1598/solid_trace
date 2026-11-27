@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -35,18 +36,13 @@ const resumeWait = 2 * time.Minute
 // limit of one download.
 const resumeTimeout = 10 * time.Minute
 
-// resumeStaging is the start of the name of the temporary folder beside the
-// project folder, into which resume downloads. A folder of this name that
-// a crash left is deleted at the next resume of the same Agent session.
-const resumeStaging = ".solidtrace-resume-"
-
 // resumeIDShape is an Agent session id: a UUID in lower case, as Claude
 // Code names its transcripts.
 var resumeIDShape = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // resumeFacts is what resume finds before it downloads: the sign-in, the
-// server's answer and this machine's checkout and transcript. decide makes
-// all the choices from it.
+// server's answer and this machine's checkout. refusal makes the choices
+// from it.
 type resumeFacts struct {
 	id           string
 	organization string
@@ -55,9 +51,7 @@ type resumeFacts struct {
 	// session is nil when SolidTrace does not have the Agent session, and
 	// when the sign-in cannot ask (canDownload is false).
 	session *agentapi.AgentSession
-	// serverEnd is the end offset of the transcript in SolidTrace, and
 	// serverHas is false when SolidTrace has no transcript.
-	serverEnd uint64
 	serverHas bool
 	// dir is the current folder.
 	dir string
@@ -66,29 +60,12 @@ type resumeFacts struct {
 	root string
 	// remotes are the repositories of the checkout, as capture finds them.
 	remotes []string
-	// target is the folder of the Agent session in the checkout, and
-	// project is its Claude Code project folder.
-	target  string
-	project string
-	// elsewhere is the folder of a copy of the transcript on this machine
-	// in another project folder, "" when there is none.
-	elsewhere string
-	// localSize is the size of the transcript on this machine, and
-	// localHas is false when this machine has none.
-	localSize uint64
-	localHas  bool
-	// fork is --fork.
-	fork bool
+	// target is the folder of the Agent session in the checkout.
+	target string
 }
 
-// resumePlan is what decide chose.
-type resumePlan struct {
-	download bool
-	fork     bool
-}
-
-// A resumeRefusal is one reason that resume does not continue, with the
-// message that tells the person what to do. decide uses the first whose
+// A resumeRefusal is one reason that resume does not download, with the
+// message that tells the person what to do. refusal uses the first whose
 // when is true.
 type resumeRefusal struct {
 	when    func(f resumeFacts) bool
@@ -136,44 +113,23 @@ var resumeRefusals = []resumeRefusal{
 			return fmt.Sprintf("SolidTrace has no transcript of the Agent session %s.", f.id)
 		},
 	},
-	{
-		// A second copy makes capture send the shorter copy again as a new
-		// version, and the transcript in SolidTrace goes back.
-		when: func(f resumeFacts) bool { return f.elsewhere != "" },
-		message: func(f resumeFacts) string {
-			command := "claude --resume " + f.id
-			if f.forks() {
-				command += " --fork-session"
-			}
-			return fmt.Sprintf("This machine has the Agent session in %s. Run this command in that folder:\n  %s",
-				f.elsewhere, command)
-		},
-	},
 }
 
-// forks is true when Claude Code continues the Agent session as a fork:
-// with --fork, and for an Agent session that is not yours. When an older
-// server does not say whose it is, a fork is the safe choice.
-func (f resumeFacts) forks() bool {
-	return f.fork || f.session.Yours == nil || !*f.session.Yours
-}
-
-// decide gives the plan of resume, or the message of the first refusal. A
-// transcript on this machine with at least the server's end offset is not
-// downloaded again. Your own Agent session continues with the same id;
-// another person's, a Run's, or one with --fork continues as a fork.
-func decide(f resumeFacts) (resumePlan, string) {
+// refusal is the message of the first refusal, "" when resume downloads.
+func refusal(f resumeFacts) string {
 	for _, r := range resumeRefusals {
 		if r.when(f) {
-			return resumePlan{}, r.message(f)
+			return r.message(f)
 		}
 	}
-	return resumePlan{
-		download: !f.localHas || f.localSize < f.serverEnd,
-		fork:     f.forks(),
-	}, ""
+	return ""
 }
 
+// resume continues an Agent session of this machine in the folder where it
+// started, with the same id. Else it downloads the Agent session into a
+// temporary folder and starts a fork of it: a new Agent session with the
+// history. So a download never goes into a Claude Code project folder,
+// and capture never sends another person's or a Run's transcript.
 func resume(ctx context.Context, args []string, env Env) int {
 	fail := func(code int, format string, a ...any) int {
 		fmt.Fprintf(env.Stderr, "solidtrace resume: "+format+"\n", a...)
@@ -185,8 +141,7 @@ func resume(ctx context.Context, args []string, env Env) int {
 	}
 	flags := flag.NewFlagSet("resume", flag.ContinueOnError)
 	flags.SetOutput(env.Stderr)
-	fork := flags.Bool("fork", false, "continue as a new Agent session, also when it is yours")
-	printOnly := flags.Bool("print", false, "download, print the command of Claude Code and its folder, and do not start it")
+	printOnly := flags.Bool("print", false, "print the command of Claude Code and its folder, and do not start it")
 	positional, ok := parseInterspersed(flags, args)
 	if !ok {
 		return 2
@@ -194,8 +149,35 @@ func resume(ctx context.Context, args []string, env Env) int {
 	if len(positional) != 1 || !resumeIDShape.MatchString(positional[0]) {
 		return fail(2, "give one SESSION_ID, the Agent session's UUID in lower case")
 	}
+	id := positional[0]
 	if env.ClaudeProjectsDir == "" {
 		return fail(1, "no Claude Code projects folder: set CLAUDE_CONFIG_DIR")
+	}
+	start := func(folder string, claude []string) int {
+		claude = append(claude, claudeArgs...)
+		if *printOnly {
+			words := []string{"cd", shellQuote(folder), "&&", "claude"}
+			for _, arg := range claude {
+				words = append(words, shellQuote(arg))
+			}
+			fmt.Fprintln(env.Stdout, strings.Join(words, " "))
+			return 0
+		}
+		if env.StartClaude == nil {
+			return fail(1, "this machine cannot start Claude Code")
+		}
+		if err := env.StartClaude(folder, claude); err != nil {
+			return fail(1, "start Claude Code: %v", err)
+		}
+		return 0
+	}
+
+	folder, err := localStartFolder(env, id)
+	if err != nil {
+		return fail(1, "%v", err)
+	}
+	if folder != "" {
+		return start(folder, []string{"--resume", id})
 	}
 
 	source := env.Source()
@@ -205,59 +187,73 @@ func resume(ctx context.Context, args []string, env Env) int {
 	}
 	client := &agentapi.Client{IngestURL: creds.IngestURL, HTTP: env.HTTP, Tokens: source, Version: env.Version,
 		Warnings: env.Stderr}
-	f, err := resumeFactsOf(ctx, env, client, creds, positional[0], *fork)
+	f, err := resumeFactsOf(ctx, env, client, creds, id)
 	if err != nil {
 		return fail(1, "%v", err)
 	}
-	plan, refusal := decide(f)
-	if refusal != "" {
-		return fail(1, "%s", refusal)
+	if message := refusal(f); message != "" {
+		return fail(1, "%s", message)
 	}
-
-	if plan.download {
-		if err := downloadSession(ctx, env, client, f.id, f.project); err != nil {
-			return fail(1, "%v", err)
-		}
-		// The first cwd of a downloaded transcript can be a folder of
-		// another machine. The record tells capture's sweep, and the next
-		// resume, that the Agent session starts in the target folder.
-		if err := capture.SetStartDir(env.ConfigDir, f.id, f.target); err != nil {
-			fmt.Fprintf(env.Stderr, "solidtrace resume: keep the folder of the Agent session for capture: %v\n", err)
-		}
+	transcript, err := downloadTranscript(ctx, env, client, id)
+	if err != nil {
+		return fail(1, "%v", err)
 	}
-	tellBranch(ctx, env, f.root, lastBranch(filepath.Join(f.project, f.id+".jsonl")))
+	tellBranch(ctx, env, f.root, lastBranch(transcript))
 	if info, err := os.Stat(f.target); err != nil || !info.IsDir() {
+		os.RemoveAll(filepath.Dir(transcript))
 		return fail(1, "the folder %s of the Agent session is not in this checkout. Switch to its branch, and run "+
 			"solidtrace resume again.", f.target)
 	}
+	fork := newSessionID()
+	// The fork keeps the cwd of the history, which can be a folder of
+	// another machine. The record tells capture's sweep, and the next
+	// resume, that the fork starts in the target folder.
+	if err := capture.SetStartDir(env.ConfigDir, fork, f.target); err != nil {
+		fmt.Fprintf(env.Stderr, "solidtrace resume: keep the folder of the Agent session for capture: %v\n", err)
+	}
+	fmt.Fprintf(env.Stderr, "solidtrace resume: the new Agent session %s starts from the history of the Agent "+
+		"session %s.\n", fork, id)
+	return start(f.target, []string{"--resume", transcript, "--fork-session", "--session-id", fork})
+}
 
-	claude := []string{"--resume", f.id}
-	if plan.fork {
-		claude = append(claude, "--fork-session")
+// localStartFolder is the folder where the Agent session started, when
+// this machine has its transcript in a Claude Code project folder and that
+// folder is on this machine. Else it is "".
+func localStartFolder(env Env, id string) (string, error) {
+	sessions, err := capture.Sessions(env.ClaudeProjectsDir)
+	if err != nil {
+		return "", fmt.Errorf("read the Claude Code projects folder: %w", err)
 	}
-	claude = append(claude, claudeArgs...)
-	if *printOnly {
-		words := []string{"cd", shellQuote(f.target), "&&", "claude"}
-		for _, arg := range claude {
-			words = append(words, shellQuote(arg))
+	// The cwd of a fork's history can be a folder of another machine, and
+	// the record has the folder that resume started the fork in.
+	record, _ := capture.RecordOf(env.ConfigDir, id)
+	for _, s := range sessions {
+		if s.ID != id {
+			continue
 		}
-		fmt.Fprintln(env.Stdout, strings.Join(words, " "))
-		return 0
+		folder := capture.StartDir(s.TranscriptPath, record.StartDir)
+		if info, err := os.Stat(folder); err == nil && info.IsDir() {
+			return folder, nil
+		}
 	}
-	if env.StartClaude == nil {
-		return fail(1, "this machine cannot start Claude Code")
-	}
-	if err := env.StartClaude(f.target, claude); err != nil {
-		return fail(1, "start Claude Code: %v", err)
-	}
-	return 0
+	return "", nil
+}
+
+// newSessionID is a random UUID (version 4) in lower case, the id of a
+// fork.
+func newSessionID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // resumeFactsOf finds the facts of resume. It asks the server only when
 // the sign-in has sessions:download.
-func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds credentials.Credentials, id string,
-	fork bool) (resumeFacts, error) {
-	f := resumeFacts{id: id, fork: fork, dir: env.Dir,
+func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds credentials.Credentials,
+	id string) (resumeFacts, error) {
+	f := resumeFacts{id: id, dir: env.Dir,
 		canDownload: slices.Contains(strings.Fields(creds.Scope), signin.ScopeSessionsDownload)}
 	if creds.Organization != nil {
 		f.organization = creds.Organization.Name
@@ -280,11 +276,9 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 		return f, fmt.Errorf("ask SolidTrace for the Agent session: %w", err)
 	}
 	f.session = answer.Session
-	for _, file := range answer.Files {
-		if file.Path == id+".jsonl" {
-			f.serverEnd, f.serverHas = file.EndOffset, true
-		}
-	}
+	f.serverHas = slices.ContainsFunc(answer.Files, func(file agentapi.AgentSessionFile) bool {
+		return file.Path == id+".jsonl"
+	})
 	if f.session == nil {
 		return f, nil
 	}
@@ -300,108 +294,56 @@ func resumeFactsOf(ctx context.Context, env Env, client *agentapi.Client, creds 
 	}
 	f.remotes = remotes
 	f.target = filepath.Join(f.root, filepath.FromSlash(f.session.Folder))
-	f.project = filepath.Join(env.ClaudeProjectsDir, capture.ClaudeProjectFolder(f.target))
-	if info, err := os.Stat(filepath.Join(f.project, id+".jsonl")); err == nil && info.Mode().IsRegular() {
-		f.localSize, f.localHas = uint64(info.Size()), true
-	}
-	sessions, err := capture.Sessions(env.ClaudeProjectsDir)
-	if err != nil {
-		return f, fmt.Errorf("read the Claude Code projects folder: %w", err)
-	}
-	// After a resume from another machine, the first cwd of the transcript
-	// is not on this machine, and the record has the folder that resume
-	// downloaded into.
-	record, _ := capture.RecordOf(env.ConfigDir, id)
-	for _, s := range sessions {
-		project := filepath.Dir(s.TranscriptPath)
-		if s.ID == id && project != f.project && !strings.HasPrefix(filepath.Base(project), resumeStaging) {
-			f.elsewhere = cmp.Or(capture.StartDir(s.TranscriptPath, record.StartDir), project)
-		}
-	}
 	return f, nil
 }
 
-// downloadSession downloads the Agent session into a temporary folder beside
-// the project folder, then renames each file of the Agent session (<id>.jsonl
-// and the files under <id>/) into the project folder, the transcript last.
-// So a crash leaves the project folder with a whole transcript or with the
-// earlier one, and the next resume downloads again.
-func downloadSession(ctx context.Context, env Env, client *agentapi.Client, id, project string) error {
-	staging := filepath.Join(filepath.Dir(project), resumeStaging+id)
-	if err := os.RemoveAll(staging); err != nil {
-		return fmt.Errorf("delete the folder that an earlier resume left: %w", err)
-	}
-	// The files go one folder down, so that capture's sweep, which reads
-	// <projects>/*/<id>.jsonl, does not find them.
-	files := filepath.Join(staging, "files")
-	if err := os.MkdirAll(files, 0o700); err != nil {
-		return err
-	}
-	defer os.RemoveAll(staging)
-	root, err := os.OpenRoot(files)
+// downloadTranscript downloads the Agent session into a new temporary
+// folder, out of the Claude Code projects folder, and gives the path of
+// its transcript there. The folder stays after a download: Claude Code
+// reads the transcript when this process is gone, and the OS deletes the
+// folder later.
+func downloadTranscript(ctx context.Context, env Env, client *agentapi.Client, id string) (path string, err error) {
+	folder, err := os.MkdirTemp("", "solidtrace-resume-*")
 	if err != nil {
-		return err
+		return "", err
+	}
+	defer func() {
+		if err != nil {
+			os.RemoveAll(folder)
+		}
+	}()
+	root, err := os.OpenRoot(folder)
+	if err != nil {
+		return "", err
 	}
 	defer root.Close()
 
 	download, err := downloadWhenReady(ctx, env, client, id)
 	if err != nil {
-		return err
+		return "", err
 	}
 	extracted, err := agentapi.Extract(download.Archive, root, nil)
 	download.Archive.Close()
 	if err != nil {
-		return err
+		return "", err
 	}
 	transcript := id + ".jsonl"
 	// An archive can have a name more than once: the last copy is the one
 	// in the folder, as Extract wrote it.
-	last := map[string]int{}
-	for i, file := range extracted {
-		last[file.Name] = i
-	}
-	var names []string
-	others := 0
-	for i, file := range extracted {
-		switch {
-		case last[file.Name] != i:
-			// A later copy replaced it.
-		case file.Name != transcript && !strings.HasPrefix(file.Name, id+"/"):
-			// Only the Agent session's own files go into the project
-			// folder. Another person can upload other paths
-			// (memory/MEMORY.md, the transcript of another Agent session),
-			// and a Run has evidence/.
-			others++
-		case file.Name == transcript && file.Flags != "":
-			return fmt.Errorf("the transcript of the Agent session is %s in SolidTrace, so a resume is not "+
-				"promised. Start a new Agent session.", file.Flags)
-		case file.Flags != "":
-			fmt.Fprintf(env.Stderr, "solidtrace resume: %s is %s in SolidTrace. Resume does not download it.\n",
-				file.Name, file.Flags)
-		case file.Name != transcript:
-			names = append(names, file.Name)
+	found, flags := false, ""
+	for _, file := range extracted {
+		if file.Name == transcript {
+			found, flags = true, file.Flags
 		}
 	}
-	if others > 0 {
-		text := fmt.Sprintf("%d files of the download are not of the Agent session. Resume does not put them", others)
-		if others == 1 {
-			text = "1 file of the download is not of the Agent session. Resume does not put it"
-		}
-		fmt.Fprintf(env.Stderr, "solidtrace resume: %s in the project folder.\n", text)
+	switch {
+	case !found:
+		return "", fmt.Errorf("the download of the Agent session %s has no transcript", id)
+	case flags != "":
+		return "", fmt.Errorf("the transcript of the Agent session is %s in SolidTrace, so a resume is not "+
+			"promised. Start a new Agent session.", flags)
 	}
-	if !slices.ContainsFunc(extracted, func(file agentapi.ExtractedFile) bool { return file.Name == transcript }) {
-		return fmt.Errorf("the download of the Agent session %s has no transcript", id)
-	}
-	for _, name := range append(names, transcript) {
-		to := filepath.Join(project, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
-			return err
-		}
-		if err := os.Rename(filepath.Join(files, filepath.FromSlash(name)), to); err != nil {
-			return err
-		}
-	}
-	return nil
+	return filepath.Join(folder, transcript), nil
 }
 
 // downloadWhenReady asks for the download, and waits while the server
