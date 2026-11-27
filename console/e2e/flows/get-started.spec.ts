@@ -32,7 +32,8 @@ test('an empty Project shows how to send it Logs, and a test Log shows at once',
   await expect(page.getByRole('heading', { name: firstLogs })).toBeVisible()
 
   // The snippets carry the new Project's own key, and the key-only Log route.
-  const shown = page.getByRole('tabpanel')
+  // The panel shown: the panel of the tab before stays for a moment, inert.
+  const shown = page.getByRole('tabpanel').and(page.locator(':not([inert])'))
   await expect(shown).toContainText(/Authorization: Bearer [0-9a-f]{32}/)
   await expect(shown).toContainText(`${ingest}/api/logs`)
   for (const tab of ['Vector', 'Fluent Bit', 'Sentry SDK']) {

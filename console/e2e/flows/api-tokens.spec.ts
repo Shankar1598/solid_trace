@@ -36,7 +36,8 @@ test('an API token is shown once with its snippets, listed, and revoked', async 
   const made = page.getByRole('region', { name: 'New API token' })
   await expect(made).toContainText(/st_[A-Za-z0-9_-]{43}/)
   const secret = (await made.locator('code').textContent())!.trim()
-  const shown = made.getByRole('tabpanel')
+  // The panel shown: the panel of the tab before stays for a moment, inert.
+  const shown = made.getByRole('tabpanel').and(made.locator(':not([inert])'))
   await expect(shown).toContainText(
     new RegExp(`claude mcp add --transport http solidtrace https?://[^ ]+/mcp --header "Authorization: Bearer ${secret}"`),
   )
