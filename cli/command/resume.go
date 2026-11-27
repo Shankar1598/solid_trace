@@ -86,6 +86,14 @@ var resumeRefusals = []resumeRefusal{
 		},
 	},
 	{
+		// Another member uploaded the repository, and the refusals below print it.
+		when: func(f resumeFacts) bool { return !printable(f.session.Repository) },
+		message: func(f resumeFacts) string {
+			return fmt.Sprintf("The repository %q of the Agent session has a character that a terminal does not print.",
+				f.session.Repository)
+		},
+	},
+	{
 		when: func(f resumeFacts) bool { return f.root == "" },
 		message: func(f resumeFacts) string {
 			return fmt.Sprintf("%s is not in a git checkout. Run solidtrace resume in a checkout of %s.",
