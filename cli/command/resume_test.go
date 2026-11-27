@@ -642,6 +642,32 @@ func TestASecondResumeOfAForkOnThisMachineContinuesItInTheTargetFolder(t *testin
 	}
 }
 
+func TestAForkWhoseHistoryHasTheCwdOfAnotherCheckoutOnThisMachineContinuesInTheTargetFolder(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	first := w.checkout()
+	repo := w.checkout()
+	transcript := `{"type":"user","cwd":"` + first + `","message":"Remember PELICAN"}` + "\n"
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": transcript})
+	if code := w.resume(resumeID); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+	_, fork := w.forkOf(w.started[0], repo)
+	// Claude Code writes the fork into the project folder of the target
+	// folder, and its first hook runs capture.
+	w.onThisMachine(fork, repo, first)
+	w.stderr = &syncBuffer{}
+	(&agentSession{w: w, id: fork, cwd: repo, dir: w.projectFolder(repo)}).hook("SessionStart")
+
+	if code := w.resume(fork); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	if want := []string{repo, "--resume", fork}; len(w.started) != 2 || !slices.Equal(w.started[1], want) {
+		t.Errorf("started %q, want then %q", w.started, want)
+	}
+}
+
 func TestTheSweepSendsNothingOfADownloadedAgentSession(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()

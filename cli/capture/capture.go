@@ -168,19 +168,21 @@ const (
 )
 
 // StartDir is the working directory where the Agent session started: the
-// cwd of the first line of the transcript that has one. The hook's cwd
-// follows each cd of the agent. A resume on another machine keeps the cwd
-// of the first machine, which is not on this machine. Then StartDir is the
-// hook's cwd or the nearest folder above it whose Claude Code project
-// folder holds the transcript. Else it is the hook's cwd.
+// cwd of the first line of the transcript that has one, when that folder
+// is on this machine and its Claude Code project folder holds the
+// transcript. The hook's cwd follows each cd of the agent. A fork of a
+// download keeps the cwd of the first machine, which can be another
+// folder, or no folder, on this machine. Then StartDir is the hook's cwd
+// or the nearest folder above it whose project folder holds the
+// transcript. Else it is the hook's cwd.
 func StartDir(transcriptPath, hookCwd string) string {
-	if cwd := firstCwd(transcriptPath); cwd != "" {
+	project := filepath.Base(filepath.Dir(transcriptPath))
+	if cwd := firstCwd(transcriptPath); cwd != "" && ClaudeProjectFolder(cwd) == project {
 		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
 			return cwd
 		}
 	}
 	if filepath.IsAbs(hookCwd) {
-		project := filepath.Base(filepath.Dir(transcriptPath))
 		for dir := filepath.Clean(hookCwd); ; dir = filepath.Dir(dir) {
 			if ClaudeProjectFolder(dir) == project {
 				return dir

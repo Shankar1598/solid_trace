@@ -114,7 +114,8 @@ func TestTheStartDirectoryIsTheFirstAbsoluteCwdOfTheTranscript(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()
 	repo := w.gitRepo("origin=https://bitbucket.org/acme/shop.git")
-	s := w.session(t.TempDir())
+	s := w.session(repo)
+	s.cwd = t.TempDir()
 	line := `{"cwd":"."}` + "\n" + `{"cwd":"` + repo + `"}` + "\n"
 	s.write("", line)
 

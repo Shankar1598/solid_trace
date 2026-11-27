@@ -78,11 +78,24 @@ func TestStartDirIsTheFirstCwdOfTheTranscriptWhenItIsOnThisMachine(t *testing.T)
 	if err := os.MkdirAll(sub, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// The hook's cwd also has the name of the project folder. The first cwd
-	// is on this machine, so it is the start directory, as before resume.
-	transcript := transcriptIn(t, sub, start)
+	transcript := transcriptIn(t, start, start)
 
-	if got := capture.StartDir(transcript, sub); got != start {
-		t.Errorf("StartDir = %s, want the first cwd %s", got, start)
+	// The agent did cd web. The sweep has no hook cwd.
+	for _, hookCwd := range []string{sub, ""} {
+		if got := capture.StartDir(transcript, hookCwd); got != start {
+			t.Errorf("StartDir with the hook cwd %q = %s, want the first cwd %s", hookCwd, got, start)
+		}
+	}
+}
+
+// The history of a fork can have the cwd of another checkout that is also
+// on this machine. Its project folder does not hold the transcript, so it
+// is not the start directory.
+func TestStartDirIsNotAFirstCwdWhoseProjectFolderDoesNotHoldTheTranscript(t *testing.T) {
+	first, target := t.TempDir(), t.TempDir()
+	transcript := transcriptIn(t, target, first)
+
+	if got := capture.StartDir(transcript, target); got != target {
+		t.Errorf("StartDir = %s, want the folder %s of the project folder", got, target)
 	}
 }
