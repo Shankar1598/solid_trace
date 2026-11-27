@@ -17,7 +17,7 @@ You read other skills' files here, and their `${CLAUDE_SKILL_DIR}` is not replac
 - The working tree is clean. If it is not, list the changed files and ask the person whether to commit them.
 - Find the open PR of this branch, as `${CLAUDE_SKILL_DIR}/../open-pr/platforms.md` says. That file gives every call to the PR in this skill.
 - With no open PR, stop and tell the person to run `/solidtrace:open-pr`.
-- The round of this run is one more than the `<!-- solidtrace-record round N -->` line of the PR body, or 2 when the body has none.
+- The round of this run is one more than N in the last `SolidTrace Review record · round N` line of the PR body, or in its `<!-- solidtrace-record round N -->` line, which plugin 0.24 and earlier wrote. With neither, the round is 2.
 
 Make a folder for this round's files: `dir=$(mktemp -d)`.
 
@@ -78,7 +78,7 @@ Follow three parts of `open-pr/SKILL.md`: "Find the sessions of this feature", t
 
 ## 9. Update the PR
 
-Write the body again as `open-pr/SKILL.md` › Write the PR says, from this round's record, and end it with `<!-- solidtrace-record round <N> -->`. Keep the link of an Evidence file of the earlier body only when its file still shows how the PR works now. When the fixes of this round change what a file shows, remove its link, or replace it with the link of a new file. Upload only the files that prove the fixes of this round, not the files of the earlier links. Upload them and write their links as `open-pr/SKILL.md` › Write the PR › **The Evidence files** says. An upload of the same file in the same Agent session gives its earlier link, and keeps the caption of its first upload: for a file that did not change, write its earlier link with its first caption, and for a new caption, upload a new file, for example a new screenshot. A failed upload gives no link: say why in the final reply. Change the PR body (Change the PR body).
+Write the body again as `open-pr/SKILL.md` › Write the PR says, from this round's record, and end it with the line `SolidTrace Review record · round <N>`. Keep the link of an Evidence file of the earlier body only when its file still shows how the PR works now. When the fixes of this round change what a file shows, remove its link, or replace it with the link of a new file. Upload only the files that prove the fixes of this round, not the files of the earlier links. Upload them and write their links as `open-pr/SKILL.md` › Write the PR › **The Evidence files** says. An upload of the same file in the same Agent session gives its earlier link, and keeps the caption of its first upload: for a file that did not change, write its earlier link with its first caption, and for a new caption, upload a new file, for example a new screenshot. A failed upload gives no link: say why in the final reply. Change the PR body (Change the PR body).
 
 ## 10. Final reply
 

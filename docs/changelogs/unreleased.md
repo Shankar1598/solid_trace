@@ -4,6 +4,7 @@
 
 - **Evidence files open in a popup.** On the Agent session page and the Review record page, a click on an Evidence file opens it in a popup on the same page: the image fit to the window, or the video with its speed control, the whole caption, "n of N" with the previous and the next file (the buttons, or ← and →), and **Open page**. Esc closes it. A click with Ctrl, Cmd, Shift or the middle button still opens the file's page.
 - **The PR body on the Review record page.** `solidtrace review record --pr-body FILE` keeps the PR body in the record's new `pr_body` (the version stays 2), and refuses a body of more than 65,536 characters, GitHub's limit. `open-pr` and `update-pr` give it the body that they wrote. The page shows it as Markdown before the Story, with the rules of a Text block, and `get_review_record` gives it. A record from plugin 0.24 or earlier has no PR body, and the page says so.
+- **`/solidtrace:setup-solidtrace-skills`.** It installs the pstack plugin when it is not there, runs pstack's model setup when `pstack-models.md` is not current, and installs `/wait-what` from `mattpocock/skills` (`npx skills add`) when it is not there. It asks whether to set them up for this repository (the default: `.claude/settings.json`, `.claude/rules/`, `.claude/skills/` and `skills-lock.json` in the repository) or for this user (`~/.claude`). `open-pr` and `update-pr` now write the PR body as the re-pitch that `/wait-what` asks for, when it is installed: in this repository's version, a little context, ASD-STE100 Simplified Technical English, and the words of `GLOSSARY.md`. The Review section of the body puts the risks first, in three groups: **Check these before you merge** (deferred, disputed, accepted and open findings, and the checks that did not run), **Fixed by the reviews**, and **Changed outside the reviews**. Each finding starts with its type: Bug, Spec, Test, Code quality, HA and infrastructure, or Security.
 
 ## Changed
 
@@ -12,6 +13,7 @@
 
 ## Fixed
 
+- **No raw comment at the end of a Bitbucket PR.** `open-pr` and `update-pr` end the PR body with the visible line `SolidTrace Review record · round N`, in place of the `<!-- solidtrace-record round N -->` comment, which Bitbucket showed as text. `update-pr` still reads the old comment on PRs that are already open.
 - **No empty runs in a Review record.** A findings block that cannot be read (a block that Claude Code's output limit cut, or a block that came back in a subagent's report) no longer makes a review run with no skill, stage, reviewers or verifier. `solidtrace review record` warns that the record has none of its findings, and a review start that only such a block follows is a run of its own, with the start's skill.
 - **The Review record page.** A run that a record already has with no skill, stage, reviewers or verifier shows one muted line: "No data: the findings block of this run could not be read." The Details of a finding wrap long paths, so they stay in their cell.
 

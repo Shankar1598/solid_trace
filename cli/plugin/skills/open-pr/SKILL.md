@@ -53,20 +53,35 @@ When it finds problems, send the sub-agent the problems, wait for new notes, and
 
 ## 6. Write the PR
 
-Write the title and the body with the `technical-writing` skill of the pstack plugin, when it is installed. Find its file with `ls -d ~/.claude/plugins/cache/*/pstack/*/skills/technical-writing/SKILL.md 2>/dev/null | sort -V | tail -1`. Read the file and follow it, because the Skill tool does not run that skill. When the command prints nothing, write short sentences with one thought each, in the words of the repository's glossary.
+Write the title and the body with two skills, when they are installed. The Skill tool runs neither, so read each file and follow it:
+
+- **`wait-what`** sets the words: write the body as the re-pitch that it asks for, to a reviewer who did not see this work. Its file is the first that exists of `"$(git rev-parse --show-toplevel)/.claude/skills/wait-what/SKILL.md"` and `~/.claude/skills/wait-what/SKILL.md`.
+- **pstack's `technical-writing`** sets the form. Find its file with `ls -d ~/.claude/plugins/cache/*/pstack/*/skills/technical-writing/SKILL.md 2>/dev/null | sort -V | tail -1`.
+
+Where the two differ on the words, `wait-what` wins. With neither, write short sentences with one thought each, in the words of the repository's glossary. `/solidtrace:setup-solidtrace-skills` installs both.
 
 The title is one line that says what the change does. The body is a briefing that a reviewer reads in about one minute, in at most 60 lines. It has these sections, in this order:
 
 - **What changes**: one `##` section for each change that a user or an operator sees, from the record's `story`, with no parent heading. The heading says the point, for example "Review records moves into Agent sessions". Say what changes and why. Name the routes, the limits and the fallbacks as the code names them.
 - **Where to look**: the two to four files or functions that a reviewer reads first, and why each one.
 - **Evidence**: the tests and checks that ran, what each one covers, and their result. Name the suites that did not run. Then the links of the Evidence files (below), one on each line.
-- **Review**, in short sentences:
-  - the count of reviews and of their findings, and how many of those findings are fixed, disputed, deferred or open;
-  - for each review, what it found that changed the code, or that it found nothing;
-  - for each finding found outside the reviews, what it was, who found it (the person, an agent or a test run), and its outcome;
-  - the confirmations that were not given.
+- **Review**, in short sentences. Group the items by what the reviewer does with them, so the risks come first:
+  - First, one line with the count of review runs and of their findings, the count of each type (below), and how many findings are fixed, deferred, accepted as they are (`disputed` or `ignored_by_person`), left as trivial, or open. Leave out a count of 0.
+  - **Check these before you merge:** each finding with the outcome `deferred`, `disputed`, `ignored_by_person` or `open`, with its outcome and why. Each confirmation that was not given, as **Not checked**. Each part of the work that the PR leaves out, and each step that the operator must know about, as **Not done**. Put the label with the most risk first, and in each label the item with the most risk first. Start each item with the risk.
+  - **Fixed by the reviews:** each `fixed` finding of the reviews: what went wrong and what the fix does. Low findings of the same type and the same review can share one item.
+  - **Changed outside the reviews:** each finding that the person, an agent or a test run found, with who found it and its outcome, and each design change that the person decided.
 
-  Do not list each finding of the reviews. End the section with one line that says the Review record has each finding and its decisions.
+  In the first two groups, write one bullet for each label, with the label in bold, and its items as bullets under it. A finding's label is its type. Start a finding's item with the word high when it is high, then its outcome in the first group, then the review that found it in parentheses:
+
+  ```markdown
+  **Check these before you merge:**
+  - **Not checked:**
+    - The extra search load during the sale week is not measured. Each failed event now does one more search.
+  - **HA and infrastructure:**
+    - Deferred (final review): the search does not check `_shards` for a partial answer. A new ticket has it.
+  ```
+
+  The type is **Bug**, **Spec**, **Test**, **Code quality**, **HA and infrastructure** or **Security**. Take it from the finding's `reviewer`: `bugs-and-spec` is **Bug**, or **Spec** when the `category` is `spec`. For a deep-review finding, take the type from its `category` and title. Leave out a group with no items. End the section with one line that names the reviews that found nothing, and one line that says the Review record has each finding and its decisions.
 
 In every section, do not quote the person's messages from the sessions: they are private, and can hold host names or secrets. Say what they asked for or decided in your own short words.
 
@@ -82,7 +97,7 @@ For each file, the command prints one line: the link, the type and the size, for
 
 When a call exits with a code that is not 0, write no link for its file, and continue with the PR. In the final reply, give the file and the error that the command printed. For example, an old SolidTrace server says `this SolidTrace server is too old for Evidence files: ask the operator to upgrade it`.
 
-End the body with the line `<!-- solidtrace-record round 1 -->`, which `update-pr` reads. Write the body to `$dir/body.md`.
+End the body with the line `SolidTrace Review record · round 1`. It tells the reviewer the round, and `update-pr` reads it. It is plain text, because Bitbucket shows an HTML comment as text. Write the body to `$dir/body.md`.
 
 ## 7. Open the PR
 

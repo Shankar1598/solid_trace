@@ -1,6 +1,6 @@
 # SolidTrace for Claude Code
 
-This plugin uploads your Claude Code Agent sessions to SolidTrace, when the repository of an Agent session is in your Organization's captured repositories. It also gives the review skills: `code-review`, `deep-review`, `open-pr`, `update-pr` and `try-pr` ([Agent sessions](../../docs/agent-sessions.md#record-what-each-review-found-the-review-skills)).
+This plugin uploads your Claude Code Agent sessions to SolidTrace, when the repository of an Agent session is in your Organization's captured repositories. It also gives the review skills: `code-review`, `deep-review`, `open-pr`, `update-pr` and `try-pr` ([Agent sessions](../../docs/agent-sessions.md#record-what-each-review-found-the-review-skills)). `setup-solidtrace-skills` installs the pstack plugin, sets up its models, and installs `/wait-what` from `mattpocock/skills`, when they are not there, for this repository (the default) or for this user.
 
 The capture part is the hooks file. `Stop`, `SubagentStop` and `SessionEnd` upload the new bytes, and `SessionStart` sweeps the Agent sessions that a crash or a closed terminal left. Each hook runs `solidtrace capture --detach`, which starts the upload in the background and returns at once, so a hook never makes Claude Code wait, also with no network.
 
