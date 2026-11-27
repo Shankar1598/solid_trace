@@ -624,6 +624,30 @@ func TestResumeDownloadsIntoATemporaryFolderAndStartsANewAgentSessionFromItsHist
 	}
 }
 
+func TestResumeStartsTheForkWhenItCannotKeepItsFolderForCapture(t *testing.T) {
+	w := newWorld(t, acme)
+	w.signIn()
+	repo := w.checkout()
+	w.inSolidTrace(resumeID, fake.Session{}, map[string]string{resumeID + ".jsonl": resumeTranscript})
+	// A file where capture keeps its records.
+	if err := os.WriteFile(filepath.Join(w.dir, "capture"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := w.resume(resumeID); code != 0 {
+		t.Fatalf("exit %d\nstderr: %s", code, w.stderr)
+	}
+
+	if len(w.started) != 1 {
+		t.Fatalf("started %q, want one start", w.started)
+	}
+	w.forkOf(w.started[0], repo)
+	if got := w.stderr.String(); !strings.Contains(got,
+		"solidtrace resume: keep the folder of the Agent session for capture: ") {
+		t.Errorf("stderr %q, want the warning", got)
+	}
+}
+
 func TestResumePrintsTheForkAndItsFolderAndStartsNothing(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()
