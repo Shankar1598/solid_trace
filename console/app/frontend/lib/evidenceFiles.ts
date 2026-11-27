@@ -61,7 +61,7 @@ export function evidenceFileOfLink(href: string | undefined, slug: string, ids: 
   return org === slug && evidence === 'evidence' && ids.includes(id) ? id : null
 }
 
-export const SPEEDS =['0.25', '0.5', '1', '2'] as const
+export const SPEEDS = ['0.25', '0.5', '1', '2'] as const
 
 export type Speed = (typeof SPEEDS)[number]
 
