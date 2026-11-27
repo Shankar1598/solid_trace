@@ -269,9 +269,6 @@ func TestResumeOfAnOldSignInAsksTheServerNothing(t *testing.T) {
 	}
 }
 
-// signedInWithScope changes the Scope of the stored sign-in, as a sign-in
-// of an older solidtrace has.
-
 func TestResumeTellsHowToGetTheBranchOfTheAgentSessionAndDoesNotChangeTheCheckout(t *testing.T) {
 	w := newWorld(t, acme)
 	w.signIn()
@@ -482,9 +479,6 @@ func TestResumePrintsNothingAboutABranchThatIsNotAValidBranchName(t *testing.T) 
 		})
 	}
 }
-
-// fromAnotherMachine is a transcript whose cwd is not on this machine.
-const fromAnotherMachine = `{"type":"user","cwd":"/home/someone-else/checkouts/shop","message":"Remember PELICAN"}` + "\n"
 
 // signedInWithScope changes the Scope of the stored sign-in, as a sign-in
 // of an older solidtrace has.
