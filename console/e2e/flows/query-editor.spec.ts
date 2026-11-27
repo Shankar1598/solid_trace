@@ -190,12 +190,14 @@ test.describe('SQL mode', () => {
     const box = page.getByLabel('SQL', { exact: true })
     await expectEditorText(box, /FROM logs/i)
     await box.fill('SELECT service, count(*) AS total FROM logs GROUP BY service')
-    // Keywords are coloured apart from the plain text of names.
+    // Keywords are coloured apart from the plain text of names, which has
+    // the editor's colour. (Not the line's: fill replaces the text as typing
+    // does, and Chrome then can give the line the colour of the text that it
+    // replaced, here the keyword's.)
     const keyword = box.getByText('SELECT', { exact: true })
-    const line = box.locator('.cm-line').first()
     const color = (l: typeof keyword) => l.evaluate(el => getComputedStyle(el).color)
     // The SQL is parsed when the browser is idle, so the colour can come a moment later.
-    await expect.poll(async () => (await color(keyword)) !== (await color(line))).toBe(true)
+    await expect.poll(async () => (await color(keyword)) !== (await color(box))).toBe(true)
 
     await box.press('Control+Enter')
     await expect(page.locator('.sticky.top-0').filter({ hasText: /^service\s*total$/ })).toBeVisible()

@@ -40,6 +40,8 @@ async function size(locator: Locator) {
 }
 
 test('a member builds a Dashboard from the explorer and the editor, ranges it, lays it out and deletes it', async ({ page }) => {
+  // About 45 s alone, and more with other workers beside it.
+  test.setTimeout(120_000)
   const errors = watchErrors(page)
   const name = `Flow dashboard ${Date.now()}`
 
