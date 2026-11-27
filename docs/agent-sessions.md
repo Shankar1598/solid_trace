@@ -124,7 +124,7 @@ Click a row in the list to open the Agent session page.
 
 - The page's heading is the title of the Agent session.
 - The header shows the person or the Run, the repository, the folder, the parent Agent session (a link, for a fork or a `/clear`), the model, the effort, the first and last activity, the tokens by kind, the estimated cost and the flags.
-- Under the header, **Resume on another machine** gives the `solidtrace resume` command of the Agent session, with **Copy**. It says if the command continues the same Agent session or starts a new one for you. See [Resume an Agent session on another machine](#resume-an-agent-session-on-another-machine).
+- Under the header, **Resume on another machine** gives the `solidtrace resume` command of the Agent session, with **Copy**. It says that the command continues the Agent session on the machine where it started, and starts a new Agent session from its history on another machine. See [Resume an Agent session on another machine](#resume-an-agent-session-on-another-machine).
 - The timeline shows the person messages, the agent replies and the tool calls in time order, the oldest step first, as a chat reads. Choose **Newest first** above the timeline to see the newest step first; **Oldest first** goes back. Your browser keeps the choice, with the choices of what to show. Each tool call shows its input, with its output below it. The agent's replies and its thinking show as Markdown; a person's messages show as plain text. The title of each reply shows its model and its effort, as `claude-opus-5-5 · high`, but not on a small screen.
 - A message that a person sent while the agent worked shows at the time when the agent got it, not at the time when the person wrote it.
 - Hook feedback, subagent prompts and the notices of background tasks show as "Not from a person". In an engineer's own Agent session, each person message is from that engineer.
@@ -149,7 +149,7 @@ An agent reads the Agent sessions with two MCP tools ([MCP](mcp.md)): `list_agen
 
 ## Resume an Agent session on another machine
 
-`solidtrace resume` downloads an Agent session from SolidTrace and starts `claude --resume` on this machine. Use it to continue your Agent session from your dev VM on your laptop, or to continue the Agent session of a colleague or a Run.
+`solidtrace resume` continues an Agent session. Use it to continue your Agent session from your dev VM on your laptop, or to continue from the Agent session of a colleague or a Run.
 
 The Agent session page shows the command under **Resume on another machine**, with **Copy**. Run it in a checkout of the repository of the Agent session:
 
@@ -157,43 +157,43 @@ The Agent session page shows the command under **Resume on another machine**, wi
 solidtrace resume 0b6c2f1e-6a51-4c8e-9a3d-0f6d1c2b3a41
 ```
 
-The command does these steps:
-
-1. It asks SolidTrace for the Agent session: its repository, its folder, its Run and if it is yours.
-2. It finds the root of the checkout of the current folder, and makes sure that a remote of the checkout is the repository of the Agent session.
-3. It downloads the Agent session into the Claude Code project folder of the Agent session's folder in this checkout (`CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`). When the transcript on this machine is already as long as the transcript in SolidTrace, it downloads nothing. A second run gives the same files.
-4. It starts `claude --resume <id>` in the folder of the Agent session.
-
 Options:
 
-- `--fork` continues your own Agent session as a new Agent session.
-- `--print` downloads, then prints the command of Claude Code and its folder. It does not start Claude Code.
+- `--print` prints the command of Claude Code and its folder. It does not start Claude Code. On another machine, it downloads first.
 - Arguments after `--` go to `claude`, for example `solidtrace resume <id> -- --model claude-opus-5-5`.
 
-### The same Agent session, or a new one
+### On the first machine: the same Agent session
 
-- **Your own Agent session** continues with the same id. Its new turns upload to the same Agent session in SolidTrace.
-- **Another person's Agent session, a Run's, or yours with `--fork`** continues as a new Agent session of yours (`claude --resume <id> --fork-session`). It starts with the full history. The first Agent session does not change. A Run's Agent session is always a fork, because the Run owns it. To work in a live Run, use `solidtrace take-over`.
+The command first looks for the transcript of the Agent session in the Claude Code project folders of this machine (`CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`). When it finds the transcript, and the folder where the Agent session started is on this machine, it starts `claude --resume <id>` in that folder. The Agent session continues with the same id, and its new turns upload to the same Agent session in SolidTrace. The command does not ask SolidTrace, so it needs no sign-in.
 
-After a resume, capture works as before. It finds the start folder of the Agent session on this machine, also when the checkout is in another path. Capture does not send an Agent session that is not yours: `solidtrace capture status` shows it as "not yours". The fork that Claude Code made is your Agent session, and it uploads.
+### On another machine: a new Agent session from the history
+
+When this machine does not have the Agent session, or the folder where it started is gone, the command does these steps:
+
+1. It asks SolidTrace for the Agent session: its repository and its folder.
+2. It finds the root of the checkout of the current folder, and makes sure that a remote of the checkout is the repository of the Agent session.
+3. It downloads the Agent session into a new temporary folder. It does not put the download in a Claude Code project folder.
+4. It makes a new id, and starts `claude --resume <the transcript in the temporary folder> --fork-session --session-id <new id>` in the folder of the Agent session in this checkout. It tells you the new id.
+
+The new Agent session starts with the full history. It is your Agent session: its turns upload to SolidTrace under the new id. The first Agent session does not change. This is the same for your own Agent session, another person's and a Run's. SolidTrace does not record the first Agent session as the parent of the new one (`parent_session_id`), so the page of the new Agent session does not link to it. To work in a live Run, use `solidtrace take-over`.
+
+Capture does not find the downloaded transcript, because it is not in a Claude Code project folder. So this machine never uploads a copy of another person's or a Run's Agent session. Capture finds the start folder of the new Agent session in this checkout, also when its history has the folders of the first machine. A second `solidtrace resume` of the new id on this machine continues it with the same id.
+
+Claude Code keeps large tool outputs in files of the Agent session, and the transcript names them by their paths on the first machine. After a resume on another machine, Claude Code cannot read these files. It still has the start of each output in the transcript.
 
 Be careful with the Agent session of another person. The transcript of an Agent session of another member or of a Run is the text of that person or that Run. Claude Code reads it as its own history and continues from it. When you do not trust the Agent session, read it on its Agent session page first.
 
 ### The branch
 
-The command reads the git branch of the last turns of the Agent session. When the checkout is on another branch, the command tells you to run `git switch <branch>`. When the checkout does not have the branch, it tells you to run `git fetch` and then `git switch <branch>`. The command does not change the checkout.
+On another machine, the command reads the git branch of the last turns of the Agent session. When the checkout is on another branch, the command tells you to run `git switch <branch>`. When the checkout does not have the branch, it tells you to run `git fetch` and then `git switch <branch>`. The command does not change the checkout.
 
-When the folder of the Agent session is not in this checkout, for example because the Agent session made it on its branch, the command downloads the Agent session and then stops. Switch to its branch, and run `solidtrace resume` again. The second run downloads nothing.
+When the folder of the Agent session is not in this checkout, for example because the Agent session made it on its branch, the command stops. Switch to its branch, and run `solidtrace resume` again.
 
 SolidTrace has only the transcript. Changes that the Agent session did not commit and push are not in SolidTrace, and they are not on this machine.
 
-### Two machines at the same time
-
-Close the Agent session on the first machine before you resume it with the same id on the second machine. When the two machines write the same Agent session at the same time, SolidTrace refuses the uploads of the second machine with 409. The second machine keeps its new turns, and `capture.log` shows the failure. To work on two machines at the same time, use `--fork` on the second machine.
-
 ### When the command refuses
 
-The command stops with exit code 1 and tells you what to do when:
+On another machine, the command stops with exit code 1 and tells you what to do when:
 
 - The sign-in does not have the Scope `sessions:download`. Run `solidtrace login` again.
 - SolidTrace has no such Agent session in your Organization.
@@ -201,14 +201,13 @@ The command stops with exit code 1 and tells you what to do when:
 - The folder of the Agent session is not a folder in its repository.
 - SolidTrace has no transcript of the Agent session.
 - The transcript is **partial** or **cut** in SolidTrace. Then a resume is not promised: start a new Agent session.
-- This machine already has the Agent session in another folder. A second copy makes capture send the shorter copy again. The message gives the `claude --resume` command to run in that folder.
 - SolidTrace did not make the last uploads ready in 2 minutes. Run the command again later.
 - The folder of the Agent session is not in this checkout. Switch to its branch, and run `solidtrace resume` again (see [The branch](#the-branch)).
 - The server answers 403 because it is older than the CLI. Ask the operator to upgrade Console and EventStore.
 
 ### The Scope and the sign-in
 
-`solidtrace resume` needs the Scope `sessions:download` ([MCP](mcp.md)). It downloads each Agent session of your Organization's Agent Project: yours, another person's and a Run's. It gives no new access, because each member can read these Agent sessions in Console. `solidtrace login` asks for it. A sign-in from before this release does not have it, so run `solidtrace login` again. You can also put it on your own API token. A child token of a Run never has it.
+A resume on another machine needs the Scope `sessions:download` ([MCP](mcp.md)). It downloads each Agent session of your Organization's Agent Project: yours, another person's and a Run's. It gives no new access, because each member can read these Agent sessions in Console. `solidtrace login` asks for it. A sign-in from before this release does not have it, so run `solidtrace login` again. You can also put it on your own API token. A child token of a Run never has it.
 
 ## Record what each review found: the review skills
 
