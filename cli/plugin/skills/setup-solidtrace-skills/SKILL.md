@@ -1,12 +1,12 @@
 ---
 name: setup-solidtrace-skills
-description: Install the pstack plugin and set up its models, and install the /wait-what skill from mattpocock/skills, for this repository or for this user.
+description: Install the pstack plugin and set up its models, and install the /wait-what and deslop skills, for this repository or for this user.
 disable-model-invocation: true
 ---
 
 # Set up the SolidTrace skills
 
-The skills of this plugin need no other skills. When they are installed, `open-pr` and `update-pr` write the PR body with the `/wait-what` skill and pstack's `technical-writing` skill. This skill installs pstack, sets up its models, and installs `/wait-what`.
+The skills of this plugin need no other skills. When they are installed, `open-pr` cleans up the branch with the `deslop` skill before its final review, and `open-pr` and `update-pr` write the PR body with the `/wait-what` skill and pstack's `technical-writing` skill. This skill installs pstack, sets up its models, and installs `/wait-what` and `deslop`.
 
 Do the steps in order. When a step finds its part already there, it changes nothing.
 
@@ -24,7 +24,7 @@ The scope sets where each part goes:
 |---|---|---|
 | pstack | `--scope project`: `<root>/.claude/settings.json` | `--scope user` |
 | The model rule `<rule>` | `<root>/.claude/rules/pstack-models.md` | `~/.claude/rules/pstack-models.md` |
-| `/wait-what` | `<root>/.claude/skills/wait-what`, and `<root>/skills-lock.json` | `~/.claude/skills/wait-what` |
+| A skill `<name>` of step 4 | `<root>/.claude/skills/<name>`, and `<root>/skills-lock.json` | `~/.claude/skills/<name>` |
 
 Done when you hold the scope.
 
@@ -49,23 +49,28 @@ Else read `<pstack>/docs/harness/claude-code.md`, then `<pstack>/skills/setup-ps
 
 Done when `<rule>` has the line `# defaults: 3`.
 
-## 4. The /wait-what skill
+## 4. The /wait-what and deslop skills
 
-`/wait-what` is there when `<scope folder>/SKILL.md` exists, with the folder from the table. The `mattpocock-skills` plugin gives only `/mattpocock-skills:wait-what`, so it does not count.
+| `<name>` | `<source>` |
+|---|---|
+| `wait-what` | `mattpocock/skills` |
+| `deslop` | `cursor/plugins` (from its `cursor-team-kit` plugin) |
 
-Else run, from `<root>`:
+A skill is there when `<scope folder>/SKILL.md` exists, with the folder from the table of step 1. A plugin that has the skill does not count, because it gives the skill only with the plugin's prefix, such as `/mattpocock-skills:wait-what`.
 
-- `repo`: `npx -y skills add mattpocock/skills --skill wait-what --agent claude-code --yes`
-- `global`: `npx -y skills add mattpocock/skills --skill wait-what --agent claude-code --global --yes`
+For each skill that is not there, run from `<root>`:
 
-When `npx` is not on the `PATH`, tell the person to install Node.js and run this skill again.
+- `repo`: `npx -y skills add <source> --skill <name> --agent claude-code --yes`
+- `global`: `npx -y skills add <source> --skill <name> --agent claude-code --global --yes`
 
-Done when `<scope folder>/SKILL.md` exists.
+For `cursor/plugins`, the command can warn that it skipped another skill of the repository. That warning is not a failure. When `npx` is not on the `PATH`, tell the person to install Node.js and run this skill again.
+
+Done when `<scope folder>/SKILL.md` exists for both skills.
 
 ## 5. Report
 
-Write one line for each part (pstack, its models, `/wait-what`): already there, installed, or set up, or the failure. Then:
+Write one line for each part (pstack, its models, `/wait-what`, `deslop`): already there, installed, or set up, or the failure. Then:
 
-- When you installed pstack or `/wait-what`, tell the person to start a new Claude Code session to use them.
+- When you installed pstack or a skill, tell the person to start a new Claude Code session to use them.
 - For `repo`, list the files that changed in `<root>` (`git status --short`), for the person to commit.
 - When both `<root>/.claude/rules/pstack-models.md` and `~/.claude/rules/pstack-models.md` exist, tell the person that each session loads both.
