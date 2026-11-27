@@ -9,5 +9,13 @@
     "playwright@anthropic-plugin-directory": true,
     "github@anthropic-plugin-directory": true,
     "pstack@cursor-plugins": true
+  },
+  "extraKnownMarketplaces": {
+    "cursor-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "cursor/plugins"
+      }
+    }
   }
 }
