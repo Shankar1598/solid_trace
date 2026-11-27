@@ -52,6 +52,15 @@ const notAlone = readdirSync(flowsDir).filter(file => !ALONE.includes(file) && c
 if (notAlone.length) throw new Error(`playwright.config.ts: add ${notAlone.join(', ')} to ALONE, as it changes the install`)
 const alone = new RegExp(`flows/(${ALONE.join('|').replace(/\./g, '\\.')})$`)
 
+// The flows that run only when the command line names them, such as
+// `bun run e2e e2e/flows/ui-pass.spec.ts`: ui-pass is a 7-minute screenshot
+// pass for a person to look at, not a check.
+// The main process decides from its command line, and the workers, which load
+// this config again with another command line, inherit the decision.
+process.env.E2E_UI_PASS ??= process.argv.some(arg => arg.includes('ui-pass')) ? '1' : '0'
+const onRequest = process.env.E2E_UI_PASS === '1' ? [] : ['ui-pass.spec.ts']
+const notRequested = onRequest.length ? new RegExp(`flows/(${onRequest.join('|').replace(/\./g, '\\.')})$`) : []
+
 export default defineConfig({
   testDir: './e2e',
   workers: Number(process.env.E2E_WORKERS ?? 3),
@@ -89,6 +98,7 @@ export default defineConfig({
     {
       name: 'flows-alone',
       testMatch: alone,
+      testIgnore: notRequested,
       workers: 1,
       outputDir: './tmp/playwright/alone',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, colorScheme: 'dark' },

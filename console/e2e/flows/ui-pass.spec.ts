@@ -16,7 +16,8 @@ import { ADMIN, ADMIN_STATE, ORG, PROJECT } from '../support/data'
 // Beside each shot, the flow checks the page for sideways overflow, boxes
 // that scroll inside on a phone, and raw values ("undefined", "null",
 // "None") in the text, and writes what it finds to problems.txt there.
-// Run it alone: bun run e2e e2e/flows/ui-pass.spec.ts (through run-flow.sh).
+// A full `bun run e2e` leaves it out (playwright.config.ts, onRequest). Run it
+// alone: bun run e2e e2e/flows/ui-pass.spec.ts (through run-flow.sh).
 
 const INGEST_URL = process.env.E2E_INGEST_URL ?? 'http://localhost:4000'
 const OUT = process.env.UI_PASS_DIR ?? join(homedir(), '.cache/solid-trace/factory-demo/screens/ui-pass')

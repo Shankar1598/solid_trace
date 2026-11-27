@@ -58,9 +58,12 @@ To run all three suites on a dev box, run them in this order:
      FACTORY_HARNESS_CONTRACT=1 go test -count=1 -v -timeout 15m ./internal/harnesscontract/
      ```
 
-   - Playwright, from `console/`, takes about 10 min:
+   - Playwright, from `console/`, takes about 27 min on the 4-CPU dev box:
      - Run `bin/rails db:migrate` first, so the dev database has any new migration.
-     - Then run `bun run e2e --reporter=line`.
+     - Then run `bun run e2e --reporter=line`. It is `e2e/run-flows`: two Playwright runs on one stack. First the project `flows` with `E2E_WORKERS` workers (default 3), each with its own Organization, Project, admin and member (`e2e/support/data.ts`; worker N has the suffix `-wN`). Then the project `flows-alone` with one worker: the flows in `ALONE` in `playwright.config.ts`, which change the install (an InstanceSetting, the factory's flow stack or demo), so nothing runs beside them. `E2E_WORKERS=1` runs everything with one worker.
+     - Call `bun run e2e`, not `playwright test --project=flows`: that runs only the first project and leaves out the flows in `ALONE`.
+     - `ui-pass.spec.ts`, a 7-min screenshot pass for a person to look at, runs only when the command names it: `bun run e2e e2e/flows/ui-pass.spec.ts`.
+     - The box is CPU-bound with 3 workers: no other suite or stack runs beside the flows.
      - `e2e/flows/runs.spec.ts` (Seam 5) builds the factory's flow stack (`factory/internal/flowstack`): the real Dispatcher and wrapper against the dev stack's Console and EventStore, with the Seam 3 fakes for the Runner, the Harness, the Forge and the Tracker. Its wrappers need a kill boundary, as the factory tests do: run the flows from a shell whose cgroup your user can write to (a delegated scope, as above). The dev stack's EventStore must be built from the same commit, as the factory calls its agent API.
 3. **Run the Rails suite after the Go suite has finished.** EventStore's root tests use Console's test database (they run `bin/rails db:reset` in `console/`), so the two suites can't run at once.
    - From `console/`, takes about 1 min:

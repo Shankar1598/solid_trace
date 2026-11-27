@@ -105,4 +105,4 @@ Serve the folder, unless `curl -sf http://127.0.0.1:8432/` already answers:
 python3 -m http.server 8432 --bind 127.0.0.1 --directory ~/.cache/solid-trace/pr-canvas
 ```
 
-Run it in the background. When port 8432 is taken by another program, use 8433, then 8434. Open the page with Playwright when you can: check that each diff draws and that the console has no errors. Then give the person the link `http://127.0.0.1:<port>/<file>`, and the path of the file. When this session runs on a remote machine, tell the person to forward the port first: `ssh -L <port>:127.0.0.1:<port> <host>`.
+Run it in the background. When port 8432 is taken by another program, use 8433, then 8434. Open the page with Playwright when you can: check that each diff draws and that the console has no errors. Then give the person the link, such as `http://127.0.0.1:8432/<file>` with the port that you used, and the path of the file. When this session runs on a remote machine, tell the person to forward the port first: `ssh -L <port>:127.0.0.1:<port> <host>`.

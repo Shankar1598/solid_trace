@@ -18,7 +18,7 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 
 ### Tests
 
-The full suites before a release: Go and Playwright in parallel, then Rails once Go is done. See `docs/agents/testing.md`.
+GitHub Actions runs the full suites on each PR and push to `main`. Before a release, check that the CI run of the commit to tag is green, and record it in the Release record. See `docs/agents/testing.md`.
 
 ### Security
 
