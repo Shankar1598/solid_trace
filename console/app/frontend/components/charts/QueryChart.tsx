@@ -184,6 +184,8 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
   }
 
   const time = model.kind === 'time' ? model : null
+  // The tooltip lists series largest first at its point; Levels keep their worst-first order.
+  const levels = model.series.some(s => s.slot === null)
   // Bars cover their bin, so they sit on its middle; lines and areas mark its start. Each point keeps its bin's start.
   const binMs = time ? time.binSeconds * 1000 : 0
   const data = useMemo<ChartPoint[]>(
@@ -413,7 +415,16 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
                   <ChartTooltip
                     isAnimationActive={false}
                     active={drag ? false : undefined}
-                    content={<ChartTooltipContent indicator="line" valueFormatter={(value: number) => optionsText(value, options ?? {})} labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)} />}
+                    content={props => (
+                      <ChartTooltipContent
+                        active={props.active}
+                        label={props.label}
+                        payload={levels ? props.payload : [...props.payload].sort((a, b) => valueOf(b) - valueOf(a))}
+                        indicator="line"
+                        valueFormatter={(value: number) => optionsText(value, options ?? {})}
+                        labelFormatter={(_, payload) => pointLabel(payload?.[0]?.payload?.start ?? payload?.[0]?.payload?.x)}
+                      />
+                    )}
                   />
                 )}
                 overlay={<>{partialAreas}{dragArea}{thresholdLines}{markedLine}</>}
@@ -433,6 +444,11 @@ function SeriesChart({ model, form, initialHidden, onHidden, onZoom, actions, le
     const start = Number(x)
     return `${binSpan(start, time.binSeconds, time)}${time.partial.includes(start) ? ' · partial bin' : ''}`
   }
+}
+
+/** A tooltip row's value to sort by: a row with no value goes last. */
+function valueOf(row: { value?: unknown }): number {
+  return typeof row.value === 'number' ? row.value : -Number.MAX_VALUE
 }
 
 /**

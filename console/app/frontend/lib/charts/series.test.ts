@@ -302,6 +302,38 @@ describe('many series', () => {
     expect(Object.keys(model.points[0])).toHaveLength(MAX_SERIES + 1)
   })
 
+  describe('of a measure whose values do not add up', () => {
+    const LAG: TableColumn = { name: 'lag_hours', type: 'number' }
+    const MAX_LAG: TableColumn = { name: 'max_lag', type: 'number', agg: 'max' }
+    const STORE: TableColumn = { name: 'store', type: 'string' }
+    // Each flat store lags 0.5 h in each of 10 bins (a sum of 5); store 612 lags 0.2 h, then 2.0 h in the last bin (a sum of 3.8).
+    const bins = Array.from({ length: 10 }, (_, i) => `2026-10-09T${String(10 + i).padStart(2, '0')}:00:00Z`)
+    const flat = Array.from({ length: MAX_SERIES + 1 }, (_, i) => `flat-${i}`)
+    const lagRows = [
+      ...flat.flatMap(store => bins.map(bin => [bin, store, 0.5])),
+      ...bins.map((bin, i) => [bin, '612', i === bins.length - 1 ? 2 : 0.2]),
+    ]
+    const hourly = { ...TIME, bin_seconds: 3600 }
+
+    it.each([LAG, MAX_LAG])('keeps the split value with the highest peak first, over ones with a larger sum ($name)', column => {
+      const model = drawable(chartOf(table([hourly, STORE, column], lagRows)))
+
+      expect(model.series[0].name).toBe('612')
+      expect(model.series).toHaveLength(MAX_SERIES)
+      expect(legendNotes(model)).toEqual([{
+        text: '2 more not shown',
+        why: `Only the ${MAX_SERIES} store values with the largest ${column.name} peaks are drawn.`,
+      }])
+    })
+
+    it('ranks a count by its total, not its peak', () => {
+      const model = drawable(chartOf(table([hourly, STORE, COUNT], lagRows.map(([bin, store, lag]) => [bin, store, Number(lag) * 10]))))
+
+      expect(model.series.map(s => s.name)).not.toContain('612')
+      expect(legendNotes(model)[0].why).toBe(`Only the ${MAX_SERIES} store values with the largest count_ totals are drawn.`)
+    })
+  })
+
   it('keeps every number column of the split values it keeps, a hue each over one axis', () => {
     const wide = services.flatMap((s, i) => [['2026-10-09T10:00:00Z', s, i + 1, 10]])
     const model = drawable(chartOf(table([TIME, SERVICE, COUNT, COUNTIF], wide)))
