@@ -1,15 +1,16 @@
 import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
 import { AlertTriangle } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useCallback, useState, type MouseEvent, type ReactNode } from 'react'
 import { EvidenceFileList } from '@/components/EvidenceFileList'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
+import { Markdown } from '@/components/Markdown'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { agentSessionPath } from '@/lib/agentSessions'
-import type { EvidenceFile } from '@/lib/evidenceFiles'
+import { evidenceFileOfLink, isPlainClick, type EvidenceFile } from '@/lib/evidenceFiles'
 import {
   decisionsOf,
   eventWords,
@@ -19,7 +20,9 @@ import {
   prHref,
   recordPath,
   reviewersText,
+  runHasNoData,
   type RecordFinding,
+  type RecordReview,
   type ReviewRecord,
   type ReviewRecordRow,
   type ReviewRound,
@@ -40,15 +43,17 @@ const OUTCOME_BADGES: Record<string, 'ok' | 'warn' | 'error' | 'neutral' | 'info
 }
 
 /**
- * One Review record: the story of the PR, its review runs, each finding
- * with the decisions on it in order, the confirmations, and the other
- * rounds of the PR. Every text is an agent's or a PR commenter's, so the
- * page shows it as text, never as HTML or Markdown.
+ * One Review record: the PR body, the story of the PR, its review runs,
+ * each finding with the decisions on it in order, the confirmations, and
+ * the other rounds of the PR. Every text is an agent's or a PR commenter's,
+ * so the page shows it as text, never as HTML. The PR body is the agent's
+ * own Markdown, and shows as a Text block does (ADR 0024).
  */
 export default function ReviewRecordShow({ review_record: view }: { review_record: ReviewRecordProps }) {
   const row = view.review_record
   const record = view.record
   const title = row ? row.pr || 'No PR' : 'Review record'
+  const [evidence, setEvidence] = useState<string | null>(null)
   return (
     <DashboardLayout>
       <PageHeader
@@ -69,7 +74,8 @@ export default function ReviewRecordShow({ review_record: view }: { review_recor
       {row && record && (
         <div className="space-y-6">
           <Header row={row} />
-          <EvidenceFileList files={view.evidence_files} />
+          <EvidenceFileList files={view.evidence_files} openId={evidence} onOpenChange={setEvidence} />
+          <PRBody body={record.pr_body} files={view.evidence_files} onOpenEvidence={setEvidence} />
           <Story record={record} />
           <Reviews record={record} />
           <Findings findings={record.findings ?? []} />
@@ -113,6 +119,27 @@ function Header({ row }: { row: ReviewRecordRow }) {
         ))}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * The PR body as Markdown. A plain click on a link to an Evidence file of
+ * the record opens its popup.
+ */
+function PRBody({ body, files, onOpenEvidence }: { body?: unknown; files: EvidenceFile[]; onOpenEvidence: (id: string) => void }) {
+  const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
+  const linkClick = useCallback((href: string | undefined, e: MouseEvent<HTMLAnchorElement>) => {
+    const id = evidenceFileOfLink(href, slug, files.map(f => f.id))
+    if (!id || !isPlainClick(e)) return
+    e.preventDefault()
+    onOpenEvidence(id)
+  }, [slug, files, onOpenEvidence])
+  return (
+    <Section title="PR body" name="pr-body">
+      {typeof body === 'string' && body
+        ? <Card><CardContent className="py-4"><Markdown text={body} onLinkClick={linkClick} /></CardContent></Card>
+        : <p className="text-sm text-muted-foreground">This record has no PR body. Records from plugin 0.24 and earlier do not keep it.</p>}
+    </Section>
   )
 }
 
@@ -163,14 +190,7 @@ function Reviews({ record }: { record: ReviewRecord }) {
               {reviews.map((review, i) => (
                 <TableRow key={`${i}:${review.run}`} data-run={review.run}>
                   <TableCell className="text-right font-mono text-xs tabular-nums">{review.run}</TableCell>
-                  <TableCell className="text-xs">
-                    {review.skill ?? '–'}
-                    {review.trigger && <span className="text-muted-foreground"> ({review.trigger})</span>}
-                    {review.skipped && <div className="text-muted-foreground">Skipped: {review.skipped}</div>}
-                  </TableCell>
-                  <TableCell className="text-xs">{[review.stage, review.step].filter(Boolean).join(' · ') || '–'}</TableCell>
-                  <TableCell className="text-xs">{reviewersText(review) || '–'}</TableCell>
-                  <TableCell className="text-xs max-md:hidden">{review.verifier ? [review.verifier.model, review.verifier.effort].filter(Boolean).join(', ') : '–'}</TableCell>
+                  <RunCells review={review} />
                 </TableRow>
               ))}
             </TableBody>
@@ -178,6 +198,28 @@ function Reviews({ record }: { record: ReviewRecord }) {
         </div>
       )}
     </Section>
+  )
+}
+
+/**
+ * The cells of a run after its number. A run with no data (an earlier
+ * record made it from a findings block that could not be read) is one line.
+ */
+function RunCells({ review }: { review: RecordReview }) {
+  if (runHasNoData(review)) {
+    return <TableCell colSpan={4} className="text-xs whitespace-normal text-muted-foreground" data-cell="no-data">No data: the findings block of this run could not be read.</TableCell>
+  }
+  return (
+    <>
+      <TableCell className="text-xs">
+        {review.skill ?? '–'}
+        {review.trigger && <span className="text-muted-foreground"> ({review.trigger})</span>}
+        {review.skipped && <div className="text-muted-foreground">Skipped: {review.skipped}</div>}
+      </TableCell>
+      <TableCell className="text-xs">{[review.stage, review.step].filter(Boolean).join(' · ') || '–'}</TableCell>
+      <TableCell className="text-xs">{reviewersText(review) || '–'}</TableCell>
+      <TableCell className="text-xs max-md:hidden">{review.verifier ? [review.verifier.model, review.verifier.effort].filter(Boolean).join(', ') : '–'}</TableCell>
+    </>
   )
 }
 
@@ -219,7 +261,7 @@ function FindingRow({ finding }: { finding: RecordFinding }) {
         {missedByTheReviews(finding) && <Badge variant="warn" className="ml-1.5">missed</Badge>}
       </TableCell>
       <TableCell className="text-xs max-md:hidden">{finding.severity ?? '–'}</TableCell>
-      <TableCell className="min-w-64 max-w-xl text-xs">
+      <TableCell className="min-w-64 max-w-xl text-xs whitespace-normal [overflow-wrap:anywhere]" data-cell="finding">
         <div className="font-medium">{finding.title ?? 'No title'}</div>
         {place && <div className="font-mono text-muted-foreground break-all">{place}</div>}
         {(finding.scenario || words.length > 0) && (

@@ -1,7 +1,8 @@
-import { Link, usePage } from '@inertiajs/react'
+import { usePage } from '@inertiajs/react'
 import { Film, ImageOff } from 'lucide-react'
+import { EvidenceViewer } from '@/components/EvidenceViewer'
 import { cn } from '@/lib/utils'
-import { evidenceBytesPath, evidencePath, evidenceTitle, isVideo, type EvidenceFile } from '@/lib/evidenceFiles'
+import { evidenceBytesPath, evidencePath, evidenceTitle, isPlainClick, isVideo, type EvidenceFile } from '@/lib/evidenceFiles'
 import type { SharedProps } from '@/types'
 
 export function EvidenceThumb({ file, className }: { file: EvidenceFile; className?: string }) {
@@ -12,7 +13,16 @@ export function EvidenceThumb({ file, className }: { file: EvidenceFile; classNa
   return <img src={evidenceBytesPath(slug, file.id)} alt="" loading="lazy" className={cn('bg-muted object-cover', className)} />
 }
 
-export function EvidenceFileList({ files }: { files: EvidenceFile[] }) {
+/**
+ * The Evidence files of a page, each a link to its page. A plain click opens
+ * the file in the popup (`openId`) on this page; a click with Cmd, Ctrl,
+ * Shift or the middle button opens its page, as a link does.
+ */
+export function EvidenceFileList({ files, openId, onOpenChange }: {
+  files: EvidenceFile[]
+  openId: string | null
+  onOpenChange: (id: string | null) => void
+}) {
   const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
   if (files.length === 0) return null
   return (
@@ -21,13 +31,22 @@ export function EvidenceFileList({ files }: { files: EvidenceFile[] }) {
       <ul className="flex flex-wrap gap-3">
         {files.map(file => (
           <li key={file.id} data-evidence-file={file.id}>
-            <Link href={evidencePath(slug, file.id)} className="flex w-40 flex-col gap-1 border p-1 text-xs hover:bg-muted/50">
+            <a
+              href={evidencePath(slug, file.id)}
+              onClick={e => {
+                if (!isPlainClick(e)) return
+                e.preventDefault()
+                onOpenChange(file.id)
+              }}
+              className="flex w-40 flex-col gap-1 border p-1 text-xs hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring"
+            >
               <EvidenceThumb file={file} className="h-24 w-full" />
               <span className="truncate" title={evidenceTitle(file)}>{evidenceTitle(file)}</span>
-            </Link>
+            </a>
           </li>
         ))}
       </ul>
+      <EvidenceViewer files={files} openId={openId} onOpenChange={onOpenChange} />
     </section>
   )
 }

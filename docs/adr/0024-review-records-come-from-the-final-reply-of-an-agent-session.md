@@ -2,7 +2,7 @@
 
 Amends [ADR 0020](0020-agent-transcripts-raw-chunks-in-clickhouse-and-logs-for-reading.md): the parse of the Agent file batches makes a third derived layer, `review_records`, next to the Logs and `agent_sessions`.
 
-Changed later, two times. First the skills sent the record to `solidtrace review final` in a heredoc, not in the final reply. Now `solidtrace review final` writes the record to a file in the folder of the Agent session, and the capture uploads it with the Agent session's other files. See [The record moves to a file of the Agent session](#the-record-moves-to-a-file-of-the-agent-session). The parse still reads the block of an older Agent session.
+Changed later, three times. First the skills sent the record to `solidtrace review final` in a heredoc, not in the final reply. Second, `solidtrace review final` writes the record to a file in the folder of the Agent session, and the capture uploads it with the Agent session's other files. See [The record moves to a file of the Agent session](#the-record-moves-to-a-file-of-the-agent-session). The parse still reads the block of an older Agent session. Third, the record keeps the PR body, and the page shows it as Markdown. See [The record keeps the PR body, shown as Markdown](#the-record-keeps-the-pr-body-shown-as-markdown).
 
 The `open-pr` and `update-pr` skills ended their final reply with the PR's **Review record**, as JSON in a `solidtrace-pr-record` block. The reply uploads with its **Agent session**, as each transcript line does. SolidTrace reads the record from there:
 
@@ -11,7 +11,7 @@ The `open-pr` and `update-pr` skills ended their final reply with the PR's **Rev
 - **Its own table, not only the Log.** A Log cuts a string at 64 KiB. A real record can be 100 KB or more, so the Log of its line does not keep all of it. `review_records` keeps the whole record, compressed.
 - **A table of AgentDays.** `review_records` is partitioned by the Project and the day when the server stored the line, as `agent_sessions` is. It follows the **Agent Project**'s **Retention**, the deletion of the Project and the disk limit with the raw layer.
 - **The newest record of a PR.** A PR's key is its `pr`, else the Agent session id. The newest record of a key has the highest round, then the latest store time. A later round replaces the earlier rounds of the same PR on the list, and the record's page links to the earlier rounds.
-- **The same readers as the Agent sessions.** Each member who can read the Agent sessions can read the Review records, on the Review records page and with the MCP tools `list_review_records` and `get_review_record`. The record is the agent's text, with the words of PR commenters in it, so the pages show it as text only, never as HTML or Markdown, and link a PR only when it is a web address.
+- **The same readers as the Agent sessions.** Each member who can read the Agent sessions can read the Review records, on the Review records page and with the MCP tools `list_review_records` and `get_review_record`. The record is the agent's text, with the words of PR commenters in it, so the pages show it as text only, never as HTML or Markdown, and link a PR only when it is a web address. The PR body, added later, is the one exception: it shows as Markdown (see [The record keeps the PR body, shown as Markdown](#the-record-keeps-the-pr-body-shown-as-markdown)).
 
 We chose this because the record already uploads with its Agent session. The parse reads only what the upload brings: no new ingest route. (The first form had no new CLI command and no change to the skills. See the next section for the change that came later.)
 
@@ -38,6 +38,16 @@ The heredoc put the whole record in the input of one tool call. The agent must t
 - **The heredoc parse went.** No release had it, and no EventStore of the first team parsed it. The block parse stays.
 
 We did not take a folder of the CLI with a new scan in the capture: it needs a second way to find the session of each file and a second record of what was sent. We did not take a direct upload from `review final` to a new route: it must copy the rule of the captured repositories, and it has no retry.
+
+## The record keeps the PR body, shown as Markdown
+
+A reviewer reads the PR body first, but the record did not keep it. Now `solidtrace review record --pr-body FILE` puts the body in the record's `pr_body`, a string that a record with no body does not have. The version stays 2, because a record of version 2 with no `pr_body` is still correct. `open-pr` and `update-pr` give the body that they wrote to the PR. The command refuses a body of more than 65,536 characters, GitHub's limit. EventStore stores the record byte for byte as before, so it needs no change.
+
+- **Markdown, with the rules of a Text block.** The page shows `pr_body` as Markdown, as the PR shows it: raw HTML is skipped, an image is a link, and a link opens in a new tab. The words of PR commenters are not in the body, only the agent's own text. The other texts of the record stay plain text.
+- **A link to an Evidence file of the record opens it in a popup.** The body links each Evidence file to its page in Console. On the record's page, such a link (also the link of an image) opens the same popup as the Evidence files list. Only a link whose path is exactly `/<organization>/evidence/<id>` counts: a web address on any host, as a Console can have more than one address, or a path from the root of this Console.
+- **Earlier records have no PR body.** Records from plugin 0.24 and earlier do not keep it, and the page says so.
+- **Over MCP, on the first page only.** `get_review_record` gives `pr_body` only on the page with `findings_from` 0, cut to 16,000 characters with `pr_body_cut` and `pr_body_chars`. A body of 65,536 characters on each page made a page of findings go past the 100,000 characters that Claude Code takes. The page shows all of the body.
+- **A plugin newer than the CLI.** A CLI with no `--pr-body` refuses the flag. The skills then run the command again without it, so the record still gets written, with no PR body.
 
 ## Considered options
 

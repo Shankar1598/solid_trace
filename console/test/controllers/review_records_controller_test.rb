@@ -35,7 +35,7 @@ class ReviewRecordsControllerTest < ActionDispatch::IntegrationTest
 
   # A record as an agent writes it, with text that must stay text.
   def record_json
-    { version: 2, pr: PR, round: 2, story: { started_from: "Add a <b>cart</b> page" },
+    { version: 2, pr: PR, pr_body: "## Cart page\n\nAdds a <b>cart</b> page.", round: 2, story: { started_from: "Add a <b>cart</b> page" },
       findings: [ { id: "1.F1", found_by: { kind: "reviewer", name: "tests" }, events: [ { type: "triage", decision: "fix" } ], outcome: "fixed" } ],
       confirmations: [] }.to_json
   end
@@ -79,6 +79,7 @@ class ReviewRecordsControllerTest < ActionDispatch::IntegrationTest
     assert_requested asked
     assert_equal RECORD, view.dig("review_record", "id")
     assert_equal "Add a <b>cart</b> page", view.dig("record", "story", "started_from")
+    assert_equal "## Cart page\n\nAdds a <b>cart</b> page.", view.dig("record", "pr_body"), "the PR body as the agent wrote it"
     assert_equal "fixed", view.dig("record", "findings", 0, "outcome")
     assert_equal [ 2, 1 ], view["rounds"].map { |r| r["round"] }
     assert_equal "/acme/review_records", view["list_path"]

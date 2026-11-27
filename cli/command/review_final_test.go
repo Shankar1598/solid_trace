@@ -110,7 +110,8 @@ func TestReviewFinalTakesTheRecordThatReviewRecordPrints(t *testing.T) {
 	projects, _ := finalProjects(t)
 	var record bytes.Buffer
 	digest := writeText(t, "digest.json", recordDigest)
-	if code := command.Run(context.Background(), []string{"review", "record", "--digest", digest, "--notes", writeText(t, "notes.json", recordNotes), "--round", "3"},
+	if code := command.Run(context.Background(), []string{"review", "record", "--digest", digest, "--notes", writeText(t, "notes.json", recordNotes), "--round", "3",
+		"--pr-body", writeText(t, "body.md", "## What changes\n")},
 		command.Env{Stdout: &record, Stderr: &bytes.Buffer{}}); code != 0 {
 		t.Fatalf("review record: exit %d", code)
 	}

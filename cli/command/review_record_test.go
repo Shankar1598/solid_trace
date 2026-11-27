@@ -269,6 +269,38 @@ func TestReviewRecordSetsThePRAndTheRound(t *testing.T) {
 	}
 }
 
+func TestReviewRecordPutsThePRBodyInTheRecord(t *testing.T) {
+	digest := writeText(t, "digest.json", recordDigest)
+	body := "## What changes\n\nThe parser has a cap.\n"
+
+	code, record, stderr := runRecord(t, "--digest", digest, "--pr-body", writeText(t, "body.md", body))
+
+	if code != 0 || record["pr_body"] != body {
+		t.Fatalf("exit %d: pr_body %q\n%s", code, record["pr_body"], stderr)
+	}
+	code, record, stderr = runRecord(t, "--digest", digest)
+	if _, ok := record["pr_body"]; code != 0 || ok {
+		t.Fatalf("with no --pr-body: exit %d, pr_body %v\n%s", code, record["pr_body"], stderr)
+	}
+}
+
+func TestReviewRecordRefusesAPRBodyOverGitHubsLimit(t *testing.T) {
+	digest := writeText(t, "digest.json", recordDigest)
+	// GitHub counts characters, not bytes: 65,536 two-byte characters fit.
+	atLimit := strings.Repeat("é", 65536)
+
+	if code, record, stderr := runRecord(t, "--digest", digest, "--pr-body", writeText(t, "body.md", atLimit)); code != 0 || record["pr_body"] != atLimit {
+		t.Fatalf("65,536 characters: exit %d\n%s", code, stderr)
+	}
+	code, _, stderr := runRecord(t, "--digest", digest, "--pr-body", writeText(t, "long.md", atLimit+"x"))
+	if want := "solidtrace review record: the PR body has 65537 characters, more than GitHub's limit of 65536\n"; code != 1 || stderr != want {
+		t.Fatalf("exit %d\nstderr: %q", code, stderr)
+	}
+	if code, _, _ := runRecord(t, "--digest", digest, "--pr-body", filepath.Join(t.TempDir(), "none.md")); code != 2 {
+		t.Fatalf("a missing body: exit %d", code)
+	}
+}
+
 func TestReviewRecordCutsThePersonsWords(t *testing.T) {
 	long := strings.Repeat("é", 300)
 	notes := `{"events": [{"finding": "1.F6", "type": "person", "said": "` + long + `", "asks": "dig", "source": "record", "evidence": ["u-person"]}]}`
@@ -554,16 +586,39 @@ func TestReviewRecordAndReviewCheckWarnOfABlockThatCannotBeRead(t *testing.T) {
 
 	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
 
-	want := "solidtrace review record: warning: the block u-bad cannot be read (the solidtrace-findings block has no closing ```): its run has no findings\n"
+	want := "solidtrace review record: warning: the block u-bad cannot be read (the solidtrace-findings block has no closing ```): the record has none of its findings\n"
 	if code != 0 || stderr != want {
 		t.Fatalf("exit %d\nstderr: %s", code, stderr)
 	}
-	if n := len(record["reviews"].([]any)); n != 1 {
-		t.Errorf("%d reviews, want 1", n)
+	if n := len(record["reviews"].([]any)); n != 0 {
+		t.Errorf("%d reviews, want 0: a block that cannot be read is not a run", n)
 	}
 	code, out, _ := runCheck(t, decodeJSON(t, digest), record)
 	wantWarnings := []string{"the block u-bad cannot be read (the solidtrace-findings block has no closing ```): the record has none of its findings"}
 	if code != 0 || !reflect.DeepEqual(out.Warnings, wantWarnings) {
+		t.Fatalf("review check: exit %d, %+v", code, out)
+	}
+}
+
+func TestReviewRecordGivesAReviewStartARunOfItsOwnWhenOnlyABlockThatCannotBeReadFollows(t *testing.T) {
+	digest := recDigest(
+		`{"session": "s1", "uuid": "u-start", "kind": "review_start", "skill": "solidtrace-skills:code-review", "trigger": "person"}`,
+		`{"session": "s1", "uuid": "u-bad", "kind": "findings", "findings": null, "error": "unexpected end of JSON input"}`)
+
+	code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
+
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	reviews := record["reviews"].([]any)
+	if len(reviews) != 1 {
+		t.Fatalf("reviews: %v, want one run of the review start", reviews)
+	}
+	if rv := reviews[0].(map[string]any); rv["start"] != "u-start" || rv["skill"] != "solidtrace-skills:code-review" {
+		t.Errorf("review: %v", rv)
+	}
+	code, out, _ := runCheck(t, decodeJSON(t, digest), record)
+	if code != 0 || len(out.Problems) != 0 {
 		t.Fatalf("review check: exit %d, %+v", code, out)
 	}
 }
@@ -584,5 +639,30 @@ func TestReviewRecordTakesWhatTheNotesGive(t *testing.T) {
 	events := recordFinding(t, record, "1.F6")["events"].([]any)
 	if fix := events[len(events)-1].(map[string]any); fix["type"] != "fix" || fix["commit"] != hashA || !reflect.DeepEqual(fix["files"], []any{"a.go"}) {
 		t.Errorf("fix: %v", fix)
+	}
+}
+
+func TestReviewRecordAndReviewCheckWarnOfABlockThatIsNotAJSONObject(t *testing.T) {
+	for _, body := range []string{"null", `[{"id": "F1"}]`} {
+		path := transcript(t, assistantLine("a-block", text("Reviewed.\n```solidtrace-findings\n"+body+"\n```")))
+		code, digest, stderr := runDigest(t, command.Env{}, "--file", path)
+		if code != 0 {
+			t.Fatalf("%s: review digest: exit %d\n%s", body, code, stderr)
+		}
+
+		code, record, stderr := runRecord(t, "--digest", writeText(t, "digest.json", digest), "--notes", writeText(t, "notes.json", storyNotes))
+
+		want := "solidtrace review record: warning: the block a-block cannot be read (the solidtrace-findings block is not a JSON object): the record has none of its findings\n"
+		if code != 0 || stderr != want {
+			t.Fatalf("%s: exit %d\nstderr: %s", body, code, stderr)
+		}
+		if n := len(record["reviews"].([]any)); n != 0 {
+			t.Errorf("%s: %d reviews, want 0: a block that is not a JSON object is not a run", body, n)
+		}
+		code, out, _ := runCheck(t, decodeJSON(t, digest), record)
+		wantWarnings := []string{"the block a-block cannot be read (the solidtrace-findings block is not a JSON object): the record has none of its findings"}
+		if code != 0 || len(out.Problems) != 0 || !reflect.DeepEqual(out.Warnings, wantWarnings) {
+			t.Fatalf("%s: review check: exit %d, %+v", body, code, out)
+		}
 	}
 }

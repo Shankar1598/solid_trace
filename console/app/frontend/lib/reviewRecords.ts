@@ -1,8 +1,8 @@
 // The Review records pages: the newest Review record of each PR, and one
 // record with its findings. A record is what an agent wrote (open-pr's
 // record.md, version 2), with the words of PR commenters in it, so the
-// pages show it as text only, and read each part with care: a field can be
-// missing.
+// pages show it as text only (the PR body as Markdown, with the rules of a
+// Text block), and read each part with care: a field can be missing.
 
 /** A Review record as EventStore lists it: its place, its PR and its counts. */
 export type ReviewRecordRow = {
@@ -69,6 +69,7 @@ export type RecordFinding = {
 
 export type RecordReview = {
   run: number
+  block_run?: number | null
   skill?: string | null
   trigger?: string | null
   stage?: string | null
@@ -85,6 +86,8 @@ export type Story = { started_from?: string; changes?: string[]; reviews?: strin
 export type ReviewRecord = {
   version: number
   pr?: string | null
+  /** The PR body in Markdown. Records from plugin 0.24 and earlier do not have it. */
+  pr_body?: string | null
   round?: number
   sessions?: { id: string; title?: string }[] | null
   story?: Story | null
@@ -175,6 +178,16 @@ export function givenText(given: boolean | null | undefined): string {
   if (given === true) return 'Given'
   if (given === false) return 'Not given'
   return 'Not known'
+}
+
+/**
+ * Whether a run has no data: no block_run, skill, stage, step, reviewers,
+ * verifier or skip. Records made before review record skipped a findings
+ * block that could not be read have such runs. A run of a block that gives
+ * only its run number has data: its block_run.
+ */
+export function runHasNoData(review: RecordReview): boolean {
+  return review.block_run == null && !review.skill && !review.stage && !review.step && !review.skipped && !review.reviewers?.length && !review.verifier
 }
 
 /** The reviewers of a run, as "name (model, effort)" each. */

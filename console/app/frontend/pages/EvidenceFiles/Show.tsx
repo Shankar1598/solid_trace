@@ -1,15 +1,13 @@
 import { Link, usePage } from '@inertiajs/react'
 import { format } from 'date-fns'
-import { ImageOff } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { EvidenceDeletedNotice, EvidencePlayer } from '@/components/EvidenceViewer'
 import DashboardLayout from '@/components/layouts/DashboardLayout'
 import { PageHeader } from '@/components/PageHeader'
 import { Card, CardContent } from '@/components/ui/card'
-import { Segmented } from '@/components/ui/segmented'
 import { agentSessionPath } from '@/lib/agentSessions'
-import { evidenceBytesPath, evidenceDeletedText, evidenceTitle, isVideo, readSpeed, saveSpeed, SPEEDS, type EvidenceFile, type Speed } from '@/lib/evidenceFiles'
+import { evidenceBytesPath, evidenceTitle, isVideo, type EvidenceFile } from '@/lib/evidenceFiles'
 import { bytesText } from '@/lib/overview'
-import { browserStorage } from '@/lib/recentQueries'
 import { sessionRecordPath, type SessionReviewRecord } from '@/lib/reviewRecords'
 import type { SharedProps } from '@/types'
 
@@ -18,8 +16,6 @@ type EvidenceFileProps = EvidenceFile & {
   review_record_known: boolean
   list_path: string
 }
-
-const SPEED_OPTIONS = SPEEDS.map(speed => ({ value: speed, label: `${speed}x` }))
 
 export default function EvidenceFileShow({ evidence_file: file }: { evidence_file: EvidenceFileProps }) {
   const slug = usePage<SharedProps>().props.current_org?.slug ?? ''
@@ -34,40 +30,13 @@ export default function EvidenceFileShow({ evidence_file: file }: { evidence_fil
       />
       <div className="space-y-4">
         {file.deleted_at
-          ? (
-            <Card className="border-dashed" data-notice="evidence-deleted">
-              <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-                <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
-                {evidenceDeletedText(file.created_at, file.deleted_at)}
-              </CardContent>
-            </Card>
-          )
+          ? <EvidenceDeletedNotice createdAt={file.created_at} deletedAt={file.deleted_at} />
           : isVideo(file)
-            ? <Player src={src} title={title} />
+            ? <EvidencePlayer src={src} title={title} className="max-h-[75vh]" />
             : <img src={src} alt={title} className="max-h-[75vh] max-w-full border object-contain" data-evidence="image" />}
         <Facts file={file} slug={slug} />
       </div>
     </DashboardLayout>
-  )
-}
-
-function Player({ src, title }: { src: string; title: string }) {
-  const video = useRef<HTMLVideoElement>(null)
-  const [speed, setSpeed] = useState(() => readSpeed(browserStorage()))
-  useEffect(() => {
-    if (!video.current) return
-    video.current.defaultPlaybackRate = Number(speed)
-    video.current.playbackRate = Number(speed)
-  }, [speed])
-  const change = (next: Speed) => {
-    saveSpeed(browserStorage(), next)
-    setSpeed(next)
-  }
-  return (
-    <div className="space-y-2">
-      <video ref={video} src={src} controls preload="metadata" aria-label={title} className="max-h-[75vh] max-w-full border bg-black" data-evidence="video" />
-      <Segmented label="Speed" value={speed} options={SPEED_OPTIONS} onChange={change} />
-    </div>
   )
 }
 

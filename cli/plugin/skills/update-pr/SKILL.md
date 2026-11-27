@@ -82,4 +82,4 @@ Write the body again as `open-pr/SKILL.md` › Write the PR says, from this roun
 
 ## 10. Final reply
 
-Set `pr` in the record as `open-pr` does, and write the record with `solidtrace review final` as `open-pr` › Final reply says. Then give the PR's URL, or in local mode the file's path, and the count of findings by decision. Do not write the record's JSON in the reply.
+Set `pr` in the record as `open-pr` does, and `pr_body` to the new body of step 9 (`--pr-body "$dir/body.md"`), and write the record with `solidtrace review final` as `open-pr` › Final reply says. When the CLI does not know `--pr-body` (`flag provided but not defined: -pr-body`, from a CLI older than this plugin), run the command again without it, and say in the final reply that the record has no PR body. Then give the PR's URL, or in local mode the file's path, and the count of findings by decision. Do not write the record's JSON in the reply.

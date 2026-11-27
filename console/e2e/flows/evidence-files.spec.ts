@@ -198,6 +198,9 @@ test('a member opens Evidence files after sign-in, plays the video at 0.5x, and 
   await expect(files.locator(`[data-evidence-file="${image.json.id}"] img`)).toHaveCount(1)
   await shot(page, 'agent-session-evidence-files')
   await files.getByRole('link', { name: 'Screenshot: Cart page' }).click()
+  await expect(page.getByRole('dialog', { name: 'Screenshot: Cart page' })).toBeVisible()
+  await expect(page).toHaveURL(`${origin}/${ORG}/agent_sessions/${session.id}`)
+  await page.getByRole('dialog').getByRole('link', { name: 'Open page' }).click()
   await expect(page).toHaveURL(`${origin}${imagePath}`)
 
   await page.goto(`/${ORG}/evidence`)
